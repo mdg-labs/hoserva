@@ -2929,18 +2929,22 @@ func (s *ConfigImportGroupCategory) UnmarshalText(data []byte) error {
 type ConfigImportNotRestored struct {
 	Kind ConfigImportNotRestoredKind `json:"kind"`
 	// The stack whose `.env` file it is (`stack_env`), the array disk by its `ConfigImportDisk.name`
-	// (`disk`), or the table and column of a database secret cleared by a bare-metal restore, with the row
-	// it was in (`database_secret`).
+	// (`disk`), the table and column of a database secret cleared by a bare-metal restore, with the row it
+	// was in (`database_secret`), or `backup_recipient`, the archive's backup recipient, which a
+	// bare-metal restore adopts only when `identity.age` opens and otherwise leaves this box's own in
+	// place.
 	Name string `json:"name"`
 	// `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section
-	// could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an
-	// `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept
-	// because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`:
-	// a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row
-	// of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included,
-	// until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk.
-	// `sealed_under_other_key`: the secret was sealed under the machine key of the installation the
-	// archive came from, which this machine does not have, so a bare-metal restore cleared it.
+	// could not be opened (see `ConfigImportSecretsStatus`; for `backup_recipient`, its `identity.age`).
+	// `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of.
+	// `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack.
+	// `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array
+	// disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the
+	// array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged
+	// or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was
+	// sealed under the machine key of the installation the archive came from, which this machine does not
+	// have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its
+	// `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
 	Reason  ConfigImportNotRestoredReason `json:"reason"`
 	Message string                        `json:"message"`
 }
@@ -2988,9 +2992,10 @@ func (s *ConfigImportNotRestored) SetMessage(val string) {
 type ConfigImportNotRestoredKind string
 
 const (
-	ConfigImportNotRestoredKindStackEnv       ConfigImportNotRestoredKind = "stack_env"
-	ConfigImportNotRestoredKindDisk           ConfigImportNotRestoredKind = "disk"
-	ConfigImportNotRestoredKindDatabaseSecret ConfigImportNotRestoredKind = "database_secret"
+	ConfigImportNotRestoredKindStackEnv        ConfigImportNotRestoredKind = "stack_env"
+	ConfigImportNotRestoredKindDisk            ConfigImportNotRestoredKind = "disk"
+	ConfigImportNotRestoredKindDatabaseSecret  ConfigImportNotRestoredKind = "database_secret"
+	ConfigImportNotRestoredKindBackupRecipient ConfigImportNotRestoredKind = "backup_recipient"
 )
 
 // AllValues returns all ConfigImportNotRestoredKind values.
@@ -2999,6 +3004,7 @@ func (ConfigImportNotRestoredKind) AllValues() []ConfigImportNotRestoredKind {
 		ConfigImportNotRestoredKindStackEnv,
 		ConfigImportNotRestoredKindDisk,
 		ConfigImportNotRestoredKindDatabaseSecret,
+		ConfigImportNotRestoredKindBackupRecipient,
 	}
 }
 
@@ -3010,6 +3016,8 @@ func (s ConfigImportNotRestoredKind) MarshalText() ([]byte, error) {
 	case ConfigImportNotRestoredKindDisk:
 		return []byte(s), nil
 	case ConfigImportNotRestoredKindDatabaseSecret:
+		return []byte(s), nil
+	case ConfigImportNotRestoredKindBackupRecipient:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -3028,20 +3036,25 @@ func (s *ConfigImportNotRestoredKind) UnmarshalText(data []byte) error {
 	case ConfigImportNotRestoredKindDatabaseSecret:
 		*s = ConfigImportNotRestoredKindDatabaseSecret
 		return nil
+	case ConfigImportNotRestoredKindBackupRecipient:
+		*s = ConfigImportNotRestoredKindBackupRecipient
+		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
 
 // `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section
-// could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an
-// `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept
-// because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`:
-// a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row
-// of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included,
-// until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk.
-// `sealed_under_other_key`: the secret was sealed under the machine key of the installation the
-// archive came from, which this machine does not have, so a bare-metal restore cleared it.
+// could not be opened (see `ConfigImportSecretsStatus`; for `backup_recipient`, its `identity.age`).
+// `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of.
+// `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack.
+// `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array
+// disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the
+// array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged
+// or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was
+// sealed under the machine key of the installation the archive came from, which this machine does not
+// have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its
+// `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
 type ConfigImportNotRestoredReason string
 
 const (
@@ -3566,6 +3579,10 @@ func (s *ConfigImportRestoredCategory) UnmarshalText(data []byte) error {
 // Ref: #/components/schemas/ConfigImportSecrets
 type ConfigImportSecrets struct {
 	Status ConfigImportSecretsStatus `json:"status"`
+	// The same status for the archive's `identity.age`, the backup recipient's private identity: `opened`
+	// means a bare-metal restore adopts the archive's recipient; otherwise this box keeps its own. Always
+	// present in a response; an in-place import never replaces the recipient, so it only reports.
+	Identity OptConfigImportSecretsStatus `json:"identity"`
 	// The stacks of the archive whose `.env` files would not be restored; empty when `status` is `opened`.
 	Stacks []string `json:"stacks"`
 }
@@ -3573,6 +3590,11 @@ type ConfigImportSecrets struct {
 // GetStatus returns the value of Status.
 func (s *ConfigImportSecrets) GetStatus() ConfigImportSecretsStatus {
 	return s.Status
+}
+
+// GetIdentity returns the value of Identity.
+func (s *ConfigImportSecrets) GetIdentity() OptConfigImportSecretsStatus {
+	return s.Identity
 }
 
 // GetStacks returns the value of Stacks.
@@ -3585,6 +3607,11 @@ func (s *ConfigImportSecrets) SetStatus(val ConfigImportSecretsStatus) {
 	s.Status = val
 }
 
+// SetIdentity sets the value of Identity.
+func (s *ConfigImportSecrets) SetIdentity(val OptConfigImportSecretsStatus) {
+	s.Identity = val
+}
+
 // SetStacks sets the value of Stacks.
 func (s *ConfigImportSecrets) SetStacks(val []string) {
 	s.Stacks = val
@@ -3592,7 +3619,7 @@ func (s *ConfigImportSecrets) SetStacks(val []string) {
 
 // `none`: the archive has no passphrase-protected section (it was built without a backup passphrase).
 // `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is
-// available. `passphrase_incorrect`: it has one and the configured passphrase does not open it.
+// available. `passphrase_incorrect`: it has one and the passphrase available does not open it.
 // Ref: #/components/schemas/ConfigImportSecretsStatus
 type ConfigImportSecretsStatus string
 
@@ -5877,8 +5904,9 @@ type ImportConfigReq struct {
 	Archive ht.MultipartFile `json:"archive"`
 	// Must be true — import is destructive.
 	Confirm bool `json:"confirm"`
-	// The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the
-	// configured backup passphrase is tried.
+	// The backup passphrase the archive's `secrets.age` and `identity.age` were sealed under. Optional:
+	// omitted, the configured backup passphrase is tried. On a fresh install it also becomes this box's
+	// backup passphrase.
 	Passphrase OptString `json:"passphrase"`
 	// The JSON of a `ConfigImportDiskMapping`: the mapping the user confirmed, which is
 	// `previewConfigImport`'s `bareMetal.diskMapping` as it was shown. Required when the installation has
@@ -6218,6 +6246,7 @@ const (
 	JobTypeAppdataRestore        JobType = "appdata_restore"
 	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
 	JobTypeRestoreDrill          JobType = "restore_drill"
+	JobTypeConfigBackup          JobType = "config_backup"
 	JobTypeContainerUpdate       JobType = "container_update"
 	JobTypeContainerRecreate     JobType = "container_recreate"
 	JobTypeAcmeIssue             JobType = "acme_issue"
@@ -6253,6 +6282,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeAppdataRestore,
 		JobTypeAppdataRestorePreview,
 		JobTypeRestoreDrill,
+		JobTypeConfigBackup,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
@@ -6308,6 +6338,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataRestorePreview:
 		return []byte(s), nil
 	case JobTypeRestoreDrill:
+		return []byte(s), nil
+	case JobTypeConfigBackup:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
@@ -6396,6 +6428,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeRestoreDrill:
 		*s = JobTypeRestoreDrill
+		return nil
+	case JobTypeConfigBackup:
+		*s = JobTypeConfigBackup
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
@@ -9097,6 +9132,52 @@ func (o OptConfigImportBareMetal) Or(d ConfigImportBareMetal) ConfigImportBareMe
 	return d
 }
 
+// NewOptConfigImportSecretsStatus returns new OptConfigImportSecretsStatus with value set to v.
+func NewOptConfigImportSecretsStatus(v ConfigImportSecretsStatus) OptConfigImportSecretsStatus {
+	return OptConfigImportSecretsStatus{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptConfigImportSecretsStatus is optional ConfigImportSecretsStatus.
+type OptConfigImportSecretsStatus struct {
+	Value ConfigImportSecretsStatus
+	Set   bool
+}
+
+// IsSet returns true if OptConfigImportSecretsStatus was set.
+func (o OptConfigImportSecretsStatus) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptConfigImportSecretsStatus) Reset() {
+	var v ConfigImportSecretsStatus
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptConfigImportSecretsStatus) SetTo(v ConfigImportSecretsStatus) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptConfigImportSecretsStatus) Get() (v ConfigImportSecretsStatus, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptConfigImportSecretsStatus) Or(d ConfigImportSecretsStatus) ConfigImportSecretsStatus {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptCreateBackupDestinationRequestOptions returns new OptCreateBackupDestinationRequestOptions with value set to v.
 func NewOptCreateBackupDestinationRequestOptions(v CreateBackupDestinationRequestOptions) OptCreateBackupDestinationRequestOptions {
 	return OptCreateBackupDestinationRequestOptions{
@@ -11621,8 +11702,8 @@ func (s *PreviewAppdataRestoreRequest) SetDestinationId(val string) {
 
 type PreviewConfigImportReq struct {
 	Archive ht.MultipartFile `json:"archive"`
-	// The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the
-	// configured backup passphrase is tried.
+	// The backup passphrase the archive's `secrets.age` and `identity.age` were sealed under. Optional:
+	// omitted, the configured backup passphrase is tried.
 	Passphrase OptString `json:"passphrase"`
 }
 
@@ -14035,6 +14116,32 @@ func (s *UPSSettings) SetRuntimeSeconds(val OptInt32) {
 
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
+
+// Ref: #/components/schemas/UpdateBackupDestinationRequest
+type UpdateBackupDestinationRequest struct {
+	Enabled   OptBool            `json:"enabled"`
+	Retention OptBackupRetention `json:"retention"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *UpdateBackupDestinationRequest) GetEnabled() OptBool {
+	return s.Enabled
+}
+
+// GetRetention returns the value of Retention.
+func (s *UpdateBackupDestinationRequest) GetRetention() OptBackupRetention {
+	return s.Retention
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *UpdateBackupDestinationRequest) SetEnabled(val OptBool) {
+	s.Enabled = val
+}
+
+// SetRetention sets the value of Retention.
+func (s *UpdateBackupDestinationRequest) SetRetention(val OptBackupRetention) {
+	s.Retention = val
+}
 
 // Release channel the update check reads from the signed index (Q67).
 // Ref: #/components/schemas/UpdateChannel

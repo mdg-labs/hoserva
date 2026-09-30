@@ -48,7 +48,7 @@ describe("job label helpers (#435)", () => {
   });
 
   it("has a catalog string, not the raw value or a missing-key marker, for every JobType", () => {
-    expect(JOB_TYPE_VALUES).toHaveLength(30);
+    expect(JOB_TYPE_VALUES).toHaveLength(31);
     for (const type of JOB_TYPE_VALUES) {
       expect(i18n.exists(`jobs.types.${type}`), type).toBe(true);
       const label = jobTypeLabel(type, i18n.t);

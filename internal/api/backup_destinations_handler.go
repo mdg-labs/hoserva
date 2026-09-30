@@ -20,6 +20,8 @@ func mapBackupDestinationError(err error) error {
 		return &apiError{code: "backup_destination_exists", statusCode: 409, message: err.Error()}
 	case errors.Is(err, backup.ErrDestinationNotFound):
 		return &apiError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	case errors.Is(err, backup.ErrNoEnabledDestination):
+		return &apiError{code: "backup_no_destination", statusCode: 409, message: err.Error()}
 	case errors.Is(err, backup.ErrRcloneMissing):
 		return &apiError{code: "rclone_missing", statusCode: 424, message: err.Error()}
 	default:
@@ -103,6 +105,26 @@ func (h *Handler) CreateBackupDestination(ctx context.Context, req *apiv1.Create
 		nd.Retention = &backup.Retention{Daily: int(v.Daily), Weekly: int(v.Weekly), Monthly: int(v.Monthly)}
 	}
 	dest, err := svc.AddDestination(ctx, nd)
+	if err != nil {
+		return nil, mapBackupDestinationError(err)
+	}
+	out := backupDestinationToAPI(dest, time.Now().UTC())
+	return &out, nil
+}
+
+func (h *Handler) UpdateBackupDestination(ctx context.Context, req *apiv1.UpdateBackupDestinationRequest, params apiv1.UpdateBackupDestinationParams) (*apiv1.BackupDestination, error) {
+	svc, err := h.backupDestinations()
+	if err != nil {
+		return nil, err
+	}
+	var u backup.DestinationUpdate
+	if v, ok := req.Enabled.Get(); ok {
+		u.Enabled = &v
+	}
+	if v, ok := req.Retention.Get(); ok {
+		u.Retention = &backup.Retention{Daily: int(v.Daily), Weekly: int(v.Weekly), Monthly: int(v.Monthly)}
+	}
+	dest, err := svc.UpdateDestination(ctx, params.DestinationId, u)
 	if err != nil {
 		return nil, mapBackupDestinationError(err)
 	}

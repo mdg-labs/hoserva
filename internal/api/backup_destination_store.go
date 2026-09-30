@@ -76,15 +76,37 @@ func (s *BackupDestinationStore) ListDestinations(ctx context.Context) ([]backup
 	if err != nil {
 		return nil, fmt.Errorf("listing backup destinations: %w", err)
 	}
+	enabled, err := s.q.ListBackupDestinationEnabledAt(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing backup destination enable times: %w", err)
+	}
+	enabledAt := make(map[string]string, len(enabled))
+	for _, e := range enabled {
+		enabledAt[e.DestinationID] = e.EnabledAt
+	}
 	out := make([]backup.Destination, 0, len(rows))
 	for _, row := range rows {
 		d, err := destinationFromRow(row)
 		if err != nil {
 			return nil, err
 		}
+		if raw, ok := enabledAt[row.ID]; ok {
+			if err := setEnabledAt(&d, raw); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+func setEnabledAt(d *backup.Destination, raw string) error {
+	t, err := time.Parse(timeFormat, raw)
+	if err != nil {
+		return fmt.Errorf("parsing enable time of destination %q: %w", d.ID, err)
+	}
+	d.EnabledAt = &t
+	return nil
 }
 
 // GetDestination implements backup.DestinationStore.
@@ -96,7 +118,21 @@ func (s *BackupDestinationStore) GetDestination(ctx context.Context, id string) 
 		}
 		return backup.Destination{}, fmt.Errorf("reading backup destination %q: %w", id, err)
 	}
-	return destinationFromRow(row)
+	d, err := destinationFromRow(row)
+	if err != nil {
+		return backup.Destination{}, err
+	}
+	raw, err := s.q.GetBackupDestinationEnabledAt(ctx, id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return backup.Destination{}, fmt.Errorf("reading enable time of backup destination %q: %w", id, err)
+	default:
+		if err := setEnabledAt(&d, raw); err != nil {
+			return backup.Destination{}, err
+		}
+	}
+	return d, nil
 }
 
 func createParams(d backup.Destination) (storedb.CreateBackupDestinationParams, error) {
@@ -186,7 +222,33 @@ func (s *BackupDestinationStore) DeleteDestination(ctx context.Context, id strin
 	if label, ok := strings.CutPrefix(id, externalDestinationIDPrefix); ok {
 		return s.deleteExternalDestination(ctx, id, label)
 	}
-	n, err := s.q.DeleteBackupDestination(ctx, id)
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return errors.New("backup destination store: deleting requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning delete of backup destination %q: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := deleteDestinationRows(ctx, s.q.WithTx(tx), id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing delete of backup destination %q: %w", id, err)
+	}
+	return nil
+}
+
+// deleteDestinationRows deletes the re-enable record explicitly rather than
+// relying on schema.sql's ON DELETE CASCADE: store.DSN's pooled connections
+// have foreign_keys off, and an orphan row fails the next migration's
+// foreign_key_check.
+func deleteDestinationRows(ctx context.Context, q *storedb.Queries, id string) error {
+	if err := q.DeleteBackupDestinationEnabledAt(ctx, id); err != nil {
+		return fmt.Errorf("deleting enable time of backup destination %q: %w", id, err)
+	}
+	n, err := q.DeleteBackupDestination(ctx, id)
 	if err != nil {
 		return fmt.Errorf("deleting backup destination %q: %w", id, err)
 	}
@@ -214,12 +276,8 @@ func (s *BackupDestinationStore) deleteExternalDestination(ctx context.Context, 
 		return err
 	}
 	return ext.InTx(ctx, func(ext *store.ExternalStore, q *storedb.Queries) error {
-		n, err := q.DeleteBackupDestination(ctx, id)
-		if err != nil {
-			return fmt.Errorf("deleting backup destination %q: %w", id, err)
-		}
-		if n == 0 {
-			return backup.ErrDestinationNotFound
+		if err := deleteDestinationRows(ctx, q, id); err != nil {
+			return err
 		}
 		if err := ext.SetBackupDestination(ctx, label, false); err != nil && !errors.Is(err, store.ErrExternalNotFound) {
 			return err
@@ -239,7 +297,11 @@ func (s *BackupDestinationStore) SetExternalDestination(ctx context.Context, lab
 			return err
 		}
 		if dest == nil {
-			if _, err := q.DeleteBackupDestination(ctx, externalDestinationIDPrefix+label); err != nil {
+			id := externalDestinationIDPrefix + label
+			if err := q.DeleteBackupDestinationEnabledAt(ctx, id); err != nil {
+				return fmt.Errorf("deleting enable time of backup destination of external disk %q: %w", label, err)
+			}
+			if _, err := q.DeleteBackupDestination(ctx, id); err != nil {
 				return fmt.Errorf("deleting backup destination of external disk %q: %w", label, err)
 			}
 			return nil
@@ -330,6 +392,52 @@ func (s *BackupDestinationStore) MarkStaleAlerted(ctx context.Context, id string
 	}
 	if n == 0 {
 		return backup.ErrDestinationNotFound
+	}
+	return nil
+}
+
+// UpdateDestination implements backup.DestinationStore. The enable time and
+// the update run in one transaction, and the enable time is recorded first,
+// while the row still holds the disabled state it is judged against.
+func (s *BackupDestinationStore) UpdateDestination(ctx context.Context, id string, u backup.DestinationUpdate, at time.Time) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return errors.New("backup destination store: updating requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning destination update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.q.WithTx(tx)
+
+	var params storedb.UpdateBackupDestinationParams
+	params.ID = id
+	if u.Enabled != nil {
+		params.Enabled = sql.NullInt64{Int64: boolToSQL(*u.Enabled), Valid: true}
+		if *u.Enabled {
+			if err := q.RecordBackupDestinationReenabled(ctx, storedb.RecordBackupDestinationReenabledParams{
+				EnabledAt: at.UTC().Format(timeFormat),
+				ID:        id,
+			}); err != nil {
+				return fmt.Errorf("recording enable time of backup destination %q: %w", id, err)
+			}
+		}
+	}
+	if u.Retention != nil {
+		params.RetentionDaily = sql.NullInt64{Int64: int64(u.Retention.Daily), Valid: true}
+		params.RetentionWeekly = sql.NullInt64{Int64: int64(u.Retention.Weekly), Valid: true}
+		params.RetentionMonthly = sql.NullInt64{Int64: int64(u.Retention.Monthly), Valid: true}
+	}
+	n, err := q.UpdateBackupDestination(ctx, params)
+	if err != nil {
+		return fmt.Errorf("updating backup destination %q: %w", id, err)
+	}
+	if n == 0 {
+		return backup.ErrDestinationNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing update of backup destination %q: %w", id, err)
 	}
 	return nil
 }

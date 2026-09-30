@@ -15,6 +15,7 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
 const mockDelete = vi.fn();
+const mockPatch = vi.fn();
 const mockToast = vi.fn();
 
 vi.mock("@/components/patterns/feedback-toast", () => ({
@@ -27,6 +28,7 @@ vi.mock("@/lib/api/client", () => ({
     POST: (...args: unknown[]) => mockPost(...args),
     PUT: (...args: unknown[]) => mockPut(...args),
     DELETE: (...args: unknown[]) => mockDelete(...args),
+    PATCH: (...args: unknown[]) => mockPatch(...args),
   },
 }));
 
@@ -45,6 +47,7 @@ describe("Settings pages", () => {
     mockPost.mockReset();
     mockPut.mockReset();
     mockDelete.mockReset();
+    mockPatch.mockReset();
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       addEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
@@ -823,6 +826,7 @@ describe("Backup settings page", () => {
     mockPost.mockReset();
     mockPut.mockReset();
     mockDelete.mockReset();
+    mockPatch.mockReset();
     mockToast.mockReset();
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       addEventListener: vi.fn(),
@@ -982,6 +986,65 @@ describe("Backup settings page", () => {
 
     expect(await within(dialog).findByText("no backup destination with that id")).toBeInTheDocument();
     expect(within(dialog).getByText(/stay where they are/)).toBeInTheDocument();
+  });
+
+  it("edits a destination's enabled flag and retention in place through updateBackupDestination", async () => {
+    mockBackupApi();
+    mockPatch.mockReturnValue(apiOk(backupDestination({ enabled: false, retention: { daily: 3, weekly: 0, monthly: 6 } })));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Boot device" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Edit Boot device")).toBeInTheDocument();
+    const save = within(dialog).getByRole("button", { name: "Save changes" });
+    expect(save).toBeDisabled();
+
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Enabled" }));
+    fireEvent.change(within(dialog).getByLabelText("Daily"), { target: { value: "3" } });
+    fireEvent.change(within(dialog).getByLabelText("Weekly"), { target: { value: "0" } });
+    fireEvent.click(save);
+
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/backup/destinations/{destinationId}", {
+        params: { path: { destinationId: "boot" } },
+        body: { enabled: false, retention: { daily: 3, weekly: 0, monthly: 6 } },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ type: "success", title: "Destination updated" }));
+    expect(mockGet.mock.calls.filter(([path]) => path === "/backup/destinations").length).toBeGreaterThan(1);
+  });
+
+  it("keeps the edit form open with the server's message when the update is refused", async () => {
+    mockBackupApi();
+    mockPatch.mockReturnValue(apiFail("backup_destination_invalid", "retention must keep at least one archive"));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Boot device" }));
+    const dialog = await screen.findByRole("dialog");
+    for (const label of ["Daily", "Weekly", "Monthly"]) {
+      fireEvent.change(within(dialog).getByLabelText(label), { target: { value: "0" } });
+    }
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    expect(await within(dialog).findByText("retention must keep at least one archive")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
+  });
+
+  it("shows a rejected update request as an error and keeps the form", async () => {
+    mockBackupApi();
+    mockPatch.mockRejectedValue(new Error("network down"));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Boot device" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Enabled" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    expect(await within(dialog).findByText("network down")).toBeInTheDocument();
+    expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
   });
 
   it("adds a local destination with the form's values", async () => {
@@ -1560,6 +1623,40 @@ describe("Config restore on the backup page", () => {
 
     expect(await screen.findByText("Everything in the archive was restored.")).toBeInTheDocument();
     expect(screen.getByText("No backup destination was written to before the restore.")).toBeInTheDocument();
+  });
+
+  it("labels a kept backup recipient and a cleared secret in plain language", async () => {
+    mockRestoreApi({
+      apply: apiOk(
+        importReport({
+          notRestored: [
+            {
+              kind: "backup_recipient",
+              name: "backup_recipient",
+              reason: "no_passphrase",
+              message: "this installation keeps its own backup recipient",
+            },
+            {
+              kind: "database_secret",
+              name: "acme_config.dns_secret",
+              reason: "sealed_under_other_key",
+              message: "acme_config.dns_secret was cleared",
+            },
+          ],
+        }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+    await confirmRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByText("Backup encryption key")).toBeInTheDocument();
+    expect(screen.getByText("Stored secret: acme_config.dns_secret")).toBeInTheDocument();
+    expect(screen.getByText("No passphrase")).toBeInTheDocument();
+    expect(screen.getByText("Sealed under another server's key")).toBeInTheDocument();
+    expect(screen.queryByText("backup_recipient", { exact: false })).not.toBeInTheDocument();
   });
 
   it("shows the schema decision and the disk mapping of a fresh box and requires confirming it", async () => {

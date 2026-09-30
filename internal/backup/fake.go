@@ -225,6 +225,21 @@ func (f *FakeDestinationStore) RecordBackupSuccess(ctx context.Context, id strin
 	})
 }
 
+func (f *FakeDestinationStore) UpdateDestination(ctx context.Context, id string, u DestinationUpdate, at time.Time) error {
+	return f.update(id, func(d *Destination) {
+		if u.Enabled != nil {
+			if *u.Enabled && !d.Enabled {
+				d.EnabledAt = &at
+				d.StaleAlertedAt = nil
+			}
+			d.Enabled = *u.Enabled
+		}
+		if u.Retention != nil {
+			d.Retention = *u.Retention
+		}
+	})
+}
+
 func (f *FakeDestinationStore) MarkStaleAlerted(ctx context.Context, id string, observed *time.Time, at time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

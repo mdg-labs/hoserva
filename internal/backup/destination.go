@@ -65,7 +65,10 @@ type Destination struct {
 
 	LastSuccessfulBackupAt *time.Time
 	StaleAlertedAt         *time.Time
-	CreatedAt              time.Time
+	// EnabledAt is when the destination was last switched from disabled
+	// to enabled; nil until it first was.
+	EnabledAt *time.Time
+	CreatedAt time.Time
 }
 
 func (d Destination) isRemote() bool {
@@ -349,66 +352,86 @@ func listArchives(dir string) ([]archiveEntry, error) {
 // day without growing retention unbounded.
 const preChangeKeepCount = 5
 
+// retentionKeepers decides which of entries survive. Ordinary archives fill
+// the daily/weekly/monthly tiers against ordinary archives only, so a
+// pre-change archive (#401) can neither occupy nor evict an ordinary slot
+// (#478). The newest preChangeKeepCount pre-change archives are kept on top.
+// A pre-change archive beyond that bound is kept only as the newest of a day,
+// week or month that a tier would keep and in which no ordinary archive
+// exists, so it fills a hole and never displaces an ordinary archive. The
+// tier windows are the most recent periods holding any archive, ordinary or
+// pre-change. entries is sorted newest-first (listArchives).
 func retentionKeepers(entries []archiveEntry, ret Retention, now time.Time, justWritten string) map[string]bool {
 	keep := map[string]bool{justWritten: true}
 	if len(entries) == 0 {
 		return keep
 	}
 
-	// entries is sorted newest-first (listArchives), so the first
-	// preChangeKeepCount pre-change archives encountered are the most
-	// recent ones — exactly the ones #401 requires to survive an ordinary
-	// same-day backup's daily-tier pruning. Any pre-change archive beyond
-	// the bound falls back to the same daily/weekly/monthly tiers as an
-	// ordinary archive.
 	preChangeKept := 0
+	ordinary := make([]archiveEntry, 0, len(entries))
+	overflow := make([]archiveEntry, 0, len(entries))
 	for _, e := range entries {
-		if e.reason == ReasonNone {
-			continue
-		}
-		if preChangeKept >= preChangeKeepCount {
-			break
-		}
-		keep[e.name] = true
-		preChangeKept++
-	}
-
-	byDay := map[string]archiveEntry{}
-	byWeek := map[string]archiveEntry{}
-	byMonth := map[string]archiveEntry{}
-
-	for _, e := range entries {
-		day := e.modTime.Format("2006-01-02")
-		if cur, ok := byDay[day]; !ok || e.modTime.After(cur.modTime) {
-			byDay[day] = e
-		}
-		year, week := e.modTime.ISOWeek()
-		weekKey := fmt.Sprintf("%04d-W%02d", year, week)
-		if cur, ok := byWeek[weekKey]; !ok || e.modTime.After(cur.modTime) {
-			byWeek[weekKey] = e
-		}
-		monthKey := e.modTime.Format("2006-01")
-		if cur, ok := byMonth[monthKey]; !ok || e.modTime.After(cur.modTime) {
-			byMonth[monthKey] = e
+		switch {
+		case e.reason == ReasonNone:
+			ordinary = append(ordinary, e)
+		case preChangeKept < preChangeKeepCount:
+			keep[e.name] = true
+			preChangeKept++
+		default:
+			overflow = append(overflow, e)
 		}
 	}
 
-	days := sortedKeys(byDay)
-	for i := 0; i < ret.Daily && i < len(days); i++ {
-		keep[byDay[days[i]].name] = true
+	tiers := []struct {
+		period func(time.Time) string
+		count  int
+	}{
+		{func(t time.Time) string { return t.Format("2006-01-02") }, ret.Daily},
+		{func(t time.Time) string {
+			year, week := t.ISOWeek()
+			return fmt.Sprintf("%04d-W%02d", year, week)
+		}, ret.Weekly},
+		{func(t time.Time) string { return t.Format("2006-01") }, ret.Monthly},
 	}
+	for _, tier := range tiers {
+		newestOrdinary := newestPerPeriod(ordinary, tier.period)
+		for i, period := range sortedKeys(newestOrdinary) {
+			if i >= tier.count {
+				break
+			}
+			keep[newestOrdinary[period].name] = true
+		}
 
-	weeks := sortedKeys(byWeek)
-	for i := 0; i < ret.Weekly && i < len(weeks); i++ {
-		keep[byWeek[weeks[i]].name] = true
-	}
-
-	months := sortedKeys(byMonth)
-	for i := 0; i < ret.Monthly && i < len(months); i++ {
-		keep[byMonth[months[i]].name] = true
+		newestOverflow := newestPerPeriod(overflow, tier.period)
+		windowPeriods := map[string]bool{}
+		for _, e := range entries {
+			windowPeriods[tier.period(e.modTime)] = true
+		}
+		for i, period := range sortedKeys(windowPeriods) {
+			if i >= tier.count {
+				break
+			}
+			if _, hasOrdinary := newestOrdinary[period]; hasOrdinary {
+				continue
+			}
+			if e, ok := newestOverflow[period]; ok {
+				keep[e.name] = true
+			}
+		}
 	}
 
 	return keep
+}
+
+func newestPerPeriod(entries []archiveEntry, period func(time.Time) string) map[string]archiveEntry {
+	newest := map[string]archiveEntry{}
+	for _, e := range entries {
+		key := period(e.modTime)
+		if cur, ok := newest[key]; !ok || e.modTime.After(cur.modTime) {
+			newest[key] = e
+		}
+	}
+	return newest
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -135,7 +135,10 @@ func encryptWithPassphrase(plain []byte, passphrase string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func decryptSecretsAge(data []byte, passphrase string) (*secretsPayload, error) {
+// decryptScrypt opens data, an age file sealed under an scrypt passphrase.
+// A passphrase that is not the one it was sealed under is
+// ErrPassphraseIncorrect.
+func decryptScrypt(data []byte, passphrase string) ([]byte, error) {
 	identity, err := age.NewScryptIdentity(passphrase)
 	if err != nil {
 		return nil, fmt.Errorf("creating age scrypt identity: %w", err)
@@ -144,13 +147,20 @@ func decryptSecretsAge(data []byte, passphrase string) (*secretsPayload, error) 
 	if err != nil {
 		var noMatch *age.NoIdentityMatchError
 		if errors.As(err, &noMatch) {
-			return nil, fmt.Errorf("decrypting secrets.age: %w", ErrPassphraseIncorrect)
+			return nil, ErrPassphraseIncorrect
 		}
-		return nil, fmt.Errorf("decrypting secrets.age: %w", errors.Join(ErrSecretsUnreadable, err))
+		return nil, err
 	}
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("reading decrypted secrets payload: %w", errors.Join(ErrSecretsUnreadable, err))
+	return io.ReadAll(r)
+}
+
+func decryptSecretsAge(data []byte, passphrase string) (*secretsPayload, error) {
+	raw, err := decryptScrypt(data, passphrase)
+	switch {
+	case errors.Is(err, ErrPassphraseIncorrect):
+		return nil, fmt.Errorf("decrypting secrets.age: %w", err)
+	case err != nil:
+		return nil, fmt.Errorf("decrypting secrets.age: %w", errors.Join(ErrSecretsUnreadable, err))
 	}
 	var payload secretsPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {

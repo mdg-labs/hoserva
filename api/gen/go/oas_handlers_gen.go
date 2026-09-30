@@ -1611,7 +1611,8 @@ func (s *Server) handleCancelDiskRemovalRequest(args [0]string, argsEscaped bool
 // with the running job and records its outcome once it has unmounted everything. A queued or
 // interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
 // with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
-// second cancel while one runs.
+// second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same
+// job is still repairing its log; retry in a moment.
 //
 // POST /jobs/{jobId}/cancel
 func (s *Server) handleCancelJobRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -13482,22 +13483,24 @@ func (s *Server) handleGetUserSharePermissionsRequest(args [1]string, argsEscape
 // and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
 // happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
 // not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
-// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
-// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
-// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
-// `archive_other_installation` (its machine key check value differs from this installation's or is
-// missing; a different installation's archive is restored only onto a fresh install) and 409
-// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
-// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
-// restore lands on a symbolic link or on something that is not a regular file, or it names a path
-// outside the directory it is restored into; nothing is followed). A bare-metal restore that would
-// replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when
-// no backup destination is enabled to take the copy of it that the pre-import archive carries. A
-// failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the
-// database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from
-// and which of the file categories were restored and which left as they were. The array's own state,
-// running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an
-// import cannot return a stopped array to normal operation.
+// device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable,
+// which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a
+// `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an
+// `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not
+// `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409
+// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
+// installation's or is missing; a different installation's archive is restored only onto a fresh
+// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
+// flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe`
+// (a file it would restore lands on a symbolic link or on something that is not a regular file, or it
+// names a path outside the directory it is restored into; nothing is followed). A bare-metal restore
+// that would replace a Samba or NFS file already on this server also refuses with 409
+// `host_files_not_saved` when no backup destination is enabled to take the copy of it that the
+// pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing
+// changed; a failure once the database has been replaced answers 500 `import_failed` naming the
+// pre-import archive to restore from and which of the file categories were restored and which left as
+// they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never
+// restored from the archive, so an import cannot return a stopped array to normal operation.
 //
 // On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
 // bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
@@ -13506,10 +13509,21 @@ func (s *Server) handleGetUserSharePermissionsRequest(args [1]string, argsEscape
 // `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
 // matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
 // its database by the same migration runner a normal upgrade uses; one from a newer version is refused
-// with 409 `archive_newer_version`. This box's own machine key check and backup recipient are kept, so
-// `hoservad` starts, and every database secret sealed under the archive's key is cleared and reported
-// in `notRestored`. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row
-// of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
+// with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts.
+// With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME,
+// UPS, backup destination and notification channel credentials) is sealed under this box's machine key
+// and written back into its own table, column and row, and the stack `.env` files are restored; the
+// passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's
+// backup recipient replaces this box's own, so archives written from then on are encrypted to it.
+// Without such a passphrase everything else is restored, this box keeps its own backup recipient
+// (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and
+// reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always
+// cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given
+// that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no
+// `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything
+// is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the
+// recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a
+// row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
 // replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this
 // operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409
 // `setup_required`.
@@ -19026,12 +19040,17 @@ func (s *Server) handlePreviewAppdataRestoreRequest(args [0]string, argsEscaped 
 // the live one per category, and lists the custom config files, app templates and app stack files the
 // import would replace, add and remove; it is empty when the archive's schema version differs, since
 // the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
-// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
-// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
-// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
-// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
-// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
-// read.
+// (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age`
+// (`identity`), and if not, which stacks' `.env` files would not be restored. The optional
+// `passphrase` is tried as `importConfig` tries it: one that does not open the archive's
+// `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`,
+// is refused as 400 `backup_passphrase_incorrect`; one that opens `secrets.age` but not `identity.age`
+// is not refused, and `identity` reports `passphrase_incorrect`. Without a `passphrase` the configured
+// one is tried, and one that is absent or does not open the files shows only in `secrets`, never as a
+// refusal; an archive with neither file has nothing to check a `passphrase` against. An archive that
+// cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
 //
 // On a fresh install, one with no array configured, `bareMetal` reports the bare-metal restore (see
 // `importConfig`): whether the archive's database would be upgraded, and one entry per array disk the
@@ -21284,9 +21303,10 @@ func (s *Server) handleRestoreAppdataRequest(args [0]string, argsEscaped bool, w
 // upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 // restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 // maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
-// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
-// §6, Q77).
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
+// `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a
+// moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery
+// hold is active (doc 02 §6, Q77).
 //
 // POST /jobs/{jobId}/resume
 func (s *Server) handleResumeJobRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -22157,6 +22177,219 @@ func (s *Server) handleRollbackUpdateRequest(args [0]string, argsEscaped bool, w
 	}
 
 	if err := encodeRollbackUpdateResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleRunConfigBackupRequest handles runConfigBackup operation.
+//
+// Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken
+// now. It writes one archive to every enabled backup destination, verifies it, and prunes each
+// destination's own retention, counting the archive like a scheduled one — it never takes the slot
+// of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups,
+// so one asked for while another runs queues rather than failing. The job succeeds when at least one
+// destination was written and its log names each destination written and each that failed (the
+// stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed`
+// notification, when none was. Refused with 409 `backup_no_destination` before anything is queued
+// while no destination is enabled, and with 501 `not_configured` when this daemon has no backup
+// service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+//
+// POST /config/backup
+func (s *Server) handleRunConfigBackupRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("runConfigBackup"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/config/backup"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), RunConfigBackupOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: RunConfigBackupOperation,
+			ID:   "runConfigBackup",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, RunConfigBackupOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, RunConfigBackupOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    RunConfigBackupOperation,
+			OperationSummary: "Back up the config to the destinations now",
+			OperationID:      "runConfigBackup",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.RunConfigBackup(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.RunConfigBackup(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeRunConfigBackupResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -26589,6 +26822,247 @@ func (s *Server) handleUnlockUserRequest(args [1]string, argsEscaped bool, w htt
 	}
 
 	if err := encodeUnlockUserResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleUpdateBackupDestinationRequest handles updateBackupDestination operation.
+//
+// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
+// options and credentials cannot be changed — remove the destination and add it again. Disabling
+// never removes an archive or the credentials, and the next backup run uses the new values without a
+// restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one
+// archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled
+// destination back on restarts its staleness clock, so it is not reported stale until two days after
+// that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a
+// retention out of bounds.
+//
+// PATCH /backup/destinations/{destinationId}
+func (s *Server) handleUpdateBackupDestinationRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateBackupDestination"),
+		semconv.HTTPRequestMethodKey.String("PATCH"),
+		semconv.HTTPRouteKey.String("/backup/destinations/{destinationId}"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), UpdateBackupDestinationOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: UpdateBackupDestinationOperation,
+			ID:   "updateBackupDestination",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, UpdateBackupDestinationOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, UpdateBackupDestinationOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+	params, err := decodeUpdateBackupDestinationParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeUpdateBackupDestinationRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *BackupDestination
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    UpdateBackupDestinationOperation,
+			OperationSummary: "Change a backup destination's enabled flag or retention",
+			OperationID:      "updateBackupDestination",
+			Body:             request,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "destinationId",
+					In:   "path",
+				}: params.DestinationId,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = *UpdateBackupDestinationRequest
+			Params   = UpdateBackupDestinationParams
+			Response = *BackupDestination
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackUpdateBackupDestinationParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.UpdateBackupDestination(ctx, request, params)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.UpdateBackupDestination(ctx, request, params)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeUpdateBackupDestinationResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)

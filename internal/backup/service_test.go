@@ -1267,9 +1267,9 @@ func TestService_RunTwiceInSameMinuteProducesDistinctArchives(t *testing.T) {
 // TestRetentionPrune_BoundsPreChangeArchives proves the third acceptance
 // criterion: pre-change archives are kept up to preChangeKeepCount on top
 // of the daily/weekly/monthly tiers, and the oldest pre-change archive
-// beyond that bound is pruned like any other archive once its tiers no
-// longer protect it. Retention is set to keep nothing in any tier, so
-// only the pre-change bound is under test.
+// beyond that bound is pruned: pre-change archives never take part in the
+// ordinary tiers. Retention is set to keep nothing in any tier, so only
+// the pre-change bound is under test.
 func TestRetentionPrune_BoundsPreChangeArchives(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
@@ -1312,6 +1312,85 @@ func TestRetentionPrune_BoundsPreChangeArchives(t *testing.T) {
 	for i := 0; i < preChangeKeepCount; i++ {
 		if _, err := os.Stat(filepath.Join(dir, names[i])); err != nil {
 			t.Fatalf("expected pre-change archive %q to survive: %v", names[i], err)
+		}
+	}
+}
+
+// TestRetentionPrune_PreChangeArchiveNeverEvictsAnOrdinaryOne reproduces
+// #478: with Daily: 1, a pre-update archive newer than the same day's
+// ordinary archive used to win that day's daily slot, so its prune deleted
+// the ordinary archive — the same deletion as a pre-update backup taken
+// right after a scheduled one, no concurrency needed. Restoring the
+// pre-change archives to the shared byDay/byWeek/byMonth loops in
+// retentionKeepers (destination.go) makes this fail with the ordinary
+// archive missing.
+func TestRetentionPrune_PreChangeArchiveNeverEvictsAnOrdinaryOne(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 14, 3, 30, 0, 0, time.UTC)
+
+	ordinary := archiveName(testInstallation, now.Add(-10*time.Minute), ReasonNone, 0)
+	preUpdate := archiveName(testInstallation, now, ReasonPreUpdate, 0)
+	for name, mod := range map[string]time.Time{ordinary: now.Add(-10 * time.Minute), preUpdate: now} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dest := Destination{Path: dir, Retention: Retention{Daily: 1}}
+	if err := pruneDestination(dest, archiveOwner{installation: testInstallation}, now, preUpdate); err != nil {
+		t.Fatalf("pruneDestination: %v", err)
+	}
+	for _, name := range []string{ordinary, preUpdate} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("archive %q was pruned: %v", name, err)
+		}
+	}
+}
+
+// TestRetentionPrune_PreChangeArchivesDoNotOccupyOrdinarySlots proves the
+// converse: a run of pre-change archives is not counted towards the
+// ordinary daily tier, so Daily: 2 still keeps the two newest ordinary
+// days beside the pre-change archives.
+func TestRetentionPrune_PreChangeArchivesDoNotOccupyOrdinarySlots(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+
+	type spec struct {
+		reason Reason
+		mod    time.Time
+	}
+	var names []string
+	specs := []spec{
+		{ReasonPreImport, now},
+		{ReasonNone, now.Add(-1 * time.Hour)},
+		{ReasonPreUpdate, now.AddDate(0, 0, -1)},
+		{ReasonNone, now.AddDate(0, 0, -1).Add(-1 * time.Hour)},
+		{ReasonNone, now.AddDate(0, 0, -2)},
+	}
+	for _, s := range specs {
+		name := archiveName(testInstallation, s.mod, s.reason, 0)
+		names = append(names, name)
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, s.mod, s.mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dest := Destination{Path: dir, Retention: Retention{Daily: 2}}
+	if err := pruneDestination(dest, archiveOwner{installation: testInstallation}, now, names[0]); err != nil {
+		t.Fatalf("pruneDestination: %v", err)
+	}
+	for i, want := range []bool{true, true, true, true, false} {
+		_, err := os.Stat(filepath.Join(dir, names[i]))
+		if (err == nil) != want {
+			t.Fatalf("archive %q kept = %v, want %v", names[i], err == nil, want)
 		}
 	}
 }

@@ -161,7 +161,10 @@ func (h *Handler) previewBareMetal(ctx context.Context, tree string, passphrase 
 		return nil, err
 	}
 	secrets, secretsErr := h.resolveSecrets(ctx, tree, passphrase)
-	p, bm, err := backup.PreviewBareMetal(ctx, h.Backup.DB, h.Backup.Paths, tree, attached, backup.WithStackEnvs(secrets.StackEnvs()))
+	if _, opened := secrets.OpenedPassphrase(); opened && h.Backup.DestinationCipher == nil {
+		return nil, errConfigImportNotConfigured
+	}
+	p, bm, err := backup.PreviewBareMetal(ctx, h.Backup.DB, h.Backup.Paths, tree, attached, secrets, h.Backup.DestinationCipher, backup.WithStackEnvs(secrets.StackEnvs()))
 	var unreadable *backup.UnreadableArchiveError
 	switch {
 	case errors.As(err, &unreadable):

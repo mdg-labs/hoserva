@@ -301,8 +301,10 @@ type BareMetalPreview struct {
 // in, and the disks are mapped against attached. Only the staged copy in a
 // temporary directory of its own is written; the live database, the archive
 // tree and every disk are only read. A newer archive is a blocker with no
-// BareMetalPreview, as is one that cannot be upgraded.
-func PreviewBareMetal(ctx context.Context, live *sql.DB, paths Paths, stagingDir string, attached []disk.Disk, opts ...FilesOption) (ImportPreview, *BareMetalPreview, error) {
+// BareMetalPreview, as is one that cannot be upgraded. secrets and cipher are
+// what the restore's Apply takes, so the groups show the secrets and the
+// recipient as it would leave them.
+func PreviewBareMetal(ctx context.Context, live *sql.DB, paths Paths, stagingDir string, attached []disk.Disk, secrets SecretsOutcome, cipher RecipientCipher, opts ...FilesOption) (ImportPreview, *BareMetalPreview, error) {
 	manifest, err := readManifest(filepath.Join(stagingDir, "manifest.json"))
 	if err != nil {
 		return ImportPreview{}, nil, fmt.Errorf("reading the archive's manifest: %w", err)
@@ -328,7 +330,7 @@ func PreviewBareMetal(ctx context.Context, live *sql.DB, paths Paths, stagingDir
 		return ImportPreview{}, nil, err
 	}
 	mapped := b.Map(attached)
-	if _, err := b.Apply(ctx, live, mapped); err != nil {
+	if _, err := b.Apply(ctx, live, mapped, secrets, cipher); err != nil {
 		return ImportPreview{}, nil, err
 	}
 	staged, err := openStaged(b.path, "ro")
@@ -379,8 +381,9 @@ type sealedColumn struct {
 
 // sealedColumns is every column the schema seals under the machine key (Q28).
 // A restore onto another machine key cannot read them, so each is cleared and
-// reported; a test lists the schema's BLOB columns and fails on one that is
-// neither here nor in unsealedBlobColumns.
+// reported, unless secrets.age carries its plaintext and Apply seals that
+// under this installation's key instead; a test lists the schema's BLOB
+// columns and fails on one that is neither here nor in unsealedBlobColumns.
 var sealedColumns = []sealedColumn{
 	{"users", "totp_secret", "username", "NULL"},
 	{"users", "totp_pending_secret", "username", "NULL"},
@@ -398,8 +401,8 @@ var sealedColumns = []sealedColumn{
 var unsealedBlobColumns = map[string]string{
 	"jobs.checkpoint":                   "a resumable job's state",
 	"machine_key_check.check_value":     "kept: this installation's own, written into the staged database",
-	"backup_recipient.wrapped_identity": "kept: this installation's own, written into the staged database",
-	"backup_recipient.check_value":      "kept: this installation's own, written into the staged database",
+	"backup_recipient.wrapped_identity": "this installation's own, or the archive's identity wrapped under this installation's key, written into the staged database",
+	"backup_recipient.check_value":      "this installation's own, or the archive's recipient's, written into the staged database",
 }
 
 // Apply makes the staged database one this installation can start on and
@@ -407,23 +410,39 @@ var unsealedBlobColumns = map[string]string{
 // copy in one transaction, so a failure leaves no partial change and the
 // live database is never touched:
 //
-//   - this installation's own machine_key_check and backup_recipient rows
-//     replace the archive's, since auth.LoadOrGenerateMachineKey treats a
-//     check value that does not match the key file as fatal (Q28);
+//   - this installation's own machine_key_check row replaces the archive's,
+//     since auth.LoadOrGenerateMachineKey treats a check value that does not
+//     match the key file as fatal (Q28);
+//   - the archive's backup recipient replaces this installation's own, its
+//     identity wrapped under this installation's machine key, when secrets
+//     opened identity.age (Q80); without it this installation's own row is
+//     kept, and reported;
 //   - each matched disk's device is the attached disk's; every other row
 //     keeps its recorded device unless a matched disk now has it;
 //   - every column in sealedColumns that holds something is cleared, and
-//     users' TOTP enrolment with it so the next login enrols again.
+//     users' TOTP enrolment with it so the next login enrols again, except
+//     each database secret secrets.age carries, which is sealed under this
+//     installation's machine key (cipher) and written back into its own
+//     table, column and row, and the backup passphrase that opened secrets,
+//     which becomes this installation's own.
+//
+// Everything is sealed before the first write, so a passphrase that opens
+// the archive but a cipher that cannot seal, or a secret this Hoserva cannot
+// place, is an error with the staged database untouched.
 //
 // A disk that is not matched stays a row of the array, unmounted, and is
 // reported: the storage gate then reports the array degraded and nothing
 // mounts until the user acknowledges it or the replace flow (doc 09 §4) runs.
-func (b *BareMetal) Apply(ctx context.Context, live *sql.DB, mapped []MappedDisk) ([]NotRestored, error) {
+func (b *BareMetal) Apply(ctx context.Context, live *sql.DB, mapped []MappedDisk, secrets SecretsOutcome, cipher RecipientCipher) ([]NotRestored, error) {
+	sealed, err := sealRestore(secrets, cipher)
+	if err != nil {
+		return nil, fmt.Errorf("preparing the archive's secrets for this installation: %w", err)
+	}
 	var (
 		keyValue, recIdentity, recCheck   []byte
 		keyCreated, recipient, recCreated string
 	)
-	err := live.QueryRowContext(ctx, `SELECT check_value, created_at FROM machine_key_check WHERE id = 1`).Scan(&keyValue, &keyCreated)
+	err = live.QueryRowContext(ctx, `SELECT check_value, created_at FROM machine_key_check WHERE id = 1`).Scan(&keyValue, &keyCreated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New("the live database has no machine key check value to keep")
 	}
@@ -455,6 +474,13 @@ func (b *BareMetal) Apply(ctx context.Context, live *sql.DB, mapped []MappedDisk
 		if _, err := tx.ExecContext(ctx, `INSERT INTO machine_key_check (id, check_value, created_at) VALUES (1, ?, ?)`, keyValue, keyCreated); err != nil {
 			return nil, err
 		}
+		if sealed.recipient != nil {
+			err := tx.QueryRowContext(ctx, `SELECT created_at FROM backup_recipient WHERE id = 1`).Scan(&recCreated)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			recipient, recIdentity, recCheck = sealed.recipient.public, sealed.recipient.wrapped, sealed.recipient.check
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM backup_recipient`); err != nil {
 			return nil, err
 		}
@@ -467,11 +493,18 @@ func (b *BareMetal) Apply(ctx context.Context, live *sql.DB, mapped []MappedDisk
 			return nil, fmt.Errorf("writing the attached disks' devices: %w", err)
 		}
 		notRestored := disksNotRestored(mapped)
-		secrets, err := clearSealedColumns(ctx, tx)
+		cleared, err := clearSealedColumns(ctx, tx, sealed)
 		if err != nil {
 			return nil, fmt.Errorf("clearing the secrets sealed under the archive's machine key: %w", err)
 		}
-		return append(notRestored, secrets...), nil
+		if err := sealed.restore(ctx, tx); err != nil {
+			return nil, fmt.Errorf("restoring the archive's secrets under this installation's machine key: %w", err)
+		}
+		notRestored = append(notRestored, cleared...)
+		if secrets.Recipient() == nil {
+			notRestored = append(notRestored, recipientNotRestored(secrets))
+		}
+		return notRestored, nil
 	}()
 	if err != nil {
 		_ = tx.Rollback()
@@ -568,21 +601,27 @@ func disksNotRestored(mapped []MappedDisk) []NotRestored {
 	return out
 }
 
-func clearSealedColumns(ctx context.Context, tx *sql.Tx) ([]NotRestored, error) {
+// clearSealedColumns clears every sealed column that holds something, and
+// reports each row it cleared, except the rows keep holds a value for, which
+// the caller overwrites with one sealed under this installation's key.
+func clearSealedColumns(ctx context.Context, tx *sql.Tx, keep sealedRestore) ([]NotRestored, error) {
 	var out []NotRestored
 	for _, c := range sealedColumns {
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE length(%s) > 0 ORDER BY 1`, c.label, c.table, c.column))
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT CAST(id AS TEXT), %s FROM %s WHERE length(%s) > 0 ORDER BY 2, 1`, c.label, c.table, c.column))
 		if err != nil {
 			return nil, fmt.Errorf("reading %s.%s: %w", c.table, c.column, err)
 		}
-		var labels []string
+		type cleared struct{ id, label string }
+		var todo []cleared
 		for rows.Next() {
-			var l string
-			if err := rows.Scan(&l); err != nil {
+			var r cleared
+			if err := rows.Scan(&r.id, &r.label); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			labels = append(labels, l)
+			if !keep.holds(secretKey{c.table, c.column, r.id}) {
+				todo = append(todo, r)
+			}
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -591,13 +630,13 @@ func clearSealedColumns(ctx context.Context, tx *sql.Tx) ([]NotRestored, error) 
 		if err := rows.Close(); err != nil {
 			return nil, err
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET %s = %s WHERE %s IS NOT NULL`, c.table, c.column, c.empty, c.column)); err != nil {
-			return nil, fmt.Errorf("clearing %s.%s: %w", c.table, c.column, err)
-		}
-		for _, l := range labels {
+		for _, r := range todo {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET %s = %s WHERE CAST(id AS TEXT) = ?`, c.table, c.column, c.empty), r.id); err != nil {
+				return nil, fmt.Errorf("clearing %s.%s: %w", c.table, c.column, err)
+			}
 			name := c.table + "." + c.column
-			if l != "" {
-				name += " (" + l + ")"
+			if r.label != "" {
+				name += " (" + r.label + ")"
 			}
 			out = append(out, NotRestored{Kind: NotRestoredDatabaseSecret, Name: name, Reason: NotRestoredSealedUnderOtherKey,
 				Message: fmt.Sprintf("%s was sealed under the machine key of the installation the archive came from and is cleared; enter it again", name)})

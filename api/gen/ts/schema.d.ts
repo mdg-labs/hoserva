@@ -59,7 +59,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel a job
-         * @description Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing. A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered with the running job and records its outcome once it has unmounted everything. A queued or interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a second cancel while one runs.
+         * @description Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing. A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered with the running job and records its outcome once it has unmounted everything. A queued or interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same job is still repairing its log; retry in a moment.
          */
         post: operations["cancelJob"];
         delete?: never;
@@ -81,7 +81,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a checkpointed job
-         * @description Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a restart — this operation is always an explicit user action. A data-disk upgrade resumes only in maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable. Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77).
+         * @description Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a restart — this operation is always an explicit user action. A data-disk upgrade resumes only in maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable. Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77).
          */
         post: operations["resumeJob"];
         delete?: never;
@@ -1619,6 +1619,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/config/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Back up the config to the destinations now
+         * @description Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken now. It writes one archive to every enabled backup destination, verifies it, and prunes each destination's own retention, counting the archive like a scheduled one — it never takes the slot of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups, so one asked for while another runs queues rather than failing. The job succeeds when at least one destination was written and its log names each destination written and each that failed (the stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed` notification, when none was. Refused with 409 `backup_no_destination` before anything is queued while no destination is enabled, and with 501 `not_configured` when this daemon has no backup service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+         */
+        post: operations["runConfigBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config/import": {
         parameters: {
             query?: never;
@@ -1630,9 +1650,9 @@ export interface paths {
         put?: never;
         /**
          * Import a config archive
-         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration: the database, the custom config files (`*.custom.conf`), the installed app templates and each stack's compose and `meta.json` files, after which every managed config file is regenerated from the restored database and the result applied to the running pool. It also restores the passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase` if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens it, everything else is restored and the report says the `.env` files were not. When the import restores `.env` files, the pre-import archive's own `secrets.age` is sealed with the passphrase that opened the imported archive's, so it holds every `.env` the import replaces; a failure to write it refuses the import. The answer is the restore report: what was restored per category, what was not and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would restore lands on a symbolic link or on something that is not a regular file, or it names a path outside the directory it is restored into; nothing is followed). A bare-metal restore that would replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when no backup destination is enabled to take the copy of it that the pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the file categories were restored and which left as they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
+         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration: the database, the custom config files (`*.custom.conf`), the installed app templates and each stack's compose and `meta.json` files, after which every managed config file is regenerated from the restored database and the result applied to the running pool. It also restores the passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase` if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens it, everything else is restored and the report says the `.env` files were not. When the import restores `.env` files, the pre-import archive's own `secrets.age` is sealed with the passphrase that opened the imported archive's, so it holds every `.env` the import replaces; a failure to write it refuses the import. The answer is the restore report: what was restored per category, what was not and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable, which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would restore lands on a symbolic link or on something that is not a regular file, or it names a path outside the directory it is restored into; nothing is followed). A bare-metal restore that would replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when no backup destination is enabled to take the copy of it that the pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the file categories were restored and which left as they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
          *
-         *     On a fresh install, one with no array configured, whatever admin accounts it has, the import is the bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array disks from `state.db` and matches each against the attached disks by identity; the mapping is what `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer matches the attached disks. An archive from an older schema version is upgraded on a staged copy of its database by the same migration runner a normal upgrade uses; one from a newer version is refused with 409 `archive_newer_version`. This box's own machine key check and backup recipient are kept, so `hoservad` starts, and every database secret sealed under the archive's key is cleared and reported in `notRestored`. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409 `setup_required`.
+         *     On a fresh install, one with no array configured, whatever admin accounts it has, the import is the bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array disks from `state.db` and matches each against the attached disks by identity; the mapping is what `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer matches the attached disks. An archive from an older schema version is upgraded on a staged copy of its database by the same migration runner a normal upgrade uses; one from a newer version is refused with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts. With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME, UPS, backup destination and notification channel credentials) is sealed under this box's machine key and written back into its own table, column and row, and the stack `.env` files are restored; the passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's backup recipient replaces this box's own, so archives written from then on are encrypted to it. Without such a passphrase everything else is restored, this box keeps its own backup recipient (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409 `setup_required`.
          */
         post: operations["importConfig"];
         delete?: never;
@@ -1652,7 +1672,7 @@ export interface paths {
         put?: never;
         /**
          * Preview a config import
-         * @description Reads the same archive upload as `importConfig` and reports what an in-place import would change, without changing anything: it writes no database row, no pre-import archive, takes no job hold, and leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive, with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409 `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with the live one per category, and lists the custom config files, app templates and app stack files the import would replace, add and remove; it is empty when the archive's schema version differs, since the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is read.
+         * @description Reads the same archive upload as `importConfig` and reports what an in-place import would change, without changing anything: it writes no database row, no pre-import archive, takes no job hold, and leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive, with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409 `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with the live one per category, and lists the custom config files, app templates and app stack files the import would replace, add and remove; it is empty when the archive's schema version differs, since the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age` (`identity`), and if not, which stacks' `.env` files would not be restored. The optional `passphrase` is tried as `importConfig` tries it: one that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`, is refused as 400 `backup_passphrase_incorrect`; one that opens `secrets.age` but not `identity.age` is not refused, and `identity` reports `passphrase_incorrect`. Without a `passphrase` the configured one is tried, and one that is absent or does not open the files shows only in `secrets`, never as a refusal; an archive with neither file has nothing to check a `passphrase` against. An archive that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is read.
          *
          *     On a fresh install, one with no array configured, `bareMetal` reports the bare-metal restore (see `importConfig`): whether the archive's database would be upgraded, and one entry per array disk the archive records, with the attached disk it matched, or none, and a state of `matched`, `absent`, `replaced` or `ambiguous`. `bareMetal.diskMapping` is the mapping to confirm, ready to send as `importConfig`'s `diskMapping`. An archive from a newer schema version is a blocker (`archive_newer_version`) with no `bareMetal`. The refusals for another installation's archive or a different array (`archive_other_installation`, `archive_array_mismatch`) apply to an installation that has an array only. While no admin account exists this operation is served on the Unix socket only.
          */
@@ -1706,7 +1726,11 @@ export interface paths {
         delete: operations["deleteBackupDestination"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change a backup destination's enabled flag or retention
+         * @description Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path, options and credentials cannot be changed — remove the destination and add it again. Disabling never removes an archive or the credentials, and the next backup run uses the new values without a restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled destination back on restarts its staleness clock, so it is not reported stale until two days after that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a retention out of bounds.
+         */
+        patch: operations["updateBackupDestination"];
         trace?: never;
     };
     "/backup/destinations/{destinationId}/test": {
@@ -2525,7 +2549,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -4027,6 +4051,10 @@ export interface components {
             encrypt?: boolean;
             retention?: components["schemas"]["BackupRetention"];
         };
+        UpdateBackupDestinationRequest: {
+            enabled?: boolean;
+            retention?: components["schemas"]["BackupRetention"];
+        };
         BackupDestinationTestResult: {
             success: boolean;
             /** @description Why the test failed, present only when success is false. */
@@ -4149,12 +4177,14 @@ export interface components {
             schemaVersion: string;
         };
         /**
-         * @description `none`: the archive has no passphrase-protected section (it was built without a backup passphrase). `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is available. `passphrase_incorrect`: it has one and the configured passphrase does not open it.
+         * @description `none`: the archive has no passphrase-protected section (it was built without a backup passphrase). `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is available. `passphrase_incorrect`: it has one and the passphrase available does not open it.
          * @enum {string}
          */
         ConfigImportSecretsStatus: "none" | "opened" | "no_passphrase" | "passphrase_incorrect";
         ConfigImportSecrets: {
             status: components["schemas"]["ConfigImportSecretsStatus"];
+            /** @description The same status for the archive's `identity.age`, the backup recipient's private identity: `opened` means a bare-metal restore adopts the archive's recipient; otherwise this box keeps its own. Always present in a response; an in-place import never replaces the recipient, so it only reports. */
+            identity?: components["schemas"]["ConfigImportSecretsStatus"];
             /** @description The stacks of the archive whose `.env` files would not be restored; empty when `status` is `opened`. */
             stacks: string[];
         };
@@ -4228,11 +4258,11 @@ export interface components {
         };
         ConfigImportNotRestored: {
             /** @enum {string} */
-            kind: "stack_env" | "disk" | "database_secret";
-            /** @description The stack whose `.env` file it is (`stack_env`), the array disk by its `ConfigImportDisk.name` (`disk`), or the table and column of a database secret cleared by a bare-metal restore, with the row it was in (`database_secret`). */
+            kind: "stack_env" | "disk" | "database_secret" | "backup_recipient";
+            /** @description The stack whose `.env` file it is (`stack_env`), the array disk by its `ConfigImportDisk.name` (`disk`), the table and column of a database secret cleared by a bare-metal restore, with the row it was in (`database_secret`), or `backup_recipient`, the archive's backup recipient, which a bare-metal restore adopts only when `identity.age` opens and otherwise leaves this box's own in place. */
             name: string;
             /**
-             * @description `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was sealed under the machine key of the installation the archive came from, which this machine does not have, so a bare-metal restore cleared it.
+             * @description `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section could not be opened (see `ConfigImportSecretsStatus`; for `backup_recipient`, its `identity.age`). `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was sealed under the machine key of the installation the archive came from, which this machine does not have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
              * @enum {string}
              */
             reason: "no_secrets" | "no_passphrase" | "passphrase_incorrect" | "stack_not_in_archive" | "left_in_place" | "disk_absent" | "disk_replaced" | "disk_ambiguous" | "sealed_under_other_key";
@@ -6492,6 +6522,27 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    runConfigBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued or running config backup job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     importConfig: {
         parameters: {
             query?: never;
@@ -6506,7 +6557,7 @@ export interface operations {
                     archive: string;
                     /** @description Must be true — import is destructive. */
                     confirm: boolean;
-                    /** @description The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the configured backup passphrase is tried. */
+                    /** @description The backup passphrase the archive's `secrets.age` and `identity.age` were sealed under. Optional: omitted, the configured backup passphrase is tried. On a fresh install it also becomes this box's backup passphrase. */
                     passphrase?: string;
                     /** @description The JSON of a `ConfigImportDiskMapping`: the mapping the user confirmed, which is `previewConfigImport`'s `bareMetal.diskMapping` as it was shown. Required when the installation has no array (409 `disk_mapping_required` without it) and refused with 409 `disk_mapping_not_applicable` otherwise, since an import into an array restores no disks. Sent as a JSON string, not a JSON part, because the generated clients send an empty part for an unset optional object; one that is not a valid mapping is refused as 400 `invalid_disk_mapping`. */
                     diskMapping?: string;
@@ -6538,7 +6589,7 @@ export interface operations {
                 "multipart/form-data": {
                     /** Format: binary */
                     archive: string;
-                    /** @description The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the configured backup passphrase is tried. */
+                    /** @description The backup passphrase the archive's `secrets.age` and `identity.age` were sealed under. Optional: omitted, the configured backup passphrase is tried. */
                     passphrase?: string;
                 };
             };
@@ -6621,6 +6672,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateBackupDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBackupDestinationRequest"];
+            };
+        };
+        responses: {
+            /** @description The destination as it is now. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupDestination"];
+                };
             };
             default: components["responses"]["Error"];
         };

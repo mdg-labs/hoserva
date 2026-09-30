@@ -3,6 +3,7 @@ import type { ClientResult } from "@/lib/api/request";
 
 type BackupDestination = components["schemas"]["BackupDestination"];
 type CreateBackupDestinationRequest = components["schemas"]["CreateBackupDestinationRequest"];
+type UpdateBackupDestinationRequest = components["schemas"]["UpdateBackupDestinationRequest"];
 type RestoreDrill = components["schemas"]["RestoreDrill"];
 
 type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
@@ -551,6 +552,13 @@ export function getBackupDestinations(signal?: AbortSignal) {
 
 export function postBackupDestination(body: CreateBackupDestinationRequest) {
   return hoservaClient.POST("/backup/destinations", { body });
+}
+
+export function patchBackupDestination(destinationId: string, body: UpdateBackupDestinationRequest) {
+  return hoservaClient.PATCH("/backup/destinations/{destinationId}", {
+    params: { path: { destinationId } },
+    body,
+  });
 }
 
 export function deleteBackupDestination(destinationId: string) {

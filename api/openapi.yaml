@@ -218,7 +218,9 @@ paths:
         unwound first; if that fails it stays interrupted and the call
         is refused with `disk_upgrade_cleanup_failed`, naming what is
         still mounted. `job_abort_in_progress` refuses a second cancel
-        while one runs.
+        while one runs. `job_resume_in_progress` refuses a cancel while
+        a resume of the same job is still repairing its log; retry in a
+        moment.
       tags: [jobs]
       x-hoserva-role: admin
       responses:
@@ -245,7 +247,9 @@ paths:
         data-disk upgrade resumes only in maintenance mode (doc 02 §4
         E5); one resumed at its releasing checkpoint is not cancellable.
         Refused with `job_abort_in_progress` while a cancel of the same
-        job is unwinding it. Resuming an interrupted mover job is refused
+        job is unwinding it, and with `job_resume_in_progress` while
+        another resume of the same job is still repairing its log
+        (retry in a moment). Resuming an interrupted mover job is refused
         with 409 `on_battery` while the on-battery hold is active
         (doc 02 §6, Q77).
       tags: [jobs]
@@ -2701,6 +2705,38 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /config/backup:
+    post:
+      operationId: runConfigBackup
+      summary: Back up the config to the destinations now
+      description: >-
+        Queues a `config_backup` job (service class): the config archive
+        the nightly chain writes, taken now. It writes one archive to every
+        enabled backup destination, verifies it, and prunes each
+        destination's own retention, counting the archive like a scheduled
+        one — it never takes the slot of a pre-import, pre-update or
+        pre-topology archive. It is serialized with the other config
+        backups, so one asked for while another runs queues rather than
+        failing. The job succeeds when at least one destination was written
+        and its log names each destination written and each that failed
+        (the stale-destination alert covers one that keeps failing), and
+        fails, with a `config_backup_failed` notification, when none was.
+        Refused with 409 `backup_no_destination` before anything is queued
+        while no destination is enabled, and with 501 `not_configured`
+        when this daemon has no backup service. To download an archive
+        instead of writing one to the destinations, use `exportConfig`.
+      tags: [config]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued or running config backup job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
   /config/import:
     post:
       operationId: importConfig
@@ -2726,9 +2762,13 @@ paths:
         before anything is written, including the pre-import backup: 400
         `invalid_archive` (it does not unpack or checksum, holds a file its
         manifest does not list or lacks one it lists, holds a link,
-        device, FIFO or duplicate entry, or has a `secrets.age` that is
-        not readable), 400 `backup_passphrase_incorrect` (a `passphrase`
-        was given and it does not open the archive's `secrets.age`), 400
+        device, FIFO or duplicate entry, or has a `secrets.age` or
+        `identity.age` that is not readable, which shows once a passphrase
+        is tried against it), 400 `backup_passphrase_incorrect` (a `passphrase`
+        was given and it does not open the archive's `secrets.age` or, for
+        an archive with an `identity.age` and no `secrets.age`, its
+        `identity.age`; one that opens `secrets.age` but not `identity.age`
+        is not refused), 400
         `incompatible_archive` (another
         schema version), 409 `job_in_progress`, 409
         `archive_other_installation` (its machine key check value differs
@@ -2764,10 +2804,27 @@ paths:
         An archive from an older schema version is upgraded on a staged
         copy of its database by the same migration runner a normal upgrade
         uses; one from a newer version is refused with 409
-        `archive_newer_version`. This box's own machine key check and backup
-        recipient are kept, so `hoservad` starts, and every database secret
+        `archive_newer_version`. This box's own machine key check is kept,
+        so `hoservad` starts. With a backup passphrase that opens the
+        archive's `secrets.age`, every database secret in it (ACME, UPS,
+        backup destination and notification channel credentials) is sealed
+        under this box's machine key and written back into its own table,
+        column and row, and the stack `.env` files are restored; the
+        passphrase becomes this box's backup passphrase; and, when it opens
+        `identity.age`, the archive's backup recipient replaces this box's
+        own, so archives written from then on are encrypted to it. Without
+        such a passphrase everything else is restored, this box keeps its own
+        backup recipient (reported as `backup_recipient`), and every secret
         sealed under the archive's key is cleared and reported in
-        `notRestored`. Only matched disks are mounted; an absent, replaced
+        `notRestored`. TOTP enrolment and any secret the archive does not
+        carry are always cleared and reported, so the next sign-in of an
+        account with TOTP enrols again. A `passphrase` given that does not
+        open the archive's `secrets.age`, or, for an archive with an
+        `identity.age` and no `secrets.age`, its `identity.age`, is refused
+        with 400 `backup_passphrase_incorrect` before anything is written;
+        one that opens `secrets.age` but not `identity.age` is restored, and
+        the report says the recipient was kept. Only
+        matched disks are mounted; an absent, replaced
         or ambiguous disk stays a row of the restored array, unmounted, and
         is reported in `notRestored` (the replace flow adopts a replacement
         disk), and no disk is ever formatted or partitioned. While no admin account exists this operation and
@@ -2794,9 +2851,10 @@ paths:
                   minLength: 1
                   maxLength: 1024
                   description: >-
-                    The backup passphrase the archive's `secrets.age` was
-                    sealed under. Optional: omitted, the configured backup
-                    passphrase is tried.
+                    The backup passphrase the archive's `secrets.age` and
+                    `identity.age` were sealed under. Optional: omitted, the
+                    configured backup passphrase is tried. On a fresh
+                    install it also becomes this box's backup passphrase.
                 diskMapping:
                   type: string
                   minLength: 1
@@ -2840,11 +2898,18 @@ paths:
         the import would replace, add and remove; it is empty when the
         archive's schema version differs, since the two cannot be compared.
         `secrets` says whether the archive has a passphrase-protected section
-        and whether the passphrase available opens it, and if not, which
-        stacks' `.env` files would not be restored. The optional `passphrase`
-        is tried as `importConfig` tries it, and one that does not open the
-        archive's `secrets.age` is refused as 400
-        `backup_passphrase_incorrect`. An
+        (`status`, for `secrets.age`) and whether the passphrase available
+        opens it and `identity.age` (`identity`), and if not, which stacks'
+        `.env` files would not be restored. The optional `passphrase`
+        is tried as `importConfig` tries it: one that does not open the
+        archive's `secrets.age`, or, for an archive with an `identity.age`
+        and no `secrets.age`, its `identity.age`, is refused as 400
+        `backup_passphrase_incorrect`; one that opens `secrets.age` but not
+        `identity.age` is not refused, and `identity` reports
+        `passphrase_incorrect`. Without a `passphrase` the configured one
+        is tried, and one that is absent or does not open the files shows
+        only in `secrets`, never as a refusal; an archive with neither file has nothing to check a
+        `passphrase` against. An
         archive that cannot be read is refused as `importConfig` refuses it
         (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with
         no config backup wired answers 501 `not_configured`. Nothing on a
@@ -2881,9 +2946,9 @@ paths:
                   minLength: 1
                   maxLength: 1024
                   description: >-
-                    The backup passphrase the archive's `secrets.age` was
-                    sealed under. Optional: omitted, the configured backup
-                    passphrase is tried.
+                    The backup passphrase the archive's `secrets.age` and
+                    `identity.age` were sealed under. Optional: omitted, the
+                    configured backup passphrase is tried.
       responses:
         "200":
           description: What the import would change.
@@ -2951,6 +3016,38 @@ paths:
   /backup/destinations/{destinationId}:
     parameters:
       - $ref: '#/components/parameters/DestinationId'
+    patch:
+      operationId: updateBackupDestination
+      summary: Change a backup destination's enabled flag or retention
+      description: >-
+        Changes `enabled` and `retention` in place; a field left out is left
+        as it is. Its type, path, options and credentials cannot be
+        changed — remove the destination and add it again. Disabling never
+        removes an archive or the credentials, and the next backup run uses
+        the new values without a restart. Retention is bounded as in
+        `createBackupDestination` (each count 0 to 1000, at least one
+        archive kept) and, as always, applies only to archives this
+        installation wrote. Switching a disabled destination back on
+        restarts its staleness clock, so it is not reported stale until two
+        days after that. 404 `backup_destination_not_found` for an unknown
+        id; 400 `backup_destination_invalid` for a retention out of bounds.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBackupDestinationRequest'
+      responses:
+        "200":
+          description: The destination as it is now.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupDestination'
+        default:
+          $ref: '#/components/responses/Error'
     delete:
       operationId: deleteBackupDestination
       summary: Remove a backup destination
@@ -4350,6 +4447,7 @@ components:
         - appdata_restore
         - appdata_restore_preview
         - restore_drill
+        - config_backup
         - container_update
         - container_recreate
         - acme_issue
@@ -7469,6 +7567,14 @@ components:
         retention:
           $ref: '#/components/schemas/BackupRetention'
 
+    UpdateBackupDestinationRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        retention:
+          $ref: '#/components/schemas/BackupRetention'
+
     BackupDestinationTestResult:
       type: object
       required: [success]
@@ -7787,8 +7893,8 @@ components:
         `none`: the archive has no passphrase-protected section (it was built
         without a backup passphrase). `opened`: the passphrase available
         opens it. `no_passphrase`: it has one and no passphrase is
-        available. `passphrase_incorrect`: it has one and the configured
-        passphrase does not open it.
+        available. `passphrase_incorrect`: it has one and the passphrase
+        available does not open it.
 
     ConfigImportSecrets:
       type: object
@@ -7796,6 +7902,14 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/ConfigImportSecretsStatus'
+        identity:
+          $ref: '#/components/schemas/ConfigImportSecretsStatus'
+          description: >-
+            The same status for the archive's `identity.age`, the backup
+            recipient's private identity: `opened` means a bare-metal
+            restore adopts the archive's recipient; otherwise this box keeps
+            its own. Always present in a response; an in-place import never
+            replaces the recipient, so it only reports.
         stacks:
           type: array
           description: >-
@@ -7977,21 +8091,25 @@ components:
       properties:
         kind:
           type: string
-          enum: [stack_env, disk, database_secret]
+          enum: [stack_env, disk, database_secret, backup_recipient]
         name:
           type: string
           description: >-
             The stack whose `.env` file it is (`stack_env`), the array disk
-            by its `ConfigImportDisk.name` (`disk`), or the table and column
+            by its `ConfigImportDisk.name` (`disk`), the table and column
             of a database secret cleared by a bare-metal restore, with the
-            row it was in (`database_secret`).
+            row it was in (`database_secret`), or `backup_recipient`, the
+            archive's backup recipient, which a bare-metal restore adopts
+            only when `identity.age` opens and otherwise leaves this box's
+            own in place.
         reason:
           type: string
           enum: [no_secrets, no_passphrase, passphrase_incorrect, stack_not_in_archive, left_in_place, disk_absent, disk_replaced, disk_ambiguous, sealed_under_other_key]
           description: >-
             `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the
             archive's passphrase-protected section could not be opened (see
-            `ConfigImportSecretsStatus`). `stack_not_in_archive`: that
+            `ConfigImportSecretsStatus`; for `backup_recipient`, its
+            `identity.age`). `stack_not_in_archive`: that
             section holds an `.env` for a stack the archive has no files of.
             `left_in_place`: the `.env` on this machine was kept because the
             archive holds none for that stack. `disk_absent`,
@@ -8002,8 +8120,10 @@ components:
             degraded array is acknowledged or the replace flow (doc 09 §4)
             adopts a replacement disk. `sealed_under_other_key`: the
             secret was sealed under the machine key of the installation the
-            archive came from, which this machine does not have, so a
-            bare-metal restore cleared it.
+            archive came from, which this machine does not have, and the
+            archive holds no copy of it it could be sealed again from (no
+            passphrase opened its `secrets.age`, or it never carried this
+            secret, like TOTP), so a bare-metal restore cleared it.
         message:
           type: string
 

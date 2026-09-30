@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -201,6 +202,19 @@ func decryptIdentitySidecar(sidecar []byte, passphrase string) (string, error) {
 	return string(plain), nil
 }
 
+var errInvalidIdentity = errors.New("not a valid age identity")
+
+// parseIdentity parses an age X25519 identity. The parser's own message can
+// quote part of what it was given ("s[48]=98"), which is a byte of the
+// private key, so a failure returns a fixed one.
+func parseIdentity(s string) (*age.X25519Identity, error) {
+	identity, err := age.ParseX25519Identity(s)
+	if err != nil {
+		return nil, errInvalidIdentity
+	}
+	return identity, nil
+}
+
 // decryptArchiveWithPassphrase reverses buildEncryptedArtifacts using
 // only the backup passphrase (Q80 — "a restore needs only the
 // passphrase"): it opens sidecarPath to recover the private identity,
@@ -216,7 +230,7 @@ func decryptArchiveWithPassphrase(encryptedPath, sidecarPath, passphrase string)
 	if err != nil {
 		return nil, err
 	}
-	identity, err := age.ParseX25519Identity(identityStr)
+	identity, err := parseIdentity(identityStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing recovered identity: %w", err)
 	}
@@ -228,7 +242,7 @@ func decryptArchiveWithPassphrase(encryptedPath, sidecarPath, passphrase string)
 // itself would use to read back one of its own encrypted archives
 // without needing the human passphrase or the sidecar file at all.
 func decryptArchiveWithRecipient(encryptedPath string, recipient *Recipient) ([]byte, error) {
-	identity, err := age.ParseX25519Identity(recipient.Identity)
+	identity, err := parseIdentity(recipient.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("parsing onboarding recipient identity: %w", err)
 	}

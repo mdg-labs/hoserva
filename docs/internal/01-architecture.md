@@ -228,7 +228,7 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
   | **Parity** | sync, scrub, fix, check | Parity, Array-write, Topology |
   | **Array-write** | rebalance, evacuation, share relocation, mover, VM disk relocation | Parity, Topology, other Array-write on the same disks |
   | **Topology** | disk format, add/remove/replace disk, pool remount | Everything in the three storage classes |
-  | **Service** | appdata backup, container update | Other Service jobs on the same container |
+  | **Service** | appdata backup, config backup, container update | Other Service jobs on the same container (a config backup: another config backup) |
   | **VM** | VM start, stop, create, delete, snapshot, clone, migration-import (doc 14 §2, Q56) | Other VM jobs on the same VM |
 
   The nightly maintenance chain (Q30) runs its steps in sequence and holds each class in turn.

@@ -62,6 +62,15 @@ func (q *Queries) DeleteBackupDestination(ctx context.Context, id string) (int64
 	return result.RowsAffected()
 }
 
+const deleteBackupDestinationEnabledAt = `-- name: DeleteBackupDestinationEnabledAt :exec
+DELETE FROM backup_destination_enabled WHERE destination_id = ?
+`
+
+func (q *Queries) DeleteBackupDestinationEnabledAt(ctx context.Context, destinationID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBackupDestinationEnabledAt, destinationID)
+	return err
+}
+
 const getBackupDestination = `-- name: GetBackupDestination :one
 SELECT id, name, type, path, options, secrets, enabled, encrypt, retention_daily,
        retention_weekly, retention_monthly, last_successful_backup_at,
@@ -89,6 +98,44 @@ func (q *Queries) GetBackupDestination(ctx context.Context, id string) (*BackupD
 		&i.CreatedAt,
 	)
 	return &i, err
+}
+
+const getBackupDestinationEnabledAt = `-- name: GetBackupDestinationEnabledAt :one
+SELECT enabled_at FROM backup_destination_enabled WHERE destination_id = ?
+`
+
+func (q *Queries) GetBackupDestinationEnabledAt(ctx context.Context, destinationID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getBackupDestinationEnabledAt, destinationID)
+	var enabled_at string
+	err := row.Scan(&enabled_at)
+	return enabled_at, err
+}
+
+const listBackupDestinationEnabledAt = `-- name: ListBackupDestinationEnabledAt :many
+SELECT destination_id, enabled_at FROM backup_destination_enabled
+`
+
+func (q *Queries) ListBackupDestinationEnabledAt(ctx context.Context) ([]*BackupDestinationEnabled, error) {
+	rows, err := q.db.QueryContext(ctx, listBackupDestinationEnabledAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*BackupDestinationEnabled
+	for rows.Next() {
+		var i BackupDestinationEnabled
+		if err := rows.Scan(&i.DestinationID, &i.EnabledAt); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBackupDestinations = `-- name: ListBackupDestinations :many
@@ -158,6 +205,22 @@ func (q *Queries) MarkBackupDestinationStaleAlerted(ctx context.Context, arg Mar
 	return result.RowsAffected()
 }
 
+const recordBackupDestinationReenabled = `-- name: RecordBackupDestinationReenabled :exec
+INSERT INTO backup_destination_enabled (destination_id, enabled_at)
+SELECT id, ? FROM backup_destinations WHERE id = ? AND enabled = 0
+ON CONFLICT (destination_id) DO UPDATE SET enabled_at = excluded.enabled_at
+`
+
+type RecordBackupDestinationReenabledParams struct {
+	EnabledAt string `json:"enabled_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) RecordBackupDestinationReenabled(ctx context.Context, arg RecordBackupDestinationReenabledParams) error {
+	_, err := q.db.ExecContext(ctx, recordBackupDestinationReenabled, arg.EnabledAt, arg.ID)
+	return err
+}
+
 const recordBackupDestinationSuccess = `-- name: RecordBackupDestinationSuccess :execrows
 UPDATE backup_destinations
 SET last_successful_backup_at = ?, stale_alerted_at = NULL
@@ -171,6 +234,41 @@ type RecordBackupDestinationSuccessParams struct {
 
 func (q *Queries) RecordBackupDestinationSuccess(ctx context.Context, arg RecordBackupDestinationSuccessParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, recordBackupDestinationSuccess, arg.LastSuccessfulBackupAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateBackupDestination = `-- name: UpdateBackupDestination :execrows
+UPDATE backup_destinations SET
+    stale_alerted_at = CASE
+        WHEN enabled = 0 AND CAST(?1 AS INTEGER) = 1 THEN NULL
+        ELSE stale_alerted_at
+    END,
+    enabled = COALESCE(CAST(?1 AS INTEGER), enabled),
+    retention_daily = COALESCE(CAST(?2 AS INTEGER), retention_daily),
+    retention_weekly = COALESCE(CAST(?3 AS INTEGER), retention_weekly),
+    retention_monthly = COALESCE(CAST(?4 AS INTEGER), retention_monthly)
+WHERE id = ?5
+`
+
+type UpdateBackupDestinationParams struct {
+	Enabled          sql.NullInt64 `json:"enabled"`
+	RetentionDaily   sql.NullInt64 `json:"retention_daily"`
+	RetentionWeekly  sql.NullInt64 `json:"retention_weekly"`
+	RetentionMonthly sql.NullInt64 `json:"retention_monthly"`
+	ID               string        `json:"id"`
+}
+
+func (q *Queries) UpdateBackupDestination(ctx context.Context, arg UpdateBackupDestinationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateBackupDestination,
+		arg.Enabled,
+		arg.RetentionDaily,
+		arg.RetentionWeekly,
+		arg.RetentionMonthly,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}

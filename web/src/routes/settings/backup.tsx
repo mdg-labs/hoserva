@@ -37,6 +37,7 @@ import {
   getJob,
   getRestoreDrill,
   getSchedules,
+  patchBackupDestination,
   postAppdataBackup,
   postAppdataRestore,
   postAppdataRestorePreview,
@@ -138,6 +139,10 @@ function fieldId(key: string): string {
 
 function fieldHintKey(key: string): string {
   return `settings.backup.fields.${key}.hint`;
+}
+
+function editRetentionId(period: string): string {
+  return `backup-dest-edit-retention-${period}`;
 }
 
 function retentionId(period: string): string {
@@ -494,6 +499,105 @@ function AddDestinationOverlay({
   );
 }
 
+function EditDestinationOverlay({
+  destination,
+  onClose,
+  onSaved,
+}: {
+  destination: BackupDestination;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const [enabled, setEnabled] = useState(destination.enabled);
+  const [retention, setRetention] = useState({ ...destination.retention });
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const unchanged =
+    enabled === destination.enabled &&
+    RETENTION_PERIODS.every((period) => retention[period] === destination.retention[period]);
+
+  async function handleSubmit(): Promise<void> {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const outcome = await request<BackupDestination>(
+        () => patchBackupDestination(destination.id, { enabled, retention }),
+        t("settings.backup.editForm.failed"),
+      );
+      if (!outcome.ok) {
+        setFailure(outcome.message);
+        return;
+      }
+      showFeedbackToast({
+        type: "success",
+        title: t("settings.backup.editForm.saved"),
+        description: destination.name,
+      });
+      onClose();
+      await onSaved();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormOverlay
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) {
+          onClose();
+        }
+      }}
+      title={t("settings.backup.editForm.title", { name: destination.name })}
+      description={t("settings.backup.editForm.description")}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+            {t("settings.actions.cancel")}
+          </Button>
+          <Button type="button" loading={busy} disabled={unchanged} onClick={() => void handleSubmit()}>
+            {t("settings.backup.editForm.submit")}
+          </Button>
+        </div>
+      }
+    >
+      {failure !== null ? (
+        <Banner tone="error" title={t("settings.backup.editForm.failed")} description={failure} />
+      ) : null}
+      <SettingSwitch
+        label={t("settings.backup.addForm.enabled")}
+        description={t("settings.backup.editForm.enabledHint")}
+        checked={enabled}
+        disabled={busy}
+        onCheckedChange={setEnabled}
+      />
+      <fieldset className="flex flex-col gap-2">
+        <legend className="font-medium text-sm">{t("settings.backup.addForm.retention")}</legend>
+        <p className="text-muted-foreground text-sm">{t("settings.backup.editForm.retentionHint")}</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {RETENTION_PERIODS.map((period) => (
+            <Field key={period}>
+              <FieldLabel htmlFor={editRetentionId(period)}>
+                {t(`settings.backup.addForm.${period}`)}
+              </FieldLabel>
+              <NumberUnit
+                id={editRetentionId(period)}
+                value={retention[period]}
+                onChange={(value) => setRetention((current) => ({ ...current, [period]: value }))}
+                unit={t("settings.backup.addForm.archivesUnit")}
+                min={0}
+                max={1000}
+              />
+            </Field>
+          ))}
+        </div>
+      </fieldset>
+    </FormOverlay>
+  );
+}
+
 function DestinationsSection({
   passphraseSet,
   onNeedPassphrase,
@@ -509,6 +613,7 @@ function DestinationsSection({
   });
   const [addOpen, setAddOpen] = useState(false);
   const [testingIds, setTestingIds] = useState<string[]>([]);
+  const [editTarget, setEditTarget] = useState<BackupDestination | null>(null);
   const [removeTarget, setRemoveTarget] = useState<BackupDestination | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
@@ -677,6 +782,14 @@ function DestinationsSection({
             </Button>
             <Button
               size="sm"
+              variant="outline"
+              aria-label={t("settings.backup.destinations.editFor", { name: row.name })}
+              onClick={() => setEditTarget(row)}
+            >
+              {t("settings.backup.destinations.edit")}
+            </Button>
+            <Button
+              size="sm"
               variant="ghost"
               aria-label={t("settings.backup.destinations.removeFor", { name: row.name })}
               onClick={() => {
@@ -721,6 +834,15 @@ function DestinationsSection({
             onNeedPassphrase();
           }}
           onAdded={query.refresh}
+        />
+      ) : null}
+
+      {editTarget !== null ? (
+        <EditDestinationOverlay
+          key={editTarget.id}
+          destination={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={query.refresh}
         />
       ) : null}
 
@@ -1104,6 +1226,7 @@ const LABELS = {
   preImportSecrets: "report.preImportSecrets",
 } as const;
 
+const RECIPIENT_KIND = "backup_recipient";
 const CHANGE_ADDED = "added";
 const CHANGE_CHANGED = "changed";
 const CHANGE_REMOVED = "removed";
@@ -1380,10 +1503,12 @@ function RestoreReport({ report }: { report: ConfigImportReport }): React.ReactE
               <li key={`${item.kind}-${item.name}`} className="flex flex-col gap-1 rounded-lg border p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">
-                    {t("settings.backup.restore.report.notRestoredItem", {
-                      kind: enumLabel(LABELS.notRestoredKinds, item.kind, t),
-                      name: item.name,
-                    })}
+                    {item.kind === RECIPIENT_KIND
+                      ? enumLabel(LABELS.notRestoredKinds, item.kind, t)
+                      : t("settings.backup.restore.report.notRestoredItem", {
+                          kind: enumLabel(LABELS.notRestoredKinds, item.kind, t),
+                          name: item.name,
+                        })}
                   </span>
                   <StatusBadge tone="warning">{enumLabel(LABELS.reasons, item.reason, t)}</StatusBadge>
                 </div>

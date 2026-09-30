@@ -6276,6 +6276,8 @@ func (s *ConfigImportNotRestoredKind) Decode(d *jx.Decoder) error {
 		*s = ConfigImportNotRestoredKindDisk
 	case ConfigImportNotRestoredKindDatabaseSecret:
 		*s = ConfigImportNotRestoredKindDatabaseSecret
+	case ConfigImportNotRestoredKindBackupRecipient:
+		*s = ConfigImportNotRestoredKindBackupRecipient
 	default:
 		*s = ConfigImportNotRestoredKind(v)
 	}
@@ -7164,6 +7166,12 @@ func (s *ConfigImportSecrets) encodeFields(e *jx.Encoder) {
 		s.Status.Encode(e)
 	}
 	{
+		if s.Identity.Set {
+			e.FieldStart("identity")
+			s.Identity.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("stacks")
 		e.ArrStart()
 		for _, elem := range s.Stacks {
@@ -7173,9 +7181,10 @@ func (s *ConfigImportSecrets) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfConfigImportSecrets = [2]string{
+var jsonFieldsNameOfConfigImportSecrets = [3]string{
 	0: "status",
-	1: "stacks",
+	1: "identity",
+	2: "stacks",
 }
 
 // Decode decodes ConfigImportSecrets from json.
@@ -7197,8 +7206,18 @@ func (s *ConfigImportSecrets) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"status\"")
 			}
+		case "identity":
+			if err := func() error {
+				s.Identity.Reset()
+				if err := s.Identity.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"identity\"")
+			}
 		case "stacks":
-			requiredBitSet[0] |= 1 << 1
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				s.Stacks = make([]string, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -7227,7 +7246,7 @@ func (s *ConfigImportSecrets) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00000011,
+		0b00000101,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -13011,6 +13030,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeAppdataRestorePreview
 	case JobTypeRestoreDrill:
 		*s = JobTypeRestoreDrill
+	case JobTypeConfigBackup:
+		*s = JobTypeConfigBackup
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
 	case JobTypeContainerRecreate:
@@ -18868,6 +18889,39 @@ func (s OptConfigImportBareMetal) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptConfigImportBareMetal) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ConfigImportSecretsStatus as json.
+func (o OptConfigImportSecretsStatus) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes ConfigImportSecretsStatus from json.
+func (o *OptConfigImportSecretsStatus) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptConfigImportSecretsStatus to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptConfigImportSecretsStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptConfigImportSecretsStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -28108,6 +28162,86 @@ func (s *UPSSettings) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *UPSSettings) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateBackupDestinationRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateBackupDestinationRequest) encodeFields(e *jx.Encoder) {
+	{
+		if s.Enabled.Set {
+			e.FieldStart("enabled")
+			s.Enabled.Encode(e)
+		}
+	}
+	{
+		if s.Retention.Set {
+			e.FieldStart("retention")
+			s.Retention.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfUpdateBackupDestinationRequest = [2]string{
+	0: "enabled",
+	1: "retention",
+}
+
+// Decode decodes UpdateBackupDestinationRequest from json.
+func (s *UpdateBackupDestinationRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateBackupDestinationRequest to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "enabled":
+			if err := func() error {
+				s.Enabled.Reset()
+				if err := s.Enabled.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "retention":
+			if err := func() error {
+				s.Retention.Reset()
+				if err := s.Retention.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"retention\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateBackupDestinationRequest")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateBackupDestinationRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateBackupDestinationRequest) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

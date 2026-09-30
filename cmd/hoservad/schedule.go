@@ -160,7 +160,7 @@ func (r *scheduleRunner) tickChain(ctx context.Context) error {
 }
 
 type scheduleNotifier struct {
-	svc *notify.Service
+	svc configBackupPublisher
 }
 
 func (n *scheduleNotifier) NotifyGuardBlocked(ctx context.Context) {
@@ -173,4 +173,11 @@ func (n *scheduleNotifier) NotifyGuardBlocked(ctx context.Context) {
 	if err != nil {
 		log.Printf("hoservad: notifying blocked threshold guard: %v", err)
 	}
+}
+
+func (n *scheduleNotifier) NotifyConfigBackupFailed(ctx context.Context, err error) {
+	if n == nil {
+		return
+	}
+	publishConfigBackupFailure(ctx, n.svc, err)
 }

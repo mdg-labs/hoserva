@@ -1532,6 +1532,8 @@ func (s ConfigImportNotRestoredKind) Validate() error {
 		return nil
 	case "database_secret":
 		return nil
+	case "backup_recipient":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1890,6 +1892,24 @@ func (s *ConfigImportSecrets) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "status",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Identity.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "identity",
 			Error: err,
 		})
 	}
@@ -3203,6 +3223,8 @@ func (s JobType) Validate() error {
 	case "appdata_restore_preview":
 		return nil
 	case "restore_drill":
+		return nil
+	case "config_backup":
 		return nil
 	case "container_update":
 		return nil
@@ -6864,6 +6886,36 @@ func (s *UPSSettings) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "runtimeSeconds",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *UpdateBackupDestinationRequest) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.Retention.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "retention",
 			Error: err,
 		})
 	}

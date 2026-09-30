@@ -3,9 +3,11 @@ package backup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -138,5 +140,64 @@ func TestBuildIdentityAge_RoundTripsThroughTheSecretsAgeScryptPath(t *testing.T)
 	}
 	if string(plain) != recipient.Identity {
 		t.Fatalf("decrypted identity.age = %q, want %q", plain, recipient.Identity)
+	}
+}
+
+// age's parser reports a bad character as its code and position ("s[48]=98"),
+// which is a byte of the identity, so none of the three decrypt paths may
+// pass that text on.
+func TestDecryptArchive_MalformedIdentityErrorQuotesNothingOfIt(t *testing.T) {
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "hoserva-config-2026-09-27T03-00.tar.zst")
+	if err := os.WriteFile(archivePath, []byte("plaintext archive contents"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recipient := testRecipient(t)
+	sealedPath, err := encryptArchiveForDestination(archivePath, recipient.Public)
+	if err != nil {
+		t.Fatalf("encryptArchiveForDestination: %v", err)
+	}
+	const passphrase = "correct horse battery staple"
+
+	for _, identity := range []string{
+		"AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQBQQQ",
+		"AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ QQ",
+		"a tampered line the parser might quote: hunter2-s3cr3t",
+	} {
+		sidecar, err := encryptWithPassphrase([]byte(identity), passphrase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sidecarPath := filepath.Join(dir, "tampered"+identitySidecarSuffix)
+		if err := os.WriteFile(sidecarPath, sidecar, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(dir, "plain")
+		_ = os.Remove(dst)
+
+		plain, sidecarErr := decryptArchiveWithPassphrase(sealedPath, sidecarPath, passphrase)
+		recipientPlain, recipientErr := decryptArchiveWithRecipient(sealedPath, &Recipient{Public: recipient.Public, Identity: identity})
+		fileErr := decryptArchiveFile(sealedPath, dst, identity)
+
+		if plain != nil || recipientPlain != nil {
+			t.Errorf("%q: a malformed identity still decrypted something", identity)
+		}
+		if _, statErr := os.Stat(dst); statErr == nil {
+			t.Errorf("%q: decryptArchiveFile left %s behind", identity, dst)
+		}
+		for name, err := range map[string]error{
+			"decryptArchiveWithPassphrase": sidecarErr,
+			"decryptArchiveWithRecipient":  recipientErr,
+			"decryptArchiveFile":           fileErr,
+		} {
+			if !errors.Is(err, errInvalidIdentity) {
+				t.Errorf("%s(%q) = %v, want the fixed invalid-identity error", name, identity, err)
+			}
+			for _, part := range []string{"s[", "malformed", "hunter2", "QQQQ", "tampered line"} {
+				if strings.Contains(err.Error(), part) {
+					t.Errorf("%s(%q) error contains %q of the parser's text or the identity: %v", name, identity, part, err)
+				}
+			}
+		}
 	}
 }

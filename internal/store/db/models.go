@@ -91,6 +91,11 @@ type BackupDestination struct {
 	CreatedAt              string         `json:"created_at"`
 }
 
+type BackupDestinationEnabled struct {
+	DestinationID string `json:"destination_id"`
+	EnabledAt     string `json:"enabled_at"`
+}
+
 type BackupRecipient struct {
 	ID              int64  `json:"id"`
 	PublicRecipient string `json:"public_recipient"`

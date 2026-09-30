@@ -1106,6 +1106,9 @@ func printConfigImportPreview(p *apiv1.ConfigImportPreview) {
 		fmt.Println("\nNo changes to the configuration.")
 	}
 	fmt.Printf("\n%s\n", describeConfigImportSecrets(p.Secrets))
+	if id, ok := p.Secrets.Identity.Get(); ok {
+		fmt.Println(describeConfigImportIdentity(id))
+	}
 	for _, n := range p.Notes {
 		fmt.Printf("\n%s\n", n.Message)
 	}
@@ -1171,7 +1174,7 @@ func describeConfigImportSecrets(s apiv1.ConfigImportSecrets) string {
 	var msg string
 	switch s.Status {
 	case apiv1.ConfigImportSecretsStatusOpened:
-		return "Secrets: the passphrase opens the archive's secrets, so its stack .env files would be restored."
+		return "Secrets: the passphrase opens the archive's secrets, so its stack .env files would be restored, and a restore onto a fresh install seals its credentials again under this server's key."
 	case apiv1.ConfigImportSecretsStatusNone:
 		msg = "Secrets: the archive has no secrets section, so its stack .env files would not be restored"
 	case apiv1.ConfigImportSecretsStatusNoPassphrase:
@@ -1185,6 +1188,23 @@ func describeConfigImportSecrets(s apiv1.ConfigImportSecrets) string {
 		msg += ": " + strings.Join(s.Stacks, ", ")
 	}
 	return msg + "."
+}
+
+// describeConfigImportIdentity says what the archive's identity.age means for
+// the backup recipient a restore onto a fresh install leaves this box with.
+func describeConfigImportIdentity(s apiv1.ConfigImportSecretsStatus) string {
+	switch s {
+	case apiv1.ConfigImportSecretsStatusOpened:
+		return "Backup recipient: the passphrase opens the archive's identity, so a restore onto a fresh install keeps the archive's recipient for future archives."
+	case apiv1.ConfigImportSecretsStatusNone:
+		return "Backup recipient: the archive has no identity, so a restore onto a fresh install keeps this server's own recipient."
+	case apiv1.ConfigImportSecretsStatusNoPassphrase:
+		return "Backup recipient: no backup passphrase is available (--passphrase-file gives one), so a restore onto a fresh install keeps this server's own recipient."
+	case apiv1.ConfigImportSecretsStatusPassphraseIncorrect:
+		return "Backup recipient: the passphrase does not open the archive's identity, so a restore onto a fresh install keeps this server's own recipient."
+	default:
+		return "Backup recipient: " + string(s)
+	}
 }
 
 func readPassphraseFile(path string) (string, error) {

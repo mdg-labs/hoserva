@@ -9,17 +9,25 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"filippo.io/age"
 )
 
 var (
 	// ErrNoSecrets: the archive has no secrets.age, which is what an archive
 	// built without a backup passphrase looks like.
 	ErrNoSecrets = errors.New("the archive has no secrets.age")
-	// ErrPassphraseIncorrect: the passphrase does not open secrets.age.
-	ErrPassphraseIncorrect = errors.New("the passphrase does not open secrets.age")
+	// ErrNoIdentity: the archive has no identity.age.
+	ErrNoIdentity = errors.New("the archive has no identity.age")
+	// ErrPassphraseIncorrect: the passphrase does not open secrets.age or
+	// identity.age, whichever was being opened.
+	ErrPassphraseIncorrect = errors.New("the passphrase does not open the archive's passphrase-protected files")
 	// ErrSecretsUnreadable: secrets.age is not a readable age file, or its
 	// content is not what BuildArchive writes.
 	ErrSecretsUnreadable = errors.New("secrets.age cannot be read")
+	// ErrIdentityUnreadable: identity.age is not a readable age file, or does
+	// not hold an age identity.
+	ErrIdentityUnreadable = errors.New("identity.age cannot be read")
 )
 
 // Secrets is the opened content of an archive's secrets.age.
@@ -46,6 +54,35 @@ func ReadSecrets(tree, passphrase string) (*Secrets, error) {
 	return &Secrets{payload: *payload}, nil
 }
 
+// ReadIdentity opens the identity.age of the verified archive tree with
+// passphrase and returns the onboarding recipient it carries (Q80): the
+// private identity, and the public recipient derived from it. ErrNoIdentity
+// says the archive has none, ErrPassphraseIncorrect that the passphrase is
+// not the one it was sealed under, ErrIdentityUnreadable that the file is
+// damaged; nothing is written.
+func ReadIdentity(tree, passphrase string) (*Recipient, error) {
+	data, err := os.ReadFile(filepath.Join(tree, "identity.age"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoIdentity
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading identity.age: %w", err)
+	}
+	plain, err := decryptScrypt(data, passphrase)
+	switch {
+	case errors.Is(err, ErrPassphraseIncorrect):
+		return nil, fmt.Errorf("decrypting identity.age: %w", err)
+	case err != nil:
+		return nil, fmt.Errorf("decrypting identity.age: %w", errors.Join(ErrIdentityUnreadable, err))
+	}
+	identity, err := age.ParseX25519Identity(strings.TrimSpace(string(plain)))
+	if err != nil {
+		// The parser's message can quote part of what it was given.
+		return nil, fmt.Errorf("identity.age holds no valid identity: %w", ErrIdentityUnreadable)
+	}
+	return &Recipient{Public: identity.Recipient().String(), Identity: identity.String()}, nil
+}
+
 // StackEnvs is every stack's .env the archive holds, in stack order.
 func (s *Secrets) StackEnvs() []StackEnv {
 	out := make([]StackEnv, len(s.payload.Stacks))
@@ -65,16 +102,41 @@ const (
 )
 
 // SecretsOutcome is whether the passphrase-protected section of an archive
-// can be restored. Stacks lists, when it cannot, the stacks of the archive
-// whose .env files would not be restored.
+// can be restored. Status is secrets.age's and Identity identity.age's, each
+// SecretsNone, SecretsOpened, SecretsNoPassphrase or SecretsPassphraseIncorrect
+// (an outcome not built by ResolveSecrets has no Identity, which reads as
+// SecretsNone). Stacks lists, when secrets.age cannot be opened, the stacks
+// of the archive whose .env files would not be restored.
 type SecretsOutcome struct {
-	Status string
-	Stacks []string
+	Status   string
+	Identity string
+	Stacks   []string
 
 	secrets       *Secrets
+	identity      *Recipient
 	archiveStacks []string
 	passphrase    string
 	fromRequest   bool
+}
+
+// Recipient is the archive's onboarding recipient with its private identity,
+// recovered from identity.age, or nil when it could not be opened.
+func (o SecretsOutcome) Recipient() *Recipient {
+	if o.identity == nil {
+		return nil
+	}
+	r := *o.identity
+	return &r
+}
+
+// OpenedPassphrase is the passphrase that opened secrets.age or identity.age,
+// the one a bare-metal restore makes this installation's backup passphrase
+// (Q28). ok is false when neither was opened.
+func (o SecretsOutcome) OpenedPassphrase() (passphrase string, ok bool) {
+	if o.secrets == nil && o.identity == nil {
+		return "", false
+	}
+	return o.passphrase, true
 }
 
 // EnvPassphrase is the passphrase that opened the archive's secrets, and
@@ -104,28 +166,39 @@ func (o SecretsOutcome) StackEnvs() []StackEnv {
 }
 
 // ResolveSecrets decides what an import can restore from the archive tree's
-// secrets.age. A passphrase given explicitly is the only one tried, and one
-// that does not open the file is ErrPassphraseIncorrect; without one the
-// configured backup passphrase (src) is tried, and if that is absent or does
-// not open the file the outcome says so, so that everything else can still
-// be restored. An explicit passphrase for an archive with no secrets.age is
-// not an error: there is nothing to check it against. Nothing is written.
+// secrets.age and identity.age. A passphrase given explicitly is the only one
+// tried, and one that does not open secrets.age is ErrPassphraseIncorrect, as
+// is one that does not open identity.age of an archive with no secrets.age
+// (with both, one that opens secrets.age but not identity.age leaves the
+// identity unopened: Identity says so); without one the configured backup
+// passphrase (src) is tried, and if that is absent or does not open a file
+// the outcome says so, so that everything else can still be restored. An
+// explicit passphrase for an archive with neither file is not an error: there
+// is nothing to check it against. Nothing is written.
 func ResolveSecrets(ctx context.Context, tree string, src SecretSource, explicit *string) (SecretsOutcome, error) {
 	archiveStacks, err := archiveStackNames(tree)
 	if err != nil {
 		return SecretsOutcome{}, err
 	}
-	out := SecretsOutcome{archiveStacks: archiveStacks}
-	notOpened := func(status string) (SecretsOutcome, error) {
-		out.Status = status
-		out.Stacks = slices.Clone(archiveStacks)
+	out := SecretsOutcome{archiveStacks: archiveStacks, Status: SecretsNone, Identity: SecretsNone}
+	done := func() (SecretsOutcome, error) {
+		if out.Status != SecretsOpened {
+			out.Stacks = slices.Clone(archiveStacks)
+		}
 		return out, nil
 	}
 
-	if _, err := os.Lstat(filepath.Join(tree, "secrets.age")); errors.Is(err, fs.ErrNotExist) {
-		return notOpened(SecretsNone)
-	} else if err != nil {
-		return SecretsOutcome{}, fmt.Errorf("checking for secrets.age: %w", err)
+	var present [2]bool
+	for i, name := range []string{"secrets.age", "identity.age"} {
+		_, err := os.Lstat(filepath.Join(tree, name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return SecretsOutcome{}, fmt.Errorf("checking for %s: %w", name, err)
+		}
+		present[i] = err == nil
+	}
+	hasSecrets, hasIdentity := present[0], present[1]
+	if !hasSecrets && !hasIdentity {
+		return done()
 	}
 
 	var passphrase string
@@ -140,26 +213,50 @@ func ResolveSecrets(ctx context.Context, tree string, src SecretSource, explicit
 		if err != nil {
 			return SecretsOutcome{}, fmt.Errorf("reading the configured backup passphrase: %w", err)
 		}
-		if !ok || p == "" {
-			return notOpened(SecretsNoPassphrase)
-		}
 		passphrase = p
-	default:
-		return notOpened(SecretsNoPassphrase)
+		if !ok {
+			passphrase = ""
+		}
+	}
+	if passphrase == "" {
+		if hasSecrets {
+			out.Status = SecretsNoPassphrase
+		}
+		if hasIdentity {
+			out.Identity = SecretsNoPassphrase
+		}
+		return done()
 	}
 
-	secrets, err := ReadSecrets(tree, passphrase)
-	switch {
-	case errors.Is(err, ErrPassphraseIncorrect) && explicit == nil:
-		return notOpened(SecretsPassphraseIncorrect)
-	case err != nil:
-		return SecretsOutcome{}, err
+	if hasSecrets {
+		secrets, err := ReadSecrets(tree, passphrase)
+		switch {
+		case errors.Is(err, ErrPassphraseIncorrect) && explicit == nil:
+			out.Status = SecretsPassphraseIncorrect
+		case err != nil:
+			return SecretsOutcome{}, err
+		default:
+			out.Status = SecretsOpened
+			out.secrets = secrets
+		}
 	}
-	out.Status = SecretsOpened
-	out.secrets = secrets
-	out.passphrase = passphrase
-	out.fromRequest = explicit != nil
-	return out, nil
+	if hasIdentity {
+		identity, err := ReadIdentity(tree, passphrase)
+		switch {
+		case errors.Is(err, ErrPassphraseIncorrect) && (explicit == nil || hasSecrets):
+			out.Identity = SecretsPassphraseIncorrect
+		case err != nil:
+			return SecretsOutcome{}, err
+		default:
+			out.Identity = SecretsOpened
+			out.identity = identity
+		}
+	}
+	if out.secrets != nil || out.identity != nil {
+		out.passphrase = passphrase
+		out.fromRequest = explicit != nil
+	}
+	return done()
 }
 
 // archiveStackNames lists, sorted, the stacks the archive's manifest holds

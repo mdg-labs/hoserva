@@ -127,7 +127,8 @@ type Invoker interface {
 	// with the running job and records its outcome once it has unmounted everything. A queued or
 	// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
 	// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
-	// second cancel while one runs.
+	// second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same
+	// job is still repairing its log; retry in a moment.
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
@@ -614,22 +615,24 @@ type Invoker interface {
 	// and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
 	// happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
 	// not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
-	// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
-	// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
-	// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
-	// `archive_other_installation` (its machine key check value differs from this installation's or is
-	// missing; a different installation's archive is restored only onto a fresh install) and 409
-	// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
-	// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
-	// restore lands on a symbolic link or on something that is not a regular file, or it names a path
-	// outside the directory it is restored into; nothing is followed). A bare-metal restore that would
-	// replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when
-	// no backup destination is enabled to take the copy of it that the pre-import archive carries. A
-	// failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the
-	// database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from
-	// and which of the file categories were restored and which left as they were. The array's own state,
-	// running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an
-	// import cannot return a stopped array to normal operation.
+	// device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable,
+	// which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a
+	// `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an
+	// `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not
+	// `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409
+	// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
+	// installation's or is missing; a different installation's archive is restored only onto a fresh
+	// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
+	// flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe`
+	// (a file it would restore lands on a symbolic link or on something that is not a regular file, or it
+	// names a path outside the directory it is restored into; nothing is followed). A bare-metal restore
+	// that would replace a Samba or NFS file already on this server also refuses with 409
+	// `host_files_not_saved` when no backup destination is enabled to take the copy of it that the
+	// pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing
+	// changed; a failure once the database has been replaced answers 500 `import_failed` naming the
+	// pre-import archive to restore from and which of the file categories were restored and which left as
+	// they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never
+	// restored from the archive, so an import cannot return a stopped array to normal operation.
 	//
 	// On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
 	// bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
@@ -638,10 +641,21 @@ type Invoker interface {
 	// `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
 	// matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
 	// its database by the same migration runner a normal upgrade uses; one from a newer version is refused
-	// with 409 `archive_newer_version`. This box's own machine key check and backup recipient are kept, so
-	// `hoservad` starts, and every database secret sealed under the archive's key is cleared and reported
-	// in `notRestored`. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row
-	// of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
+	// with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts.
+	// With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME,
+	// UPS, backup destination and notification channel credentials) is sealed under this box's machine key
+	// and written back into its own table, column and row, and the stack `.env` files are restored; the
+	// passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's
+	// backup recipient replaces this box's own, so archives written from then on are encrypted to it.
+	// Without such a passphrase everything else is restored, this box keeps its own backup recipient
+	// (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and
+	// reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always
+	// cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given
+	// that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no
+	// `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything
+	// is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the
+	// recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a
+	// row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
 	// replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this
 	// operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409
 	// `setup_required`.
@@ -902,12 +916,17 @@ type Invoker interface {
 	// the live one per category, and lists the custom config files, app templates and app stack files the
 	// import would replace, add and remove; it is empty when the archive's schema version differs, since
 	// the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
-	// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
-	// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
-	// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
-	// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
-	// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
-	// read.
+	// (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age`
+	// (`identity`), and if not, which stacks' `.env` files would not be restored. The optional
+	// `passphrase` is tried as `importConfig` tries it: one that does not open the archive's
+	// `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`,
+	// is refused as 400 `backup_passphrase_incorrect`; one that opens `secrets.age` but not `identity.age`
+	// is not refused, and `identity` reports `passphrase_incorrect`. Without a `passphrase` the configured
+	// one is tried, and one that is absent or does not open the files shows only in `secrets`, never as a
+	// refusal; an archive with neither file has nothing to check a `passphrase` against. An archive that
+	// cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+	// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+	// on a data disk is read.
 	//
 	// On a fresh install, one with no array configured, `bareMetal` reports the bare-metal restore (see
 	// `importConfig`): whether the archive's database would be upgraded, and one entry per array disk the
@@ -1026,9 +1045,10 @@ type Invoker interface {
 	// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 	// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 	// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
-	// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
-	// §6, Q77).
+	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
+	// `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a
+	// moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery
+	// hold is active (doc 02 §6, Q77).
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
@@ -1055,6 +1075,21 @@ type Invoker interface {
 	//
 	// POST /settings/updates/rollback
 	RollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// RunConfigBackup invokes runConfigBackup operation.
+	//
+	// Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken
+	// now. It writes one archive to every enabled backup destination, verifies it, and prunes each
+	// destination's own retention, counting the archive like a scheduled one — it never takes the slot
+	// of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups,
+	// so one asked for while another runs queues rather than failing. The job succeeds when at least one
+	// destination was written and its log names each destination written and each that failed (the
+	// stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed`
+	// notification, when none was. Refused with 409 `backup_no_destination` before anything is queued
+	// while no destination is enabled, and with 501 `not_configured` when this daemon has no backup
+	// service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+	//
+	// POST /config/backup
+	RunConfigBackup(ctx context.Context) (*Job, error)
 	// RunDoctor invokes runDoctor operation.
 	//
 	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
@@ -1242,6 +1277,19 @@ type Invoker interface {
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
+	// UpdateBackupDestination invokes updateBackupDestination operation.
+	//
+	// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
+	// options and credentials cannot be changed — remove the destination and add it again. Disabling
+	// never removes an archive or the credentials, and the next backup run uses the new values without a
+	// restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one
+	// archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled
+	// destination back on restarts its staleness clock, so it is not reported stale until two days after
+	// that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a
+	// retention out of bounds.
+	//
+	// PATCH /backup/destinations/{destinationId}
+	UpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error)
 	// UpdateExternalDisk invokes updateExternalDisk operation.
 	//
 	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
@@ -2396,7 +2444,8 @@ func (c *Client) sendCancelDiskRemoval(ctx context.Context, request *CancelDiskR
 // with the running job and records its outcome once it has unmounted everything. A queued or
 // interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
 // with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
-// second cancel while one runs.
+// second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same
+// job is still repairing its log; retry in a moment.
 //
 // POST /jobs/{jobId}/cancel
 func (c *Client) CancelJob(ctx context.Context, params CancelJobParams) (*Job, error) {
@@ -9958,22 +10007,24 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
 // happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
 // not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
-// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
-// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
-// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
-// `archive_other_installation` (its machine key check value differs from this installation's or is
-// missing; a different installation's archive is restored only onto a fresh install) and 409
-// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
-// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
-// restore lands on a symbolic link or on something that is not a regular file, or it names a path
-// outside the directory it is restored into; nothing is followed). A bare-metal restore that would
-// replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when
-// no backup destination is enabled to take the copy of it that the pre-import archive carries. A
-// failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the
-// database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from
-// and which of the file categories were restored and which left as they were. The array's own state,
-// running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an
-// import cannot return a stopped array to normal operation.
+// device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable,
+// which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a
+// `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an
+// `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not
+// `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409
+// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
+// installation's or is missing; a different installation's archive is restored only onto a fresh
+// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
+// flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe`
+// (a file it would restore lands on a symbolic link or on something that is not a regular file, or it
+// names a path outside the directory it is restored into; nothing is followed). A bare-metal restore
+// that would replace a Samba or NFS file already on this server also refuses with 409
+// `host_files_not_saved` when no backup destination is enabled to take the copy of it that the
+// pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing
+// changed; a failure once the database has been replaced answers 500 `import_failed` naming the
+// pre-import archive to restore from and which of the file categories were restored and which left as
+// they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never
+// restored from the archive, so an import cannot return a stopped array to normal operation.
 //
 // On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
 // bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
@@ -9982,10 +10033,21 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
 // matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
 // its database by the same migration runner a normal upgrade uses; one from a newer version is refused
-// with 409 `archive_newer_version`. This box's own machine key check and backup recipient are kept, so
-// `hoservad` starts, and every database secret sealed under the archive's key is cleared and reported
-// in `notRestored`. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row
-// of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
+// with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts.
+// With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME,
+// UPS, backup destination and notification channel credentials) is sealed under this box's machine key
+// and written back into its own table, column and row, and the stack `.env` files are restored; the
+// passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's
+// backup recipient replaces this box's own, so archives written from then on are encrypted to it.
+// Without such a passphrase everything else is restored, this box keeps its own backup recipient
+// (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and
+// reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always
+// cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given
+// that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no
+// `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything
+// is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the
+// recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a
+// row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
 // replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this
 // operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409
 // `setup_required`.
@@ -13417,12 +13479,17 @@ func (c *Client) sendPreviewAppdataRestore(ctx context.Context, request *Preview
 // the live one per category, and lists the custom config files, app templates and app stack files the
 // import would replace, add and remove; it is empty when the archive's schema version differs, since
 // the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
-// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
-// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
-// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
-// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
-// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
-// read.
+// (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age`
+// (`identity`), and if not, which stacks' `.env` files would not be restored. The optional
+// `passphrase` is tried as `importConfig` tries it: one that does not open the archive's
+// `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`,
+// is refused as 400 `backup_passphrase_incorrect`; one that opens `secrets.age` but not `identity.age`
+// is not refused, and `identity` reports `passphrase_incorrect`. Without a `passphrase` the configured
+// one is tried, and one that is absent or does not open the files shows only in `secrets`, never as a
+// refusal; an archive with neither file has nothing to check a `passphrase` against. An archive that
+// cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
 //
 // On a fresh install, one with no array configured, `bareMetal` reports the bare-metal restore (see
 // `importConfig`): whether the archive's database would be upgraded, and one entry per array disk the
@@ -14845,9 +14912,10 @@ func (c *Client) sendRestoreAppdata(ctx context.Context, request *RestoreAppdata
 // upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 // restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 // maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
-// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
-// §6, Q77).
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
+// `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a
+// moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery
+// hold is active (doc 02 §6, Q77).
 //
 // POST /jobs/{jobId}/resume
 func (c *Client) ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error) {
@@ -15401,6 +15469,140 @@ func (c *Client) sendRollbackUpdate(ctx context.Context, request *ConfirmUpdateR
 
 	stage = "DecodeResponse"
 	result, err := decodeRollbackUpdateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RunConfigBackup invokes runConfigBackup operation.
+//
+// Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken
+// now. It writes one archive to every enabled backup destination, verifies it, and prunes each
+// destination's own retention, counting the archive like a scheduled one — it never takes the slot
+// of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups,
+// so one asked for while another runs queues rather than failing. The job succeeds when at least one
+// destination was written and its log names each destination written and each that failed (the
+// stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed`
+// notification, when none was. Refused with 409 `backup_no_destination` before anything is queued
+// while no destination is enabled, and with 501 `not_configured` when this daemon has no backup
+// service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+//
+// POST /config/backup
+func (c *Client) RunConfigBackup(ctx context.Context) (*Job, error) {
+	res, err := c.sendRunConfigBackup(ctx)
+	return res, err
+}
+
+func (c *Client) sendRunConfigBackup(ctx context.Context) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("runConfigBackup"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/config/backup"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RunConfigBackupOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/config/backup"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RunConfigBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RunConfigBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRunConfigBackupResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -18171,6 +18373,159 @@ func (c *Client) sendUnlockUser(ctx context.Context, params UnlockUserParams) (r
 
 	stage = "DecodeResponse"
 	result, err := decodeUnlockUserResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateBackupDestination invokes updateBackupDestination operation.
+//
+// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
+// options and credentials cannot be changed — remove the destination and add it again. Disabling
+// never removes an archive or the credentials, and the next backup run uses the new values without a
+// restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one
+// archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled
+// destination back on restarts its staleness clock, so it is not reported stale until two days after
+// that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a
+// retention out of bounds.
+//
+// PATCH /backup/destinations/{destinationId}
+func (c *Client) UpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error) {
+	res, err := c.sendUpdateBackupDestination(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (res *BackupDestination, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateBackupDestination"),
+		semconv.HTTPRequestMethodKey.String("PATCH"),
+		semconv.URLTemplateKey.String("/backup/destinations/{destinationId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateBackupDestinationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/backup/destinations/"
+	{
+		// Encode "destinationId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "destinationId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.DestinationId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PATCH", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateBackupDestinationRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateBackupDestinationResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
