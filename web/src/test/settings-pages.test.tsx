@@ -1625,6 +1625,40 @@ describe("Config restore on the backup page", () => {
     expect(screen.getByText("No backup destination was written to before the restore.")).toBeInTheDocument();
   });
 
+  it("labels a kept backup recipient and a cleared secret in plain language", async () => {
+    mockRestoreApi({
+      apply: apiOk(
+        importReport({
+          notRestored: [
+            {
+              kind: "backup_recipient",
+              name: "backup_recipient",
+              reason: "no_passphrase",
+              message: "this installation keeps its own backup recipient",
+            },
+            {
+              kind: "database_secret",
+              name: "acme_config.dns_secret",
+              reason: "sealed_under_other_key",
+              message: "acme_config.dns_secret was cleared",
+            },
+          ],
+        }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+    await confirmRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByText("Backup encryption key")).toBeInTheDocument();
+    expect(screen.getByText("Stored secret: acme_config.dns_secret")).toBeInTheDocument();
+    expect(screen.getByText("No passphrase")).toBeInTheDocument();
+    expect(screen.getByText("Sealed under another server's key")).toBeInTheDocument();
+    expect(screen.queryByText("backup_recipient", { exact: false })).not.toBeInTheDocument();
+  });
+
   it("shows the schema decision and the disk mapping of a fresh box and requires confirming it", async () => {
     mockRestoreApi({ preview: apiOk(importPreview({ bareMetal: bareMetalPreview() })) });
 

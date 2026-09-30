@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	ht "github.com/ogen-go/ogen/http"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -37,6 +38,21 @@ func mockBareMetalArchive(t *testing.T, extra ...string) []byte {
 // buildMockBareMetalArchive is mockBareMetalArchive for a contract case,
 // which has no *testing.T to build one with.
 func buildMockBareMetalArchive(extra ...string) ([]byte, error) {
+	return buildMockArchive(false, extra...)
+}
+
+// contractArchivePassphrase is the backup passphrase the sealed archives of
+// buildMockSealedArchive were built under.
+const contractArchivePassphrase = "the archive's contract passphrase"
+
+// buildMockSealedArchive is buildMockBareMetalArchive with the archive's
+// backup passphrase set, so it carries a secrets.age holding the notification
+// channel's credential and an identity.age holding its backup recipient.
+func buildMockSealedArchive(extra ...string) ([]byte, error) {
+	return buildMockArchive(true, extra...)
+}
+
+func buildMockArchive(sealed bool, extra ...string) ([]byte, error) {
 	migrations, err := store.Load()
 	if err != nil {
 		return nil, err
@@ -71,7 +87,23 @@ func buildMockBareMetalArchive(extra ...string) ([]byte, error) {
 	if err := os.Mkdir(staging, 0o700); err != nil {
 		return nil, err
 	}
-	if _, err := backup.BuildArchive(context.Background(), db, backup.Paths{}, nil, nil, "host", "test", time.Now(), staging); err != nil {
+	var (
+		src    backup.SecretSource
+		opts   []backup.ArchiveOption
+		cipher backup.SecretCipher
+	)
+	if sealed {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			return nil, err
+		}
+		credential, _ := backup.FakeSecretCipher{}.Encrypt([]byte("gotify-token"))
+		src = &backup.FakeSecretSource{Passphrase: contractArchivePassphrase, HasPass: true,
+			Secrets: []backup.DatabaseSecret{{Table: "notify_channels", Column: "secret", RowID: "c1", Ciphertext: credential}}}
+		cipher = backup.FakeSecretCipher{}
+		opts = append(opts, backup.WithRecipient(&backup.Recipient{Public: id.Recipient().String(), Identity: id.String()}))
+	}
+	if _, err := backup.BuildArchive(context.Background(), db, backup.Paths{}, src, cipher, "host", "test", time.Now(), staging, opts...); err != nil {
 		return nil, err
 	}
 	return packArchive(staging)
@@ -204,4 +236,79 @@ func TestMockConfigImport_FreshInstallWithoutABackupDestinationRefusesToReplaceH
 	}
 	_, err = h.ImportConfig(ctx, mockImport(archive, mapping))
 	mockErr(t, err, 409, "host_files_not_saved")
+}
+
+// A bare-metal restore with the archive's passphrase seals the archive's
+// secrets under this installation's key, so they are not reported as not
+// restored, and adopts its recipient; without it, or with one that does not
+// open the archive, the mock answers as production does.
+func TestMockConfigImport_TheArchivesPassphraseRestoresItsSecretsOnAFreshInstall(t *testing.T) {
+	ctx := context.Background()
+	archive, err := buildMockSealedArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping := `{"disks":[{"role":"data","roleIndex":1,"device":"/dev/sdb"}]}`
+	h, err := newHandler("fresh-install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPass := func(p string) *apiv1.ImportConfigReq {
+		req := mockImport(archive, mapping)
+		req.Passphrase = apiv1.NewOptString(p)
+		return req
+	}
+
+	_, err = h.ImportConfig(ctx, withPass("not the passphrase"))
+	mockErr(t, err, 400, "backup_passphrase_incorrect")
+
+	p, err := h.PreviewConfigImport(ctx, &apiv1.PreviewConfigImportReq{Archive: ht.MultipartFile{File: bytes.NewReader(archive)}, Passphrase: apiv1.NewOptString(contractArchivePassphrase)})
+	if err != nil {
+		t.Fatalf("PreviewConfigImport with the archive's passphrase: %v", err)
+	}
+	if p.Secrets.Status != apiv1.ConfigImportSecretsStatusOpened || p.Secrets.Identity.Or("") != apiv1.ConfigImportSecretsStatusOpened {
+		t.Fatalf("preview secrets = %+v, want secrets.age and identity.age opened", p.Secrets)
+	}
+	p, err = h.PreviewConfigImport(ctx, &apiv1.PreviewConfigImportReq{Archive: ht.MultipartFile{File: bytes.NewReader(archive)}})
+	if err != nil {
+		t.Fatalf("PreviewConfigImport without a passphrase: %v", err)
+	}
+	if p.Secrets.Status != apiv1.ConfigImportSecretsStatusNoPassphrase || p.Secrets.Identity.Or("") != apiv1.ConfigImportSecretsStatusNoPassphrase {
+		t.Fatalf("preview secrets without a passphrase = %+v, want no_passphrase for both", p.Secrets)
+	}
+
+	report, err := h.ImportConfig(ctx, withPass(contractArchivePassphrase))
+	if err != nil {
+		t.Fatalf("ImportConfig with the archive's passphrase: %v", err)
+	}
+	for _, n := range report.NotRestored {
+		if n.Kind == apiv1.ConfigImportNotRestoredKindDatabaseSecret || n.Kind == apiv1.ConfigImportNotRestoredKindBackupRecipient {
+			t.Errorf("the report lists %s %s as not restored", n.Kind, n.Name)
+		}
+	}
+
+	// The passphrase is now the mock's configured one, as production's is.
+	report, err = h.ImportConfig(ctx, mockImport(archive, mapping))
+	if err != nil || report.Secrets != apiv1.ConfigImportSecretsStatusOpened {
+		t.Fatalf("ImportConfig with the now configured passphrase = %+v (err %v), want the secrets opened", report, err)
+	}
+
+	fresh, err := newHandler("fresh-install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err = fresh.ImportConfig(ctx, mockImport(archive, mapping))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[apiv1.ConfigImportNotRestoredKind]bool{}
+	for _, n := range report.NotRestored {
+		kinds[n.Kind] = true
+		if n.Kind == apiv1.ConfigImportNotRestoredKindBackupRecipient && n.Reason != apiv1.ConfigImportNotRestoredReasonNoPassphrase {
+			t.Errorf("recipient reason = %s, want no_passphrase", n.Reason)
+		}
+	}
+	if !kinds[apiv1.ConfigImportNotRestoredKindBackupRecipient] || !kinds[apiv1.ConfigImportNotRestoredKindDatabaseSecret] {
+		t.Errorf("without a passphrase the report lists %v, want the cleared secret and the kept recipient", report.NotRestored)
+	}
 }

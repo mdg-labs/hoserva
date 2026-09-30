@@ -1554,7 +1554,8 @@
         "notRestoredKinds": {
           "stack_env": "App secrets",
           "disk": "Array disk",
-          "database_secret": "Stored secret"
+          "database_secret": "Stored secret",
+          "backup_recipient": "Backup encryption key"
         },
         "reasons": {
           "no_secrets": "Archive has no secrets",

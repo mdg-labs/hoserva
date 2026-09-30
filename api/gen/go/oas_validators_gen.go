@@ -1532,6 +1532,8 @@ func (s ConfigImportNotRestoredKind) Validate() error {
 		return nil
 	case "database_secret":
 		return nil
+	case "backup_recipient":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1890,6 +1892,24 @@ func (s *ConfigImportSecrets) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "status",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Identity.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "identity",
 			Error: err,
 		})
 	}

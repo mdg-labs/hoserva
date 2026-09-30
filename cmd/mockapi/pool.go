@@ -647,21 +647,26 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(tree) }()
-	var bareMetalNotRestored []backup.NotRestored
+	var (
+		bareMetalNotRestored []backup.NotRestored
+		secrets              backup.SecretsOutcome
+	)
 	if h.mockFresh() {
-		bareMetalNotRestored, err = h.mockBareMetalNotRestored(ctx, tree, mapping)
+		bareMetalNotRestored, secrets, err = h.mockBareMetalNotRestored(ctx, tree, mapping, req.Passphrase)
 		if err != nil {
 			return nil, err
 		}
 		if !h.mockHasEnabledBackupDestination() {
 			return nil, &mockError{code: "host_files_not_saved", statusCode: 409, message: "this restore replaces files already on this server, and no backup destination took the copy of them that must come first; enable a backup destination and try again. Nothing was restored"}
 		}
-	} else if mapping != nil {
-		return nil, &mockError{code: "disk_mapping_not_applicable", statusCode: 409, message: "this installation has an array, so an import restores no disks and takes no diskMapping"}
-	}
-	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
-	if err != nil {
-		return nil, err
+	} else {
+		if mapping != nil {
+			return nil, &mockError{code: "disk_mapping_not_applicable", statusCode: 409, message: "this installation has an array, so an import restores no disks and takes no diskMapping"}
+		}
+		secrets, err = h.resolveMockSecrets(ctx, tree, req.Passphrase)
+		if err != nil {
+			return nil, err
+		}
 	}
 	notRestored, err := backup.StackEnvsNotRestored(secrets, backup.Paths{})
 	if err != nil {
@@ -698,6 +703,13 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 			Message: n.Message,
 		}
 	}
+	// A bare-metal restore makes the passphrase that opened the archive this
+	// installation's own, as production's does.
+	if p, ok := secrets.OpenedPassphrase(); ok && h.mockFresh() {
+		h.notifyMu.Lock()
+		h.backupPassphrase = p
+		h.notifyMu.Unlock()
+	}
 	return report, nil
 }
 
@@ -733,8 +745,8 @@ func (h *handler) resolveMockSecrets(ctx context.Context, tree string, passphras
 	out, err := backup.ResolveSecrets(ctx, tree, src, explicit)
 	switch {
 	case errors.Is(err, backup.ErrPassphraseIncorrect):
-		return backup.SecretsOutcome{}, &mockError{code: "backup_passphrase_incorrect", statusCode: 400, message: "the passphrase does not open the archive's secrets.age"}
-	case errors.Is(err, backup.ErrSecretsUnreadable):
+		return backup.SecretsOutcome{}, &mockError{code: "backup_passphrase_incorrect", statusCode: 400, message: "the passphrase does not open the archive's secrets.age or identity.age"}
+	case errors.Is(err, backup.ErrSecretsUnreadable), errors.Is(err, backup.ErrIdentityUnreadable):
 		return backup.SecretsOutcome{}, errInvalidArchive(err)
 	case err != nil:
 		return backup.SecretsOutcome{}, err
@@ -754,8 +766,9 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 	defer func() { _ = os.RemoveAll(tree) }()
 	var bareMetal apiv1.OptConfigImportBareMetal
 	blockers := []apiv1.ConfigImportBlocker{}
+	secrets, secretsErr := h.resolveMockSecrets(ctx, tree, req.Passphrase)
 	if h.mockFresh() {
-		bm, found, err := h.mockBareMetalPreview(ctx, tree)
+		bm, found, err := h.mockBareMetalPreview(ctx, tree, secrets)
 		if err != nil {
 			return nil, err
 		}
@@ -764,9 +777,8 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			bareMetal = apiv1.NewOptConfigImportBareMetal(*bm)
 		}
 	}
-	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
-	if err != nil {
-		return nil, err
+	if secretsErr != nil {
+		return nil, secretsErr
 	}
 	notes := []apiv1.ConfigImportNote{
 		{
@@ -797,8 +809,9 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 		},
 		LiveSchemaVersion: "mock",
 		Secrets: apiv1.ConfigImportSecrets{
-			Status: apiv1.ConfigImportSecretsStatus(secrets.Status),
-			Stacks: append([]string{}, secrets.Stacks...),
+			Status:   apiv1.ConfigImportSecretsStatus(secrets.Status),
+			Identity: apiv1.NewOptConfigImportSecretsStatus(apiv1.ConfigImportSecretsStatus(mockIdentityStatus(secrets))),
+			Stacks:   append([]string{}, secrets.Stacks...),
 		},
 		Blockers:  blockers,
 		BareMetal: bareMetal,
@@ -821,6 +834,13 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 		},
 		Notes: notes,
 	}, nil
+}
+
+func mockIdentityStatus(o backup.SecretsOutcome) string {
+	if o.Identity == "" {
+		return backup.SecretsNone
+	}
+	return o.Identity
 }
 
 // maxMockArchiveBytes is the size production's importConfig refuses an

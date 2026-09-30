@@ -470,7 +470,11 @@ var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409,
 // staged and upgraded, its disks mapped onto the attached ones, and the
 // mapping the request confirmed must be the one the attached disks give,
 // before anything is written. The restore then prepares the staged database
-// (backup.BareMetal.Apply) before the same restore, and writes the disk
+// (backup.BareMetal.Apply, which with a passphrase that opens secrets.age or
+// identity.age seals the archive's database secrets under this
+// installation's machine key, makes the passphrase this installation's own
+// and adopts the archive's backup recipient) before the same restore, and
+// writes the disk
 // mount units and snapraid.conf (Handler.RegenerateArray) ahead of the
 // regeneration.
 func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) (*apiv1.ConfigImportReport, error) {
@@ -526,6 +530,9 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	secrets, err := h.resolveSecrets(ctx, staging, req.Passphrase)
 	if err != nil {
 		return nil, err
+	}
+	if _, opened := secrets.OpenedPassphrase(); bm != nil && opened && h.Backup.DestinationCipher == nil {
+		return nil, errConfigImportNotConfigured
 	}
 	if h.Store != nil {
 		active, err := h.Store.ListActive(ctx)
@@ -646,7 +653,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		if err := h.confirmBareMetal(ctx, bm); err != nil {
 			return nil, err
 		}
-		bmNotRestored, err := bm.staged.Apply(ctx, h.Backup.DB, bm.mapped)
+		bmNotRestored, err := bm.staged.Apply(ctx, h.Backup.DB, bm.mapped, secrets, h.Backup.DestinationCipher)
 		if err != nil {
 			log.Printf("hoservad: config import: preparing the archive's database: %v", err)
 			return nil, &apiError{code: "import_failed", statusCode: 500, message: fmt.Sprintf("the import did not start and nothing was changed: %v", err)}
@@ -692,6 +699,15 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// The restored database holds the archive's recipient, when the
+	// passphrase opened identity.age, so the archives this daemon writes from
+	// here on are encrypted to it and not to the one it started with. The
+	// restore hold keeps every job, which is what writes an archive, from
+	// running.
+	if r := secrets.Recipient(); bm != nil && r != nil {
+		h.Backup.Recipient = r
 	}
 
 	if importPostRestoreHookForTest != nil {
@@ -760,8 +776,8 @@ func (h *Handler) resolveSecrets(ctx context.Context, tree string, passphrase ap
 	out, err := backup.ResolveSecrets(ctx, tree, h.Backup.Secrets, explicit)
 	switch {
 	case errors.Is(err, backup.ErrPassphraseIncorrect):
-		return backup.SecretsOutcome{}, &apiError{code: "backup_passphrase_incorrect", statusCode: 400, message: "the passphrase does not open the archive's secrets.age"}
-	case errors.Is(err, backup.ErrSecretsUnreadable):
+		return backup.SecretsOutcome{}, &apiError{code: "backup_passphrase_incorrect", statusCode: 400, message: "the passphrase does not open the archive's secrets.age or identity.age"}
+	case errors.Is(err, backup.ErrSecretsUnreadable), errors.Is(err, backup.ErrIdentityUnreadable):
 		return backup.SecretsOutcome{}, &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 	case err != nil:
 		return backup.SecretsOutcome{}, fmt.Errorf("opening the archive's secrets: %w", err)
@@ -933,8 +949,9 @@ func (h *Handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 func configImportPreviewToAPI(p backup.ImportPreview, secrets backup.SecretsOutcome) *apiv1.ConfigImportPreview {
 	out := &apiv1.ConfigImportPreview{
 		Secrets: apiv1.ConfigImportSecrets{
-			Status: apiv1.ConfigImportSecretsStatus(secrets.Status),
-			Stacks: append([]string{}, secrets.Stacks...),
+			Status:   apiv1.ConfigImportSecretsStatus(secrets.Status),
+			Identity: apiv1.NewOptConfigImportSecretsStatus(apiv1.ConfigImportSecretsStatus(identityStatus(secrets))),
+			Stacks:   append([]string{}, secrets.Stacks...),
 		},
 		Archive: apiv1.ConfigImportArchive{
 			Timestamp:      p.Timestamp,
@@ -962,6 +979,13 @@ func configImportPreviewToAPI(p backup.ImportPreview, secrets backup.SecretsOutc
 		out.Notes[i] = apiv1.ConfigImportNote{Code: apiv1.ConfigImportNoteCode(n.Code), Message: n.Message}
 	}
 	return out
+}
+
+func identityStatus(o backup.SecretsOutcome) string {
+	if o.Identity == "" {
+		return backup.SecretsNone
+	}
+	return o.Identity
 }
 
 func configImportChangesToAPI(cs []backup.ImportChange) []apiv1.ConfigImportChange {

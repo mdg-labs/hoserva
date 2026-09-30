@@ -104,40 +104,47 @@ func stageMockBareMetal(ctx context.Context, tree string) (*sql.DB, *backup.Bare
 }
 
 // mockBareMetalNotRestored confirms the mapping as production does (409
-// disk_mapping_required, 409 disk_mapping_stale) and returns what the restore
-// would not restore: the disks that did not match and the secrets cleared,
-// from the same backup.BareMetal.Apply, which only writes the staged copy.
-func (h *handler) mockBareMetalNotRestored(ctx context.Context, tree string, mapping *backup.DiskMapping) ([]backup.NotRestored, error) {
+// disk_mapping_required, 409 disk_mapping_stale), opens the archive's secrets
+// as production does after it (400 backup_passphrase_incorrect), and returns
+// what the restore would not restore: the disks that did not match, the
+// secrets cleared and the recipient kept, from the same
+// backup.BareMetal.Apply, which only writes the staged copy.
+func (h *handler) mockBareMetalNotRestored(ctx context.Context, tree string, mapping *backup.DiskMapping, passphrase apiv1.OptString) ([]backup.NotRestored, backup.SecretsOutcome, error) {
 	live, bm, err := stageMockBareMetal(ctx, tree)
 	if err != nil {
-		return nil, err
+		return nil, backup.SecretsOutcome{}, err
 	}
 	defer func() { _ = live.Close() }()
 	defer bm.Discard()
 	mapped, err := bm.Confirm(h.mockAttachedDisks(), mapping)
 	switch {
 	case errors.Is(err, backup.ErrDiskMappingRequired):
-		return nil, &mockError{code: "disk_mapping_required", statusCode: 409, message: err.Error()}
+		return nil, backup.SecretsOutcome{}, &mockError{code: "disk_mapping_required", statusCode: 409, message: err.Error()}
 	case err != nil:
 		var stale *backup.DiskMappingStaleError
 		if errors.As(err, &stale) {
-			return nil, &mockError{code: "disk_mapping_stale", statusCode: 409, message: err.Error()}
+			return nil, backup.SecretsOutcome{}, &mockError{code: "disk_mapping_stale", statusCode: 409, message: err.Error()}
 		}
-		return nil, err
+		return nil, backup.SecretsOutcome{}, err
 	}
-	return bm.Apply(ctx, live, mapped)
+	secrets, err := h.resolveMockSecrets(ctx, tree, passphrase)
+	if err != nil {
+		return nil, backup.SecretsOutcome{}, err
+	}
+	notRestored, err := bm.Apply(ctx, live, mapped, secrets, backup.FakeSecretCipher{})
+	return notRestored, secrets, err
 }
 
 // mockBareMetalPreview is production's bareMetal block for the upload, with
 // the schema-decision and mapping blockers that go with it. A nil block is
 // what production answers for a newer archive.
-func (h *handler) mockBareMetalPreview(ctx context.Context, tree string) (*apiv1.ConfigImportBareMetal, []apiv1.ConfigImportBlocker, error) {
+func (h *handler) mockBareMetalPreview(ctx context.Context, tree string, secrets backup.SecretsOutcome) (*apiv1.ConfigImportBareMetal, []apiv1.ConfigImportBlocker, error) {
 	live, err := mockLiveDatabase(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() { _ = live.Close() }()
-	p, bm, err := backup.PreviewBareMetal(ctx, live, backup.Paths{}, tree, h.mockAttachedDisks())
+	p, bm, err := backup.PreviewBareMetal(ctx, live, backup.Paths{}, tree, h.mockAttachedDisks(), secrets, backup.FakeSecretCipher{})
 	var unreadable *backup.UnreadableArchiveError
 	if errors.As(err, &unreadable) {
 		return nil, nil, errInvalidArchive(err)

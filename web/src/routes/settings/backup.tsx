@@ -1226,6 +1226,7 @@ const LABELS = {
   preImportSecrets: "report.preImportSecrets",
 } as const;
 
+const RECIPIENT_KIND = "backup_recipient";
 const CHANGE_ADDED = "added";
 const CHANGE_CHANGED = "changed";
 const CHANGE_REMOVED = "removed";
@@ -1502,10 +1503,12 @@ function RestoreReport({ report }: { report: ConfigImportReport }): React.ReactE
               <li key={`${item.kind}-${item.name}`} className="flex flex-col gap-1 rounded-lg border p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">
-                    {t("settings.backup.restore.report.notRestoredItem", {
-                      kind: enumLabel(LABELS.notRestoredKinds, item.kind, t),
-                      name: item.name,
-                    })}
+                    {item.kind === RECIPIENT_KIND
+                      ? enumLabel(LABELS.notRestoredKinds, item.kind, t)
+                      : t("settings.backup.restore.report.notRestoredItem", {
+                          kind: enumLabel(LABELS.notRestoredKinds, item.kind, t),
+                          name: item.name,
+                        })}
                   </span>
                   <StatusBadge tone="warning">{enumLabel(LABELS.reasons, item.reason, t)}</StatusBadge>
                 </div>

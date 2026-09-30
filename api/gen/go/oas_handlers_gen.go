@@ -13507,10 +13507,21 @@ func (s *Server) handleGetUserSharePermissionsRequest(args [1]string, argsEscape
 // `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
 // matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
 // its database by the same migration runner a normal upgrade uses; one from a newer version is refused
-// with 409 `archive_newer_version`. This box's own machine key check and backup recipient are kept, so
-// `hoservad` starts, and every database secret sealed under the archive's key is cleared and reported
-// in `notRestored`. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row
-// of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
+// with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts.
+// With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME,
+// UPS, backup destination and notification channel credentials) is sealed under this box's machine key
+// and written back into its own table, column and row, and the stack `.env` files are restored; the
+// passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's
+// backup recipient replaces this box's own, so archives written from then on are encrypted to it.
+// Without such a passphrase everything else is restored, this box keeps its own backup recipient
+// (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and
+// reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always
+// cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given
+// that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no
+// `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything
+// is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the
+// recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a
+// row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
 // replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this
 // operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409
 // `setup_required`.
@@ -19027,12 +19038,13 @@ func (s *Server) handlePreviewAppdataRestoreRequest(args [0]string, argsEscaped 
 // the live one per category, and lists the custom config files, app templates and app stack files the
 // import would replace, add and remove; it is empty when the archive's schema version differs, since
 // the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
-// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
-// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
-// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
-// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
-// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
-// read.
+// (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age`
+// (`identity`), and if not, which stacks' `.env` files would not be restored. The optional
+// `passphrase` is tried as `importConfig` tries it, and one that does not open the archive's
+// `secrets.age` or `identity.age` is refused as 400 `backup_passphrase_incorrect`. An archive that
+// cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
 //
 // On a fresh install, one with no array configured, `bareMetal` reports the bare-metal restore (see
 // `importConfig`): whether the archive's database would be upgraded, and one entry per array disk the

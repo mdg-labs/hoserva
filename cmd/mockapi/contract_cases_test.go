@@ -2470,6 +2470,77 @@ var contractCases = []contractCase{
 	},
 	{
 		op:       "ImportConfig",
+		name:     "bare_metal_with_the_archives_passphrase",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			report, err := contractImportSealed(ctx, h, contractArchivePassphrase)
+			if err != nil {
+				return err
+			}
+			for _, n := range report.NotRestored {
+				if n.Kind == apiv1.ConfigImportNotRestoredKindBackupRecipient || (n.Kind == apiv1.ConfigImportNotRestoredKindDatabaseSecret && strings.HasPrefix(n.Name, "notify_channels")) {
+					return fmt.Errorf("the report lists %s %s as not restored although the passphrase opened the archive", n.Kind, n.Name)
+				}
+			}
+			return nil
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "bare_metal_with_a_wrong_passphrase",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := contractImportSealed(ctx, h, "not the archive's passphrase")
+			return err
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "bare_metal_without_a_passphrase_keeps_the_recipient",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			report, err := contractImportSealed(ctx, h, "")
+			if err != nil {
+				return err
+			}
+			for _, n := range report.NotRestored {
+				if n.Kind == apiv1.ConfigImportNotRestoredKindBackupRecipient && n.Reason == apiv1.ConfigImportNotRestoredReasonNoPassphrase {
+					return nil
+				}
+			}
+			return fmt.Errorf("the report %+v does not say this installation kept its own backup recipient", report.NotRestored)
+		},
+	},
+	{
+		op:       "PreviewConfigImport",
+		name:     "bare_metal_preview_reports_whether_the_passphrase_opens_the_identity",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			archive, err := buildMockSealedArchive()
+			if err != nil {
+				return err
+			}
+			for pass, want := range map[string]apiv1.ConfigImportSecretsStatus{
+				contractArchivePassphrase: apiv1.ConfigImportSecretsStatusOpened,
+				"":                        apiv1.ConfigImportSecretsStatusNoPassphrase,
+			} {
+				req := &apiv1.PreviewConfigImportReq{Archive: ht.MultipartFile{File: bytes.NewReader(archive)}}
+				if pass != "" {
+					req.Passphrase = apiv1.NewOptString(pass)
+				}
+				p, err := h.PreviewConfigImport(ctx, req)
+				if err != nil {
+					return err
+				}
+				if p.Secrets.Status != want || p.Secrets.Identity.Or("") != want {
+					return fmt.Errorf("with passphrase %q the preview reports secrets %s and identity %s, want both %s", pass, p.Secrets.Status, p.Secrets.Identity.Or(""), want)
+				}
+			}
+			return nil
+		},
+	},
+	{
+		op:       "ImportConfig",
 		name:     "disk_mapping_on_an_installation_with_an_array",
 		scenario: "healthy",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -3117,6 +3188,18 @@ func contractImportBareMetal(ctx context.Context, h apiv1.Handler, mapping strin
 	}
 	_, err = h.ImportConfig(ctx, req)
 	return err
+}
+
+func contractImportSealed(ctx context.Context, h apiv1.Handler, passphrase string) (*apiv1.ConfigImportReport, error) {
+	archive, err := buildMockSealedArchive()
+	if err != nil {
+		return nil, fmt.Errorf("building the archive: %w", err)
+	}
+	req := &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader(archive)}, DiskMapping: apiv1.NewOptString(contractMatchedMapping)}
+	if passphrase != "" {
+		req.Passphrase = apiv1.NewOptString(passphrase)
+	}
+	return h.ImportConfig(ctx, req)
 }
 
 func contractPreviewBareMetal(ctx context.Context, h apiv1.Handler, extra ...string) (*apiv1.ConfigImportPreview, error) {

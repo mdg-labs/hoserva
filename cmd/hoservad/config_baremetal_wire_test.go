@@ -22,6 +22,7 @@ import (
 	"github.com/ogen-go/ogen/ogenerrors"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/backup"
@@ -42,6 +43,8 @@ type wiredInstall struct {
 	root, etc, stateDir, dbPath, keyPath string
 
 	db          *sql.DB
+	key         *auth.MachineKey
+	settings    *api.SettingsService
 	authStore   *api.AuthStore
 	authService *api.AuthService
 	recipient   *backup.Recipient
@@ -86,6 +89,8 @@ func newWiredInstall(t *testing.T) *wiredInstall {
 	if err != nil {
 		t.Fatal(err)
 	}
+	w.key = machineKey
+	w.settings = api.NewSettingsService(api.NewSettingsStore(db), machineKey)
 	w.authService = api.NewAuthService(w.authStore, machineKey)
 	w.recipient, err = backup.LoadOrGenerateRecipient(ctx, machineKey, api.NewBackupRecipientStore(db), time.Now)
 	if err != nil {
@@ -112,7 +117,10 @@ func newWiredInstall(t *testing.T) *wiredInstall {
 			TemplatesDir: filepath.Join(w.stateDir, "templates"),
 			StacksDir:    filepath.Join(w.stateDir, "stacks"),
 		},
-		Recipient: w.recipient,
+		Recipient:         w.recipient,
+		Secrets:           backupSecretSource(w.settings, acme.NewStore(db), api.NewUPSStore(db), api.NewBackupDestinationStore(db), notify.NewStore(db)),
+		Cipher:            machineKey,
+		DestinationCipher: machineKey,
 		Destinations: []backup.Destination{{ID: "boot", Name: "Boot device", Path: filepath.Join(w.root, "backups"), Enabled: true,
 			Retention: backup.Retention{Daily: 7, Weekly: 4, Monthly: 6}}},
 	})
@@ -135,8 +143,16 @@ func (w *wiredInstall) attach(dev, uuid, wwn string) {
 // share and an admin, and the archive it exported.
 func newSourceWiredInstall(t *testing.T) (*wiredInstall, []byte) {
 	t.Helper()
-	ctx := context.Background()
 	src := newWiredInstall(t)
+	populateSourceInstall(t, src)
+	return src, exportArchive(t, src.handler)
+}
+
+// populateSourceInstall gives src a running array, a share, an admin and a
+// custom config file.
+func populateSourceInstall(t *testing.T, src *wiredInstall) {
+	t.Helper()
+	ctx := context.Background()
 	if err := src.arrays.PutArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}, []store.ArrayDisk{
 		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p1", WWN: "wwn-p1", Serial: "ser-uuid-p1", Mountpoint: "/mnt/parity1"},
 		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", WWN: "wwn-d1", Serial: "ser-uuid-d1", Mountpoint: "/mnt/disk1"},
@@ -156,7 +172,6 @@ func newSourceWiredInstall(t *testing.T) (*wiredInstall, []byte) {
 	if err := os.WriteFile(custom, []byte("archived custom\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return src, exportArchive(t, src.handler)
 }
 
 type wireClient struct {

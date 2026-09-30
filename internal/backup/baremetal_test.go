@@ -318,7 +318,7 @@ func TestBareMetalApply_MakesTheStagedDatabaseThisInstallations(t *testing.T) {
 		"/dev/sdb": {WWN: "wwn-d2", Serial: "ser-d2", FSUUID: "uuid-d2"},
 		"/dev/sdc": {WWN: "wwn-d1", Serial: "ser-d1", FSUUID: "uuid-d1"},
 	}))
-	notRestored, err := b.Apply(ctx, live, mapped)
+	notRestored, err := b.Apply(ctx, live, mapped, SecretsOutcome{}, nil)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestBareMetalApply_AFailureLeavesTheStagedDatabaseUntouched(t *testing.T) {
 	mustExec(t, staged, `CREATE TRIGGER fail_clear BEFORE UPDATE OF secrets ON backup_destinations BEGIN SELECT RAISE(ABORT, 'injected'); END`)
 	_ = staged.Close()
 
-	if _, err := b.Apply(ctx, live, mapped); err == nil || !strings.Contains(err.Error(), "injected") {
+	if _, err := b.Apply(ctx, live, mapped, SecretsOutcome{}, nil); err == nil || !strings.Contains(err.Error(), "injected") {
 		t.Fatalf("Apply = %v, want the injected failure", err)
 	}
 	db := openStagedRO(t, b.Path())
@@ -457,7 +457,7 @@ func TestBareMetalApply_RefusesWhenThisInstallationHasNoKeyRowsToKeep(t *testing
 			}
 			defer b.Discard()
 			before := fileSum(t, b.Path())
-			if _, err := b.Apply(ctx, live, b.Map(nil)); err == nil {
+			if _, err := b.Apply(ctx, live, b.Map(nil), SecretsOutcome{}, nil); err == nil {
 				t.Fatal("Apply succeeded without this installation's own row to keep")
 			}
 			if fileSum(t, b.Path()) != before {
@@ -485,7 +485,7 @@ func TestBareMetalApply_DevicesNeverCollide(t *testing.T) {
 		"/dev/sda": {WWN: "wwn-d2", FSUUID: "uuid-d2"},
 		"/dev/sdb": {WWN: "wwn-d1", FSUUID: "uuid-d1"},
 	}))
-	if _, err := b.Apply(ctx, live, mapped); err != nil {
+	if _, err := b.Apply(ctx, live, mapped, SecretsOutcome{}, nil); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	staged := openStagedRO(t, b.Path())

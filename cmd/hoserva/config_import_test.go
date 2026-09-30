@@ -402,6 +402,28 @@ func TestConfigImportPreview_SendsThePassphraseAndPrintsTheSecretsStatus(t *test
 	}
 }
 
+func TestConfigImportPreview_PrintsWhetherThePassphraseOpensTheBackupRecipient(t *testing.T) {
+	for status, want := range map[apiv1.ConfigImportSecretsStatus]string{
+		apiv1.ConfigImportSecretsStatusOpened:              "keeps the archive's recipient",
+		apiv1.ConfigImportSecretsStatusNone:                "the archive has no identity",
+		apiv1.ConfigImportSecretsStatusNoPassphrase:        "no backup passphrase is available",
+		apiv1.ConfigImportSecretsStatusPassphraseIncorrect: "does not open the archive's identity",
+	} {
+		sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			p := testConfigImportPreview()
+			p.Secrets = apiv1.ConfigImportSecrets{Status: apiv1.ConfigImportSecretsStatusOpened, Identity: apiv1.NewOptConfigImportSecretsStatus(status), Stacks: []string{}}
+			writeJSON(t, w, http.StatusOK, p)
+		})
+		printed, err := runAppCLI(t, sock, "config", "import", "--preview", writeArchiveFile(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(printed, "Backup recipient:") || !strings.Contains(printed, want) {
+			t.Errorf("identity %s: output does not say %q:\n%s", status, want, printed)
+		}
+	}
+}
+
 func testBareMetalPreview() *apiv1.ConfigImportPreview {
 	p := testConfigImportPreview()
 	p.Blockers = []apiv1.ConfigImportBlocker{}
