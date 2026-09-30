@@ -1554,6 +1554,99 @@
           "sealed_under_other_key": "Sealed under another server's key"
         }
       },
+      "appdata": {
+        "title": "Appdata backup",
+        "description": "Backs up each app's own files (its appdata folder) so an app can be put back the way it was. Choose which apps are included and whether each is stopped while its files are copied. The schedule is on the Schedules page.",
+        "backUpNow": "Back up now",
+        "backupFailed": "Could not start the appdata backup",
+        "errors": {
+          "array_stopped": "The array is stopped, so appdata cannot be backed up or restored",
+          "container_not_found": "That app has no appdata in the backup",
+          "archive_not_found": "That archive is no longer on the destination",
+          "backup_destination_not_found": "That backup destination no longer exists",
+          "appdata_archive_invalid": "That is not an appdata archive of this server and app",
+          "appdata_preview_gone": "The preview is no longer available",
+          "appdata_preview_failed": "The preview failed",
+          "appdata_preview_not_ready": "The preview is not ready yet",
+          "not_configured": "This server cannot back up appdata"
+        },
+        "policy": {
+          "loadFailed": "Could not load the appdata backup settings",
+          "saveFailed": "Could not save the backup setting for {{name}}",
+          "retry": "Try again",
+          "noEngineTitle": "Apps are not available on this server",
+          "noEngineDescription": "This server has no Docker Engine connection, so there are no apps whose appdata could be backed up.",
+          "engineUnreachableTitle": "The Docker Engine is not reachable",
+          "engineUnreachableDescription": "Hoserva could not reach the Docker Engine, so it cannot list the apps to back up.",
+          "empty": {
+            "title": "No apps with appdata",
+            "description": "No container keeps files in the appdata folder yet. Apps you install will appear here."
+          },
+          "columns": {
+            "container": "App",
+            "included": "Back up",
+            "stop": "Stop while copying",
+            "actions": "Actions"
+          },
+          "includeFor": "Include {{name}} in the appdata backup",
+          "stopFor": "Stop {{name}} while its appdata is copied",
+          "backUpFor": "Back up {{name}} now",
+          "backUpOne": "Back up now",
+          "databaseImage": "Database image",
+          "hint": "Copying a database's files while it runs can give a backup that does not restore, so databases are best stopped while they are copied. An app that is stopped is started again afterwards."
+        },
+        "job": {
+          "backupSucceeded": "Appdata backup finished",
+          "backupFailed": "The appdata backup failed",
+          "restoreSucceeded": "Appdata restore finished",
+          "restoreFailed": "The appdata restore failed",
+          "statusIs": "Job status: {{status}}.",
+          "followFailed": "Could not follow the job",
+          "cancelFailed": "Could not cancel the job"
+        },
+        "archives": {
+          "title": "Appdata archives and restore",
+          "description": "The appdata backups found on your destinations, newest first. Restore puts one app's files back from an archive, after showing what it would replace.",
+          "refresh": "Refresh archives",
+          "loadFailed": "Could not load the appdata archives",
+          "unavailableTitle": "{{destination}} could not be listed",
+          "empty": {
+            "title": "No appdata archives yet",
+            "description": "No appdata backup has been written to a destination yet. Use Back up now, or wait for the schedule.",
+            "descriptionPartial": "None were found on the destinations that could be listed."
+          },
+          "columns": {
+            "destination": "Destination",
+            "archive": "Archive",
+            "created": "Taken",
+            "size": "Size",
+            "actions": "Actions"
+          },
+          "preRestore": "Snapshot before a restore",
+          "encrypted": "Encrypted",
+          "restore": "Restore",
+          "restoreFor": "Restore {{container}} from {{archive}}"
+        },
+        "restore": {
+          "title": "Restore {{container}}",
+          "description": "From {{archive}}, taken {{when}}.",
+          "previewFailed": "Could not preview the restore",
+          "previewAgain": "Preview again",
+          "noChanges": "The archive and the current files are identical, so nothing would change.",
+          "replaced": "Replaced",
+          "added": "Added",
+          "removed": "Removed",
+          "groupLabel": "{{label}} ({{size}})",
+          "moreFiles_one": "…and {{count}} more file",
+          "moreFiles_other": "…and {{count}} more files",
+          "confirmTitle": "Replace the appdata of {{container}}",
+          "itemReplace": "Each folder in the archive is replaced as a whole: files that are not in the archive are removed.",
+          "itemSnapshot": "A snapshot of the current appdata is written to your destinations first. If that fails, nothing is changed.",
+          "itemStop": "The app is stopped during the restore and started again afterwards.",
+          "confirm": "Restore",
+          "applyFailed": "Could not start the restore"
+        }
+      },
       "drill": {
         "title": "Restore drill",
         "description": "Checks that your newest backup on each destination can really be restored. It fetches the archive, opens it the way a restore would and verifies it, then throws everything away. Nothing is written to a destination.",

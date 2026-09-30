@@ -1623,3 +1623,359 @@ describe("Config restore on the backup page", () => {
     expect(screen.queryByRole("button", { name: "Restore this configuration" })).not.toBeInTheDocument();
   });
 });
+
+const JELLYFIN = {
+  name: "jellyfin",
+  image: "jellyfin/jellyfin",
+  running: true,
+  stop: true,
+  included: true,
+  databaseImage: false,
+};
+
+const POSTGRES = {
+  name: "postgres",
+  image: "postgres",
+  running: true,
+  stop: true,
+  included: true,
+  databaseImage: true,
+};
+
+const POSTGRES_WARNING = "A database copied while it runs can give a backup that does not restore.";
+
+function appdataJob(type: string, status: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id: `${type}-job`,
+    type,
+    class: "service",
+    status,
+    progress: status === "running" ? 40 : null,
+    resumable: false,
+    cancellable: false,
+    createdAt: "2026-09-29T10:00:00Z",
+    ...overrides,
+  };
+}
+
+function appdataArchive(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "jellyfin-2026-09-28.tar.zst",
+    container: "jellyfin",
+    destinationId: "boot",
+    destinationName: "Boot device",
+    createdAt: "2026-09-28T02:00:00Z",
+    size: 2048,
+    encrypted: false,
+    ...overrides,
+  };
+}
+
+function restorePreview() {
+  const empty = { files: 0, bytes: 0, sample: [] };
+  return {
+    container: "jellyfin",
+    archive: "jellyfin-2026-09-28.tar.zst",
+    destinationId: "boot",
+    createdAt: "2026-09-28T02:00:00Z",
+    directories: [
+      {
+        directory: "jellyfin/config",
+        replaced: { files: 3, bytes: 3072, sample: ["a.db", "b.db"] },
+        added: { files: 1, bytes: 10, sample: ["new.xml"] },
+        removed: { files: 2, bytes: 4096, sample: ["old.log", "old2.log"] },
+      },
+      { directory: "jellyfin/cache", replaced: empty, added: empty, removed: empty },
+    ],
+  };
+}
+
+type AppdataResponses = {
+  policy?: () => Promise<unknown>;
+  archives?: () => Promise<unknown>;
+  job?: (jobId: string) => Promise<unknown>;
+  preview?: () => Promise<unknown>;
+};
+
+function mockAppdataApi(responses: AppdataResponses = {}): void {
+  mockBackupApi();
+  const base = mockGet.getMockImplementation() as (path: string) => unknown;
+  mockGet.mockImplementation((path: string, options?: { params?: { path?: { jobId?: string } } }) => {
+    switch (path) {
+      case "/appdata/backup":
+        return (responses.policy ?? (() => apiOk({ containers: [JELLYFIN, POSTGRES] })))();
+      case "/appdata/backup/archives":
+        return (responses.archives ?? (() => apiOk({ archives: [appdataArchive()], unavailable: [] })))();
+      case "/jobs/{jobId}": {
+        const jobId = options?.params?.path?.jobId ?? "";
+        return (responses.job ?? ((id: string) => apiOk(appdataJob(id.replace(/-job$/, ""), "succeeded"))))(jobId);
+      }
+      case "/appdata/backup/restore/preview/{jobId}":
+        return (responses.preview ?? (() => apiOk(restorePreview())))();
+      default:
+        return base(path);
+    }
+  });
+  mockPost.mockImplementation((path: string) => {
+    switch (path) {
+      case "/appdata/backup":
+        return apiOk(appdataJob("appdata_backup", "queued"));
+      case "/appdata/backup/restore/preview":
+        return apiOk(appdataJob("appdata_restore_preview", "queued"));
+      case "/appdata/backup/restore":
+        return apiOk(appdataJob("appdata_restore", "queued"));
+      default:
+        return Promise.resolve({ data: null, response: { ok: false } });
+    }
+  });
+}
+
+function getCalls(path: string): number {
+  return mockGet.mock.calls.filter((call) => call[0] === path).length;
+}
+
+describe("Appdata backup on the backup page", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPut.mockReset();
+    mockToast.mockReset();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  it("lists each container with its stop policy and flags a database image that is not stopped with the API's warning", async () => {
+    mockAppdataApi({
+      policy: () =>
+        apiOk({ containers: [JELLYFIN, { ...POSTGRES, stop: false, warning: POSTGRES_WARNING }] }),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("jellyfin/jellyfin")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Stop jellyfin while its appdata is copied" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Stop postgres while its appdata is copied" })).not.toBeChecked();
+    expect(screen.getAllByText(POSTGRES_WARNING)).toHaveLength(1);
+    expect(screen.getByText("Database image")).toBeInTheDocument();
+  });
+
+  it("saves a container's stop policy and shows the warning once a database image is not stopped", async () => {
+    let postgres: Record<string, unknown> = POSTGRES;
+    mockAppdataApi({ policy: () => apiOk({ containers: [JELLYFIN, postgres] }) });
+    mockPut.mockImplementation(() => {
+      postgres = { ...POSTGRES, stop: false, warning: POSTGRES_WARNING };
+      return apiOk(postgres);
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Stop postgres while its appdata is copied" }));
+
+    expect(await screen.findByText(POSTGRES_WARNING)).toBeInTheDocument();
+    expect(mockPut).toHaveBeenCalledWith("/appdata/backup/containers/{name}", {
+      params: { path: { name: "postgres" } },
+      body: { stop: false, included: true },
+    });
+    expect(screen.getByRole("switch", { name: "Stop postgres while its appdata is copied" })).not.toBeChecked();
+  });
+
+  it("saves whether a container is included without changing its stop policy", async () => {
+    mockAppdataApi();
+    mockPut.mockReturnValue(apiOk({ ...JELLYFIN, included: false }));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Include jellyfin in the appdata backup" }));
+
+    await waitFor(() =>
+      expect(mockPut).toHaveBeenCalledWith("/appdata/backup/containers/{name}", {
+        params: { path: { name: "jellyfin" } },
+        body: { stop: true, included: false },
+      }),
+    );
+  });
+
+  it("starts a backup of every included container and follows the job to its end", async () => {
+    mockAppdataApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    await screen.findByText("jellyfin/jellyfin");
+    const archiveLoads = getCalls("/appdata/backup/archives");
+    fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByText("Appdata backup finished")).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalledWith("/appdata/backup", { body: {} });
+    expect(mockGet).toHaveBeenCalledWith("/jobs/{jobId}", {
+      params: { path: { jobId: "appdata_backup-job" } },
+      signal: expect.anything(),
+    });
+    await waitFor(() => expect(getCalls("/appdata/backup/archives")).toBe(archiveLoads + 1));
+  });
+
+  it("starts a backup of one chosen container", async () => {
+    mockAppdataApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Back up postgres now" }));
+
+    await screen.findByText("Appdata backup finished");
+    expect(mockPost).toHaveBeenCalledWith("/appdata/backup", { body: { containers: ["postgres"] } });
+  });
+
+  it("shows the job's progress while it runs", async () => {
+    let polls = 0;
+    mockAppdataApi({
+      job: () => {
+        polls += 1;
+        return apiOk(appdataJob("appdata_backup", polls === 1 ? "running" : "succeeded"));
+      },
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+    expect(screen.queryByText("Appdata backup finished")).not.toBeInTheDocument();
+    expect(await screen.findByText("Appdata backup finished", undefined, { timeout: 4000 })).toBeInTheDocument();
+  });
+
+  it("shows the job's own error when the backup job fails", async () => {
+    mockAppdataApi({
+      job: () =>
+        apiOk(appdataJob("appdata_backup", "failed", { error: { code: "internal", message: "postgres would not stop" } })),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByText("The appdata backup failed")).toBeInTheDocument();
+    expect(screen.getByText("postgres would not stop")).toBeInTheDocument();
+    expect(screen.queryByText("Appdata backup finished")).not.toBeInTheDocument();
+  });
+
+  it("lists archives newest first per container and destination", async () => {
+    mockAppdataApi({
+      archives: () =>
+        apiOk({
+          archives: [
+            appdataArchive({ name: "jellyfin-old.tar.zst", createdAt: "2026-09-01T02:00:00Z" }),
+            appdataArchive({ name: "jellyfin-new.tar.zst", createdAt: "2026-09-28T02:00:00Z", encrypted: true }),
+            appdataArchive({ name: "jellyfin-offsite.tar.zst", destinationId: "offsite", destinationName: "Offsite copy" }),
+            appdataArchive({ name: "postgres-1.tar.zst", container: "postgres" }),
+            appdataArchive({ name: "jellyfin-snap.tar.zst", createdAt: "2026-09-15T02:00:00Z", reason: "pre-restore" }),
+          ],
+          unavailable: [],
+        }),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    await screen.findByText("jellyfin-new.tar.zst");
+    const order = screen
+      .getAllByText(/^(jellyfin|postgres)-.*\.tar\.zst$/)
+      .map((element) => element.textContent);
+    expect(order).toEqual([
+      "jellyfin-new.tar.zst",
+      "jellyfin-snap.tar.zst",
+      "jellyfin-old.tar.zst",
+      "jellyfin-offsite.tar.zst",
+      "postgres-1.tar.zst",
+    ]);
+    expect(screen.getByText("Snapshot before a restore")).toBeInTheDocument();
+    const newestRow = screen.getByText("jellyfin-new.tar.zst").closest("tr") as HTMLElement;
+    expect(within(newestRow).getByText("Encrypted")).toBeInTheDocument();
+    const oldRow = screen.getByText("jellyfin-old.tar.zst").closest("tr") as HTMLElement;
+    expect(within(oldRow).queryByText("Encrypted")).not.toBeInTheDocument();
+  });
+
+  it("names a destination that could not be listed instead of reading it as empty", async () => {
+    mockAppdataApi({
+      archives: () =>
+        apiOk({ archives: [], unavailable: [{ destinationId: "offsite", message: "rclone: connection refused" }] }),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("Offsite copy could not be listed")).toBeInTheDocument();
+    expect(screen.getByText("rclone: connection refused")).toBeInTheDocument();
+    expect(screen.getByText("None were found on the destinations that could be listed.")).toBeInTheDocument();
+  });
+
+  it("says there are no archives yet when every destination was listed and none holds one", async () => {
+    mockAppdataApi({ archives: () => apiOk({ archives: [], unavailable: [] }) });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("No appdata archives yet")).toBeInTheDocument();
+    expect(screen.queryByText(/could not be listed/)).not.toBeInTheDocument();
+  });
+
+  it("previews a restore, then restores after a typed confirmation and follows the restore job", async () => {
+    mockAppdataApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Restore jellyfin from jellyfin-2026-09-28.tar.zst" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("jellyfin/config")).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalledWith("/appdata/backup/restore/preview", {
+      body: { container: "jellyfin", archive: "jellyfin-2026-09-28.tar.zst", destinationId: "boot" },
+    });
+    expect(mockGet).toHaveBeenCalledWith("/appdata/backup/restore/preview/{jobId}", {
+      params: { path: { jobId: "appdata_restore_preview-job" } },
+      signal: undefined,
+    });
+    expect(within(dialog).getByText("Replaced (3.00 KiB)")).toBeInTheDocument();
+    expect(within(dialog).getByText("Added (10 B)")).toBeInTheDocument();
+    expect(within(dialog).getByText("Removed (4.00 KiB)")).toBeInTheDocument();
+    expect(within(dialog).getByText("a.db")).toBeInTheDocument();
+    expect(within(dialog).getByText("old2.log")).toBeInTheDocument();
+    expect(within(dialog).getByText("…and 1 more file")).toBeInTheDocument();
+    expect(within(dialog).queryByText("jellyfin/cache")).not.toBeInTheDocument();
+
+    const restoreButton = within(dialog).getByRole("button", { name: "Restore" });
+    expect(restoreButton).toBeDisabled();
+    expect(mockPost).not.toHaveBeenCalledWith("/appdata/backup/restore", expect.anything());
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "jellyfin" } });
+    fireEvent.click(restoreButton);
+
+    expect(await screen.findByText("Appdata restore finished")).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalledWith("/appdata/backup/restore", {
+      body: {
+        container: "jellyfin",
+        archive: "jellyfin-2026-09-28.tar.zst",
+        destinationId: "boot",
+        confirm: true,
+      },
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("says nothing would change when the archive and the live files are identical", async () => {
+    mockAppdataApi({
+      preview: () => {
+        const empty = { files: 0, bytes: 0, sample: [] };
+        return apiOk({
+          ...restorePreview(),
+          directories: [{ directory: "jellyfin/config", replaced: empty, added: empty, removed: empty }],
+        });
+      },
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Restore jellyfin from jellyfin-2026-09-28.tar.zst" }),
+    );
+
+    expect(
+      await screen.findByText("The archive and the current files are identical, so nothing would change."),
+    ).toBeInTheDocument();
+  });
+});

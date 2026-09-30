@@ -577,6 +577,64 @@ export function postConfigExport() {
   return hoservaClient.POST("/config/export", { parseAs: "blob" });
 }
 
+type AppdataBackupContainer = components["schemas"]["AppdataBackupContainer"];
+
+// `getAppdataBackup` answers 501 `not_configured` without a Docker Engine
+// client and 503 when the Engine is not reachable; both are states the
+// appdata section names, not load failures.
+export type AppdataBackupState =
+  | { state: "ready"; containers: AppdataBackupContainer[] }
+  | { state: "no_engine" }
+  | { state: "engine_unreachable"; message: string };
+
+const ENGINE_UNREACHABLE_STATUS = 503;
+
+export async function getAppdataBackup(signal?: AbortSignal): Promise<ClientResult<AppdataBackupState>> {
+  const result = await hoservaClient.GET("/appdata/backup", { signal });
+  if (result.error?.code === NOT_CONFIGURED_CODE) {
+    return { data: { state: "no_engine" }, response: { ok: true } };
+  }
+  if (result.response?.status === ENGINE_UNREACHABLE_STATUS) {
+    return {
+      data: { state: "engine_unreachable", message: result.error?.message ?? "" },
+      response: { ok: true },
+    };
+  }
+  if (result.error !== undefined || result.response?.ok === false || result.data === undefined) {
+    return { error: result.error, response: { ok: false } };
+  }
+  return { data: { state: "ready", containers: result.data.containers }, response: { ok: true } };
+}
+
+export function putAppdataBackupContainer(name: string, body: { stop: boolean; included: boolean }) {
+  return hoservaClient.PUT("/appdata/backup/containers/{name}", { params: { path: { name } }, body });
+}
+
+export function postAppdataBackup(containers?: string[]) {
+  return hoservaClient.POST("/appdata/backup", {
+    body: containers === undefined ? {} : { containers },
+  });
+}
+
+export function getAppdataArchives(signal?: AbortSignal) {
+  return availableUnlessNotConfigured(hoservaClient.GET("/appdata/backup/archives", { signal }));
+}
+
+export function postAppdataRestorePreview(body: { container: string; archive: string; destinationId: string }) {
+  return hoservaClient.POST("/appdata/backup/restore/preview", { body });
+}
+
+export function getAppdataRestorePreview(jobId: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/appdata/backup/restore/preview/{jobId}", {
+    params: { path: { jobId } },
+    signal,
+  });
+}
+
+export function postAppdataRestore(body: { container: string; archive: string; destinationId: string }) {
+  return hoservaClient.POST("/appdata/backup/restore", { body: { ...body, confirm: true } });
+}
+
 // The generated body type calls the binary `archive` part a string; the
 // request itself is the FormData built here, which the client passes
 // through untouched.

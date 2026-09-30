@@ -1,5 +1,5 @@
 import { Archive } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -11,6 +11,7 @@ import { showFeedbackToast } from "@/components/patterns/feedback-toast";
 import { FileUpload } from "@/components/patterns/file-upload";
 import { FormOverlay } from "@/components/patterns/form-overlay";
 import { GroupedResults, type ResultGroup } from "@/components/patterns/grouped-results";
+import { JobProgress } from "@/components/patterns/job-progress";
 import { jobStatusLabel } from "@/components/patterns/job-status";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { NumberUnit } from "@/components/patterns/number-unit";
@@ -22,27 +23,40 @@ import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { jobDetailPath } from "@/hooks/paths";
 import type { components } from "@/lib/api/client";
 import {
   deleteBackupDestination,
+  getAppdataArchives,
+  getAppdataBackup,
+  getAppdataRestorePreview,
   getBackupDestinations,
   getGeneralSettings,
+  getJob,
   getRestoreDrill,
   getSchedules,
+  postAppdataBackup,
+  postAppdataRestore,
+  postAppdataRestorePreview,
   postBackupDestination,
   postBackupDestinationTest,
   postConfigExport,
   postConfigImport,
   postConfigImportPreview,
+  postJobCancel,
   postRestoreDrill,
+  putAppdataBackupContainer,
   putGeneralSettings,
+  type AppdataBackupState,
   type Availability,
 } from "@/lib/api/operations";
 import { parseClientResult, type ClientResult } from "@/lib/api/request";
+import { formatBytes } from "@/routes/storage-setup/config-preview";
 import { useApiQuery, type UseApiQueryResult } from "@/lib/api/use-api-query";
 
+type ListAppdataArchives = components["schemas"]["ListAppdataArchivesOK"];
 type BackupDestination = components["schemas"]["BackupDestination"];
 type BackupDestinationType = components["schemas"]["BackupDestinationType"];
 type BackupDestinationTestResult = components["schemas"]["BackupDestinationTestResult"];
@@ -1621,6 +1635,901 @@ function ConfigRestoreCard(): React.ReactElement {
   );
 }
 
+const JOB_POLL_MS = 1000;
+const JOB_FINISHED_STATUSES: Job["status"][] = ["succeeded", "failed", "cancelled", "interrupted"];
+
+const APPDATA_ERROR_CODES = [
+  "array_stopped",
+  "container_not_found",
+  "archive_not_found",
+  "backup_destination_not_found",
+  "appdata_archive_invalid",
+  "appdata_preview_gone",
+  "appdata_preview_failed",
+  "appdata_preview_not_ready",
+  "not_configured",
+];
+
+function appdataFailureTitle(code: string | undefined, fallback: string, t: TFn): string {
+  if (code !== undefined && APPDATA_ERROR_CODES.includes(code)) {
+    return t(`settings.backup.appdata.errors.${code}`);
+  }
+  return fallback;
+}
+
+function jobFinished(job: Job): boolean {
+  return JOB_FINISHED_STATUSES.includes(job.status);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+    const onAbort = (): void => {
+      window.clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+type FollowResult = { kind: "done"; job: Job } | { kind: "error"; message: string } | { kind: "aborted" };
+
+function useJobFollow(): {
+  job: Job | null;
+  failure: string | null;
+  start: (queued: Job, fallback: string) => Promise<FollowResult>;
+  reset: () => void;
+} {
+  const [job, setJob] = useState<Job | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const abort = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      abort.current?.abort();
+    },
+    [],
+  );
+
+  const reset = useCallback((): void => {
+    abort.current?.abort();
+    abort.current = null;
+    setJob(null);
+    setFailure(null);
+  }, []);
+
+  const start = useCallback(async (queued: Job, fallback: string): Promise<FollowResult> => {
+    abort.current?.abort();
+    const controller = new AbortController();
+    abort.current = controller;
+    setJob(queued);
+    setFailure(null);
+    let current = queued;
+    while (!jobFinished(current)) {
+      const outcome = await request<Job>(() => getJob(current.id, controller.signal), fallback);
+      if (controller.signal.aborted) {
+        return { kind: "aborted" };
+      }
+      if (!outcome.ok || outcome.data === undefined) {
+        const message = outcome.ok ? fallback : outcome.message;
+        setFailure(message);
+        return { kind: "error", message };
+      }
+      current = outcome.data;
+      setJob(current);
+      if (!jobFinished(current) && !(await sleep(JOB_POLL_MS, controller.signal))) {
+        return { kind: "aborted" };
+      }
+    }
+    return { kind: "done", job: current };
+  }, []);
+
+  return { job, failure, start, reset };
+}
+
+function jobFailureMessage(job: Job, t: ReturnType<typeof useTranslation>["t"]): string {
+  return job.error?.message || t("settings.backup.appdata.job.statusIs", { status: jobStatusLabel(job.status, t) });
+}
+
+type JobKind = "backup" | "restore";
+
+function AppdataJobPanel({
+  kind,
+  job,
+  failure,
+  onCancel,
+}: {
+  kind: JobKind;
+  job: Job;
+  failure: string | null;
+  onCancel: (jobId: string) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-3">
+      <JobProgress job={job} onCancel={onCancel} />
+      {failure !== null ? (
+        <Banner
+          tone="error"
+          title={t("settings.backup.appdata.job.followFailed")}
+          description={failure}
+          action={
+            <Button size="sm" variant="outline" render={<Link to={jobDetailPath(job.id)} />}>
+              {t("settings.backup.drill.viewJob")}
+            </Button>
+          }
+        />
+      ) : null}
+      {job.status === "succeeded" ? (
+        <Banner tone="info" title={t(`settings.backup.appdata.job.${kind}Succeeded`)} />
+      ) : null}
+      {jobFinished(job) && job.status !== "succeeded" ? (
+        <Banner
+          tone="error"
+          title={t(`settings.backup.appdata.job.${kind}Failed`)}
+          description={jobFailureMessage(job, t)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+type AppdataRestorePreview = components["schemas"]["AppdataRestorePreview"];
+type AppdataArchive = components["schemas"]["AppdataArchive"];
+type AppdataBackupContainer = components["schemas"]["AppdataBackupContainer"];
+
+type RestorePhase = "starting" | "running" | "loading" | "ready" | "failed";
+
+function useAppdataRestore(onStarted: (job: Job) => void): {
+  target: AppdataArchive | null;
+  phase: RestorePhase;
+  job: Job | null;
+  preview: AppdataRestorePreview | null;
+  failure: RestoreFailure | null;
+  applyBusy: boolean;
+  applyFailure: RestoreFailure | null;
+  begin: (archive: AppdataArchive) => Promise<void>;
+  apply: () => Promise<boolean>;
+  close: () => void;
+} {
+  const { t } = useTranslation();
+  const [target, setTarget] = useState<AppdataArchive | null>(null);
+  const [phase, setPhase] = useState<RestorePhase>("starting");
+  const [preview, setPreview] = useState<AppdataRestorePreview | null>(null);
+  const [failure, setFailure] = useState<RestoreFailure | null>(null);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyFailure, setApplyFailure] = useState<RestoreFailure | null>(null);
+  const follow = useJobFollow();
+  const generation = useRef(0);
+
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
+
+  const begin = useCallback(
+    async (archive: AppdataArchive): Promise<void> => {
+      generation.current += 1;
+      const mine = generation.current;
+      follow.reset();
+      setTarget(archive);
+      setPhase("starting");
+      setPreview(null);
+      setFailure(null);
+      setApplyFailure(null);
+      const fallback = t("settings.backup.appdata.restore.previewFailed");
+      const fail = (next: RestoreFailure): void => {
+        setFailure(next);
+        setPhase("failed");
+      };
+      const queued = await request<Job>(
+        () =>
+          postAppdataRestorePreview({
+            container: archive.container,
+            archive: archive.name,
+            destinationId: archive.destinationId,
+          }),
+        fallback,
+      );
+      if (mine !== generation.current) {
+        return;
+      }
+      if (!queued.ok) {
+        fail({ code: queued.code, message: queued.message });
+        return;
+      }
+      if (queued.data === undefined) {
+        fail({ code: undefined, message: fallback });
+        return;
+      }
+      setPhase("running");
+      const followed = await follow.start(queued.data, fallback);
+      if (mine !== generation.current || followed.kind === "aborted") {
+        return;
+      }
+      if (followed.kind === "error") {
+        fail({ code: undefined, message: followed.message });
+        return;
+      }
+      if (followed.job.status !== "succeeded") {
+        fail({ code: undefined, message: jobFailureMessage(followed.job, t) });
+        return;
+      }
+      setPhase("loading");
+      const result = await request<AppdataRestorePreview>(
+        () => getAppdataRestorePreview(followed.job.id),
+        fallback,
+      );
+      if (mine !== generation.current) {
+        return;
+      }
+      if (!result.ok) {
+        fail({ code: result.code, message: result.message });
+        return;
+      }
+      if (result.data === undefined) {
+        fail({ code: undefined, message: fallback });
+        return;
+      }
+      setPreview(result.data);
+      setPhase("ready");
+    },
+    [follow, t],
+  );
+
+  const apply = useCallback(async (): Promise<boolean> => {
+    if (target === null) {
+      return false;
+    }
+    setApplyBusy(true);
+    setApplyFailure(null);
+    try {
+      const outcome = await request<Job>(
+        () =>
+          postAppdataRestore({
+            container: target.container,
+            archive: target.name,
+            destinationId: target.destinationId,
+          }),
+        t("settings.backup.appdata.restore.applyFailed"),
+      );
+      if (!outcome.ok) {
+        setApplyFailure({ code: outcome.code, message: outcome.message });
+        return false;
+      }
+      if (outcome.data === undefined) {
+        setApplyFailure({ code: undefined, message: t("settings.backup.appdata.restore.applyFailed") });
+        return false;
+      }
+      generation.current += 1;
+      setTarget(null);
+      onStarted(outcome.data);
+      return true;
+    } finally {
+      setApplyBusy(false);
+    }
+  }, [onStarted, t, target]);
+
+  const close = useCallback((): void => {
+    generation.current += 1;
+    follow.reset();
+    setTarget(null);
+    setPreview(null);
+    setFailure(null);
+    setApplyFailure(null);
+  }, [follow]);
+
+  return { target, phase, job: follow.job, preview, failure, applyBusy, applyFailure, begin, apply, close };
+}
+
+function AppdataPreviewResult({ preview }: { preview: AppdataRestorePreview }): React.ReactElement {
+  const { t } = useTranslation();
+  const directories = preview.directories
+    .map((directory) => ({
+      directory: directory.directory,
+      groups: [
+        { id: CHANGE_CHANGED, label: t("settings.backup.appdata.restore.replaced"), group: directory.replaced },
+        { id: CHANGE_ADDED, label: t("settings.backup.appdata.restore.added"), group: directory.added },
+        { id: CHANGE_REMOVED, label: t("settings.backup.appdata.restore.removed"), group: directory.removed },
+      ].filter((entry) => entry.group.files > 0),
+    }))
+    .filter((directory) => directory.groups.length > 0);
+
+  if (directories.length === 0) {
+    return <p className="text-muted-foreground text-sm">{t("settings.backup.appdata.restore.noChanges")}</p>;
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {directories.map((directory) => {
+        const groups: ResultGroup[] = directory.groups.map((entry) => ({
+          id: entry.id,
+          label: t("settings.backup.appdata.restore.groupLabel", {
+            label: entry.label,
+            size: formatBytes(entry.group.bytes),
+          }),
+          count: entry.group.files,
+          defaultOpen: true,
+          items:
+            entry.group.files > entry.group.sample.length
+              ? [
+                  ...entry.group.sample,
+                  t("settings.backup.appdata.restore.moreFiles", {
+                    count: entry.group.files - entry.group.sample.length,
+                  }),
+                ]
+              : entry.group.sample,
+        }));
+        return (
+          <div key={directory.directory} className="flex flex-col gap-2">
+            <p className="font-medium text-sm">{directory.directory}</p>
+            <GroupedResults groups={groups} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AppdataRestoreOverlay({
+  restore,
+  onCancelJob,
+}: {
+  restore: ReturnType<typeof useAppdataRestore>;
+  onCancelJob: (jobId: string) => void;
+}): React.ReactElement {
+  const { t, i18n } = useTranslation();
+  const [confirmText, setConfirmText] = useState("");
+  const { target, phase, job, preview, failure, applyBusy, applyFailure } = restore;
+
+  function close(): void {
+    setConfirmText("");
+    restore.close();
+  }
+
+  let body: React.ReactElement | null = null;
+  if (phase === "starting" || phase === "loading") {
+    body = <LoadingBlock rows={2} />;
+  } else if (phase === "running") {
+    body = job ? <JobProgress job={job} onCancel={onCancelJob} /> : <LoadingBlock rows={2} />;
+  } else if (phase === "failed" && failure) {
+    body = (
+      <Banner
+        tone="error"
+        title={appdataFailureTitle(failure.code, t("settings.backup.appdata.restore.previewFailed"), t)}
+        description={failure.message}
+        action={
+          target ? (
+            <Button size="sm" variant="outline" onClick={() => void restore.begin(target)}>
+              {t("settings.backup.appdata.restore.previewAgain")}
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  } else if (phase === "ready" && preview && target) {
+    body = (
+      <>
+        <AppdataPreviewResult preview={preview} />
+        <TypedConfirm
+          phrase={target.container}
+          value={confirmText}
+          onChange={setConfirmText}
+          title={t("settings.backup.appdata.restore.confirmTitle", { container: target.container })}
+          items={[
+            t("settings.backup.appdata.restore.itemReplace"),
+            t("settings.backup.appdata.restore.itemSnapshot"),
+            t("settings.backup.appdata.restore.itemStop"),
+          ]}
+        />
+      </>
+    );
+  }
+
+  return (
+    <FormOverlay
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open && !applyBusy) {
+          close();
+        }
+      }}
+      title={t("settings.backup.appdata.restore.title", { container: target?.container ?? "" })}
+      description={
+        target
+          ? t("settings.backup.appdata.restore.description", {
+              archive: target.name,
+              when: formatDateTime(target.createdAt, i18n.language),
+            })
+          : undefined
+      }
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={applyBusy} onClick={close}>
+            {t("settings.actions.cancel")}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            loading={applyBusy}
+            disabled={phase !== "ready" || target === null || confirmText !== target.container}
+            onClick={() =>
+              void restore.apply().then((started) => {
+                if (started) {
+                  setConfirmText("");
+                }
+              })
+            }
+          >
+            {t("settings.backup.appdata.restore.confirm")}
+          </Button>
+        </div>
+      }
+    >
+      {applyFailure ? (
+        <Banner
+          tone="error"
+          title={appdataFailureTitle(applyFailure.code, t("settings.backup.appdata.restore.applyFailed"), t)}
+          description={applyFailure.message}
+        />
+      ) : null}
+      {body}
+    </FormOverlay>
+  );
+}
+
+function ArchivesPanel({
+  archives,
+  destinationNames,
+  onRestore,
+  restoreDisabled,
+}: {
+  archives: UseApiQueryResult<Availability<ListAppdataArchives>>;
+  destinationNames: Record<string, string>;
+  onRestore: (archive: AppdataArchive) => void;
+  restoreDisabled: boolean;
+}): React.ReactElement {
+  const { t, i18n } = useTranslation();
+  const load = archives.data;
+
+  if (archives.loading) {
+    return <LoadingBlock rows={2} />;
+  }
+  if (load === null) {
+    return (
+      <Banner
+        tone="error"
+        title={t("settings.backup.appdata.archives.loadFailed")}
+        description={archives.error ?? undefined}
+      />
+    );
+  }
+  if (!load.available) {
+    return (
+      <Banner
+        tone="info"
+        title={t("settings.backup.unavailableTitle")}
+        description={t("settings.backup.unavailableDescription")}
+      />
+    );
+  }
+
+  const { archives: found, unavailable } = load.value;
+  const containers = [...new Set(found.map((archive) => archive.container))].sort();
+  const columns: DataTableColumn<AppdataArchive>[] = [
+    {
+      id: "destination",
+      header: t("settings.backup.appdata.archives.columns.destination"),
+      cell: (row) => row.destinationName,
+    },
+    {
+      id: "archive",
+      header: t("settings.backup.appdata.archives.columns.archive"),
+      cell: (row) => (
+        <div className="flex flex-col gap-1">
+          <span>{row.name}</span>
+          <div className="flex flex-wrap gap-1">
+            {row.reason === "pre-restore" ? (
+              <StatusBadge tone="info">{t("settings.backup.appdata.archives.preRestore")}</StatusBadge>
+            ) : null}
+            {row.encrypted ? (
+              <StatusBadge tone="outline">{t("settings.backup.appdata.archives.encrypted")}</StatusBadge>
+            ) : null}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "created",
+      header: t("settings.backup.appdata.archives.columns.created"),
+      cell: (row) => formatDateTime(row.createdAt, i18n.language),
+    },
+    {
+      id: "size",
+      header: t("settings.backup.appdata.archives.columns.size"),
+      cell: (row) => formatBytes(row.size),
+    },
+    {
+      id: "actions",
+      header: t("settings.backup.appdata.archives.columns.actions"),
+      cell: (row) => (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={restoreDisabled}
+          aria-label={t("settings.backup.appdata.archives.restoreFor", {
+            container: row.container,
+            archive: row.name,
+          })}
+          onClick={() => onRestore(row)}
+        >
+          {t("settings.backup.appdata.archives.restore")}
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {unavailable.map((entry) => (
+        <Banner
+          key={entry.destinationId}
+          tone="warning"
+          title={t("settings.backup.appdata.archives.unavailableTitle", {
+            destination: destinationNames[entry.destinationId] ?? entry.destinationId,
+          })}
+          description={entry.message}
+        />
+      ))}
+      {containers.length === 0 ? (
+        <EmptyState
+          icon={Archive}
+          title={t("settings.backup.appdata.archives.empty.title")}
+          description={
+            unavailable.length > 0
+              ? t("settings.backup.appdata.archives.empty.descriptionPartial")
+              : t("settings.backup.appdata.archives.empty.description")
+          }
+        />
+      ) : (
+        containers.map((container) => {
+          const rows = found
+            .filter((archive) => archive.container === container)
+            .sort(
+              (a, b) =>
+                a.destinationName.localeCompare(b.destinationName) ||
+                Date.parse(b.createdAt) - Date.parse(a.createdAt),
+            );
+          return (
+            <div key={container} className="flex flex-col gap-2">
+              <p className="font-medium text-sm">{container}</p>
+              <DataTable
+                rows={rows}
+                getRowKey={(row) => `${row.destinationId}/${row.name}`}
+                columns={columns}
+              />
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function AppdataBackupSection(): React.ReactElement {
+  const { t } = useTranslation();
+  const policy = useApiQuery<AppdataBackupState>({
+    queryKey: "appdata-backup-policy",
+    queryFn: (signal) => getAppdataBackup(signal),
+    fallbackError: t("settings.backup.appdata.policy.loadFailed"),
+  });
+  const archives = useApiQuery<Availability<ListAppdataArchives>>({
+    queryKey: "appdata-archives",
+    queryFn: (signal) => getAppdataArchives(signal),
+    fallbackError: t("settings.backup.appdata.archives.loadFailed"),
+  });
+  const destinations = useApiQuery<DestinationsLoad>({
+    queryKey: "appdata-destination-names",
+    queryFn: (signal) => getBackupDestinations(signal),
+  });
+  const jobFollow = useJobFollow();
+  const [jobKind, setJobKind] = useState<JobKind>("backup");
+  const [savingNames, setSavingNames] = useState<string[]>([]);
+  const savingRef = useRef(new Set<string>());
+  const [savedRows, setSavedRows] = useState<Record<string, AppdataBackupContainer>>({});
+  const [savedRowsFor, setSavedRowsFor] = useState(policy.data);
+  const [saveFailure, setSaveFailure] = useState<{ name: string; failure: RestoreFailure } | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupFailure, setBackupFailure] = useState<RestoreFailure | null>(null);
+
+  if (savedRowsFor !== policy.data) {
+    setSavedRowsFor(policy.data);
+    setSavedRows({});
+  }
+
+  const destinationNames: Record<string, string> = {};
+  if (destinations.data?.available) {
+    for (const destination of destinations.data.value.destinations) {
+      destinationNames[destination.id] = destination.name;
+    }
+  }
+
+  const jobRunning = jobFollow.job !== null && !jobFinished(jobFollow.job) && jobFollow.failure === null;
+
+  async function trackJob(kind: JobKind, queued: Job): Promise<void> {
+    setJobKind(kind);
+    const followed = await jobFollow.start(queued, t("settings.backup.appdata.job.followFailed"));
+    if (followed.kind === "done") {
+      if (followed.job.status === "succeeded") {
+        showFeedbackToast({ type: "success", title: t(`settings.backup.appdata.job.${kind}Succeeded`) });
+      }
+      await Promise.all([archives.refresh(), policy.refresh()]);
+    }
+  }
+
+  const restore = useAppdataRestore((queued) => {
+    void trackJob("restore", queued);
+  });
+
+  async function handleCancelJob(jobId: string): Promise<void> {
+    const outcome = await request<unknown>(() => postJobCancel(jobId), t("settings.backup.appdata.job.cancelFailed"));
+    if (!outcome.ok) {
+      showFeedbackToast({
+        type: "error",
+        title: t("settings.backup.appdata.job.cancelFailed"),
+        description: outcome.message,
+      });
+    }
+  }
+
+  async function handleBackup(containers?: string[]): Promise<void> {
+    setBackupBusy(true);
+    setBackupFailure(null);
+    try {
+      const outcome = await request<Job>(() => postAppdataBackup(containers), t("settings.backup.appdata.backupFailed"));
+      if (!outcome.ok) {
+        setBackupFailure({ code: outcome.code, message: outcome.message });
+        return;
+      }
+      if (outcome.data === undefined) {
+        setBackupFailure({ code: undefined, message: t("settings.backup.appdata.backupFailed") });
+        return;
+      }
+      void trackJob("backup", outcome.data);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function handlePolicy(
+    container: AppdataBackupContainer,
+    change: { stop: boolean; included: boolean },
+  ): Promise<void> {
+    if (savingRef.current.has(container.name)) {
+      return;
+    }
+    savingRef.current.add(container.name);
+    setSavingNames((current) => [...current, container.name]);
+    setSaveFailure(null);
+    try {
+      const outcome = await request<AppdataBackupContainer>(
+        () => putAppdataBackupContainer(container.name, change),
+        t("settings.backup.appdata.policy.saveFailed", { name: container.name }),
+      );
+      if (!outcome.ok) {
+        setSaveFailure({ name: container.name, failure: { code: outcome.code, message: outcome.message } });
+        return;
+      }
+      const saved = outcome.data ?? { ...container, ...change };
+      setSavedRows((current) => ({ ...current, [container.name]: saved }));
+      await policy.refresh();
+    } finally {
+      savingRef.current.delete(container.name);
+      setSavingNames((current) => current.filter((name) => name !== container.name));
+    }
+  }
+
+  const config = policy.data;
+  const containers =
+    config?.state === "ready" ? config.containers.map((container) => savedRows[container.name] ?? container) : [];
+  const canBackUp = config?.state === "ready" && containers.some((container) => container.included);
+
+  let policyBody: React.ReactElement;
+  if (policy.loading) {
+    policyBody = <LoadingBlock rows={2} />;
+  } else if (config === null) {
+    policyBody = (
+      <Banner
+        tone="error"
+        title={t("settings.backup.appdata.policy.loadFailed")}
+        description={policy.error ?? undefined}
+      />
+    );
+  } else if (config.state === "no_engine") {
+    policyBody = (
+      <Banner
+        tone="info"
+        title={t("settings.backup.appdata.policy.noEngineTitle")}
+        description={t("settings.backup.appdata.policy.noEngineDescription")}
+      />
+    );
+  } else if (config.state === "engine_unreachable") {
+    policyBody = (
+      <Banner
+        tone="warning"
+        title={t("settings.backup.appdata.policy.engineUnreachableTitle")}
+        description={config.message || t("settings.backup.appdata.policy.engineUnreachableDescription")}
+        action={
+          <Button size="sm" variant="outline" disabled={policy.refreshing} onClick={() => void policy.refresh()}>
+            {t("settings.backup.appdata.policy.retry")}
+          </Button>
+        }
+      />
+    );
+  } else if (containers.length === 0) {
+    policyBody = (
+      <EmptyState
+        icon={Archive}
+        title={t("settings.backup.appdata.policy.empty.title")}
+        description={t("settings.backup.appdata.policy.empty.description")}
+      />
+    );
+  } else {
+    const columns: DataTableColumn<AppdataBackupContainer>[] = [
+      {
+        id: "container",
+        header: t("settings.backup.appdata.policy.columns.container"),
+        cell: (row) => (
+          <div className="flex flex-col">
+            <span className="font-medium">{row.name}</span>
+            <span className="text-muted-foreground text-xs">{row.image}</span>
+          </div>
+        ),
+      },
+      {
+        id: "included",
+        header: t("settings.backup.appdata.policy.columns.included"),
+        cell: (row) => (
+          <Switch
+            checked={row.included}
+            disabled={savingNames.includes(row.name)}
+            aria-label={t("settings.backup.appdata.policy.includeFor", { name: row.name })}
+            onCheckedChange={(included) => void handlePolicy(row, { stop: row.stop, included })}
+          />
+        ),
+      },
+      {
+        id: "stop",
+        header: t("settings.backup.appdata.policy.columns.stop"),
+        cell: (row) => (
+          <div className="flex flex-col gap-1">
+            <Switch
+              checked={row.stop}
+              disabled={savingNames.includes(row.name)}
+              aria-label={t("settings.backup.appdata.policy.stopFor", { name: row.name })}
+              onCheckedChange={(stop) => void handlePolicy(row, { stop, included: row.included })}
+            />
+            {row.databaseImage ? (
+              <span className="text-muted-foreground text-xs">{t("settings.backup.appdata.policy.databaseImage")}</span>
+            ) : null}
+            {row.warning ? (
+              <div className="max-w-xs [&>span]:h-auto [&>span]:whitespace-normal [&>span]:py-0.5 [&>span]:text-start">
+                <StatusBadge tone="warning">{row.warning}</StatusBadge>
+              </div>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: t("settings.backup.appdata.policy.columns.actions"),
+        cell: (row) => (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!row.included || backupBusy || jobRunning}
+            aria-label={t("settings.backup.appdata.policy.backUpFor", { name: row.name })}
+            onClick={() => void handleBackup([row.name])}
+          >
+            {t("settings.backup.appdata.policy.backUpOne")}
+          </Button>
+        ),
+      },
+    ];
+    policyBody = <DataTable rows={containers} getRowKey={(row) => row.name} columns={columns} />;
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("settings.backup.appdata.title")}</CardTitle>
+          <CardDescription>{t("settings.backup.appdata.description")}</CardDescription>
+          <CardAction>
+            <Button
+              loading={backupBusy}
+              disabled={!canBackUp || jobRunning}
+              onClick={() => void handleBackup()}
+            >
+              {t("settings.backup.appdata.backUpNow")}
+            </Button>
+          </CardAction>
+        </CardHeader>
+        <CardPanel className="flex flex-col gap-4">
+          {backupFailure ? (
+            <Banner
+              tone="error"
+              title={appdataFailureTitle(backupFailure.code, t("settings.backup.appdata.backupFailed"), t)}
+              description={backupFailure.message}
+            />
+          ) : null}
+          {saveFailure ? (
+            <Banner
+              tone="error"
+              title={appdataFailureTitle(
+                saveFailure.failure.code,
+                t("settings.backup.appdata.policy.saveFailed", { name: saveFailure.name }),
+                t,
+              )}
+              description={saveFailure.failure.message}
+            />
+          ) : null}
+          {jobFollow.job ? (
+            <AppdataJobPanel
+              kind={jobKind}
+              job={jobFollow.job}
+              failure={jobFollow.failure}
+              onCancel={(jobId) => void handleCancelJob(jobId)}
+            />
+          ) : null}
+          {policy.error !== null && config !== null ? (
+            <Banner tone="error" title={t("settings.backup.appdata.policy.loadFailed")} description={policy.error} />
+          ) : null}
+          {policyBody}
+          <p className="text-muted-foreground text-sm">{t("settings.backup.appdata.policy.hint")}</p>
+        </CardPanel>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("settings.backup.appdata.archives.title")}</CardTitle>
+          <CardDescription>{t("settings.backup.appdata.archives.description")}</CardDescription>
+          <CardAction>
+            <Button variant="outline" disabled={archives.refreshing} onClick={() => void archives.refresh()}>
+              {t("settings.backup.appdata.archives.refresh")}
+            </Button>
+          </CardAction>
+        </CardHeader>
+        <CardPanel className="flex flex-col gap-4">
+          {archives.error !== null && archives.data !== null ? (
+            <Banner
+              tone="error"
+              title={t("settings.backup.appdata.archives.loadFailed")}
+              description={archives.error}
+            />
+          ) : null}
+          <ArchivesPanel
+            archives={archives}
+            destinationNames={destinationNames}
+            restoreDisabled={jobRunning}
+            onRestore={(archive) => void restore.begin(archive)}
+          />
+        </CardPanel>
+      </Card>
+
+      <AppdataRestoreOverlay restore={restore} onCancelJob={(jobId) => void handleCancelJob(jobId)} />
+    </>
+  );
+}
+
 export function BackupSettingsPage(): React.ReactElement {
   const { t } = useTranslation();
   const generalQuery = useApiQuery<GeneralSettings>({
@@ -1637,6 +2546,7 @@ export function BackupSettingsPage(): React.ReactElement {
       <DestinationsSection passphraseSet={passphraseSet} onNeedPassphrase={() => setPassphraseOpen(true)} />
       <ConfigBackupCard general={generalQuery} onEditPassphrase={() => setPassphraseOpen(true)} />
       <ConfigRestoreCard />
+      <AppdataBackupSection />
       <RestoreDrillCard />
       {passphraseOpen ? (
         <PassphraseOverlay

@@ -517,3 +517,404 @@ describe("Config restore failures", () => {
     expect(await screen.findByText("The restore is finished and you were signed out")).toBeInTheDocument();
   });
 });
+
+describe("Appdata backup failures", () => {
+  const JELLYFIN = {
+    name: "jellyfin",
+    image: "jellyfin/jellyfin",
+    running: true,
+    stop: true,
+    included: true,
+    databaseImage: false,
+  };
+  const ARCHIVE = {
+    name: "jellyfin-2026-09-28.tar.zst",
+    container: "jellyfin",
+    destinationId: "boot",
+    destinationName: "Boot device",
+    createdAt: "2026-09-28T02:00:00Z",
+    size: 2048,
+    encrypted: false,
+  };
+  const PREVIEW = {
+    container: "jellyfin",
+    archive: ARCHIVE.name,
+    destinationId: "boot",
+    createdAt: "2026-09-28T02:00:00Z",
+    directories: [
+      {
+        directory: "jellyfin/config",
+        replaced: { files: 1, bytes: 10, sample: ["a.db"] },
+        added: { files: 0, bytes: 0, sample: [] },
+        removed: { files: 0, bytes: 0, sample: [] },
+      },
+    ],
+  };
+
+  function ok(data: unknown) {
+    return Promise.resolve({ data, response: { ok: true } });
+  }
+
+  function fail(code: string, message: string, status = 409) {
+    return Promise.resolve({ error: { code, message }, response: { ok: false, status } });
+  }
+
+  function job(type: string, status: string, overrides: Record<string, unknown> = {}) {
+    return {
+      id: `${type}-job`,
+      type,
+      class: "service",
+      status,
+      resumable: false,
+      cancellable: false,
+      createdAt: "2026-09-29T10:00:00Z",
+      ...overrides,
+    };
+  }
+
+  type Responses = {
+    policy?: () => unknown;
+    archives?: () => unknown;
+    job?: () => unknown;
+    preview?: () => unknown;
+    post?: Record<string, () => unknown>;
+    put?: () => unknown;
+  };
+
+  function appdataApi(responses: Responses): void {
+    mockGet.mockImplementation((path: string) => {
+      switch (path) {
+        case "/backup/destinations":
+          return ok({ destinations: [] });
+        case "/backup/drill":
+          return ok({});
+        case "/settings/general":
+          return ok({ backupPassphraseSet: true });
+        case "/appdata/backup":
+          return (responses.policy ?? (() => ok({ containers: [JELLYFIN] })))();
+        case "/appdata/backup/archives":
+          return (responses.archives ?? (() => ok({ archives: [ARCHIVE], unavailable: [] })))();
+        case "/jobs/{jobId}":
+          return (responses.job ?? (() => ok(job("appdata_restore_preview", "succeeded"))))();
+        case "/appdata/backup/restore/preview/{jobId}":
+          return (responses.preview ?? (() => ok(PREVIEW)))();
+        default:
+          return notFound();
+      }
+    });
+    mockPost.mockImplementation((path: string) => {
+      const handler = responses.post?.[path];
+      if (handler) {
+        return handler();
+      }
+      if (path === "/appdata/backup/restore/preview") {
+        return ok(job("appdata_restore_preview", "queued"));
+      }
+      if (path === "/appdata/backup/restore") {
+        return ok(job("appdata_restore", "queued"));
+      }
+      if (path === "/appdata/backup") {
+        return ok(job("appdata_backup", "queued"));
+      }
+      return notFound();
+    });
+    mockPut.mockImplementation(() => (responses.put ?? (() => ok(JELLYFIN)))());
+  }
+
+  function renderPage(): void {
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+  }
+
+  async function openRestore(): Promise<HTMLElement> {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: `Restore jellyfin from ${ARCHIVE.name}` }));
+    return screen.findByRole("dialog");
+  }
+
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPut.mockReset();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  it("names a server without a Docker Engine client instead of an empty list", async () => {
+    appdataApi({ policy: () => fail("not_configured", "no docker client", 501) });
+
+    renderPage();
+
+    expect(await screen.findByText("Apps are not available on this server")).toBeInTheDocument();
+    expect(screen.queryByText("No apps with appdata")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back up now" })).toBeDisabled();
+  });
+
+  it("names an unreachable Docker Engine with the server's message and offers to try again", async () => {
+    let calls = 0;
+    appdataApi({
+      policy: () => {
+        calls += 1;
+        return calls === 1 ? fail("docker_unreachable", "dial unix /var/run/docker.sock: refused", 503) : ok({ containers: [JELLYFIN] });
+      },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("The Docker Engine is not reachable")).toBeInTheDocument();
+    expect(screen.getByText("dial unix /var/run/docker.sock: refused")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("jellyfin/jellyfin")).toBeInTheDocument();
+  });
+
+  it("shows a banner instead of an empty table when the policy cannot be loaded", async () => {
+    appdataApi({ policy: () => fail("internal", "policy store unavailable", 500) });
+
+    renderPage();
+
+    expect(await screen.findByText("Could not load the appdata backup settings")).toBeInTheDocument();
+    expect(screen.getByText("policy store unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("No apps with appdata")).not.toBeInTheDocument();
+  });
+
+  it("names the state of no containers with appdata in scope", async () => {
+    appdataApi({ policy: () => ok({ containers: [] }) });
+
+    renderPage();
+
+    expect(await screen.findByText("No apps with appdata")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back up now" })).toBeDisabled();
+  });
+
+  it("names a policy change that could not be saved and keeps the old setting", async () => {
+    appdataApi({ put: () => fail("container_not_found", "no such container", 404) });
+
+    renderPage();
+    const stop = await screen.findByRole("switch", { name: "Stop jellyfin while its appdata is copied" });
+    fireEvent.click(stop);
+
+    expect(await screen.findByText("That app has no appdata in the backup")).toBeInTheDocument();
+    expect(screen.getByText("no such container")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Stop jellyfin while its appdata is copied" })).toBeChecked();
+  });
+
+  it("builds the next toggle on the saved row when the refresh after a save fails", async () => {
+    let reads = 0;
+    appdataApi({
+      policy: () => {
+        reads += 1;
+        return reads === 1 ? ok({ containers: [JELLYFIN] }) : fail("internal", "policy store unavailable", 500);
+      },
+      put: () => ok({ ...JELLYFIN, stop: false }),
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("switch", { name: "Stop jellyfin while its appdata is copied" }));
+    expect(await screen.findByText("policy store unavailable")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: "Stop jellyfin while its appdata is copied" })).not.toBeChecked(),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: "Include jellyfin in the appdata backup" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("switch", { name: "Include jellyfin in the appdata backup" }));
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(2));
+    expect(mockPut.mock.calls[0][1]).toMatchObject({ body: { stop: false, included: true } });
+    expect(mockPut.mock.calls[1][1]).toMatchObject({ body: { stop: false, included: false } });
+  });
+
+  it("does not send a second change for a row while its first save is in flight", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    appdataApi({ put: () => new Promise((resolve) => (finish = resolve)) });
+
+    renderPage();
+    const stop = await screen.findByRole("switch", { name: "Stop jellyfin while its appdata is copied" });
+    fireEvent.click(stop);
+    fireEvent.click(stop);
+    fireEvent.click(screen.getByRole("switch", { name: "Include jellyfin in the appdata backup" }));
+
+    expect(mockPut).toHaveBeenCalledTimes(1);
+    finish({ data: { ...JELLYFIN, stop: false }, response: { ok: true } });
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: "Include jellyfin in the appdata backup" })).toBeEnabled(),
+    );
+  });
+
+  it.each([
+    ["array_stopped", "The array is stopped, so appdata cannot be backed up or restored", 409],
+    ["container_not_found", "That app has no appdata in the backup", 404],
+  ])("names a backup refused as %s and follows no job", async (code, title, status) => {
+    appdataApi({ post: { "/appdata/backup": () => fail(code, `backup says ${code}`, status) } });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.getByText(`backup says ${code}`)).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(mockGet).not.toHaveBeenCalledWith("/jobs/{jobId}", expect.anything());
+  });
+
+  it("names a backup whose request was rejected", async () => {
+    appdataApi({ post: { "/appdata/backup": () => Promise.reject(new Error("network down")) } });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByText("Could not start the appdata backup")).toBeInTheDocument();
+    expect(screen.getByText("network down")).toBeInTheDocument();
+  });
+
+  it("names a job that cannot be followed instead of reading it as finished", async () => {
+    appdataApi({ job: () => fail("internal", "job store unavailable", 500) });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByText("Could not follow the job")).toBeInTheDocument();
+    expect(screen.getByText("job store unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Appdata backup finished")).not.toBeInTheDocument();
+  });
+
+  it("names a cancelled job with its status", async () => {
+    appdataApi({ job: () => ok(job("appdata_backup", "cancelled")) });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+
+    expect(await screen.findByText("The appdata backup failed")).toBeInTheDocument();
+    expect(screen.getByText("Job status: Cancelled.")).toBeInTheDocument();
+  });
+
+  it("shows a banner when the archives cannot be loaded, and a named state when the server has no backup service", async () => {
+    appdataApi({ archives: () => fail("internal", "listing crashed", 500) });
+
+    renderPage();
+
+    expect(await screen.findByText("Could not load the appdata archives")).toBeInTheDocument();
+    expect(screen.getByText("listing crashed")).toBeInTheDocument();
+    expect(screen.queryByText("No appdata archives yet")).not.toBeInTheDocument();
+
+    cleanup();
+    appdataApi({ archives: () => fail("not_configured", "no backup service", 501) });
+
+    renderPage();
+
+    expect(await screen.findByText("Backups are not available on this server")).toBeInTheDocument();
+    expect(screen.queryByText("No appdata archives yet")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["archive_not_found", "That archive is no longer on the destination", 404],
+    ["array_stopped", "The array is stopped, so appdata cannot be backed up or restored", 409],
+    ["appdata_archive_invalid", "That is not an appdata archive of this server and app", 400],
+  ])("names a restore preview that is refused as %s", async (code, title, status) => {
+    appdataApi({ post: { "/appdata/backup/restore/preview": () => fail(code, `preview says ${code}`, status) } });
+
+    const dialog = await openRestore();
+
+    expect(await within(dialog).findByText(title)).toBeInTheDocument();
+    expect(within(dialog).getByText(`preview says ${code}`)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Restore" })).toBeDisabled();
+    expect(mockPost).not.toHaveBeenCalledWith("/appdata/backup/restore", expect.anything());
+  });
+
+  it("shows the job's own error when the preview job fails, for a corrupt or refused archive", async () => {
+    appdataApi({
+      job: () =>
+        ok(
+          job("appdata_restore_preview", "failed", {
+            error: { code: "appdata_archive_invalid", message: "the archive holds a link to /etc" },
+          }),
+        ),
+    });
+
+    const dialog = await openRestore();
+
+    expect(await within(dialog).findByText("Could not preview the restore")).toBeInTheDocument();
+    expect(within(dialog).getByText("the archive holds a link to /etc")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Restore" })).toBeDisabled();
+    expect(mockGet).not.toHaveBeenCalledWith("/appdata/backup/restore/preview/{jobId}", expect.anything());
+  });
+
+  it("names a preview that failed after the job ran, from the preview read", async () => {
+    appdataApi({ preview: () => fail("appdata_preview_failed", "the job was cancelled", 409) });
+
+    const dialog = await openRestore();
+
+    expect(await within(dialog).findByText("The preview failed")).toBeInTheDocument();
+    expect(within(dialog).getByText("the job was cancelled")).toBeInTheDocument();
+  });
+
+  it("offers to preview again when the result is gone, and shows the new preview", async () => {
+    let reads = 0;
+    appdataApi({
+      preview: () => {
+        reads += 1;
+        return reads === 1 ? fail("appdata_preview_gone", "the result is no longer held", 404) : ok(PREVIEW);
+      },
+    });
+
+    const dialog = await openRestore();
+
+    expect(await within(dialog).findByText("The preview is no longer available")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Preview again" }));
+
+    expect(await within(dialog).findByText("jellyfin/config")).toBeInTheDocument();
+    expect(mockPost.mock.calls.filter((call) => call[0] === "/appdata/backup/restore/preview")).toHaveLength(2);
+  });
+
+  it("keeps the typed confirmation and names a restore refused while the array is stopped", async () => {
+    appdataApi({ post: { "/appdata/backup/restore": () => fail("array_stopped", "array is stopped") } });
+
+    const dialog = await openRestore();
+    await within(dialog).findByText("jellyfin/config");
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "jellyfin" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(
+      await within(dialog).findByText("The array is stopped, so appdata cannot be backed up or restored"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox")).toHaveValue("jellyfin");
+    expect(within(dialog).getByRole("button", { name: "Restore" })).toBeEnabled();
+    expect(screen.queryByText("Appdata restore finished")).not.toBeInTheDocument();
+  });
+
+  it("cannot be dismissed while the restore request is running", async () => {
+    let finish: (value: unknown) => void = () => {};
+    appdataApi({ post: { "/appdata/backup/restore": () => new Promise((resolve) => (finish = resolve)) } });
+
+    const dialog = await openRestore();
+    await within(dialog).findByText("jellyfin/config");
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "jellyfin" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled());
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    finish({ data: job("appdata_restore", "queued"), response: { ok: true } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("does not start a restore for a mismatching confirmation", async () => {
+    appdataApi({});
+
+    const dialog = await openRestore();
+    await within(dialog).findByText("jellyfin/config");
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "jellyfi" } });
+
+    expect(within(dialog).getByRole("button", { name: "Restore" })).toBeDisabled();
+    expect(mockPost).not.toHaveBeenCalledWith("/appdata/backup/restore", expect.anything());
+  });
+});
