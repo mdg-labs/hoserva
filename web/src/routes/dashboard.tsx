@@ -1,6 +1,7 @@
 import type React from "react";
 import { HardDrive } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { Banner } from "@/components/patterns/banner";
 import { TimeSeriesChart, type ChartPoint } from "@/components/patterns/chart";
@@ -14,11 +15,12 @@ import {
   arrayStatusTone,
   parityFreshnessLabel,
 } from "@/components/patterns/system-status";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useActiveJobs } from "@/hooks/use-active-jobs";
 import { diskDetailPath, PATHS } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
-import { getMetrics } from "@/lib/api/operations";
+import { getBackupDestinations, getMetrics, type Availability } from "@/lib/api/operations";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { jobTypeLabel } from "@/lib/job-labels";
 import type { components } from "@/lib/api/client";
@@ -27,6 +29,9 @@ import { formatBytes } from "@/routes/storage-setup/config-preview";
 const METRIC_DISK_THROUGHPUT = "disk_throughput_bytes_per_sec";
 const METRIC_NETWORK_THROUGHPUT = "network_throughput_bytes_per_sec";
 const CHART_WINDOW_MS = 60 * 60 * 1000;
+const SETTINGS_BACKUP_ROUTE = "/settings/backup";
+
+type BackupDestination = components["schemas"]["BackupDestination"];
 
 function poolSummary(pool: ReturnType<typeof useSystemData>["pool"]): {
   total: number;
@@ -96,7 +101,7 @@ function useMetricSeries(metric: string, enabled: boolean): ChartPoint[] | null 
 }
 
 export function DashboardPage(): React.ReactElement {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { status, pool, jobs, doctor, loading, error } = useSystemData();
   const activeJobs = useActiveJobs(jobs);
   const summary = poolSummary(pool);
@@ -105,6 +110,16 @@ export function DashboardPage(): React.ReactElement {
   const chartsEnabled = Boolean(pool?.mounted);
   const throughputData = useMetricSeries(METRIC_DISK_THROUGHPUT, chartsEnabled);
   const networkData = useMetricSeries(METRIC_NETWORK_THROUGHPUT, chartsEnabled);
+  const backupQuery = useApiQuery<Availability<{ destinations: BackupDestination[] }>>({
+    queryKey: ["dashboard-backup-destinations", chartsEnabled],
+    queryFn: (signal) => getBackupDestinations(signal),
+    enabled: chartsEnabled,
+    fallbackError: t("dashboard.attention.backupUnknown"),
+  });
+  const staleDestinations =
+    backupQuery.data?.available === true
+      ? backupQuery.data.value.destinations.filter((destination) => destination.stale)
+      : [];
   const formatBytesPerSecond = (value: number): string =>
     t("dashboard.bytesPerSecond", { value: formatBytes(value) });
 
@@ -125,6 +140,37 @@ export function DashboardPage(): React.ReactElement {
         tone="error"
         title={t("dashboard.attention.failedJob", { type: jobTypeLabel(job.type, t) })}
         description={job.error?.message}
+      />,
+    );
+  }
+
+  if (staleDestinations.length > 0) {
+    attention.push(
+      <Banner
+        key="backup-stale"
+        tone="warning"
+        title={t("dashboard.attention.backupStale", {
+          count: staleDestinations.length,
+          names: new Intl.ListFormat(i18n.language, { type: "conjunction" }).format(
+            staleDestinations.map((destination) => destination.name),
+          ),
+        })}
+        description={t("dashboard.attention.backupStaleDescription")}
+        action={
+          <Button size="sm" variant="outline" render={<Link to={SETTINGS_BACKUP_ROUTE} />}>
+            {t("dashboard.attention.backupStaleAction")}
+          </Button>
+        }
+      />,
+    );
+  }
+  if (backupQuery.error !== null) {
+    attention.push(
+      <Banner
+        key="backup-unknown"
+        tone="warning"
+        title={t("dashboard.attention.backupUnknown")}
+        description={backupQuery.error}
       />,
     );
   }

@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { ToastProvider } from "@/components/ui/toast";
+import { BackupSettingsPage } from "@/routes/settings/backup";
 import { GeneralSettingsPage } from "@/routes/settings/general";
 import { NotificationsSettingsPage } from "@/routes/settings/notifications";
 import { SchedulesSettingsPage } from "@/routes/settings/schedules";
@@ -14,6 +15,11 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
 const mockDelete = vi.fn();
+const mockToast = vi.fn();
+
+vi.mock("@/components/patterns/feedback-toast", () => ({
+  showFeedbackToast: (...args: unknown[]) => mockToast(...args),
+}));
 
 vi.mock("@/lib/api/client", () => ({
   hoservaClient: {
@@ -723,5 +729,531 @@ describe("Settings pages", () => {
 
     pendingPost.release?.();
     expect(await within(dialog).findByText("acme: a DNS credential is required")).toBeInTheDocument();
+  });
+});
+
+function apiOk(data: unknown) {
+  return Promise.resolve({ data, response: { ok: true } });
+}
+
+function apiFail(code: string, message: string) {
+  return Promise.resolve({ error: { code, message }, response: { ok: false } });
+}
+
+function backupDestination(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "boot",
+    name: "Boot device",
+    type: "local",
+    path: "/var/backups/hoserva",
+    enabled: true,
+    encrypt: false,
+    retention: { daily: 7, weekly: 4, monthly: 6 },
+    hasSecrets: false,
+    stale: false,
+    createdAt: "2026-09-01T00:00:00Z",
+    lastSuccessfulBackupAt: "2026-09-28T02:00:00Z",
+    ...overrides,
+  };
+}
+
+const OFFSITE_DESTINATION = backupDestination({
+  id: "offsite",
+  name: "Offsite copy",
+  type: "s3",
+  path: "bucket/hoserva",
+  encrypt: true,
+  hasSecrets: true,
+  stale: true,
+  lastSuccessfulBackupAt: undefined,
+});
+
+function drillSchedule(overrides: Record<string, unknown> = {}) {
+  return {
+    chain: { startTime: "02:00", weeklyScrubDay: 0, schedulePreview: "every day at 02:00", nextRun: "2026-10-15T02:00:00Z", steps: [] },
+    otherJobs: [
+      {
+        id: "restore_drill",
+        enabled: true,
+        frequency: "monthly",
+        time: "04:00",
+        schedulePreview: "monthly at 04:00",
+        nextRun: "2026-10-15T12:00:00Z",
+        ...overrides,
+      },
+    ],
+    conflicts: [],
+  };
+}
+
+type BackupApiResponses = {
+  destinations?: Promise<unknown>;
+  drill?: Promise<unknown>;
+  schedules?: Promise<unknown>;
+  general?: Promise<unknown>;
+};
+
+function mockBackupApi(responses: BackupApiResponses = {}): void {
+  mockGet.mockImplementation((path: string) => {
+    switch (path) {
+      case "/backup/destinations":
+        return responses.destinations ?? apiOk({ destinations: [backupDestination(), OFFSITE_DESTINATION] });
+      case "/backup/drill":
+        return responses.drill ?? apiOk({});
+      case "/settings/schedules":
+        return responses.schedules ?? apiOk(drillSchedule());
+      case "/settings/general":
+        return responses.general ?? apiOk({ backupPassphraseSet: true });
+      default:
+        return Promise.resolve({ data: null, response: { ok: false } });
+    }
+  });
+}
+
+async function openAddDestination(): Promise<HTMLElement> {
+  await screen.findByText("Boot device");
+  fireEvent.click(screen.getByRole("button", { name: "Add destination" }));
+  return screen.findByRole("dialog");
+}
+
+describe("Backup settings page", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPut.mockReset();
+    mockDelete.mockReset();
+    mockToast.mockReset();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  it("lists each destination with its type, retention, encryption, last backup and stale badge", async () => {
+    mockBackupApi();
+
+    renderWithToast(<BackupSettingsPage />);
+
+    const bootRow = (await screen.findByText("Boot device")).closest("tr") as HTMLElement;
+    expect(within(bootRow).getByText("Local folder")).toBeInTheDocument();
+    expect(within(bootRow).getByText("Enabled")).toBeInTheDocument();
+    expect(within(bootRow).getByText("7 daily, 4 weekly, 6 monthly")).toBeInTheDocument();
+    expect(within(bootRow).getByText("Not encrypted")).toBeInTheDocument();
+    expect(within(bootRow).getByText("Healthy")).toBeInTheDocument();
+    expect(within(bootRow).queryByText("Stale")).not.toBeInTheDocument();
+
+    const offsiteRow = screen.getByText("Offsite copy").closest("tr") as HTMLElement;
+    expect(within(offsiteRow).getByText("S3-compatible storage")).toBeInTheDocument();
+    expect(within(offsiteRow).getByText("Encrypted")).toBeInTheDocument();
+    expect(within(offsiteRow).getByText("Never")).toBeInTheDocument();
+    expect(within(offsiteRow).getByText("Stale")).toBeInTheDocument();
+
+    expect(
+      screen.getByText(
+        "Backing up to an NFS share? Mount the share on this server, then add its mount path as a local folder.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("names the empty state when there are no destinations", async () => {
+    mockBackupApi({ destinations: apiOk({ destinations: [] }) });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("No backup destinations yet")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("offers the six destination types and no NFS remote", async () => {
+    mockBackupApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    const dialog = await openAddDestination();
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Type" }));
+
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Local folder",
+      "SMB share",
+      "S3-compatible storage",
+      "SFTP server",
+      "WebDAV server",
+      "rclone remote",
+    ]);
+    expect(screen.queryByRole("option", { name: /NFS/ })).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/For an NFS share, mount it first/)).toBeInTheDocument();
+  });
+
+  it("reports a passing connection test through a toast and keeps the button loading meanwhile", async () => {
+    mockBackupApi();
+    const pending: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pending.release = () => resolve({ data: { success: true }, response: { ok: true } });
+        }),
+    );
+
+    renderWithToast(<BackupSettingsPage />);
+    const button = await screen.findByRole("button", { name: "Test connection to Boot device" });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(mockPost).toHaveBeenCalledWith("/backup/destinations/{destinationId}/test", {
+      params: { path: { destinationId: "boot" } },
+    });
+
+    pending.release?.();
+    await waitFor(() => expect(button).not.toBeDisabled());
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Connection test passed" }),
+    );
+  });
+
+  it("shows the reason when a connection test comes back unsuccessful", async () => {
+    mockBackupApi();
+    mockPost.mockResolvedValue({ data: { success: false, error: "connection refused" }, response: { ok: true } });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Test connection to Offsite copy" }));
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        type: "error",
+        title: "Connection test failed",
+        description: "connection refused",
+      }),
+    );
+  });
+
+  it("reports a missing rclone with its install command", async () => {
+    mockBackupApi();
+    mockPost.mockReturnValue(apiFail("rclone_missing", "rclone is not installed; install it with: apt install rclone"));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Test connection to Offsite copy" }));
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        type: "error",
+        title: "rclone is not installed",
+        description: "rclone is not installed; install it with: apt install rclone",
+      }),
+    );
+  });
+
+  it("removes a destination after a confirmation that says its archives stay", async () => {
+    mockBackupApi();
+    mockDelete.mockResolvedValue({ response: { ok: true } });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Boot device" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove Boot device?")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Archives already written to Boot device stay where they are. Hoserva does not delete them."),
+    ).toBeInTheDocument();
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove destination" }));
+
+    await waitFor(() =>
+      expect(mockDelete).toHaveBeenCalledWith("/backup/destinations/{destinationId}", {
+        params: { path: { destinationId: "boot" } },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("keeps the removal confirmation open with the error when the removal fails", async () => {
+    mockBackupApi();
+    mockDelete.mockReturnValue(apiFail("backup_destination_not_found", "no backup destination with that id"));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Boot device" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove destination" }));
+
+    expect(await within(dialog).findByText("no backup destination with that id")).toBeInTheDocument();
+    expect(within(dialog).getByText(/stay where they are/)).toBeInTheDocument();
+  });
+
+  it("adds a local destination with the form's values", async () => {
+    mockBackupApi();
+    mockPost.mockReturnValue(apiOk(backupDestination({ id: "usb", name: "USB backup" })));
+
+    renderWithToast(<BackupSettingsPage />);
+    const dialog = await openAddDestination();
+    const submit = within(dialog).getByRole("button", { name: "Add destination" });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "USB backup" } });
+    fireEvent.change(within(dialog).getByLabelText("Folder"), { target: { value: "/mnt/usb/backups" } });
+    fireEvent.click(submit);
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/backup/destinations", {
+        body: {
+          name: "USB backup",
+          type: "local",
+          path: "/mnt/usb/backups",
+          enabled: true,
+          encrypt: false,
+          retention: { daily: 7, weekly: 4, monthly: 6 },
+        },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ type: "success", title: "Destination added" }));
+  });
+
+  it("sends a remote destination's options and write-only credentials, and never an encrypt flag", async () => {
+    mockBackupApi();
+    mockPost.mockReturnValue(apiOk(backupDestination({ id: "s3", name: "Cloud", type: "s3" })));
+
+    renderWithToast(<BackupSettingsPage />);
+    const dialog = await openAddDestination();
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Type" }));
+    const option = await screen.findByRole("option", { name: "S3-compatible storage" });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+
+    fireEvent.change(await within(dialog).findByLabelText("Access key ID"), { target: { value: "AKIA123" } });
+    fireEvent.change(within(dialog).getByLabelText("Secret access key"), { target: { value: "s3cr3t" } });
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Cloud" } });
+    fireEvent.change(within(dialog).getByLabelText("Bucket and prefix"), { target: { value: "my-bucket/hoserva" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add destination" }));
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/backup/destinations", {
+        body: {
+          name: "Cloud",
+          type: "s3",
+          path: "my-bucket/hoserva",
+          enabled: true,
+          retention: { daily: 7, weekly: 4, monthly: 6 },
+          options: { access_key_id: "AKIA123" },
+          secrets: { secret_access_key: "s3cr3t" },
+        },
+      }),
+    );
+  });
+
+  it("sends the user to set the passphrase when a remote destination needs one", async () => {
+    mockBackupApi({ general: apiOk({ backupPassphraseSet: false }) });
+    mockPost.mockReturnValue(
+      apiFail("backup_passphrase_required", "a remote destination needs a backup passphrase"),
+    );
+
+    renderWithToast(<BackupSettingsPage />);
+    const dialog = await openAddDestination();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Local" } });
+    fireEvent.change(within(dialog).getByLabelText("Folder"), { target: { value: "/mnt/x" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add destination" }));
+
+    expect(await within(dialog).findByText("a remote destination needs a backup passphrase")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set backup passphrase" }));
+
+    const passphraseDialog = await screen.findByRole("dialog");
+    expect(within(passphraseDialog).getByLabelText("Passphrase")).toBeInTheDocument();
+    expect(within(passphraseDialog).queryByLabelText("Name")).not.toBeInTheDocument();
+  });
+
+  it("warns about the missing passphrase as soon as a remote type is picked", async () => {
+    mockBackupApi({ general: apiOk({ backupPassphraseSet: false }) });
+
+    renderWithToast(<BackupSettingsPage />);
+    const dialog = await openAddDestination();
+    expect(within(dialog).queryByText("Set a backup passphrase first")).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Type" }));
+    const option = await screen.findByRole("option", { name: "SFTP server" });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+
+    expect(await within(dialog).findByText("Set a backup passphrase first")).toBeInTheDocument();
+  });
+
+  it("sets the backup passphrase write-only and never shows it", async () => {
+    mockBackupApi({ general: apiOk({ backupPassphraseSet: false }) });
+    mockPut.mockReturnValue(apiOk({ backupPassphraseSet: true }));
+
+    renderWithToast(<BackupSettingsPage />);
+    expect(await screen.findByText("No backup passphrase is set.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set passphrase" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const save = within(dialog).getByRole("button", { name: "Save passphrase" });
+    fireEvent.change(within(dialog).getByLabelText("Passphrase"), { target: { value: "correct horse" } });
+    fireEvent.change(within(dialog).getByLabelText("Repeat the passphrase"), { target: { value: "correct hors" } });
+    expect(within(dialog).getByText("The two passphrases do not match.")).toBeInTheDocument();
+    expect(save).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText("Repeat the passphrase"), { target: { value: "correct horse" } });
+    fireEvent.click(save);
+
+    await waitFor(() =>
+      expect(mockPut).toHaveBeenCalledWith("/settings/general", { body: { backupPassphrase: "correct horse" } }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByDisplayValue("correct horse")).not.toBeInTheDocument();
+    expect(screen.queryByText("correct horse")).not.toBeInTheDocument();
+  });
+
+  it("shows that a passphrase is set and offers to change it", async () => {
+    mockBackupApi({ general: apiOk({ backupPassphraseSet: true }) });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("A backup passphrase is set.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change passphrase" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Change backup passphrase")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Keep the previous one for them/)).toBeInTheDocument();
+  });
+
+  it("keeps the passphrase overlay open with the error when saving fails", async () => {
+    mockBackupApi({ general: apiOk({ backupPassphraseSet: false }) });
+    mockPut.mockReturnValue(apiFail("bad_request", "passphrase rejected"));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set passphrase" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Passphrase"), { target: { value: "abc" } });
+    fireEvent.change(within(dialog).getByLabelText("Repeat the passphrase"), { target: { value: "abc" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save passphrase" }));
+
+    expect(await within(dialog).findByText("passphrase rejected")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("downloads the config archive", async () => {
+    mockBackupApi();
+    const archive = new Blob(["archive"]);
+    mockPost.mockReturnValue(apiOk(archive));
+    const createObjectURL = vi.fn(() => "blob:config");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download config backup" }));
+
+    await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+    expect(mockPost).toHaveBeenCalledWith("/config/export", { parseAs: "blob" });
+    expect(createObjectURL).toHaveBeenCalledWith(archive);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:config");
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ type: "success", title: "Config backup downloaded" }));
+    click.mockRestore();
+  });
+
+  it("shows an error instead of saving a file when the config export fails", async () => {
+    mockBackupApi();
+    mockPost.mockReturnValue(apiFail("internal", "could not build the archive"));
+    const createObjectURL = vi.fn(() => "blob:config");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: createObjectURL });
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download config backup" }));
+
+    expect(await screen.findByText("Could not download the config backup")).toBeInTheDocument();
+    expect(screen.getByText("could not build the archive")).toBeInTheDocument();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("names a restore drill that has never run, with the next scheduled run", async () => {
+    mockBackupApi({ drill: apiOk({}) });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("Never run yet")).toBeInTheDocument();
+    expect(await screen.findByText(/Oct 15, 2026/)).toBeInTheDocument();
+  });
+
+  it("says the restore drill is not scheduled when its schedule is off", async () => {
+    mockBackupApi({ schedules: apiOk(drillSchedule({ enabled: false })) });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("Not scheduled. The restore drill schedule is off.")).toBeInTheDocument();
+  });
+
+  it("shows the last restore drill's result per destination with the reason each failed", async () => {
+    mockBackupApi({
+      drill: apiOk({
+        lastRun: {
+          ranAt: "2026-09-28T04:00:00Z",
+          passed: false,
+          destinations: [
+            {
+              destinationId: "boot",
+              destinationName: "Boot device",
+              passed: true,
+              archive: "hoserva-config-x-2026-09-28.tar.zst",
+            },
+            {
+              destinationId: "offsite",
+              destinationName: "Offsite copy",
+              passed: false,
+              archive: null,
+              error: "no archive written by this installation",
+            },
+          ],
+        },
+      }),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+
+    expect(await screen.findByText("Archive tested: hoserva-config-x-2026-09-28.tar.zst")).toBeInTheDocument();
+    expect(screen.getByText("No archive found")).toBeInTheDocument();
+    expect(screen.getByText("no archive written by this installation")).toBeInTheDocument();
+    expect(screen.getAllByText("Failed")).toHaveLength(2);
+    expect(screen.queryByText("Never run yet")).not.toBeInTheDocument();
+  });
+
+  it("queues a restore drill and shows the job it queued", async () => {
+    mockBackupApi();
+    mockPost.mockReturnValue(
+      apiOk({
+        id: "3f9a1c52-0000-4000-8000-000000000001",
+        type: "restore_drill",
+        class: "service",
+        status: "queued",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-09-29T10:00:00Z",
+      }),
+    );
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+
+    expect(await screen.findByText("Restore drill queued")).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalledWith("/backup/drill");
+    expect(screen.getByText(/Job status: Queued\./)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View job" })).toHaveAttribute(
+      "href",
+      "/jobs/3f9a1c52-0000-4000-8000-000000000001",
+    );
+  });
+
+  it("shows the error when the restore drill cannot be started", async () => {
+    mockBackupApi();
+    mockPost.mockReturnValue(apiFail("not_configured", "no backup service is configured"));
+
+    renderWithToast(<BackupSettingsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+
+    expect(await screen.findByText("Could not start the restore drill")).toBeInTheDocument();
+    expect(screen.getByText("no backup service is configured")).toBeInTheDocument();
+    expect(screen.queryByText("Restore drill queued")).not.toBeInTheDocument();
   });
 });

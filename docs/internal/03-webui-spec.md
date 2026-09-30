@@ -504,17 +504,19 @@ Per job: enabled, cron-like schedule with a human-readable preview ("every day a
 ### 8.5 `/settings/backup`
 Full design in doc 10.
 
-**Destinations** — list of backup destinations (local path, SMB/NFS, S3-compatible, SFTP, WebDAV, rclone remote), each with enabled, retention, encryption, last successful backup, and a **Test connection** button that writes and reads back a file. A fresh install has two local destinations: the boot device and a pool path (Q40).
+**Destinations** — list of backup destinations (a local path, SMB, S3-compatible, SFTP, WebDAV, or an rclone remote), each with enabled, retention, encryption, last successful backup, a stale badge, and a **Test connection** button that writes and reads back a file. NFS is not a remote type, because rclone has no NFS backend: an NFS share is mounted on the server and added as a **local** destination at its mount path, and the add form says so. A fresh install has two local destinations: the boot device and a pool path (Q40). Enabled and retention are shown read-only; a destination's enabled flag and retention are edited in place once the API has an update operation for them (#447), until then by removing and re-adding it. Removing a destination leaves the archives already written to it where they are, and the confirmation says so.
 
-**Config backup** — the archive described in doc 10 §1; manual run and download; schedule is part of the nightly chain. Backup passphrase set/change (Q28).
+**Config backup** — the archive described in doc 10 §1; download; schedule is part of the nightly chain. The Card offers download only, until an operation exists that writes a config backup to the destinations on demand (only the nightly chain writes to them today). Backup passphrase set/change (Q28), shown as set or not set and never as its value.
 
 **Restore** — upload an archive, preview what it contains and what will change, apply.
 
 **Appdata backup** — scope, per-container stop policy (with known database images flagged), destinations, schedule, retention.
 
-**Restore drill** — last result and next run.
+**Restore drill** — last result and next run, and a **Run now** button that queues the drill as a job.
 
-**Components:** destinations as a `data-table` with a *Test connection* Button (`loading`) reporting through `feedback-toast`; add destination via `form-overlay`; config backup Card with run and download Buttons (`p-button-16`); passphrase via `form-overlay` with `secret-input`; restore as `file-upload`, then a `grouped-results` preview, then `typed-confirm`; appdata backup as a `form` with a per-container stop-policy `data-table` and warning `status-badge`s on database images; restore drill as a Card with a `status-badge`.
+The dashboard's attention row (§2, Row 5) carries a banner naming any stale destination and linking to this page.
+
+**Components:** destinations as a `data-table` with a *Test connection* Button (`loading`) reporting through `feedback-toast`; add destination via `form-overlay`; config backup Card with a download Button (`p-button-16`; a run Button is added when a manual-run operation exists); passphrase via `form-overlay` with `secret-input`; restore as `file-upload`, then a `grouped-results` preview, then `typed-confirm`; appdata backup as a `form` with a per-container stop-policy `data-table` and warning `status-badge`s on database images; restore drill as a Card with a `status-badge`.
 
 ### 8.6 `/settings/updates`
 Current Hoserva version, available version, changelog, update channel (stable / beta), update action, **rollback to the previous version** (Q67), update check on/off (read from Hoserva's own release index, never a system-wide `apt update` — Q49, Q67). Pending Debian updates and whether a reboot is required: security updates install unattended, and **Reboot** is always the user's action (Q68). Also: available updates for mergerfs and SnapRAID, and whether they fall inside the version range the installed Hoserva release was tested against (Q7); installed versions are read from package metadata.

@@ -20,6 +20,7 @@ import { ParityPage } from "@/routes/storage/parity";
 import { PoolOverviewPage } from "@/routes/storage/pool";
 import { WakeEventsPage } from "@/routes/storage/wake-events";
 import { StorageSetupPage } from "@/routes/storage-setup";
+import { BackupSettingsPage } from "@/routes/settings/backup";
 import { GeneralSettingsPage } from "@/routes/settings/general";
 import { NotificationsSettingsPage } from "@/routes/settings/notifications";
 import { SchedulesSettingsPage } from "@/routes/settings/schedules";
@@ -111,7 +112,7 @@ function AuthenticatedRoutes(): React.ReactElement {
           <Route path="settings/network" element={<NetworkSettingsPage />} />
           <Route path="settings/notifications" element={<NotificationsSettingsPage />} />
           <Route path="settings/schedules" element={<SchedulesSettingsPage />} />
-          <Route path="settings/backup" element={<PlaceholderPage titleKey="settingsNav.backup" />} />
+          <Route path="settings/backup" element={<BackupSettingsPage />} />
           <Route path="settings/updates" element={<UpdatesSettingsPage />} />
           <Route path="settings/advanced" element={<PlaceholderPage titleKey="settingsNav.advanced" />} />
         </Route>

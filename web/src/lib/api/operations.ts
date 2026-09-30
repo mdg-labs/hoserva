@@ -1,4 +1,9 @@
 import { hoservaClient, type components } from "@/lib/api/client";
+import type { ClientResult } from "@/lib/api/request";
+
+type BackupDestination = components["schemas"]["BackupDestination"];
+type CreateBackupDestinationRequest = components["schemas"]["CreateBackupDestinationRequest"];
+type RestoreDrill = components["schemas"]["RestoreDrill"];
 
 type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
 type CreateArrayRequest = components["schemas"]["CreateArrayRequest"];
@@ -514,4 +519,60 @@ export function putUPSSettings(body: UpdateUPSSettingsRequest) {
 
 export function postDoctorHostConfig(body: ApplyHostConfigRequest) {
   return hoservaClient.POST("/doctor/host-config", { body });
+}
+
+// Backup and restore settings.
+
+// A daemon without a backup service answers 501 `not_configured`; that is
+// a state the backup UI names, not a load failure, so it resolves to
+// `{ available: false }` and every other failure stays an error.
+export type Availability<T> = { available: true; value: T } | { available: false };
+
+const NOT_CONFIGURED_CODE = "not_configured";
+
+async function availableUnlessNotConfigured<T>(
+  call: Promise<ClientResult<T>>,
+): Promise<ClientResult<Availability<T>>> {
+  const result = await call;
+  if (result.error?.code === NOT_CONFIGURED_CODE) {
+    return { data: { available: false }, response: { ok: true } };
+  }
+  if (result.error !== undefined || result.response?.ok === false || result.data === undefined) {
+    return { error: result.error, response: { ok: false } };
+  }
+  return { data: { available: true, value: result.data }, response: { ok: true } };
+}
+
+export function getBackupDestinations(signal?: AbortSignal) {
+  return availableUnlessNotConfigured<{ destinations: BackupDestination[] }>(
+    hoservaClient.GET("/backup/destinations", { signal }),
+  );
+}
+
+export function postBackupDestination(body: CreateBackupDestinationRequest) {
+  return hoservaClient.POST("/backup/destinations", { body });
+}
+
+export function deleteBackupDestination(destinationId: string) {
+  return hoservaClient.DELETE("/backup/destinations/{destinationId}", {
+    params: { path: { destinationId } },
+  });
+}
+
+export function postBackupDestinationTest(destinationId: string) {
+  return hoservaClient.POST("/backup/destinations/{destinationId}/test", {
+    params: { path: { destinationId } },
+  });
+}
+
+export function getRestoreDrill(signal?: AbortSignal) {
+  return availableUnlessNotConfigured<RestoreDrill>(hoservaClient.GET("/backup/drill", { signal }));
+}
+
+export function postRestoreDrill() {
+  return hoservaClient.POST("/backup/drill");
+}
+
+export function postConfigExport() {
+  return hoservaClient.POST("/config/export", { parseAs: "blob" });
 }

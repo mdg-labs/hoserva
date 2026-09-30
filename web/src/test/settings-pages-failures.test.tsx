@@ -1,7 +1,8 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { BackupSettingsPage } from "@/routes/settings/backup";
 import { GeneralSettingsPage } from "@/routes/settings/general";
 import { NetworkSettingsPage } from "@/routes/settings/network";
 import { NotificationsSettingsPage } from "@/routes/settings/notifications";
@@ -10,11 +11,13 @@ import { UpdatesSettingsPage } from "@/routes/settings/updates";
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockPut = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   hoservaClient: {
     GET: (...args: unknown[]) => mockGet(...args),
     POST: (...args: unknown[]) => mockPost(...args),
+    PUT: (...args: unknown[]) => mockPut(...args),
   },
 }));
 
@@ -37,6 +40,7 @@ describe("Settings pages load failures", () => {
     cleanup();
     mockGet.mockReset();
     mockPost.mockReset();
+    mockPut.mockReset();
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       addEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
@@ -144,5 +148,172 @@ describe("Settings pages load failures", () => {
     expect(await screen.findByText("Could not load schedules")).toBeInTheDocument();
     expect(await screen.findByText("schedules unavailable")).toBeInTheDocument();
     expect(screen.queryByText("Nightly maintenance chain")).not.toBeInTheDocument();
+  });
+
+  function backupApi(overrides: Record<string, unknown>): void {
+    mockGet.mockImplementation((path: string) => {
+      if (path in overrides) {
+        return overrides[path];
+      }
+      if (path === "/backup/destinations") {
+        return Promise.resolve({ data: { destinations: [] }, response: { ok: true } });
+      }
+      if (path === "/backup/drill") {
+        return Promise.resolve({ data: {}, response: { ok: true } });
+      }
+      if (path === "/settings/general") {
+        return Promise.resolve({ data: { backupPassphraseSet: true }, response: { ok: true } });
+      }
+      return notFound();
+    });
+  }
+
+  it("shows a backup destinations error instead of an empty table when /backup/destinations fails", async () => {
+    backupApi({
+      "/backup/destinations": Promise.resolve({
+        error: { code: "internal", message: "destinations unavailable" },
+        response: { ok: false },
+      }),
+    });
+
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Could not load backup destinations")).toBeInTheDocument();
+    expect(await screen.findByText("destinations unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("No backup destinations yet")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("shows a restore drill error instead of 'never run' when /backup/drill fails", async () => {
+    backupApi({
+      "/backup/drill": Promise.resolve({
+        error: { code: "internal", message: "drill unavailable" },
+        response: { ok: false },
+      }),
+    });
+
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Could not load the last restore drill")).toBeInTheDocument();
+    expect(await screen.findByText("drill unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Never run yet")).not.toBeInTheDocument();
+  });
+
+  it("names a daemon without a backup service instead of showing empty destinations or a never-run drill", async () => {
+    const notConfigured = { error: { code: "not_configured", message: "no backup service" }, response: { ok: false } };
+    backupApi({
+      "/backup/destinations": Promise.resolve(notConfigured),
+      "/backup/drill": Promise.resolve(notConfigured),
+    });
+
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findAllByText("Backups are not available on this server")).toHaveLength(2);
+    expect(screen.queryByText("No backup destinations yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Never run yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not load backup destinations")).not.toBeInTheDocument();
+  });
+
+  it("does not report the passphrase as unset when its status cannot be loaded", async () => {
+    backupApi({
+      "/settings/general": Promise.resolve({
+        error: { code: "internal", message: "general unavailable" },
+        response: { ok: false },
+      }),
+    });
+
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Could not load the backup passphrase status")).toBeInTheDocument();
+    expect(screen.queryByText("No backup passphrase is set.")).not.toBeInTheDocument();
+    expect(screen.queryByText("A backup passphrase is set.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the last drill result and names the failure when refreshing it fails", async () => {
+    let drillCalls = 0;
+    backupApi({});
+    const base = mockGet.getMockImplementation() as (path: string) => unknown;
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/backup/drill") {
+        drillCalls += 1;
+        if (drillCalls === 1) {
+          return Promise.resolve({
+            data: { lastRun: { ranAt: "2026-09-28T04:00:00Z", passed: true, destinations: [] } },
+            response: { ok: true },
+          });
+        }
+        return Promise.resolve({
+          error: { code: "internal", message: "drill refresh unavailable" },
+          response: { ok: false },
+        });
+      }
+      return base(path);
+    });
+
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Passed")).toBeInTheDocument();
+    expect(screen.queryByText("Could not load the last restore drill")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh result" }));
+
+    expect(await screen.findByText("Could not load the last restore drill")).toBeInTheDocument();
+    expect(await screen.findByText("drill refresh unavailable")).toBeInTheDocument();
+  });
+
+  it("names the failure when the passphrase status cannot be refreshed after saving it", async () => {
+    let generalCalls = 0;
+    backupApi({});
+    const base = mockGet.getMockImplementation() as (path: string) => unknown;
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/general") {
+        generalCalls += 1;
+        if (generalCalls === 1) {
+          return Promise.resolve({ data: { backupPassphraseSet: false }, response: { ok: true } });
+        }
+        return Promise.resolve({
+          error: { code: "internal", message: "general refresh unavailable" },
+          response: { ok: false },
+        });
+      }
+      return base(path);
+    });
+    mockPut.mockReturnValue(Promise.resolve({ data: { backupPassphraseSet: true }, response: { ok: true } }));
+
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("No backup passphrase is set.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set passphrase" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Passphrase"), { target: { value: "correct horse" } });
+    fireEvent.change(within(dialog).getByLabelText("Repeat the passphrase"), { target: { value: "correct horse" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save passphrase" }));
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled());
+    expect(await screen.findByText("Could not load the backup passphrase status")).toBeInTheDocument();
+    expect(await screen.findByText("general refresh unavailable")).toBeInTheDocument();
   });
 });

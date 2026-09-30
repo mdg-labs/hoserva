@@ -216,7 +216,12 @@
       "title": "Needs attention",
       "degraded": "The array is degraded.",
       "syncBlocked": "Parity sync is blocked by the threshold guard.",
-      "failedJob": "Job failed: {{type}}"
+      "failedJob": "Job failed: {{type}}",
+      "backupStale_one": "A backup destination has gone without a successful backup: {{names}}",
+      "backupStale_other": "{{count}} backup destinations have gone without a successful backup: {{names}}",
+      "backupStaleDescription": "No backup has been written there for at least two days.",
+      "backupStaleAction": "Open backup settings",
+      "backupUnknown": "Could not check the backup destinations"
     }
   },
   "pool": {
@@ -1175,6 +1180,219 @@
           "title": "Container update checks",
           "description": "Check installed containers for available image updates."
         }
+      }
+    },
+    "backup": {
+      "unavailableTitle": "Backups are not available on this server",
+      "unavailableDescription": "This daemon has no backup service configured, so there is nothing to show or change here.",
+      "destinations": {
+        "title": "Backup destinations",
+        "description": "Where Hoserva writes config backups. A fresh install has two local destinations: the boot device and a folder on the pool.",
+        "nfsNote": "Backing up to an NFS share? Mount the share on this server, then add its mount path as a local folder.",
+        "loadFailed": "Could not load backup destinations",
+        "add": "Add destination",
+        "empty": {
+          "title": "No backup destinations yet",
+          "description": "Add a destination so config backups have somewhere to go. Until you do, nothing is backed up off this server's own disks."
+        },
+        "columns": {
+          "name": "Name",
+          "type": "Type",
+          "enabled": "Enabled",
+          "retention": "Retention",
+          "encryption": "Encryption",
+          "lastBackup": "Last successful backup",
+          "status": "Status",
+          "actions": "Actions"
+        },
+        "types": {
+          "local": "Local folder",
+          "smb": "SMB share",
+          "s3": "S3-compatible storage",
+          "sftp": "SFTP server",
+          "webdav": "WebDAV server",
+          "rclone": "rclone remote"
+        },
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "retention": "{{daily}} daily, {{weekly}} weekly, {{monthly}} monthly",
+        "encrypted": "Encrypted",
+        "notEncrypted": "Not encrypted",
+        "neverBackedUp": "Never",
+        "status": {
+          "stale": "Stale",
+          "staleHint": "No successful backup in the last two days.",
+          "paused": "Paused",
+          "ok": "Healthy",
+          "waiting": "Waiting for first backup"
+        },
+        "test": "Test connection",
+        "testFor": "Test connection to {{name}}",
+        "testPassed": "Connection test passed",
+        "testPassedDescription": "Hoserva wrote a file to {{name}}, read it back and removed it.",
+        "testFailed": "Connection test failed",
+        "testFailedUnknown": "The destination did not say why.",
+        "testError": "Could not test {{name}}",
+        "rcloneMissing": "rclone is not installed",
+        "remove": "Remove",
+        "removeFor": "Remove {{name}}",
+        "removeTitle": "Remove {{name}}?",
+        "removeDescription": "This takes the destination out of Hoserva's settings. Nothing is written to it from now on.",
+        "removeKept": "Archives already written to {{name}} stay where they are. Hoserva does not delete them.",
+        "removeConfirm": "Remove destination",
+        "removeFailed": "Could not remove the destination",
+        "removed": "Destination removed"
+      },
+      "addForm": {
+        "title": "Add backup destination",
+        "description": "Config backups are written here on the nightly schedule.",
+        "submit": "Add destination",
+        "failed": "Could not add the destination",
+        "added": "Destination added",
+        "name": "Name",
+        "namePlaceholder": "Offsite copy",
+        "type": "Type",
+        "path": {
+          "local": "Folder",
+          "smb": "Share and folder",
+          "s3": "Bucket and prefix",
+          "sftp": "Folder",
+          "webdav": "Folder",
+          "rclone": "Folder"
+        },
+        "pathHint": {
+          "local": "An absolute path on this server. For an NFS share, mount it first and enter its mount path.",
+          "smb": "The share name, then an optional folder, such as backups/hoserva.",
+          "s3": "The bucket name, then an optional prefix, such as my-bucket/hoserva.",
+          "sftp": "The folder on the server. Leave empty for the login folder.",
+          "webdav": "A folder within the WebDAV address. Leave empty to use the address itself.",
+          "rclone": "A folder within the rclone remote. Leave empty for its top level."
+        },
+        "enabled": "Enabled",
+        "enabledHint": "A disabled destination is kept, but no backup is written to it.",
+        "encrypt": "Encrypt archives",
+        "encryptHint": "Each archive can then only be opened with the backup passphrase.",
+        "encryptRemote": "Archives written to a remote destination are always encrypted with your backup passphrase.",
+        "retention": "Retention",
+        "retentionHint": "How many archives to keep: the newest of each day, week and month.",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly",
+        "archivesUnit": "archives",
+        "secretHint": "Stored encrypted and never shown again.",
+        "passphraseNeededTitle": "Set a backup passphrase first",
+        "passphraseNeededDescription": "A remote destination is always encrypted, and that needs a backup passphrase.",
+        "setPassphrase": "Set backup passphrase"
+      },
+      "fields": {
+        "host": {
+          "label": "Server address",
+          "hint": "Host name or IP address of the server."
+        },
+        "user": {
+          "label": "User name"
+        },
+        "port": {
+          "label": "Port",
+          "hint": "Leave empty for the default port."
+        },
+        "domain": {
+          "label": "Domain",
+          "hint": "Optional Windows domain."
+        },
+        "access_key_id": {
+          "label": "Access key ID"
+        },
+        "provider": {
+          "label": "Provider",
+          "hint": "Optional, such as AWS, Minio or Wasabi."
+        },
+        "endpoint": {
+          "label": "Endpoint",
+          "hint": "Optional. Needed for S3-compatible services other than AWS."
+        },
+        "region": {
+          "label": "Region",
+          "hint": "Optional."
+        },
+        "key_file": {
+          "label": "Private key file",
+          "hint": "Path to a key file on this server. Use this or a password."
+        },
+        "known_hosts_file": {
+          "label": "Known hosts file",
+          "hint": "Path to a known_hosts file on this server. Without it the server's identity is not verified."
+        },
+        "url": {
+          "label": "Address",
+          "hint": "The WebDAV address, such as https://cloud.example.com/remote.php/dav/files/user/."
+        },
+        "vendor": {
+          "label": "Vendor",
+          "hint": "Optional, such as nextcloud or owncloud."
+        },
+        "remote": {
+          "label": "rclone remote name",
+          "hint": "The name of a remote already set up with rclone config."
+        },
+        "pass": {
+          "label": "Password"
+        },
+        "secret_access_key": {
+          "label": "Secret access key"
+        }
+      },
+      "config": {
+        "title": "Config backup",
+        "description": "One archive with your Hoserva settings: shares, users, schedules, destinations and more. It is also written to your destinations by the nightly maintenance chain, after the parity sync.",
+        "download": "Download config backup",
+        "downloadFailed": "Could not download the config backup",
+        "downloaded": "Config backup downloaded",
+        "downloadOnly": "Downloading is the only manual option for now. Backups to your destinations follow the nightly schedule.",
+        "passphraseTitle": "Backup passphrase",
+        "passphraseSet": "A backup passphrase is set.",
+        "passphraseNotSet": "No backup passphrase is set.",
+        "passphraseHint": "It protects the secrets in every archive and is required for remote destinations. Hoserva never shows it again after you save it.",
+        "passphraseLoadFailed": "Could not load the backup passphrase status",
+        "setPassphrase": "Set passphrase",
+        "changePassphrase": "Change passphrase"
+      },
+      "passphrase": {
+        "setTitle": "Set backup passphrase",
+        "changeTitle": "Change backup passphrase",
+        "description": "The passphrase protects the secrets stored in backups. Keep it somewhere safe.",
+        "warning": "If this server is lost, an archive on a remote destination cannot be opened without the passphrase.",
+        "changeWarning": "Archives written earlier were sealed with the passphrase that was set at the time. Keep the previous one for them.",
+        "passphrase": "Passphrase",
+        "confirm": "Repeat the passphrase",
+        "mismatch": "The two passphrases do not match.",
+        "save": "Save passphrase",
+        "saveFailed": "Could not save the passphrase",
+        "saved": "Backup passphrase saved"
+      },
+      "drill": {
+        "title": "Restore drill",
+        "description": "Checks that your newest backup on each destination can really be restored. It fetches the archive, opens it the way a restore would and verifies it, then throws everything away. Nothing is written to a destination.",
+        "loadFailed": "Could not load the last restore drill",
+        "neverRunTitle": "Never run yet",
+        "neverRunDescription": "No restore drill has run yet. It runs on its schedule, or you can run one now.",
+        "passed": "Passed",
+        "failed": "Failed",
+        "ranAt": "Ran {{when}}",
+        "noDestinationsTested": "The drill could not test any destination",
+        "destinationsTitle": "Destinations tested",
+        "archiveTested": "Archive tested: {{archive}}",
+        "noArchive": "No archive found",
+        "reasonUnknown": "No reason given.",
+        "nextRun": "Next scheduled run",
+        "notScheduled": "Not scheduled. The restore drill schedule is off.",
+        "scheduleUnavailable": "Could not load the schedule.",
+        "runNow": "Run now",
+        "refresh": "Refresh result",
+        "runFailed": "Could not start the restore drill",
+        "queuedTitle": "Restore drill queued",
+        "queuedDescription": "The result appears here when the job finishes. Job status: {{status}}.",
+        "viewJob": "View job"
       }
     },
     "updates": {
