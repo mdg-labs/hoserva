@@ -51,6 +51,10 @@ type DiffGuard interface {
 // implements this once it exists; every chain test uses a fake.
 type ChainNotifier interface {
 	NotifyGuardBlocked(ctx context.Context)
+	// NotifyConfigBackupFailed reports a nightly config backup that wrote
+	// no destination (doc 10 §1). The chain never calls it for a cancelled
+	// run or for a backup that wrote at least one destination.
+	NotifyConfigBackupFailed(ctx context.Context, err error)
 }
 
 // ConfigBackup is the chain's last step (Q30, doc 10 §1): a consistent
@@ -226,6 +230,9 @@ func (c *MaintenanceChain) runConfigBackup(ctx context.Context) (StepResult, boo
 		return StepResult{Step: StepConfigBackup, Skipped: true}, false, nil
 	}
 	if err := c.Backup.Run(ctx); err != nil {
+		if c.Notifier != nil && ctx.Err() == nil {
+			c.Notifier.NotifyConfigBackupFailed(context.WithoutCancel(ctx), err)
+		}
 		wrapped := fmt.Errorf("job: maintenance chain: config backup: %w", err)
 		return StepResult{Step: StepConfigBackup, Err: wrapped}, false, wrapped
 	}

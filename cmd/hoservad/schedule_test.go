@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
 
@@ -484,5 +488,78 @@ func TestScheduleRunner_NilBackupSkipsConfigBackup(t *testing.T) {
 	}
 	if h.runner.Backup != nil {
 		t.Fatal("harness should leave Backup nil")
+	}
+}
+
+// nightlyBackupService is a real backup.Service over one destination that
+// cannot be written (its parent is a regular file) and, when withGood is
+// set, one that can.
+func nightlyBackupService(t *testing.T, h *scheduleHarness, withGood bool) *backup.Service {
+	t.Helper()
+	root := t.TempDir()
+	blocker := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dests := &backup.FakeDestinationStore{}
+	retention := backup.Retention{Daily: 7}
+	if err := dests.CreateDestination(context.Background(), backup.Destination{
+		ID: "bad", Name: "Bad", Type: backup.TypeLocal, Path: filepath.Join(blocker, "backups"), Enabled: true, Retention: retention,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if withGood {
+		if err := dests.CreateDestination(context.Background(), backup.Destination{
+			ID: "good", Name: "Good", Type: backup.TypeLocal, Path: filepath.Join(root, "good"), Enabled: true, Retention: retention,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &backup.Service{DB: h.db, Paths: backup.Paths{DBPath: filepath.Join(root, "hoservad.db")}, Store: dests, Hostname: "test-host"}
+}
+
+func nightlyChainHarness(t *testing.T, pub *recordingPublisher) *scheduleHarness {
+	t.Helper()
+	now := time.Date(2026, 6, 15, 2, 1, 0, 0, time.UTC)
+	eng := newRecordingEngine()
+	eng.SetDiff(parity.DiffReport{Removed: 1, PerDisk: map[string]parity.DiskDiff{
+		"/mnt/disk1": {FilesBefore: 1000, FilesAfter: 999},
+	}})
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+	h := newScheduleHarness(t, utcClock(now), job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+	h.runner.Notifier = &scheduleNotifier{svc: pub}
+	return h
+}
+
+// #477: the chain hoservad schedules publishes config_backup_failed when
+// its config backup wrote no destination, and the tick still returns the
+// failure.
+func TestScheduleRunner_NightlyConfigBackupThatWroteNowhereAlerts(t *testing.T) {
+	pub := &recordingPublisher{}
+	h := nightlyChainHarness(t, pub)
+	h.runner.Backup = nightlyBackupService(t, h, false)
+
+	if err := h.runner.tick(context.Background()); err == nil {
+		t.Fatal("tick succeeded, want the failed config backup's error")
+	}
+	if n := pub.count(notify.EventConfigBackupFailed); n != 1 {
+		t.Fatalf("config_backup_failed published %d times, want once", n)
+	}
+	if len(pub.messages) != 1 || !strings.Contains(pub.messages[0], "The config backup did not complete") {
+		t.Fatalf("message = %q, want the on-demand job's payload shape", pub.messages)
+	}
+}
+
+func TestScheduleRunner_NightlyConfigBackupWithOneDestinationWrittenDoesNotAlert(t *testing.T) {
+	pub := &recordingPublisher{}
+	h := nightlyChainHarness(t, pub)
+	h.runner.Backup = nightlyBackupService(t, h, true)
+
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v — a partial success is not a failure", err)
+	}
+	if n := pub.count(notify.EventConfigBackupFailed); n != 0 {
+		t.Fatalf("config_backup_failed published %d times for a partial success, want none", n)
 	}
 }

@@ -51,8 +51,21 @@ func (g *fakeGuard) Evaluate(ctx context.Context) (bool, error) {
 }
 
 type fakeNotifier struct {
-	mu       sync.Mutex
-	notified int
+	mu           sync.Mutex
+	notified     int
+	backupFailed []error
+}
+
+func (n *fakeNotifier) NotifyConfigBackupFailed(ctx context.Context, err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.backupFailed = append(n.backupFailed, err)
+}
+
+func (n *fakeNotifier) backupFailures() []error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]error(nil), n.backupFailed...)
 }
 
 func (n *fakeNotifier) NotifyGuardBlocked(ctx context.Context) {
@@ -71,12 +84,18 @@ type fakeBackup struct {
 	mu   sync.Mutex
 	runs int
 	err  error
+	// onRun runs inside Run, before it returns err, so a test can cancel
+	// the chain's context mid-backup.
+	onRun func()
 }
 
 func (b *fakeBackup) Run(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.runs++
+	if b.onRun != nil {
+		b.onRun()
+	}
 	return b.err
 }
 
@@ -192,6 +211,84 @@ func TestMaintenanceChain_GuardBlockStopsChainAfterDiffAndNotifies(t *testing.T)
 	}
 	if result.Steps[1].Step != StepDiffGuard || !result.Steps[1].Blocked {
 		t.Errorf("result.Steps[1] = %+v, want a blocked diff_guard entry", result.Steps[1])
+	}
+}
+
+// TestMaintenanceChain_FailedConfigBackupPublishesTheFailureOnce is #477: a
+// nightly config backup that fails (the backup returns an error exactly when
+// it wrote no destination) is reported through the chain's notifier, once,
+// with the backup's own error, and the chain still reports the failure.
+func TestMaintenanceChain_FailedConfigBackupPublishesTheFailureOnce(t *testing.T) {
+	s := newTestScheduler(t)
+	registerRecording(s, TypeSync, &stepRecorder{}, "sync")
+	backupErr := errors.New("backup: every enabled destination was skipped or unavailable")
+	notifier := &fakeNotifier{}
+	chain := &MaintenanceChain{
+		Scheduler: s,
+		Guard:     &fakeGuard{},
+		Backup:    &fakeBackup{err: backupErr},
+		Notifier:  notifier,
+	}
+
+	result, err := chain.Run(context.Background())
+	if !errors.Is(err, backupErr) {
+		t.Fatalf("Run error = %v, want the backup's error", err)
+	}
+	if last := result.Steps[len(result.Steps)-1]; last.Step != StepConfigBackup || last.Err == nil {
+		t.Fatalf("last step = %+v, want a failed config_backup step", last)
+	}
+	got := notifier.backupFailures()
+	if len(got) != 1 || !errors.Is(got[0], backupErr) {
+		t.Fatalf("config backup failures published = %v, want exactly the backup's error", got)
+	}
+	if notifier.count() != 0 {
+		t.Errorf("guard-blocked notifications = %d, want 0", notifier.count())
+	}
+}
+
+// TestMaintenanceChain_CancelledConfigBackupPublishesNothing keeps a
+// shutdown from alerting on a backup it interrupted.
+func TestMaintenanceChain_CancelledConfigBackupPublishesNothing(t *testing.T) {
+	s := newTestScheduler(t)
+	registerRecording(s, TypeSync, &stepRecorder{}, "sync")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	notifier := &fakeNotifier{}
+	chain := &MaintenanceChain{
+		Scheduler: s,
+		Guard:     &fakeGuard{},
+		Backup:    &fakeBackup{err: context.Canceled, onRun: cancel},
+		Notifier:  notifier,
+	}
+
+	if _, err := chain.Run(ctx); err == nil {
+		t.Fatal("Run succeeded, want the interrupted backup's error")
+	}
+	if got := notifier.backupFailures(); len(got) != 0 {
+		t.Fatalf("config backup failures published on a cancelled chain = %v, want none", got)
+	}
+}
+
+// TestMaintenanceChain_SucceededOrSkippedConfigBackupPublishesNothing covers
+// the two non-failures: a backup that wrote a destination (nil error, which
+// is also how a partial success ends) and no backup configured.
+func TestMaintenanceChain_SucceededOrSkippedConfigBackupPublishesNothing(t *testing.T) {
+	for name, backup := range map[string]ConfigBackup{
+		"succeeded": &fakeBackup{},
+		"skipped":   nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestScheduler(t)
+			registerRecording(s, TypeSync, &stepRecorder{}, "sync")
+			notifier := &fakeNotifier{}
+			chain := &MaintenanceChain{Scheduler: s, Guard: &fakeGuard{}, Backup: backup, Notifier: notifier}
+			if _, err := chain.Run(context.Background()); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := notifier.backupFailures(); len(got) != 0 {
+				t.Fatalf("config backup failures published = %v, want none", got)
+			}
+		})
 	}
 }
 
