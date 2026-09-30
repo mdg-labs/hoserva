@@ -2131,6 +2131,72 @@ func decodeGetSharePermissionsParams(args [1]string, argsEscaped bool, r *http.R
 	return params, nil
 }
 
+// GetStackParams is parameters of getStack operation.
+type GetStackParams struct {
+	// The stack's name.
+	Name string
+}
+
+func unpackGetStackParams(packed middleware.Parameters) (params GetStackParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetStackParams(args [1]string, argsEscaped bool, r *http.Request) (params GetStackParams, _ error) {
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetUserSharePermissionsParams is parameters of getUserSharePermissions operation.
 type GetUserSharePermissionsParams struct {
 	UserId uuid.UUID
@@ -2776,6 +2842,132 @@ func decodeRemoveAppParams(args [1]string, argsEscaped bool, r *http.Request) (p
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// RemoveStackParams is parameters of removeStack operation.
+type RemoveStackParams struct {
+	// Also delete the stack's appdata (its named volumes and the bind-mount directories inside the appdata
+	// location that no other container uses) and its whole directory. Never implied by anything else;
+	// absent means false.
+	DeleteAppdata OptBool `json:",omitempty,omitzero"`
+	// The stack's name.
+	Name string
+}
+
+func unpackRemoveStackParams(packed middleware.Parameters) (params RemoveStackParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "deleteAppdata",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.DeleteAppdata = v.(OptBool)
+		}
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeRemoveStackParams(args [1]string, argsEscaped bool, r *http.Request) (params RemoveStackParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Set default value for query: deleteAppdata.
+	{
+		val := bool(false)
+		params.DeleteAppdata.SetTo(val)
+	}
+	// Decode query: deleteAppdata.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "deleteAppdata",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotDeleteAppdataVal bool
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToBool(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotDeleteAppdataVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.DeleteAppdata.SetTo(paramsDotDeleteAppdataVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "deleteAppdata",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
 			In:   "path",
 			Err:  err,
 		}

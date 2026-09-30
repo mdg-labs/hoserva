@@ -179,6 +179,7 @@ func containerFromSummary(s dockercontainer.Summary) Container {
 		Health: healthFromStatus(s.Status),
 		Ports:  ports,
 		Mounts: mounts,
+		Labels: s.Labels,
 	}
 }
 

@@ -70,7 +70,22 @@ type Container struct {
 	Health string // one of the Health constants
 	Ports  []Port
 	Mounts []Mount
+	// Labels are the container's Engine labels; StackService reads the
+	// Compose project label to find a stack's containers.
+	Labels map[string]string
 }
+
+// composeProjectLabel is the label Docker Compose puts on every container
+// of a project, the project being the stack's name.
+const composeProjectLabel = "com.docker.compose.project"
+
+// composeWorkingDirLabel and composeConfigFilesLabel record where Compose
+// started a container from: the project directory and the comma-separated
+// compose files. Two projects can share a name, and these tell them apart.
+const (
+	composeWorkingDirLabel  = "com.docker.compose.project.working_dir"
+	composeConfigFilesLabel = "com.docker.compose.project.config_files"
+)
 
 // Image is one image the Docker Engine holds locally.
 type Image struct {

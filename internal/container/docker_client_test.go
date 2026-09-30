@@ -142,9 +142,13 @@ func TestContainerFromSummary(t *testing.T) {
 		Mounts: []dockercontainer.MountPoint{
 			{Source: "/mnt/cache/appdata/jellyfin", Destination: "/config", Mode: "rw", RW: true},
 		},
+		Labels: map[string]string{composeProjectLabel: "jellyfin"},
 	}
 
 	got := containerFromSummary(s)
+	if got.Labels[composeProjectLabel] != "jellyfin" {
+		t.Fatalf("containerFromSummary().Labels = %v, want the Compose project label", got.Labels)
+	}
 
 	want := Container{
 		ID:     "abc123",

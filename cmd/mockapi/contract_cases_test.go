@@ -352,6 +352,131 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Compose stacks (#278) ---
+	{
+		op:   "ListStacks",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListStacks(ctx)
+			return err
+		},
+	},
+	{
+		op:   "CreateStack",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services:\n  web:\n    image: nginx\n"})
+			return err
+		},
+	},
+	{
+		op:   "CreateStack",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "../etc", Compose: "services: {}\n"})
+			return err
+		},
+	},
+	{
+		op:   "CreateStack",
+		name: "empty_compose_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: " \n"})
+			return err
+		},
+	},
+	{
+		op:   "CreateStack",
+		name: "duplicate_name_is_a_conflict",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}
+			if _, err := h.CreateStack(ctx, req); err != nil {
+				return err
+			}
+			_, err := h.CreateStack(ctx, req)
+			return err
+		},
+	},
+	{
+		op:   "GetStack",
+		name: "valid_created_stack",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "GetStack",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "RemoveStack",
+		name: "valid_created_stack",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "RemoveStack",
+		name: "valid_remove_then_create_again",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.CreateStackRequest{Name: "plex", Compose: "services: {}\n"}
+			if _, err := h.CreateStack(ctx, req); err != nil {
+				return err
+			}
+			if _, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "plex"}); err != nil {
+				return err
+			}
+			_, err := h.CreateStack(ctx, req)
+			return err
+		},
+	},
+	{
+		op:   "RemoveStack",
+		name: "appdata_deletion_of_an_unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "nginx", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveStack",
+		name: "appdata_deletion_needs_an_appdata_location",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "nginx", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveStack",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "RemoveStack",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "../stacks", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
 	// --- Apps lifecycle (#277) ---
 	{
 		op:   "StartApp",

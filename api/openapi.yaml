@@ -100,6 +100,13 @@ tags:
       03 §7) is stored here too, editable from either the share or the
       user/group; enforcing it in generated Samba/mergerfs config is a
       later issue.
+  - name: stacks
+    description: >-
+      Docker Compose stacks (doc 04 §2, D4): one `stacks` row per stack,
+      from which `docker-compose.yml`, `.env` and `meta.json` under the
+      stacks directory (`<state dir>/stacks/<name>/`, `/var/lib/hoserva/
+      stacks/<name>/` on an installed system) are generated. A stack's
+      Compose project is run with `docker compose`, never through a shell.
   - name: apps
     description: >-
       Docker Engine containers and images (`hoserva app list`, doc 04 §2,
@@ -3723,6 +3730,144 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /stacks:
+    get:
+      operationId: listStacks
+      summary: List Compose stacks
+      description: >-
+        Every stack Hoserva has a row for, sorted by name. A stack's
+        `.env` is never returned: it holds generated secrets.
+      tags: [stacks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The stacks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListStacksOK'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createStack
+      summary: Create a Compose stack
+      description: >-
+        Stores the stack's row (D4, `.env` sealed under the machine key) and
+        generates `docker-compose.yml`, `.env` and `meta.json` into the
+        directory named after the stack, then checks the result with
+        `docker compose config`. Nothing is started. Refused with 409
+        `stack_exists` when a stack of that name exists. A directory of
+        that name already under the stacks directory (what a removed
+        stack's own files left behind) is used as it is, and only the three
+        generated files are written into it; it is refused with 409
+        `stack_dir_exists` when it holds a `docker-compose.yml`, which is
+        never overwritten. A name that is not 1 to 63 lowercase letters,
+        digits, `-` or `_`, starting with a letter or digit, is refused
+        with 400 `invalid_stack_name` before anything is touched. A Compose
+        file that `docker compose config` rejects is refused with 400
+        `invalid_stack`, and leaves no row and no generated file behind.
+      tags: [stacks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStackRequest'
+      responses:
+        "200":
+          description: The created stack.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stack'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /stacks/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The stack's name.
+    get:
+      operationId: getStack
+      summary: Get a Compose stack
+      description: One stack's row, without its `.env`.
+      tags: [stacks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The stack.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stack'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: removeStack
+      summary: Remove a Compose stack
+      description: >-
+        Runs `docker compose down` for the stack (its containers and
+        networks are removed; named volumes are kept), deletes its generated
+        `docker-compose.yml`, `.env` and `meta.json`, and then its row; the
+        stack's directory goes too if nothing else is in it, so the name
+        can be used again and a file the stack keeps there stays. Taking
+        the stack down does not need its `.env`. `docker compose down`
+        removes every container and network of the stack's Compose project
+        name, and with `--volumes` its named volumes, whichever file or
+        directory they were started from. So before docker runs, every
+        container of that project must be one Compose started from the
+        stack's own directory: a project of the same name that something
+        else runs (a hand-run `~/immich/compose.yml` is project `immich`) is
+        refused with 409 `stack_project_shared`, whether or not the stack
+        has its `.env` and whether or not appdata is deleted. Since that
+        cannot be checked otherwise, a remove is also refused, as any
+        docker failure is, when the project's containers cannot be listed
+        (503 `docker_unavailable` when Docker is not reachable). Appdata is
+        deleted only when `deleteAppdata` is explicitly true: then the
+        stack's named volumes are removed with `docker compose down
+        --volumes`, each bind-mount directory of the stack's containers
+        that lies strictly inside an appdata location (the cache disk's
+        `appdata` directory) and is used by no other container is deleted,
+        and so is the stack's whole directory, before the row. Nothing is
+        deleted if one of the stack's containers is still there after
+        `docker compose down`. That needs the array running, like a
+        container remove that deletes appdata: refused with 409
+        `array_stopped` (or 503 `array_state_unknown`) before anything is
+        changed, with 409 `appdata_unavailable` when no appdata location
+        is known, and with 409 `appdata_shared` when a directory is used
+        by another container or another container binds a place inside the
+        stack's directory. A name that is not a valid stack name is
+        refused with 400 `invalid_stack_name` before anything is touched.
+        A `docker compose down` that fails, or a directory that cannot be
+        deleted, leaves the row in place so the remove can be retried.
+      tags: [stacks]
+      x-hoserva-role: admin
+      parameters:
+        - name: deleteAppdata
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: >-
+            Also delete the stack's appdata (its named volumes and the
+            bind-mount directories inside the appdata location that no
+            other container uses) and its whole directory. Never implied by
+            anything else; absent means false.
+      responses:
+        "200":
+          description: The stack was removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveStackResult'
+        default:
+          $ref: '#/components/responses/Error'
+
   /users:
     get:
       operationId: listUsers
@@ -5780,6 +5925,72 @@ components:
             The appdata directories deleted. Empty unless `deleteAppdata`
             was requested — and possibly empty then too, when none of the
             container's mounts lay inside the appdata location.
+
+    StackTemplate:
+      type: object
+      required: [source, id, revision]
+      properties:
+        source:
+          type: string
+          description: Where the template came from; empty for a stack no template installed.
+        id:
+          type: string
+        revision:
+          type: string
+
+    Stack:
+      type: object
+      required: [name, template, installedAt]
+      properties:
+        name:
+          type: string
+        template:
+          $ref: '#/components/schemas/StackTemplate'
+        installedAt:
+          type: string
+          format: date-time
+
+    ListStacksOK:
+      type: object
+      required: [stacks]
+      properties:
+        stacks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stack'
+
+    CreateStackRequest:
+      type: object
+      required: [name, compose]
+      properties:
+        name:
+          type: string
+          description: >-
+            1 to 63 lowercase letters, digits, `-` or `_`, starting with a
+            letter or digit. It is the stack's directory name and its
+            Compose project name.
+        compose:
+          type: string
+          description: The `docker-compose.yml` text.
+        env:
+          type: string
+          description: >-
+            The `.env` text. Write-only: it is stored sealed under the
+            machine key and never returned. Absent means an empty `.env`.
+        template:
+          $ref: '#/components/schemas/StackTemplate'
+
+    RemoveStackResult:
+      type: object
+      required: [deletedPaths]
+      properties:
+        deletedPaths:
+          type: array
+          items:
+            type: string
+          description: >-
+            The appdata directories and the stack directory deleted. Empty
+            unless `deleteAppdata` was requested.
 
     AppPort:
       type: object

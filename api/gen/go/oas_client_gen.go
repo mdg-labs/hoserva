@@ -223,6 +223,21 @@ type Invoker interface {
 	//
 	// POST /shares
 	CreateShare(ctx context.Context, request *CreateShareRequest) (*Share, error)
+	// CreateStack invokes createStack operation.
+	//
+	// Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`,
+	// `.env` and `meta.json` into the directory named after the stack, then checks the result with
+	// `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that
+	// name exists. A directory of that name already under the stacks directory (what a removed stack's own
+	// files left behind) is used as it is, and only the three generated files are written into it; it is
+	// refused with 409 `stack_dir_exists` when it holds a `docker-compose.yml`, which is never
+	// overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
+	// letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
+	// that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
+	// generated file behind.
+	//
+	// POST /stacks
+	CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error)
 	// CreateUser invokes createUser operation.
 	//
 	// Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin
@@ -568,6 +583,12 @@ type Invoker interface {
 	//
 	// GET /shares/{name}/permissions
 	GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error)
+	// GetStack invokes getStack operation.
+	//
+	// One stack's row, without its `.env`.
+	//
+	// GET /stacks/{name}
+	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
 	// GetStatus invokes getStatus operation.
 	//
 	// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -745,6 +766,13 @@ type Invoker interface {
 	//
 	// GET /shares
 	ListShares(ctx context.Context) (*ListSharesOK, error)
+	// ListStacks invokes listStacks operation.
+	//
+	// Every stack Hoserva has a row for, sorted by name. A stack's `.env` is never returned: it holds
+	// generated secrets.
+	//
+	// GET /stacks
+	ListStacks(ctx context.Context) (*ListStacksOK, error)
 	// ListUserGroups invokes listUserGroups operation.
 	//
 	// Every user group, sorted by name (Q27, doc 03 §7).
@@ -993,6 +1021,34 @@ type Invoker interface {
 	//
 	// DELETE /apps/{id}
 	RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error)
+	// RemoveStack invokes removeStack operation.
+	//
+	// Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are
+	// kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the
+	// stack's directory goes too if nothing else is in it, so the name can be used again and a file the
+	// stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down`
+	// removes every container and network of the stack's Compose project name, and with `--volumes` its
+	// named volumes, whichever file or directory they were started from. So before docker runs, every
+	// container of that project must be one Compose started from the stack's own directory: a project of
+	// the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is
+	// refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not
+	// appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker
+	// failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is
+	// not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's
+	// named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the
+	// stack's containers that lies strictly inside an appdata location (the cache disk's `appdata`
+	// directory) and is used by no other container is deleted, and so is the stack's whole directory,
+	// before the row. Nothing is deleted if one of the stack's containers is still there after
+	// `docker compose down`. That needs the array running, like a container remove that deletes appdata:
+	// refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409
+	// `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a
+	// directory is used by another container or another container binds a place inside the stack's
+	// directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before
+	// anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted,
+	// leaves the row in place so the remove can be retried.
+	//
+	// DELETE /stacks/{name}
+	RemoveStack(ctx context.Context, params RemoveStackParams) (*RemoveStackResult, error)
 	// ReplaceDisk invokes replaceDisk operation.
 	//
 	// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
@@ -3859,6 +3915,143 @@ func (c *Client) sendCreateShare(ctx context.Context, request *CreateShareReques
 
 	stage = "DecodeResponse"
 	result, err := decodeCreateShareResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CreateStack invokes createStack operation.
+//
+// Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`,
+// `.env` and `meta.json` into the directory named after the stack, then checks the result with
+// `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that
+// name exists. A directory of that name already under the stacks directory (what a removed stack's own
+// files left behind) is used as it is, and only the three generated files are written into it; it is
+// refused with 409 `stack_dir_exists` when it holds a `docker-compose.yml`, which is never
+// overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
+// letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
+// that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
+// generated file behind.
+//
+// POST /stacks
+func (c *Client) CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error) {
+	res, err := c.sendCreateStack(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendCreateStack(ctx context.Context, request *CreateStackRequest) (res *Stack, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createStack"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/stacks"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/stacks"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateStackRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CreateStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CreateStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateStackResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -9465,6 +9658,149 @@ func (c *Client) sendGetSharePermissions(ctx context.Context, params GetSharePer
 	return result, nil
 }
 
+// GetStack invokes getStack operation.
+//
+// One stack's row, without its `.env`.
+//
+// GET /stacks/{name}
+func (c *Client) GetStack(ctx context.Context, params GetStackParams) (*Stack, error) {
+	res, err := c.sendGetStack(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetStack(ctx context.Context, params GetStackParams) (res *Stack, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getStack"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/stacks/{name}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetStackResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetStatus invokes getStatus operation.
 //
 // One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -11756,6 +12092,132 @@ func (c *Client) sendListShares(ctx context.Context) (res *ListSharesOK, err err
 
 	stage = "DecodeResponse"
 	result, err := decodeListSharesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListStacks invokes listStacks operation.
+//
+// Every stack Hoserva has a row for, sorted by name. A stack's `.env` is never returned: it holds
+// generated secrets.
+//
+// GET /stacks
+func (c *Client) ListStacks(ctx context.Context) (*ListStacksOK, error) {
+	res, err := c.sendListStacks(ctx)
+	return res, err
+}
+
+func (c *Client) sendListStacks(ctx context.Context) (res *ListStacksOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listStacks"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/stacks"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListStacksOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/stacks"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListStacksOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListStacksOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListStacksResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -14330,6 +14792,192 @@ func (c *Client) sendRemoveApp(ctx context.Context, params RemoveAppParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeRemoveAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RemoveStack invokes removeStack operation.
+//
+// Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are
+// kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the
+// stack's directory goes too if nothing else is in it, so the name can be used again and a file the
+// stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down`
+// removes every container and network of the stack's Compose project name, and with `--volumes` its
+// named volumes, whichever file or directory they were started from. So before docker runs, every
+// container of that project must be one Compose started from the stack's own directory: a project of
+// the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is
+// refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not
+// appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker
+// failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is
+// not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's
+// named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the
+// stack's containers that lies strictly inside an appdata location (the cache disk's `appdata`
+// directory) and is used by no other container is deleted, and so is the stack's whole directory,
+// before the row. Nothing is deleted if one of the stack's containers is still there after
+// `docker compose down`. That needs the array running, like a container remove that deletes appdata:
+// refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409
+// `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a
+// directory is used by another container or another container binds a place inside the stack's
+// directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before
+// anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted,
+// leaves the row in place so the remove can be retried.
+//
+// DELETE /stacks/{name}
+func (c *Client) RemoveStack(ctx context.Context, params RemoveStackParams) (*RemoveStackResult, error) {
+	res, err := c.sendRemoveStack(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendRemoveStack(ctx context.Context, params RemoveStackParams) (res *RemoveStackResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("removeStack"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/stacks/{name}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RemoveStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "deleteAppdata" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "deleteAppdata",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.DeleteAppdata.Get(); ok {
+				return e.EncodeValue(conv.BoolToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RemoveStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RemoveStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRemoveStackResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

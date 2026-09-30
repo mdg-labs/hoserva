@@ -142,6 +142,7 @@ var uncomparedTables = map[string]string{
 	"array_disks":                "refused by CheckImport when it differs: an archive of another array is never imported",
 	"relocation_manifest":        "refused by CheckImport when it differs: an archive of another array is never imported",
 	"relocation_removing_disks":  "refused by CheckImport when it differs: an archive of another array is never imported",
+	"stacks":                     "compared as the stack_file changes: the rows hold what each stack's compose file, .env and meta.json are generated from",
 	"machine_key_check":          "refused by CheckImport when it differs: it identifies the installation",
 	"schema_migrations":          "the schema version, which CheckImport requires to match",
 }

@@ -42,7 +42,8 @@ type secretsArchive struct {
 // manifest, its secrets.age holding archivedPlain and a stack .env sealed
 // under secretsPass, and its identity.age sealed under identityPass (no file
 // when empty). A second notification channel, c2, holds a sealed credential
-// secrets.age carries nothing for.
+// secrets.age carries nothing for. The stack web holds a sealed env that
+// secrets.age carries the .env of, and the stack bare one it carries none for.
 func archiveWithSecrets(t *testing.T, secretsPass, identityPass string) secretsArchive {
 	t.Helper()
 	tree := archiveOfAnotherInstallation(t)
@@ -51,6 +52,8 @@ func archiveWithSecrets(t *testing.T, secretsPass, identityPass string) secretsA
 		t.Fatal(err)
 	}
 	mustExec(t, db, `INSERT INTO notify_channels (id, name, type, enabled, config, secret, created_at, updated_at) VALUES ('c2', 'ops2', 'gotify', 1, '{}', X'cd', 't', 't')`)
+	mustExec(t, db, `INSERT INTO stacks (name, template_source, template_id, template_revision, compose, env, installed_at) VALUES ('web', '', '', '', 'services: {}', X'ef', 't')`)
+	mustExec(t, db, `INSERT INTO stacks (name, template_source, template_id, template_revision, compose, env, installed_at) VALUES ('bare', '', '', '', 'services: {}', X'ef', 't')`)
 	_ = db.Close()
 
 	if err := writeManifest(filepath.Join(tree, "manifest.json"), buildManifest("host", "1", time.Now(), map[string]string{"stacks/web/docker-compose.yml": "x"})); err != nil {
@@ -189,14 +192,27 @@ func TestBareMetalApply_WithThePassphraseSealsEverySecretUnderThisInstallationsK
 		"database_secret users.totp_secret (alice) sealed_under_other_key",
 		"database_secret users.totp_pending_secret (alice) sealed_under_other_key",
 		"database_secret notify_channels.secret (ops2) sealed_under_other_key",
+		"database_secret stacks.env (bare) sealed_under_other_key",
 		"disk parity disk 1 (/mnt/parity1, WWN wwn-p1) disk_absent",
 	} {
 		if !slices.Contains(names, w) {
 			t.Errorf("notRestored lacks %q; has %v", w, names)
 		}
 	}
+	env, err := FakeSecretCipher{}.Decrypt(stagedBlob(t, staged, `SELECT env FROM stacks WHERE name = 'web'`))
+	if err != nil || string(env) != envBody {
+		t.Errorf("stacks.env of web = %q (%v), want the archive's .env sealed under this installation's key", env, err)
+	}
+	if n := queryString(t, staged, `SELECT COUNT(*) FROM stacks WHERE name = 'bare' AND length(env) > 0`); n != "0" {
+		t.Error("the env of a stack secrets.age carries no .env for was left sealed under the archive's key")
+	}
+	for _, n := range notRestored {
+		if n.Kind == NotRestoredDatabaseSecret && strings.HasPrefix(n.Name, "stacks.env") && strings.Contains(n.Message, "enter it again") {
+			t.Errorf("%s: %q tells the user to enter a value no operation takes", n.Name, n.Message)
+		}
+	}
 	for _, n := range names {
-		for _, restored := range []string{"acme_config", "ups_config", "backup_destinations", "notify_channels.secret (ops)", "backup_passphrase", NotRestoredRecipient} {
+		for _, restored := range []string{"acme_config", "ups_config", "backup_destinations", "notify_channels.secret (ops)", "stacks.env (web)", "backup_passphrase", NotRestoredRecipient} {
 			if strings.Contains(n, restored) {
 				t.Errorf("notRestored lists %q, which was restored", n)
 			}
@@ -238,6 +254,7 @@ func TestBareMetalApply_WithoutAPassphraseClearsEverySecretAndKeepsTheOwnRecipie
 				`SELECT COUNT(*) FROM acme_config WHERE length(dns_secret) > 0 OR length(account_key) > 0`,
 				`SELECT COUNT(*) FROM ups_config WHERE length(monitor_password) > 0`,
 				`SELECT COUNT(*) FROM backup_destinations WHERE length(secrets) > 0`,
+				`SELECT COUNT(*) FROM stacks WHERE length(env) > 0`,
 				`SELECT COUNT(*) FROM schema_info WHERE backup_passphrase IS NOT NULL`,
 			} {
 				if got := queryString(t, staged, q); got != "0" {
@@ -257,6 +274,18 @@ func TestBareMetalApply_WithoutAPassphraseClearsEverySecretAndKeepsTheOwnRecipie
 			}
 			if !found {
 				t.Errorf("notRestored = %v, want the backup recipient kept and reported as %s", notRestoredNames(notRestored), tc.reason)
+			}
+			stacksReported := 0
+			for _, n := range notRestored {
+				if n.Kind == NotRestoredDatabaseSecret && strings.HasPrefix(n.Name, "stacks.env") {
+					stacksReported++
+					if strings.Contains(n.Message, "enter it again") {
+						t.Errorf("%s: %q tells the user to enter a value no operation takes", n.Name, n.Message)
+					}
+				}
+			}
+			if stacksReported != 2 {
+				t.Errorf("notRestored = %v, want both stacks' cleared env reported", notRestoredNames(notRestored))
 			}
 		})
 	}

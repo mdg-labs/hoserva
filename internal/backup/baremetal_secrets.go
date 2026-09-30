@@ -21,10 +21,12 @@ const NotRestoredRecipient = "backup_recipient"
 // id, as secrets.age names it.
 type secretKey struct{ table, column, rowID string }
 
-// restorableSecrets are the columns secrets.age carries a plaintext for, each
-// keyed by the id column every one of these tables has. A bare-metal restore
-// writes them under this installation's machine key, and refuses an entry for
-// any other column, so nothing in the file ever names a statement.
+// restorableSecrets are the columns secrets.age carries a database entry for,
+// each keyed by the id column every one of these tables has. A bare-metal
+// restore writes them under this installation's machine key, and refuses an
+// entry for any other column, so nothing in the file ever names a statement.
+// A stack's .env is not among them: secrets.age carries it as a stack entry,
+// and the restore seals it into stacks.env.
 var restorableSecrets = map[string]bool{
 	"acme_config.dns_secret":      true,
 	"acme_config.account_key":     true,
@@ -92,7 +94,29 @@ func sealRestore(o SecretsOutcome, cipher RecipientCipher) (sealedRestore, error
 		}
 		out.values[secretKey{e.Table, e.Column, e.RowID}] = sealed
 	}
+	// A stack's .env is the plaintext its stacks.env column is sealed from
+	// (the same value the restore writes to its .env file), for the stacks
+	// the archive has files of.
+	for _, e := range o.secrets.StackEnvs() {
+		if !slices.Contains(o.archiveStacks, e.Stack) {
+			continue
+		}
+		sealed, err := seal("the .env of stack "+e.Stack, e.Body)
+		if err != nil {
+			return sealedRestore{}, err
+		}
+		out.values[secretKey{"stacks", "env", e.Stack}] = sealed
+	}
 	return out, nil
+}
+
+// rowKey is the column that identifies a row of a table with sealed columns:
+// id, unless sealedRowKeys names another.
+func rowKey(table string) string {
+	if k, ok := sealedRowKeys[table]; ok {
+		return k
+	}
+	return "id"
 }
 
 // holds reports whether the restore writes k's column of its row, so that
@@ -118,7 +142,7 @@ func (r sealedRestore) restore(ctx context.Context, tx *sql.Tx) error {
 		return strings.Compare(a.table+"."+a.column+"."+a.rowID, b.table+"."+b.column+"."+b.rowID)
 	})
 	for _, k := range keys {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET %s = ? WHERE CAST(id AS TEXT) = ?`, k.table, k.column), r.values[k], k.rowID); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET %s = ? WHERE CAST(%s AS TEXT) = ?`, k.table, k.column, rowKey(k.table)), r.values[k], k.rowID); err != nil {
 			return fmt.Errorf("writing %s.%s (row %s): %w", k.table, k.column, k.rowID, err)
 		}
 	}

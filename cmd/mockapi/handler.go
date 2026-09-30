@@ -89,6 +89,11 @@ type handler struct {
 	appsMu sync.Mutex
 	apps   []apiv1.App
 
+	// stacksMu guards stacks (#278): the Compose stacks this mock instance
+	// lists, starting empty. CreateStack and RemoveStack change them.
+	stacksMu sync.Mutex
+	stacks   map[string]apiv1.Stack
+
 	// appdataMu guards appdataPolicies (#61): the per-container appdata
 	// backup policy set through SetAppdataBackupContainer. A container
 	// with no entry is stopped and included, like production.

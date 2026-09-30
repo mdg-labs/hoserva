@@ -2153,6 +2153,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Compose stacks
+         * @description Every stack Hoserva has a row for, sorted by name. A stack's `.env` is never returned: it holds generated secrets.
+         */
+        get: operations["listStacks"];
+        put?: never;
+        /**
+         * Create a Compose stack
+         * @description Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`, `.env` and `meta.json` into the directory named after the stack, then checks the result with `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that name exists. A directory of that name already under the stacks directory (what a removed stack's own files left behind) is used as it is, and only the three generated files are written into it; it is refused with 409 `stack_dir_exists` when it holds a `docker-compose.yml`, which is never overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no generated file behind.
+         */
+        post: operations["createStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a Compose stack
+         * @description One stack's row, without its `.env`.
+         */
+        get: operations["getStack"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a Compose stack
+         * @description Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the stack's directory goes too if nothing else is in it, so the name can be used again and a file the stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down` removes every container and network of the stack's Compose project name, and with `--volumes` its named volumes, whichever file or directory they were started from. So before docker runs, every container of that project must be one Compose started from the stack's own directory: a project of the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the stack's containers that lies strictly inside an appdata location (the cache disk's `appdata` directory) and is used by no other container is deleted, and so is the stack's whole directory, before the row. Nothing is deleted if one of the stack's containers is still there after `docker compose down`. That needs the array running, like a container remove that deletes appdata: refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409 `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a directory is used by another container or another container binds a place inside the stack's directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted, leaves the row in place so the remove can be retried.
+         */
+        delete: operations["removeStack"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -3189,6 +3240,34 @@ export interface components {
         };
         RemoveAppResult: {
             /** @description The appdata directories deleted. Empty unless `deleteAppdata` was requested — and possibly empty then too, when none of the container's mounts lay inside the appdata location. */
+            deletedPaths: string[];
+        };
+        StackTemplate: {
+            /** @description Where the template came from; empty for a stack no template installed. */
+            source: string;
+            id: string;
+            revision: string;
+        };
+        Stack: {
+            name: string;
+            template: components["schemas"]["StackTemplate"];
+            /** Format: date-time */
+            installedAt: string;
+        };
+        ListStacksOK: {
+            stacks: components["schemas"]["Stack"][];
+        };
+        CreateStackRequest: {
+            /** @description 1 to 63 lowercase letters, digits, `-` or `_`, starting with a letter or digit. It is the stack's directory name and its Compose project name. */
+            name: string;
+            /** @description The `docker-compose.yml` text. */
+            compose: string;
+            /** @description The `.env` text. Write-only: it is stored sealed under the machine key and never returned. Absent means an empty `.env`. */
+            env?: string;
+            template?: components["schemas"]["StackTemplate"];
+        };
+        RemoveStackResult: {
+            /** @description The appdata directories and the stack directory deleted. Empty unless `deleteAppdata` was requested. */
             deletedPaths: string[];
         };
         AppPort: {
@@ -7220,6 +7299,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppStats"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listStacks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stacks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListStacksOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateStackRequest"];
+            };
+        };
+        responses: {
+            /** @description The created stack. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stack. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeStack: {
+        parameters: {
+            query?: {
+                /** @description Also delete the stack's appdata (its named volumes and the bind-mount directories inside the appdata location that no other container uses) and its whole directory. Never implied by anything else; absent means false. */
+                deleteAppdata?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stack was removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveStackResult"];
                 };
             };
             default: components["responses"]["Error"];

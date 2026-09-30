@@ -334,6 +334,16 @@ type SpinEvent struct {
 	At        string `json:"at"`
 }
 
+type Stack struct {
+	Name             string `json:"name"`
+	TemplateSource   string `json:"template_source"`
+	TemplateID       string `json:"template_id"`
+	TemplateRevision string `json:"template_revision"`
+	Compose          string `json:"compose"`
+	Env              []byte `json:"env"`
+	InstalledAt      string `json:"installed_at"`
+}
+
 type UpsConfig struct {
 	ID                int64  `json:"id"`
 	Connection        string `json:"connection"`

@@ -4286,6 +4286,59 @@ func (s *CreateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
 }
 
+// Ref: #/components/schemas/CreateStackRequest
+type CreateStackRequest struct {
+	// 1 to 63 lowercase letters, digits, `-` or `_`, starting with a letter or digit. It is the stack's
+	// directory name and its Compose project name.
+	Name string `json:"name"`
+	// The `docker-compose.yml` text.
+	Compose string `json:"compose"`
+	// The `.env` text. Write-only: it is stored sealed under the machine key and never returned. Absent
+	// means an empty `.env`.
+	Env      OptString        `json:"env"`
+	Template OptStackTemplate `json:"template"`
+}
+
+// GetName returns the value of Name.
+func (s *CreateStackRequest) GetName() string {
+	return s.Name
+}
+
+// GetCompose returns the value of Compose.
+func (s *CreateStackRequest) GetCompose() string {
+	return s.Compose
+}
+
+// GetEnv returns the value of Env.
+func (s *CreateStackRequest) GetEnv() OptString {
+	return s.Env
+}
+
+// GetTemplate returns the value of Template.
+func (s *CreateStackRequest) GetTemplate() OptStackTemplate {
+	return s.Template
+}
+
+// SetName sets the value of Name.
+func (s *CreateStackRequest) SetName(val string) {
+	s.Name = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *CreateStackRequest) SetCompose(val string) {
+	s.Compose = val
+}
+
+// SetEnv sets the value of Env.
+func (s *CreateStackRequest) SetEnv(val OptString) {
+	s.Env = val
+}
+
+// SetTemplate sets the value of Template.
+func (s *CreateStackRequest) SetTemplate(val OptStackTemplate) {
+	s.Template = val
+}
+
 // Ref: #/components/schemas/CreateUserGroupRequest
 type CreateUserGroupRequest struct {
 	Name string `json:"name"`
@@ -6808,6 +6861,21 @@ func (s *ListSharesOK) GetShares() []Share {
 // SetShares sets the value of Shares.
 func (s *ListSharesOK) SetShares(val []Share) {
 	s.Shares = val
+}
+
+// Ref: #/components/schemas/ListStacksOK
+type ListStacksOK struct {
+	Stacks []Stack `json:"stacks"`
+}
+
+// GetStacks returns the value of Stacks.
+func (s *ListStacksOK) GetStacks() []Stack {
+	return s.Stacks
+}
+
+// SetStacks sets the value of Stacks.
+func (s *ListStacksOK) SetStacks(val []Stack) {
+	s.Stacks = val
 }
 
 type ListUserGroupsOK struct {
@@ -10598,6 +10666,52 @@ func (o OptShareSMB) Or(d ShareSMB) ShareSMB {
 	return d
 }
 
+// NewOptStackTemplate returns new OptStackTemplate with value set to v.
+func NewOptStackTemplate(v StackTemplate) OptStackTemplate {
+	return OptStackTemplate{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStackTemplate is optional StackTemplate.
+type OptStackTemplate struct {
+	Value StackTemplate
+	Set   bool
+}
+
+// IsSet returns true if OptStackTemplate was set.
+func (o OptStackTemplate) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStackTemplate) Reset() {
+	var v StackTemplate
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStackTemplate) SetTo(v StackTemplate) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStackTemplate) Get() (v StackTemplate, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStackTemplate) Or(d StackTemplate) StackTemplate {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptStartAppdataBackupRequest returns new OptStartAppdataBackupRequest with value set to v.
 func NewOptStartAppdataBackupRequest(v StartAppdataBackupRequest) OptStartAppdataBackupRequest {
 	return OptStartAppdataBackupRequest{
@@ -11906,6 +12020,22 @@ func (s *RemoveAppResult) GetDeletedPaths() []string {
 
 // SetDeletedPaths sets the value of DeletedPaths.
 func (s *RemoveAppResult) SetDeletedPaths(val []string) {
+	s.DeletedPaths = val
+}
+
+// Ref: #/components/schemas/RemoveStackResult
+type RemoveStackResult struct {
+	// The appdata directories and the stack directory deleted. Empty unless `deleteAppdata` was requested.
+	DeletedPaths []string `json:"deletedPaths"`
+}
+
+// GetDeletedPaths returns the value of DeletedPaths.
+func (s *RemoveStackResult) GetDeletedPaths() []string {
+	return s.DeletedPaths
+}
+
+// SetDeletedPaths sets the value of DeletedPaths.
+func (s *RemoveStackResult) SetDeletedPaths(val []string) {
 	s.DeletedPaths = val
 }
 
@@ -13460,6 +13590,81 @@ func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/Stack
+type Stack struct {
+	Name        string        `json:"name"`
+	Template    StackTemplate `json:"template"`
+	InstalledAt time.Time     `json:"installedAt"`
+}
+
+// GetName returns the value of Name.
+func (s *Stack) GetName() string {
+	return s.Name
+}
+
+// GetTemplate returns the value of Template.
+func (s *Stack) GetTemplate() StackTemplate {
+	return s.Template
+}
+
+// GetInstalledAt returns the value of InstalledAt.
+func (s *Stack) GetInstalledAt() time.Time {
+	return s.InstalledAt
+}
+
+// SetName sets the value of Name.
+func (s *Stack) SetName(val string) {
+	s.Name = val
+}
+
+// SetTemplate sets the value of Template.
+func (s *Stack) SetTemplate(val StackTemplate) {
+	s.Template = val
+}
+
+// SetInstalledAt sets the value of InstalledAt.
+func (s *Stack) SetInstalledAt(val time.Time) {
+	s.InstalledAt = val
+}
+
+// Ref: #/components/schemas/StackTemplate
+type StackTemplate struct {
+	// Where the template came from; empty for a stack no template installed.
+	Source   string `json:"source"`
+	ID       string `json:"id"`
+	Revision string `json:"revision"`
+}
+
+// GetSource returns the value of Source.
+func (s *StackTemplate) GetSource() string {
+	return s.Source
+}
+
+// GetID returns the value of ID.
+func (s *StackTemplate) GetID() string {
+	return s.ID
+}
+
+// GetRevision returns the value of Revision.
+func (s *StackTemplate) GetRevision() string {
+	return s.Revision
+}
+
+// SetSource sets the value of Source.
+func (s *StackTemplate) SetSource(val string) {
+	s.Source = val
+}
+
+// SetID sets the value of ID.
+func (s *StackTemplate) SetID(val string) {
+	s.ID = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *StackTemplate) SetRevision(val string) {
+	s.Revision = val
 }
 
 // Ref: #/components/schemas/StartAppdataBackupRequest

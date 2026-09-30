@@ -534,6 +534,7 @@ func run(cfg config) error {
 		handler.Container = dockerProvider
 	}
 	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready, arrayActionAdmit(scheduler))
+	wireStacks(handler, store.NewStackStore(db), machineKey, container.CommandRunner{}, absStateDir, apps, arrayActionAdmit(scheduler))
 	if apps != nil {
 		go apps.Watcher.Run(ctx)
 		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)

@@ -186,6 +186,9 @@ type Handler struct {
 	// business logic for Apps (doc 04 §1) over the same Provider as
 	// Container. Nil returns 501 from those operations.
 	Lifecycle *container.Lifecycle
+	// Stacks is the Compose stack model (doc 04 §2, D4) behind /stacks.
+	// Nil returns 501 from those operations.
+	Stacks *container.StackService
 	// ComposeRunner execs `docker compose version` for the doctor Compose
 	// v2 check. Nil uses the real container.CommandRunner.
 	ComposeRunner container.Runner

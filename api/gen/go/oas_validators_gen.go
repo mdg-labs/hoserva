@@ -3742,6 +3742,29 @@ func (s *ListSharesOK) Validate() error {
 	return nil
 }
 
+func (s *ListStacksOK) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Stacks == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "stacks",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s *ListUserGroupsOK) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -5475,6 +5498,29 @@ func (s *RegisterExternalDiskRequest) Validate() error {
 }
 
 func (s *RemoveAppResult) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.DeletedPaths == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "deletedPaths",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *RemoveStackResult) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
 	}

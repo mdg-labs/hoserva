@@ -759,3 +759,21 @@ CREATE TABLE restore_drill_result (
     error TEXT,
     destinations TEXT NOT NULL
 ) STRICT;
+
+-- Installed Compose stacks (#278, doc 04 §2, D4): one row per stack, from
+-- which /var/lib/hoserva/stacks/<name>/'s docker-compose.yml, .env and
+-- meta.json are generated. name is also the stack's directory name and its
+-- Compose project name. compose is the docker-compose.yml text. env is the
+-- .env text sealed under the machine key (Q28): it holds the template's
+-- generated secrets, so it is never stored in the clear. template_source,
+-- template_id and template_revision are empty for a stack no template
+-- installed. installed_at is when the row was created.
+CREATE TABLE stacks (
+    name TEXT PRIMARY KEY,
+    template_source TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    template_revision TEXT NOT NULL,
+    compose TEXT NOT NULL,
+    env BLOB NOT NULL,
+    installed_at TEXT NOT NULL
+) STRICT;
