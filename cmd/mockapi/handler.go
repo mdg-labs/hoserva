@@ -61,6 +61,11 @@ type handler struct {
 	network         apiv1.NetworkSettings
 	certSerial      int64
 
+	// backupPassphrase is the configured backup passphrase's value, which
+	// GeneralSettings only reports the presence of; ImportConfig and
+	// PreviewConfigImport try it as production does. Guarded by notifyMu.
+	backupPassphrase string
+
 	// maintenance is Q70's maintenance mode for this mock instance:
 	// StopArray sets it, StartArray clears it, GetStatus reports it.
 	maintenance bool

@@ -75,7 +75,7 @@ func TestSecretsAge_RoundTrip(t *testing.T) {
 		}},
 	}
 	envs := []StackEnv{{Stack: "plex", Body: []byte("TOKEN=x\n")}}
-	data, err := buildSecretsAge(ctx, src, FakeSecretCipher{}, envs)
+	data, err := buildSecretsAge(ctx, src, FakeSecretCipher{}, envs, "")
 	if err != nil {
 		t.Fatalf("buildSecretsAge: %v", err)
 	}

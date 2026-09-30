@@ -41,6 +41,7 @@ func (h *handler) UpdateGeneralSettings(ctx context.Context, req *apiv1.UpdateGe
 	}
 	if passphrase, ok := req.BackupPassphrase.Get(); ok {
 		h.generalSettings.BackupPassphraseSet = passphrase != ""
+		h.backupPassphrase = passphrase
 	}
 	return cloneGeneralSettings(h.generalSettings), nil
 }

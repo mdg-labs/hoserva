@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
@@ -70,7 +71,27 @@ type Service struct {
 	// matching a Service built before job.ArraySequence is wired to one.
 	PoolWriteGate *PoolWriteGate
 
+	// ExternalRoot is where external disks mount, /mnt/disks/<label> (Q72),
+	// a destination path is compared against by path component to decide
+	// whether the disk it lives on must be mounted before every write. Empty
+	// uses disk.ExternalMountRoot; a test points it at a directory it fully
+	// controls.
+	ExternalRoot string
+	// ExternalMounted reports whether path is a mount point in the kernel
+	// mount table. Nil reads /proc/self/mountinfo (disk.KernelMounts); a test
+	// injects a fake so an ejected disk is observable without a real mount.
+	ExternalMounted func(ctx context.Context, path string) (bool, error)
+	// ExternalGates, when set, gives each external disk a write gate that an
+	// eject of that disk closes (#454): a write admitted to /mnt/disks/<label>
+	// finishes before the disk is unmounted, and none is admitted after. Nil
+	// never refuses — the mount check alone then guards the write.
+	ExternalGates *ExternalWriteGates
+
 	destMu sync.Mutex
+	// archiveMu keeps a config backup's write and prune of a destination
+	// from landing between a restore drill's listing of it and its fetch of
+	// the archive it picked (#444).
+	archiveMu sync.Mutex
 }
 
 // PoolWriteGate coordinates a config backup's write to a destination under
@@ -130,7 +151,7 @@ func (g *PoolWriteGate) Close(ctx context.Context) error {
 	case <-ch:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("backup: waiting for an in-flight pool-destination write to finish: %w", ctx.Err())
+		return fmt.Errorf("backup: waiting for an in-flight destination write to finish: %w", ctx.Err())
 	}
 }
 
@@ -181,11 +202,47 @@ func (s *Service) Run(ctx context.Context) error {
 // even when a later same-day backup would otherwise take today's daily-tier
 // slot and prune it.
 func (s *Service) RunReason(ctx context.Context, reason Reason) error {
+	_, err := s.RunReasonArchive(ctx, reason)
+	return err
+}
+
+// WrittenArchive is the archive a run wrote and the names of the
+// destinations it wrote it to.
+type WrittenArchive struct {
+	Name         string
+	Destinations []string
+	// SecretsSealed is whether the archive holds a secrets.age.
+	SecretsSealed bool
+}
+
+// RunOption changes how RunReasonArchive builds its archive.
+type RunOption func(*runOptions)
+
+type runOptions struct {
+	sealSecrets string
+}
+
+// SealSecretsWith seals the archive's secrets.age under passphrase, and
+// verifies it against that passphrase, instead of the configured backup
+// passphrase. The identity sidecar and an encrypted destination's artifacts
+// still use the configured one. Empty, it changes nothing.
+func SealSecretsWith(passphrase string) RunOption {
+	return func(o *runOptions) { o.sealSecrets = passphrase }
+}
+
+// RunReasonArchive is RunReason that also reports the archive it wrote, so
+// a caller guarding a destructive change can name the backup to restore
+// from. The result is empty when the run fails.
+func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...RunOption) (WrittenArchive, error) {
+	var run runOptions
+	for _, opt := range opts {
+		opt(&run)
+	}
 	if !reason.valid() {
-		return fmt.Errorf("backup: unknown reason %q", reason)
+		return WrittenArchive{}, fmt.Errorf("backup: unknown reason %q", reason)
 	}
 	if s.DB == nil {
-		return fmt.Errorf("backup: no database configured")
+		return WrittenArchive{}, fmt.Errorf("backup: no database configured")
 	}
 	now := time.Now().UTC()
 	if s.Now != nil {
@@ -194,13 +251,13 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 
 	staging, err := os.MkdirTemp("", "hoserva-config-staging-*")
 	if err != nil {
-		return fmt.Errorf("creating staging directory: %w", err)
+		return WrittenArchive{}, fmt.Errorf("creating staging directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	_, err = BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient))
+	manifest, err := BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient), WithSecretsPassphrase(run.sealSecrets))
 	if err != nil {
-		return err
+		return WrittenArchive{}, err
 	}
 
 	// Packed into a directory private to this run — not staging, which
@@ -211,34 +268,40 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 	// also isolates those.
 	archiveDir, err := os.MkdirTemp("", "hoserva-config-archive-*")
 	if err != nil {
-		return fmt.Errorf("creating archive directory: %w", err)
+		return WrittenArchive{}, fmt.Errorf("creating archive directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(archiveDir) }()
 
 	dests, err := s.loadDestinations(ctx)
 	if err != nil {
-		return err
+		return WrittenArchive{}, err
 	}
 	name := resolveArchiveName(s.installationID(), now, reason, dests)
 	archivePath := filepath.Join(archiveDir, name)
 	if err := packArchive(staging, archivePath); err != nil {
-		return fmt.Errorf("packing archive: %w", err)
+		return WrittenArchive{}, fmt.Errorf("packing archive: %w", err)
 	}
 
 	passphrase := ""
 	if s.Secrets != nil {
 		if p, ok, err := s.Secrets.BackupPassphrase(ctx); err != nil {
-			return fmt.Errorf("reading backup passphrase for verification: %w", err)
+			return WrittenArchive{}, fmt.Errorf("reading backup passphrase for verification: %w", err)
 		} else if ok {
 			passphrase = p
 		}
 	}
-	if err := VerifyArchive(archivePath, passphrase); err != nil {
-		return fmt.Errorf("verifying archive: %w", err)
+	verifyWith := passphrase
+	if run.sealSecrets != "" {
+		verifyWith = run.sealSecrets
+	}
+	if err := VerifyArchive(archivePath, verifyWith); err != nil {
+		return WrittenArchive{}, fmt.Errorf("verifying archive: %w", err)
 	}
 
+	_, sealed := manifest.Checksums["secrets.age"]
 	var artifacts *encryptedArtifacts
 	var failures []error
+	var writtenTo []string
 	wrote := false
 	skipped := false
 	for _, dest := range dests {
@@ -246,7 +309,7 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 			continue
 		}
 
-		release, why := s.admitDestination(dest)
+		release, why := s.admitDestination(ctx, dest)
 		if why != "" {
 			s.log("skipping destination %q: %s", dest.ID, why)
 			skipped = true
@@ -256,6 +319,7 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 		release()
 		if written {
 			wrote = true
+			writtenTo = append(writtenTo, destinationLabel(dest))
 		}
 		if err != nil {
 			failures = append(failures, err)
@@ -272,12 +336,19 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 		for _, err := range failures {
 			s.log("%v", err)
 		}
-		return nil
+		return WrittenArchive{Name: name, Destinations: writtenTo, SecretsSealed: sealed}, nil
 	}
 	if skipped {
-		return errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)
+		return WrittenArchive{}, errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)
 	}
-	return errors.Join(failures...)
+	return WrittenArchive{}, errors.Join(failures...)
+}
+
+func destinationLabel(d Destination) string {
+	if d.Name != "" {
+		return d.Name
+	}
+	return d.ID
 }
 
 func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {
@@ -297,20 +368,30 @@ func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {
 // bare, empty directory on the root filesystem — os.MkdirAll inside
 // writeArchive would happily create it there, the archive would be
 // written onto the boot device without saying so, and it would be hidden
-// the moment the pool mounts back over it. A destination anywhere else
-// (the boot device, an external disk, a remote) is unaffected by the
-// array's own mount state and is always admitted.
+// the moment the pool mounts back over it. A destination on an external
+// disk (under /mnt/disks/<label>) needs the same check against that
+// disk's own mount, for the same reason: with the disk ejected, the write
+// would create the directory on the boot device. A destination anywhere else
+// (the boot device, a remote) is unaffected by any mount state and is always
+// admitted.
 //
-// PoolWriteGate.begin runs before the mount check itself (#409): once it
-// admits a write, job.ArraySequence.Stop's own Close call cannot return —
-// and so cannot let an unmount proceed — until the returned release runs,
-// closing the exact race a mount check alone cannot: mount confirmed
-// live, then torn down before the write that check was guarding ever
-// reaches disk. A non-empty reason means the destination was not
-// admitted; release is then a no-op.
-func (s *Service) admitDestination(dest Destination) (release func(), reason string) {
+// A gate slot is taken before the mount check itself, for a pool destination
+// from PoolWriteGate (#409) and for an external one from that disk's gate in
+// ExternalGates (#454): once it admits a write, job.ArraySequence.Stop's
+// Close, or an eject of the disk, cannot return — and so cannot let an
+// unmount proceed — until the returned release runs, closing the exact race
+// a mount check alone cannot: mount confirmed live, then torn down before
+// the write that check was guarding ever reaches disk. A non-empty reason
+// means the destination was not admitted; release is then a no-op.
+func (s *Service) admitDestination(ctx context.Context, dest Destination) (release func(), reason string) {
 	noop := func() {}
-	if dest.isRemote() || !underPoolRoot(dest.Path, s.poolRoot()) {
+	if dest.isRemote() {
+		return noop, ""
+	}
+	if mountPoint, ok := externalMountPoint(dest.Path, s.externalRoot()); ok {
+		return s.admitExternal(ctx, mountPoint)
+	}
+	if !underPoolRoot(dest.Path, s.poolRoot()) {
 		return noop, ""
 	}
 	release = noop
@@ -359,6 +440,8 @@ func (s *Service) writeDestination(ctx context.Context, dest Destination, archiv
 	if err != nil {
 		return false, fmt.Errorf("preparing destination %q: %w", dest.ID, err)
 	}
+	s.archiveMu.Lock()
+	defer s.archiveMu.Unlock()
 	if sidecarPath != "" {
 		if err := target.write(ctx, sidecarPath); err != nil {
 			return false, fmt.Errorf("writing destination %q: %w", dest.ID, err)
@@ -376,6 +459,74 @@ func (s *Service) writeDestination(ctx context.Context, dest Destination, archiv
 		return true, fmt.Errorf("pruning destination %q: %w", dest.ID, err)
 	}
 	return true, nil
+}
+
+// externalMountPoint returns the mount point of the external disk a path
+// under root belongs to: root/<label>, whatever lies below it. A path that
+// is root itself has no disk to be mounted, so root is returned and is
+// never in the mount table.
+func externalMountPoint(path, root string) (string, bool) {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if !underPoolRoot(path, root) {
+		return "", false
+	}
+	rel := strings.TrimPrefix(strings.TrimPrefix(path, root), string(filepath.Separator))
+	if rel == "" {
+		return root, true
+	}
+	label, _, _ := strings.Cut(rel, string(filepath.Separator))
+	return filepath.Join(root, label), true
+}
+
+// admitExternal takes mountPoint's disk gate slot, if the disk has one,
+// before confirming the disk is mounted. The external root itself is no disk
+// and has no gate; it is never in the mount table.
+func (s *Service) admitExternal(ctx context.Context, mountPoint string) (release func(), reason string) {
+	noop := func() {}
+	release = noop
+	if mountPoint != filepath.Clean(s.externalRoot()) {
+		label := filepath.Base(mountPoint)
+		var ok bool
+		if release, ok = s.ExternalGates.begin(label); !ok {
+			return noop, fmt.Sprintf("the external disk %q is ejected or being ejected", label)
+		}
+	}
+	if why := s.externalMountRefusal(ctx, mountPoint); why != "" {
+		release()
+		return noop, why
+	}
+	return release, ""
+}
+
+// externalMountRefusal is empty when mountPoint is confirmed mounted. A
+// mount table that cannot be read is a refusal too: an external
+// destination on an ejected disk would otherwise be created on the boot
+// device (doc 10 §1). The table is the kernel's mountinfo — the disk itself
+// is never listed or read (Q13).
+func (s *Service) externalMountRefusal(ctx context.Context, mountPoint string) string {
+	mounted, err := s.externalMounted(ctx, mountPoint)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("confirming the external disk is mounted at %q: %v", mountPoint, err)
+	case !mounted:
+		return fmt.Sprintf("the external disk is not mounted at %q", mountPoint)
+	}
+	return ""
+}
+
+func (s *Service) externalRoot() string {
+	if s.ExternalRoot != "" {
+		return s.ExternalRoot
+	}
+	return disk.ExternalMountRoot
+}
+
+func (s *Service) externalMounted(ctx context.Context, path string) (bool, error) {
+	if s.ExternalMounted != nil {
+		return s.ExternalMounted(ctx, path)
+	}
+	return disk.KernelMounts{}.IsMounted(ctx, path)
 }
 
 // poolRoot is PoolRoot's default, pool.CatchAllPath.

@@ -42,7 +42,7 @@ func TestImportConfig_KeepsAStoppedArrayStopped(t *testing.T) {
 		t.Fatalf("precondition: array_maintenance = (%d, %d, found %v), want the stopped array persisted", m, s, ok)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestImportConfig_DoesNotStopARunningArray(t *testing.T) {
 	archive := exportBytes(t, h)
 	execAll(t, db, `DELETE FROM array_maintenance`)
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestImportConfig_RefusesWhenTheLiveArrayStateCannotBeKept(t *testing.T) {
 	before := liveFingerprint(t, db)
 	execAll(t, db, `ALTER TABLE array_maintenance RENAME TO array_maintenance_gone`)
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	if err == nil {
 		t.Fatal("ImportConfig succeeded although the live array state could not be read")
 	}

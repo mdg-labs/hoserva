@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
@@ -106,8 +108,39 @@ func (h *handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterE
 	d.MountPoint = "/mnt/disks/" + label
 	d.ContainerPath = d.MountPoint
 	d.BackupDestination = req.BackupDestination.Or(false)
+	if d.BackupDestination {
+		if err := h.syncExternalDestination(label, true); err != nil {
+			return nil, err
+		}
+	}
 	h.putExternal(d)
 	return &d, nil
+}
+
+// syncExternalDestination creates or removes label's "external:<label>"
+// destination the way the daemon does when the disk's flag changes,
+// running the same admission check (backup.PrepareExternalDestination,
+// D18). Nothing is changed when the check refuses.
+func (h *handler) syncExternalDestination(label string, enabled bool) error {
+	h.backupMu.Lock()
+	defer h.backupMu.Unlock()
+	id := "external:" + label
+	if !enabled {
+		h.removeBackupDestinationLocked(id)
+		return nil
+	}
+	dest, err := backup.PrepareExternalDestination(label, h.backupDestinations)
+	if err != nil {
+		return mapMockBackupDestinationError(err)
+	}
+	for _, e := range h.backupDestinations {
+		if e.ID == dest.ID {
+			return nil
+		}
+	}
+	dest.CreatedAt = time.Now().UTC()
+	h.backupDestinations = append(h.backupDestinations, dest)
+	return nil
 }
 
 func (h *handler) UpdateExternalDisk(ctx context.Context, req *apiv1.UpdateExternalDiskRequest, params apiv1.UpdateExternalDiskParams) (*apiv1.ExternalDisk, error) {
@@ -116,6 +149,9 @@ func (h *handler) UpdateExternalDisk(ctx context.Context, req *apiv1.UpdateExter
 		return nil, err
 	}
 	if v, ok := req.BackupDestination.Get(); ok {
+		if err := h.syncExternalDestination(string(d.Label), v); err != nil {
+			return nil, err
+		}
 		d.BackupDestination = v
 		h.putExternal(d)
 	}

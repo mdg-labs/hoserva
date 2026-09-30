@@ -17,6 +17,7 @@ const (
 	RefusalIncompatibleArchive = "incompatible_archive"
 	RefusalOtherInstallation   = "archive_other_installation"
 	RefusalArrayMismatch       = "archive_array_mismatch"
+	RefusalUnsafeRestorePath   = "restore_path_unsafe"
 )
 
 // ImportRefusal is one reason an archive may not be restored in place.

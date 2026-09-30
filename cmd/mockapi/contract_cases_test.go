@@ -2077,6 +2077,49 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		// The flag creates the disk's "external:<label>" destination
+		// (doc 10 §1); another destination already named for the disk
+		// refuses it with backup_destination_exists/409 on both sides.
+		op:   "UpdateExternalDisk",
+		name: "flag_clashing_with_a_destination_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"}); err != nil {
+				return err
+			}
+			if _, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{Name: "Backup2", Type: apiv1.BackupDestinationTypeLocal, Path: "/srv/elsewhere"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateExternalDisk(ctx, &apiv1.UpdateExternalDiskRequest{BackupDestination: apiv1.NewOptBool(true)}, apiv1.UpdateExternalDiskParams{Label: "backup2"})
+			return err
+		},
+	},
+	{
+		op:   "RegisterExternalDisk",
+		name: "flag_clashing_with_a_destination_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{Name: "Backup2", Type: apiv1.BackupDestinationTypeLocal, Path: "/srv/elsewhere"}); err != nil {
+				return err
+			}
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		// Deleting a disk's destination clears its flag; the destination
+		// is then gone on both sides, so a second delete is a 404.
+		op:   "DeleteBackupDestination",
+		name: "external_destination_twice",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
+				return err
+			}
+			if err := h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "external:backup2"}); err != nil {
+				return err
+			}
+			return h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "external:backup2"})
+		},
+	},
+	{
 		op:   "UpdateExternalDisk",
 		name: "unknown_label",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -2320,17 +2363,31 @@ var contractCases = []contractCase{
 		op:   "ImportConfig",
 		name: "missing_confirm",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			return h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: false})
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: false})
+			return err
 		},
 	},
 	{
 		op:   "ImportConfig",
 		name: "invalid_archive",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			return h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{
 				Confirm: true,
 				Archive: ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
 			})
+			return err
+		},
+	},
+	{
+		op:   "ImportConfig",
+		name: "invalid_archive_with_passphrase",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+				Confirm:    true,
+				Archive:    ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
+				Passphrase: apiv1.NewOptString("a passphrase"),
+			})
+			return err
 		},
 	},
 

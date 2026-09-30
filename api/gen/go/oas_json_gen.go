@@ -4957,6 +4957,8 @@ func (s *ConfigImportBlockerCode) Decode(d *jx.Decoder) error {
 		*s = ConfigImportBlockerCodeArchiveOtherInstallation
 	case ConfigImportBlockerCodeArchiveArrayMismatch:
 		*s = ConfigImportBlockerCodeArchiveArrayMismatch
+	case ConfigImportBlockerCodeRestorePathUnsafe:
+		*s = ConfigImportBlockerCodeRestorePathUnsafe
 	default:
 		*s = ConfigImportBlockerCode(v)
 	}
@@ -5156,6 +5158,12 @@ func (s *ConfigImportChangeKind) Decode(d *jx.Decoder) error {
 		*s = ConfigImportChangeKindUpdateChannel
 	case ConfigImportChangeKindUpdateCheck:
 		*s = ConfigImportChangeKindUpdateCheck
+	case ConfigImportChangeKindCustomConfigFile:
+		*s = ConfigImportChangeKindCustomConfigFile
+	case ConfigImportChangeKindTemplateFile:
+		*s = ConfigImportChangeKindTemplateFile
+	case ConfigImportChangeKindStackFile:
+		*s = ConfigImportChangeKindStackFile
 	default:
 		*s = ConfigImportChangeKind(v)
 	}
@@ -5379,6 +5387,12 @@ func (s *ConfigImportGroupCategory) Decode(d *jx.Decoder) error {
 		*s = ConfigImportGroupCategoryBackup
 	case ConfigImportGroupCategorySystem:
 		*s = ConfigImportGroupCategorySystem
+	case ConfigImportGroupCategoryCustomConfig:
+		*s = ConfigImportGroupCategoryCustomConfig
+	case ConfigImportGroupCategoryTemplates:
+		*s = ConfigImportGroupCategoryTemplates
+	case ConfigImportGroupCategoryStacks:
+		*s = ConfigImportGroupCategoryStacks
 	default:
 		*s = ConfigImportGroupCategory(v)
 	}
@@ -5395,6 +5409,233 @@ func (s ConfigImportGroupCategory) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ConfigImportGroupCategory) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ConfigImportNotRestored) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ConfigImportNotRestored) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("kind")
+		s.Kind.Encode(e)
+	}
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		e.FieldStart("reason")
+		s.Reason.Encode(e)
+	}
+	{
+		e.FieldStart("message")
+		e.Str(s.Message)
+	}
+}
+
+var jsonFieldsNameOfConfigImportNotRestored = [4]string{
+	0: "kind",
+	1: "name",
+	2: "reason",
+	3: "message",
+}
+
+// Decode decodes ConfigImportNotRestored from json.
+func (s *ConfigImportNotRestored) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportNotRestored to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "kind":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Kind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"kind\"")
+			}
+		case "name":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "reason":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Reason.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reason\"")
+			}
+		case "message":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.Message = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"message\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ConfigImportNotRestored")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfConfigImportNotRestored) {
+					name = jsonFieldsNameOfConfigImportNotRestored[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ConfigImportNotRestored) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportNotRestored) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ConfigImportNotRestoredKind as json.
+func (s ConfigImportNotRestoredKind) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ConfigImportNotRestoredKind from json.
+func (s *ConfigImportNotRestoredKind) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportNotRestoredKind to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ConfigImportNotRestoredKind(v) {
+	case ConfigImportNotRestoredKindStackEnv:
+		*s = ConfigImportNotRestoredKindStackEnv
+	default:
+		*s = ConfigImportNotRestoredKind(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ConfigImportNotRestoredKind) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportNotRestoredKind) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ConfigImportNotRestoredReason as json.
+func (s ConfigImportNotRestoredReason) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ConfigImportNotRestoredReason from json.
+func (s *ConfigImportNotRestoredReason) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportNotRestoredReason to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ConfigImportNotRestoredReason(v) {
+	case ConfigImportNotRestoredReasonNoSecrets:
+		*s = ConfigImportNotRestoredReasonNoSecrets
+	case ConfigImportNotRestoredReasonNoPassphrase:
+		*s = ConfigImportNotRestoredReasonNoPassphrase
+	case ConfigImportNotRestoredReasonPassphraseIncorrect:
+		*s = ConfigImportNotRestoredReasonPassphraseIncorrect
+	case ConfigImportNotRestoredReasonStackNotInArchive:
+		*s = ConfigImportNotRestoredReasonStackNotInArchive
+	case ConfigImportNotRestoredReasonLeftInPlace:
+		*s = ConfigImportNotRestoredReasonLeftInPlace
+	default:
+		*s = ConfigImportNotRestoredReason(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ConfigImportNotRestoredReason) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportNotRestoredReason) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -5550,6 +5791,48 @@ func (s *ConfigImportNoteCode) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ConfigImportPreImportSecrets as json.
+func (s ConfigImportPreImportSecrets) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ConfigImportPreImportSecrets from json.
+func (s *ConfigImportPreImportSecrets) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportPreImportSecrets to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ConfigImportPreImportSecrets(v) {
+	case ConfigImportPreImportSecretsNone:
+		*s = ConfigImportPreImportSecretsNone
+	case ConfigImportPreImportSecretsRequest:
+		*s = ConfigImportPreImportSecretsRequest
+	case ConfigImportPreImportSecretsConfigured:
+		*s = ConfigImportPreImportSecretsConfigured
+	default:
+		*s = ConfigImportPreImportSecrets(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ConfigImportPreImportSecrets) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportPreImportSecrets) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode implements json.Marshaler.
 func (s *ConfigImportPreview) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -5584,6 +5867,10 @@ func (s *ConfigImportPreview) encodeFields(e *jx.Encoder) {
 		e.ArrEnd()
 	}
 	{
+		e.FieldStart("secrets")
+		s.Secrets.Encode(e)
+	}
+	{
 		e.FieldStart("notes")
 		e.ArrStart()
 		for _, elem := range s.Notes {
@@ -5593,12 +5880,13 @@ func (s *ConfigImportPreview) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfConfigImportPreview = [5]string{
+var jsonFieldsNameOfConfigImportPreview = [6]string{
 	0: "archive",
 	1: "liveSchemaVersion",
 	2: "blockers",
 	3: "groups",
-	4: "notes",
+	4: "secrets",
+	5: "notes",
 }
 
 // Decode decodes ConfigImportPreview from json.
@@ -5668,8 +5956,18 @@ func (s *ConfigImportPreview) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"groups\"")
 			}
-		case "notes":
+		case "secrets":
 			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.Secrets.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"secrets\"")
+			}
+		case "notes":
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				s.Notes = make([]ConfigImportNote, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -5696,7 +5994,7 @@ func (s *ConfigImportPreview) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00011111,
+		0b00111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -5738,6 +6036,554 @@ func (s *ConfigImportPreview) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ConfigImportPreview) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ConfigImportReport) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ConfigImportReport) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("restored")
+		e.ArrStart()
+		for _, elem := range s.Restored {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("notRestored")
+		e.ArrStart()
+		for _, elem := range s.NotRestored {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("secrets")
+		s.Secrets.Encode(e)
+	}
+	{
+		e.FieldStart("preImportArchive")
+		e.Str(s.PreImportArchive)
+	}
+	{
+		e.FieldStart("preImportSecrets")
+		s.PreImportSecrets.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfConfigImportReport = [5]string{
+	0: "restored",
+	1: "notRestored",
+	2: "secrets",
+	3: "preImportArchive",
+	4: "preImportSecrets",
+}
+
+// Decode decodes ConfigImportReport from json.
+func (s *ConfigImportReport) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportReport to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "restored":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				s.Restored = make([]ConfigImportRestored, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem ConfigImportRestored
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Restored = append(s.Restored, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"restored\"")
+			}
+		case "notRestored":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.NotRestored = make([]ConfigImportNotRestored, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem ConfigImportNotRestored
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.NotRestored = append(s.NotRestored, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"notRestored\"")
+			}
+		case "secrets":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Secrets.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"secrets\"")
+			}
+		case "preImportArchive":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.PreImportArchive = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"preImportArchive\"")
+			}
+		case "preImportSecrets":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.PreImportSecrets.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"preImportSecrets\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ConfigImportReport")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00011111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfConfigImportReport) {
+					name = jsonFieldsNameOfConfigImportReport[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ConfigImportReport) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportReport) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ConfigImportRestored) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ConfigImportRestored) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("category")
+		s.Category.Encode(e)
+	}
+	{
+		e.FieldStart("added")
+		e.Int64(s.Added)
+	}
+	{
+		e.FieldStart("changed")
+		e.Int64(s.Changed)
+	}
+	{
+		e.FieldStart("removed")
+		e.Int64(s.Removed)
+	}
+}
+
+var jsonFieldsNameOfConfigImportRestored = [4]string{
+	0: "category",
+	1: "added",
+	2: "changed",
+	3: "removed",
+}
+
+// Decode decodes ConfigImportRestored from json.
+func (s *ConfigImportRestored) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportRestored to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "category":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Category.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"category\"")
+			}
+		case "added":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int64()
+				s.Added = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"added\"")
+			}
+		case "changed":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Int64()
+				s.Changed = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"changed\"")
+			}
+		case "removed":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Int64()
+				s.Removed = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"removed\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ConfigImportRestored")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfConfigImportRestored) {
+					name = jsonFieldsNameOfConfigImportRestored[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ConfigImportRestored) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportRestored) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ConfigImportRestoredCategory as json.
+func (s ConfigImportRestoredCategory) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ConfigImportRestoredCategory from json.
+func (s *ConfigImportRestoredCategory) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportRestoredCategory to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ConfigImportRestoredCategory(v) {
+	case ConfigImportRestoredCategoryShares:
+		*s = ConfigImportRestoredCategoryShares
+	case ConfigImportRestoredCategoryAccounts:
+		*s = ConfigImportRestoredCategoryAccounts
+	case ConfigImportRestoredCategorySchedules:
+		*s = ConfigImportRestoredCategorySchedules
+	case ConfigImportRestoredCategoryNotifications:
+		*s = ConfigImportRestoredCategoryNotifications
+	case ConfigImportRestoredCategoryBackup:
+		*s = ConfigImportRestoredCategoryBackup
+	case ConfigImportRestoredCategorySystem:
+		*s = ConfigImportRestoredCategorySystem
+	case ConfigImportRestoredCategoryCustomConfig:
+		*s = ConfigImportRestoredCategoryCustomConfig
+	case ConfigImportRestoredCategoryTemplates:
+		*s = ConfigImportRestoredCategoryTemplates
+	case ConfigImportRestoredCategoryStacks:
+		*s = ConfigImportRestoredCategoryStacks
+	case ConfigImportRestoredCategoryStackEnv:
+		*s = ConfigImportRestoredCategoryStackEnv
+	default:
+		*s = ConfigImportRestoredCategory(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ConfigImportRestoredCategory) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportRestoredCategory) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ConfigImportSecrets) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ConfigImportSecrets) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("status")
+		s.Status.Encode(e)
+	}
+	{
+		e.FieldStart("stacks")
+		e.ArrStart()
+		for _, elem := range s.Stacks {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfConfigImportSecrets = [2]string{
+	0: "status",
+	1: "stacks",
+}
+
+// Decode decodes ConfigImportSecrets from json.
+func (s *ConfigImportSecrets) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportSecrets to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "status":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Status.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"status\"")
+			}
+		case "stacks":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Stacks = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Stacks = append(s.Stacks, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"stacks\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ConfigImportSecrets")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfConfigImportSecrets) {
+					name = jsonFieldsNameOfConfigImportSecrets[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ConfigImportSecrets) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportSecrets) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ConfigImportSecretsStatus as json.
+func (s ConfigImportSecretsStatus) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ConfigImportSecretsStatus from json.
+func (s *ConfigImportSecretsStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportSecretsStatus to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ConfigImportSecretsStatus(v) {
+	case ConfigImportSecretsStatusNone:
+		*s = ConfigImportSecretsStatusNone
+	case ConfigImportSecretsStatusOpened:
+		*s = ConfigImportSecretsStatusOpened
+	case ConfigImportSecretsStatusNoPassphrase:
+		*s = ConfigImportSecretsStatusNoPassphrase
+	case ConfigImportSecretsStatusPassphraseIncorrect:
+		*s = ConfigImportSecretsStatusPassphraseIncorrect
+	default:
+		*s = ConfigImportSecretsStatus(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ConfigImportSecretsStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportSecretsStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

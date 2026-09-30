@@ -1025,6 +1025,8 @@ func (s ConfigImportBlockerCode) Validate() error {
 		return nil
 	case "archive_array_mismatch":
 		return nil
+	case "restore_path_unsafe":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1106,6 +1108,12 @@ func (s ConfigImportChangeKind) Validate() error {
 	case "update_channel":
 		return nil
 	case "update_check":
+		return nil
+	case "custom_config_file":
+		return nil
+	case "template_file":
+		return nil
+	case "stack_file":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -1233,6 +1241,72 @@ func (s ConfigImportGroupCategory) Validate() error {
 		return nil
 	case "system":
 		return nil
+	case "custom_config":
+		return nil
+	case "templates":
+		return nil
+	case "stacks":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *ConfigImportNotRestored) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Kind.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "kind",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Reason.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "reason",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s ConfigImportNotRestoredKind) Validate() error {
+	switch s {
+	case "stack_env":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s ConfigImportNotRestoredReason) Validate() error {
+	switch s {
+	case "no_secrets":
+		return nil
+	case "no_passphrase":
+		return nil
+	case "passphrase_incorrect":
+		return nil
+	case "stack_not_in_archive":
+		return nil
+	case "left_in_place":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1266,6 +1340,19 @@ func (s ConfigImportNoteCode) Validate() error {
 	case "sessions_replaced":
 		return nil
 	case "array_state_kept":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s ConfigImportPreImportSecrets) Validate() error {
+	switch s {
+	case "none":
+		return nil
+	case "request":
+		return nil
+	case "configured":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -1335,6 +1422,17 @@ func (s *ConfigImportPreview) Validate() error {
 		})
 	}
 	if err := func() error {
+		if err := s.Secrets.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "secrets",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if s.Notes == nil {
 			return errors.New("nil is invalid value")
 		}
@@ -1366,6 +1464,195 @@ func (s *ConfigImportPreview) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s *ConfigImportReport) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Restored == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.Restored {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "restored",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if s.NotRestored == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.NotRestored {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "notRestored",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Secrets.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "secrets",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.PreImportSecrets.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "preImportSecrets",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *ConfigImportRestored) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Category.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "category",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s ConfigImportRestoredCategory) Validate() error {
+	switch s {
+	case "shares":
+		return nil
+	case "accounts":
+		return nil
+	case "schedules":
+		return nil
+	case "notifications":
+		return nil
+	case "backup":
+		return nil
+	case "system":
+		return nil
+	case "custom_config":
+		return nil
+	case "templates":
+		return nil
+	case "stacks":
+		return nil
+	case "stack_env":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *ConfigImportSecrets) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Status.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "status",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if s.Stacks == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "stacks",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s ConfigImportSecretsStatus) Validate() error {
+	switch s {
+	case "none":
+		return nil
+	case "opened":
+		return nil
+	case "no_passphrase":
+		return nil
+	case "passphrase_incorrect":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *ConfigureLetsEncryptRequest) Validate() error {
@@ -2422,6 +2709,48 @@ func (s HostConfigID) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s *ImportConfigReq) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.Passphrase.Get(); ok {
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     1024,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(value)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "passphrase",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s *Job) Validate() error {
@@ -4715,6 +5044,48 @@ func (s *PreviewAppdataRestoreRequest) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "destinationId",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *PreviewConfigImportReq) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.Passphrase.Get(); ok {
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     1024,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(value)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "passphrase",
 			Error: err,
 		})
 	}

@@ -699,6 +699,9 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// and "pool", with paths in this test's own temp directory so
 		// nothing is written to a real path, and a fake rclone.
 		Backup: contractBackupService(t, db, dbPath),
+		// The regeneration step ImportConfig runs once the database is
+		// restored; an archive that does not verify is refused before it.
+		RegenerateConfig: func(context.Context) error { return nil },
 	}
 	// Appdata backup (#61) is the real service over this rig's own
 	// Docker fake and backup destinations. This rig has no cache disk in any

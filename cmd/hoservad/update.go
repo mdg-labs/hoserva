@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -60,11 +62,17 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 		DestinationCipher: machineKey,
 		Recipient:         recipient,
 		Version:           packageVersion(ctx, runner, "hoserva"),
+		// wireBackup hands this same instance to the handler, so an eject
+		// (#454) waits for the writes this service admits.
+		ExternalGates: &backup.ExternalWriteGates{},
 	}
 	defaults := backup.DefaultDestinations()
 	defaults[0].Path = filepath.Join(cfg.stateDir, "backups")
 	if err := svc.SeedDestinations(ctx, defaults); err != nil {
 		return nil, fmt.Errorf("seeding default backup destinations: %w", err)
+	}
+	if err := svc.ReconcileExternalDestinations(ctx); err != nil {
+		log.Printf("hoservad: reconciling external-disk backup destinations: %v", err)
 	}
 	return svc, nil
 }
@@ -79,6 +87,30 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 // the assignment.
 func wireBackup(handler *api.Handler, backupService *backup.Service) {
 	handler.Backup = backupService
+	handler.ExternalWriteGates = backupService.ExternalGates
+}
+
+// wireConfigImport sets handler.RegenerateConfig, the step ImportConfig
+// (POST /config/import, doc 10 §1) runs once the database has been
+// restored: topologyChanged (share and pool mount units, Samba and NFS
+// from the store, the array sequence and the running pool — the same hook
+// the disk-topology jobs run with) and then the NUT files from the stored
+// UPS settings. Both are attempted and both failures reported. Kept as its
+// own function, following wireBackup's pattern, so a test can call exactly
+// what main.go calls. handler.UPS is read when the hook runs.
+func wireConfigImport(handler *api.Handler, topologyChanged func(ctx context.Context) error) {
+	handler.RegenerateConfig = func(ctx context.Context) error {
+		var errs []error
+		if err := topologyChanged(ctx); err != nil {
+			errs = append(errs, err)
+		}
+		if handler.UPS == nil {
+			errs = append(errs, fmt.Errorf("the UPS settings service is not configured"))
+		} else if err := handler.UPS.Regenerate(ctx); err != nil {
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
+	}
 }
 
 // updateShutdownLookup adapts the daemon's current job.ArraySequence to

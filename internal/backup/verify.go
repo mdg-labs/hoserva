@@ -23,13 +23,35 @@ func VerifyArchive(archivePath, passphrase string) error {
 
 // VerifyArchiveForImport runs the same checksum and PRAGMA integrity_check
 // validation as VerifyArchive, but never requires a passphrase or
-// decrypts secrets.age: config import (doc 10 §1, #269) restores the
-// database only — #62 restores the rest, including secrets — so a
+// decrypts secrets.age: config import (doc 10 §1) restores the database,
+// custom config, templates and stacks from the archive's files, and a
 // caller importing an archive it did not just build, and may have no
 // passphrase for yet, must still be able to validate the part it is
 // about to restore from.
 func VerifyArchiveForImport(archivePath string) error {
 	return verifyArchive(archivePath, "", false)
+}
+
+// ExtractVerifiedArchive unpacks archivePath into a new temporary
+// directory, verifies what it unpacked the way VerifyArchiveForImport does
+// and returns the directory, which the caller removes. A restore reads its
+// files from this one tree and never from a second extraction, so what it
+// writes is what was verified: RestoreFiles compares each file with the
+// manifest again as it copies it. On an error the directory is already gone.
+func ExtractVerifiedArchive(archivePath string) (string, error) {
+	dir, err := os.MkdirTemp("", "hoserva-backup-verify-*")
+	if err != nil {
+		return "", fmt.Errorf("creating verify temp dir: %w", err)
+	}
+	if err := unpackArchive(archivePath, dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("unpacking archive: %w", err)
+	}
+	if err := verifyTree(dir, "", false); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
 }
 
 // checkManifestCoversArchive requires the manifest and the unpacked
@@ -82,7 +104,10 @@ func verifyArchive(archivePath, passphrase string, requireSecretsPassphrase bool
 	if err := unpackArchive(archivePath, dir); err != nil {
 		return fmt.Errorf("unpacking archive: %w", err)
 	}
+	return verifyTree(dir, passphrase, requireSecretsPassphrase)
+}
 
+func verifyTree(dir, passphrase string, requireSecretsPassphrase bool) error {
 	manifest, err := readManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		return fmt.Errorf("reading manifest: %w", err)

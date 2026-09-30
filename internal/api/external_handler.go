@@ -5,11 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
+
+// defaultExternalEjectWait bounds how long an eject waits for a backup write
+// to the disk to finish before giving up and leaving the disk mounted (#454).
+const defaultExternalEjectWait = 2 * time.Minute
+
+func (h *Handler) externalEjectWait() time.Duration {
+	if h.ExternalEjectWait > 0 {
+		return h.ExternalEjectWait
+	}
+	return defaultExternalEjectWait
+}
 
 func errExternalNotFound(label string) error {
 	return &apiError{code: "external_disk_not_found", statusCode: 404, message: fmt.Sprintf("no external disk %q", label)}
@@ -176,10 +189,7 @@ func (h *Handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterE
 		Mountpoint:        mountpoint,
 		BackupDestination: req.BackupDestination.Or(false),
 	}
-	if err := ext.PutExternalDisk(ctx, row); err != nil {
-		if errors.Is(err, store.ErrExternalExists) {
-			return nil, errExternalExists(err)
-		}
+	if err := h.putExternalDisk(ctx, ext, row); err != nil {
 		return nil, err
 	}
 	apiDisk := externalToAPI(row, inv)
@@ -192,12 +202,49 @@ func (h *Handler) UpdateExternalDisk(ctx context.Context, req *apiv1.UpdateExter
 		return nil, err
 	}
 	if v, ok := req.BackupDestination.Get(); ok {
-		if err := h.externalStore().SetBackupDestination(ctx, row.Label, v); err != nil {
+		if err := h.setExternalBackupDestination(ctx, row.Label, v); err != nil {
 			return nil, err
 		}
 		row.BackupDestination = v
 	}
 	return h.externalAPI(ctx, row)
+}
+
+// backupDestinationsConfigured reports whether destinations are stored,
+// which is when an external disk's flag must create or remove the disk's
+// destination (doc 10 §1) rather than stand alone.
+func (h *Handler) backupDestinationsConfigured() bool {
+	return h.Backup != nil && h.Backup.Store != nil
+}
+
+func (h *Handler) putExternalDisk(ctx context.Context, ext *store.ExternalStore, row store.ExternalDisk) error {
+	var err error
+	if row.BackupDestination && h.backupDestinationsConfigured() {
+		err = h.Backup.RegisterExternalDisk(ctx, row)
+	} else {
+		err = ext.PutExternalDisk(ctx, row)
+	}
+	return mapExternalBackupError(row.Label, err)
+}
+
+func (h *Handler) setExternalBackupDestination(ctx context.Context, label string, enabled bool) error {
+	if !h.backupDestinationsConfigured() {
+		return h.externalStore().SetBackupDestination(ctx, label, enabled)
+	}
+	return mapExternalBackupError(label, h.Backup.SetExternalDestination(ctx, label, enabled))
+}
+
+func mapExternalBackupError(label string, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrExternalExists):
+		return errExternalExists(err)
+	case errors.Is(err, store.ErrExternalNotFound):
+		return errExternalNotFound(label)
+	default:
+		return mapBackupDestinationError(err)
+	}
 }
 
 func (h *Handler) MountExternalDisk(ctx context.Context, params apiv1.MountExternalDiskParams) (*apiv1.ExternalDisk, error) {
@@ -218,7 +265,10 @@ func (h *Handler) MountExternalDisk(ctx context.Context, params apiv1.MountExter
 	if unit.Filesystem == "" {
 		unit.Filesystem = disk.XFS
 	}
-	if err := disk.MountExternal(ctx, h.diskMounter(), unit); err != nil {
+	err = h.ExternalWriteGates.Mount(ctx, row.Label, func(ctx context.Context) error {
+		return disk.MountExternal(ctx, h.diskMounter(), unit)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("mounting external disk %s: %w", row.Label, err)
 	}
 	apiDisk := externalToAPI(row, inv)
@@ -239,7 +289,13 @@ func (h *Handler) EjectExternalDisk(ctx context.Context, params apiv1.EjectExter
 			return nil, errInvalidPlan(err)
 		}
 	}
-	if err := disk.EjectExternal(ctx, h.diskMounter(), h.Disks, unit, row.Device); err != nil {
+	err = h.ExternalWriteGates.Eject(ctx, row.Label, h.externalEjectWait(), func(ctx context.Context) error {
+		return disk.EjectExternal(ctx, h.diskMounter(), h.Disks, unit, row.Device)
+	})
+	if errors.Is(err, backup.ErrExternalWriteInFlight) {
+		return nil, &apiError{code: "external_disk_busy", statusCode: 409, message: fmt.Sprintf("%v — external disk %q was left mounted", err, row.Label)}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("ejecting external disk %s: %w", row.Label, err)
 	}
 	apiDisk := externalToAPI(row, inv)

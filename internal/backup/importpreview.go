@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -155,21 +156,42 @@ var uncomparedColumns = map[string]string{
 
 var importCategories = []string{CategoryShares, CategoryAccounts, CategorySchedules, CategoryNotifications, CategoryBackup, CategorySystem}
 
+// fileGroupKinds is the kind a preview reports for each category of files
+// an import restores besides the database (RestoreFiles). Their categories
+// are FilesCustomConfig, FilesTemplates and FilesStacks, listed after the
+// database's.
+var fileGroupKinds = map[string]string{
+	FilesCustomConfig: "custom_config_file",
+	FilesTemplates:    "template_file",
+	FilesStacks:       "stack_file",
+}
+
 // ImportChangeKinds lists every kind a preview can report.
 func ImportChangeKinds() []string {
-	kinds := make([]string, len(configTables))
-	for i, t := range configTables {
-		kinds[i] = t.kind
+	kinds := make([]string, 0, len(configTables)+len(fileGroupKinds))
+	for _, t := range configTables {
+		kinds = append(kinds, t.kind)
+	}
+	for _, c := range filesCategories {
+		kinds = append(kinds, fileGroupKinds[c])
 	}
 	return kinds
 }
 
+// ImportCategories lists every category a preview can report, in the order
+// it lists them.
+func ImportCategories() []string {
+	return slices.Concat(importCategories, filesCategories)
+}
+
 // PreviewImport reports what restoring the archive unpacked in stagingDir
-// (its manifest.json and state.db) over live would do, and writes nothing:
-// both databases are only read, the archive's opened read-only. A refusal
-// CheckImport finds is a blocker; the comparison still runs unless the
-// schema versions differ. It reads the two databases only (Q13).
-func PreviewImport(ctx context.Context, live *sql.DB, stagingDir string) (ImportPreview, error) {
+// (its manifest.json, state.db and files) over live and the directories in
+// paths would do, and writes nothing: both databases are only read, the
+// archive's opened read-only. A refusal CheckImport finds, or a path
+// RestoreFiles would refuse, is a blocker; the comparison still runs unless
+// the schema versions differ. It reads the two databases and the files
+// RestoreFiles manages only (Q13).
+func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir string, opts ...FilesOption) (ImportPreview, error) {
 	manifest, err := readManifest(filepath.Join(stagingDir, "manifest.json"))
 	if err != nil {
 		return ImportPreview{}, fmt.Errorf("reading the archive's manifest: %w", err)
@@ -206,6 +228,18 @@ func PreviewImport(ctx context.Context, live *sql.DB, stagingDir string) (Import
 	if check.Refusal != nil {
 		p.Blockers = append(p.Blockers, *check.Refusal)
 	}
+	files, err := PlanFiles(stagingDir, paths, opts...)
+	var unsafe *UnsafeRestorePathError
+	switch {
+	case errors.As(err, &unsafe):
+		p.Blockers = append(p.Blockers, ImportRefusal{Code: RefusalUnsafeRestorePath, Message: err.Error()})
+		files = nil
+		for _, c := range filesCategories {
+			files = append(files, FileChanges{Category: c})
+		}
+	case err != nil:
+		return ImportPreview{}, fmt.Errorf("comparing the archive's files: %w", err)
+	}
 	if check.ArchiveSchemaVersion != check.LiveSchemaVersion {
 		return p, nil
 	}
@@ -213,7 +247,36 @@ func PreviewImport(ctx context.Context, live *sql.DB, stagingDir string) (Import
 	if err != nil {
 		return ImportPreview{}, err
 	}
+	for _, c := range files {
+		p.Groups = append(p.Groups, ImportGroup{
+			Category: c.Category,
+			Added:    fileChanges(fileGroupKinds[c.Category], c.Added),
+			Changed:  fileChanges(fileGroupKinds[c.Category], c.Replaced),
+			Removed:  fileChanges(fileGroupKinds[c.Category], c.Removed),
+		})
+	}
 	return p, nil
+}
+
+func fileChanges(kind string, names []string) []ImportChange {
+	out := make([]ImportChange, len(names))
+	for i, n := range names {
+		out[i] = ImportChange{Kind: kind, Name: n}
+	}
+	return out
+}
+
+// DiffImport compares the database at archiveDB, the staged state.db of a
+// verified archive whose schema version matches live's, with live, in
+// ImportCategories' database categories and PreviewImport's terms. Both
+// databases are only read.
+func DiffImport(ctx context.Context, live *sql.DB, archiveDB string) ([]ImportGroup, error) {
+	arc, err := openArchiveDB(archiveDB)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = arc.Close() }()
+	return diffConfig(ctx, live, arc)
 }
 
 func diffConfig(ctx context.Context, live, arc *sql.DB) ([]ImportGroup, error) {

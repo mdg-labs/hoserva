@@ -138,7 +138,7 @@ func (a *AppdataService) uploadAppdata(ctx context.Context, dests []Destination,
 		}
 	}()
 	for _, dest := range dests {
-		release, why := a.Backup.admitDestination(dest)
+		release, why := a.Backup.admitDestination(ctx, dest)
 		if why != "" {
 			a.Backup.log("skipping destination %q for %s: %s", dest.ID, name, why)
 			failures = append(failures, fmt.Errorf("destination %q skipped: %s", dest.ID, why))
@@ -281,7 +281,7 @@ func (a *AppdataService) ListArchives(ctx context.Context, container string) ([]
 	var archives []AppdataArchive
 	var unavailable []AppdataUnavailable
 	for _, dest := range dests {
-		release, why := a.Backup.admitDestination(dest)
+		release, why := a.Backup.admitDestination(ctx, dest)
 		if why != "" {
 			unavailable = append(unavailable, AppdataUnavailable{DestinationID: dest.ID, Message: why})
 			continue
@@ -318,7 +318,7 @@ func (a *AppdataService) listDestination(ctx context.Context, dest Destination) 
 // encrypted, decrypts it with the onboarding identity. It returns the path
 // of the plain tar.zst.
 func (a *AppdataService) fetchAppdata(ctx context.Context, dest Destination, name, dir string) (string, error) {
-	release, why := a.Backup.admitDestination(dest)
+	release, why := a.Backup.admitDestination(ctx, dest)
 	if why != "" {
 		return "", fmt.Errorf("reading destination %q: %s", dest.ID, why)
 	}

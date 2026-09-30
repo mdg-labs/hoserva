@@ -191,6 +191,42 @@ func (s *UPSService) Update(ctx context.Context, input UpdateUPSInput) (UPSView,
 	return upsViewFromRow(&row), nil
 }
 
+// Regenerate rewrites the NUT files from the stored settings and reloads
+// the units, so the files match the database after a config import
+// replaced it (doc 10 §1, D4). With no stored settings it only removes the
+// managed NUT files and reloads nothing. It changes no row.
+func (s *UPSService) Regenerate(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Generator == nil {
+		return fmt.Errorf("settings: ups generator is not configured")
+	}
+	row, err := s.Store.Get(ctx)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("settings: loading ups config: %w", err)
+		}
+		row = nil
+	}
+	if err := s.restoreUPSGenerated(ctx, row); err != nil {
+		return err
+	}
+	if row == nil {
+		return nil
+	}
+	if s.Socket != nil {
+		if err := s.Socket.Apply(ctx); err != nil {
+			return fmt.Errorf("settings: applying ups control socket permissions: %w", err)
+		}
+	}
+	if s.NUT != nil {
+		if err := s.NUT.Reload(ctx, config.UPSConnection(row.Connection)); err != nil {
+			return fmt.Errorf("settings: reloading nut: %w", err)
+		}
+	}
+	return nil
+}
+
 // rollbackUPS restores SQLite and the generated NUT files to previous
 // (or clears both when previous is nil). It uses its own context so a
 // cancelled request cannot leave a half-applied change behind.

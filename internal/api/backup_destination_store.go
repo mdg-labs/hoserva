@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/store"
 	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
 
@@ -177,14 +179,123 @@ func (s *BackupDestinationStore) SeedDestinations(ctx context.Context, ds []back
 	return nil
 }
 
-// DeleteDestination implements backup.DestinationStore.
+// DeleteDestination implements backup.DestinationStore. An external
+// disk's destination is deleted together with that disk's flag, in one
+// transaction, so neither can be left claiming the other.
 func (s *BackupDestinationStore) DeleteDestination(ctx context.Context, id string) error {
+	if label, ok := strings.CutPrefix(id, externalDestinationIDPrefix); ok {
+		return s.deleteExternalDestination(ctx, id, label)
+	}
 	n, err := s.q.DeleteBackupDestination(ctx, id)
 	if err != nil {
 		return fmt.Errorf("deleting backup destination %q: %w", id, err)
 	}
 	if n == 0 {
 		return backup.ErrDestinationNotFound
+	}
+	return nil
+}
+
+const externalDestinationIDPrefix = "external:"
+
+var _ backup.ExternalDestinationStore = (*BackupDestinationStore)(nil)
+
+func (s *BackupDestinationStore) externalStore() (*store.ExternalStore, error) {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return nil, errors.New("backup destination store: external disks require *sql.DB")
+	}
+	return store.NewExternalStore(sqlDB), nil
+}
+
+func (s *BackupDestinationStore) deleteExternalDestination(ctx context.Context, id, label string) error {
+	ext, err := s.externalStore()
+	if err != nil {
+		return err
+	}
+	return ext.InTx(ctx, func(ext *store.ExternalStore, q *storedb.Queries) error {
+		n, err := q.DeleteBackupDestination(ctx, id)
+		if err != nil {
+			return fmt.Errorf("deleting backup destination %q: %w", id, err)
+		}
+		if n == 0 {
+			return backup.ErrDestinationNotFound
+		}
+		if err := ext.SetBackupDestination(ctx, label, false); err != nil && !errors.Is(err, store.ErrExternalNotFound) {
+			return err
+		}
+		return nil
+	})
+}
+
+// SetExternalDestination implements backup.ExternalDestinationStore.
+func (s *BackupDestinationStore) SetExternalDestination(ctx context.Context, label string, dest *backup.Destination) error {
+	ext, err := s.externalStore()
+	if err != nil {
+		return err
+	}
+	return ext.InTx(ctx, func(ext *store.ExternalStore, q *storedb.Queries) error {
+		if err := ext.SetBackupDestination(ctx, label, dest != nil); err != nil {
+			return err
+		}
+		if dest == nil {
+			if _, err := q.DeleteBackupDestination(ctx, externalDestinationIDPrefix+label); err != nil {
+				return fmt.Errorf("deleting backup destination of external disk %q: %w", label, err)
+			}
+			return nil
+		}
+		return createIfAbsent(ctx, q, *dest)
+	})
+}
+
+// PutExternalDisk implements backup.ExternalDestinationStore.
+func (s *BackupDestinationStore) PutExternalDisk(ctx context.Context, d store.ExternalDisk, dest *backup.Destination) error {
+	ext, err := s.externalStore()
+	if err != nil {
+		return err
+	}
+	return ext.InTx(ctx, func(ext *store.ExternalStore, q *storedb.Queries) error {
+		if err := ext.PutExternalDisk(ctx, d); err != nil {
+			return err
+		}
+		if dest == nil {
+			return nil
+		}
+		return createIfAbsent(ctx, q, *dest)
+	})
+}
+
+// FlaggedExternalLabels implements backup.ExternalDestinationStore.
+func (s *BackupDestinationStore) FlaggedExternalLabels(ctx context.Context) ([]string, error) {
+	ext, err := s.externalStore()
+	if err != nil {
+		return nil, err
+	}
+	disks, err := ext.ListExternalDisks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var labels []string
+	for _, d := range disks {
+		if d.BackupDestination {
+			labels = append(labels, d.Label)
+		}
+	}
+	return labels, nil
+}
+
+func createIfAbsent(ctx context.Context, q *storedb.Queries, d backup.Destination) error {
+	if _, err := q.GetBackupDestination(ctx, d.ID); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reading backup destination %q: %w", d.ID, err)
+	}
+	params, err := createParams(d)
+	if err != nil {
+		return err
+	}
+	if err := q.CreateBackupDestination(ctx, params); err != nil {
+		return fmt.Errorf("persisting backup destination %q: %w", d.ID, err)
 	}
 	return nil
 }

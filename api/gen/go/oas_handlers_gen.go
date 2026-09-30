@@ -13462,15 +13462,32 @@ func (s *Server) handleGetUserSharePermissionsRequest(args [1]string, argsEscape
 // handleImportConfigRequest handles importConfig operation.
 //
 // Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
-// configuration. Every refusal happens before anything is written, including the pre-import backup:
-// 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or
-// lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive`
-// (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key
-// check value differs from this installation's or is missing; a different installation's archive is
-// restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state
-// or the relocation in flight differ from the live array; the message names each difference). The
-// array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from
-// the archive, so an import cannot return a stopped array to normal operation.
+// configuration: the database, the custom config files (`*.custom.conf`), the installed app templates
+// and each stack's compose and `meta.json` files, after which every managed config file is regenerated
+// from the restored database and the result applied to the running pool. It also restores the
+// passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase`
+// if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens
+// it, everything else is restored and the report says the `.env` files were not. When the import
+// restores `.env` files, the pre-import archive's own `secrets.age` is sealed with the passphrase that
+// opened the imported archive's, so it holds every `.env` the import replaces; a failure to write it
+// refuses the import. The answer is the restore report: what was restored per category, what was not
+// and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
+// happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
+// not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
+// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
+// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
+// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
+// `archive_other_installation` (its machine key check value differs from this installation's or is
+// missing; a different installation's archive is restored only onto a fresh install) and 409
+// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
+// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
+// restore lands on a symbolic link or on something that is not a regular file, or it names a path
+// outside the directory it is restored into; nothing is followed). A failure to stage the files
+// answers 500 `import_failed` with nothing changed; a failure once the database has been replaced
+// answers 500 `import_failed` naming the pre-import archive to restore from and which of the file
+// categories were restored and which left as they were. The array's own state, running, in maintenance
+// mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a
+// stopped array to normal operation.
 //
 // POST /config/import
 func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -13627,7 +13644,7 @@ func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w h
 		}
 	}()
 
-	var response *ImportConfigNoContent
+	var response *ConfigImportReport
 	if m := s.cfg.Middleware; m != nil {
 		mreq := middleware.Request{
 			Context:          ctx,
@@ -13643,7 +13660,7 @@ func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w h
 		type (
 			Request  = *ImportConfigReq
 			Params   = struct{}
-			Response = *ImportConfigNoContent
+			Response = *ConfigImportReport
 		)
 		response, err = middleware.HookMiddleware[
 			Request,
@@ -13654,12 +13671,12 @@ func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w h
 			mreq,
 			nil,
 			func(ctx context.Context, request Request, params Params) (response Response, err error) {
-				err = s.h.ImportConfig(ctx, request)
+				response, err = s.h.ImportConfig(ctx, request)
 				return response, err
 			},
 		)
 	} else {
-		err = s.h.ImportConfig(ctx, request)
+		response, err = s.h.ImportConfig(ctx, request)
 	}
 	if err != nil {
 		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
@@ -18980,11 +18997,16 @@ func (s *Server) handlePreviewAppdataRestoreRequest(args [0]string, argsEscaped 
 // without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
 // leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
 // with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
-// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
-// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
-// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
-// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
-// on a data disk is read.
+// `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with
+// the live one per category, and lists the custom config files, app templates and app stack files the
+// import would replace, add and remove; it is empty when the archive's schema version differs, since
+// the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
+// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
+// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
+// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
+// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
+// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
+// read.
 //
 // POST /config/import/preview
 func (s *Server) handlePreviewConfigImportRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

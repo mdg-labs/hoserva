@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -445,5 +447,138 @@ func TestLastDrill_NilBeforeTheFirstDrill(t *testing.T) {
 	rig := newDrillRig(t, false)
 	if got, err := rig.svc.LastDrill(context.Background()); err != nil || got != nil {
 		t.Fatalf("LastDrill = %v, %v; want nil, nil", got, err)
+	}
+}
+
+// betweenListAndFetch runs hook once, at the drill's first download from
+// the remote, after the destination was listed and before the archive is
+// fetched.
+//
+// It also reports, once armed, when a config backup deletes an archive, and
+// records how long the rig's first backup took.
+type betweenListAndFetch struct {
+	inner RcloneRunner
+	once  sync.Once
+	hook  func(ctx context.Context)
+
+	backupTook time.Duration
+	armed      atomic.Bool
+	pruneOnce  sync.Once
+	pruned     chan struct{}
+}
+
+func (r *betweenListAndFetch) Run(ctx context.Context, c RcloneCommand) ([]byte, error) {
+	if len(c.Args) > 0 {
+		switch {
+		case c.Args[0] == "copyto":
+			r.once.Do(func() { r.hook(ctx) })
+		case c.Args[0] == "deletefile" && r.armed.Load():
+			r.pruneOnce.Do(func() { close(r.pruned) })
+		}
+	}
+	return r.inner.Run(ctx, c)
+}
+
+func remoteDrillRig(t *testing.T, retention Retention) (*remoteRig, *FakeDrillStore, *betweenListAndFetch, *[]DrillResult) {
+	t.Helper()
+	rig := newRemoteRig(t)
+	rig.now = time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	rig.rclone.Now = func() time.Time { return rig.now }
+	drills := &FakeDrillStore{}
+	rig.svc.Drills = drills
+	gate := &betweenListAndFetch{inner: rig.rclone, pruned: make(chan struct{})}
+	rig.svc.Rclone = gate
+	req := s3Request()
+	req.Retention = &retention
+	if _, err := rig.svc.AddDestination(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := rig.svc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	gate.backupTook = time.Since(start)
+	t.Setenv("TMPDIR", t.TempDir())
+	return rig, drills, gate, &[]DrillResult{}
+}
+
+func remoteArchives(rig *remoteRig) map[string]bool {
+	out := map[string]bool{}
+	for key := range rig.rclone.Files() {
+		if strings.HasSuffix(key, ".tar.zst.age") {
+			out[filepath.Base(key)] = true
+		}
+	}
+	return out
+}
+
+func TestRunDrill_AConfigBackupPruningTheArchiveItPickedDoesNotFailTheDrill(t *testing.T) {
+	rig, drills, gate, alerts := remoteDrillRig(t, Retention{Daily: 1})
+	ctx := context.Background()
+	picked := remoteArchives(rig)
+	if len(picked) != 1 {
+		t.Fatalf("archives after the first backup = %v, want one", picked)
+	}
+
+	backupDone := make(chan error, 1)
+	gate.hook = func(context.Context) {
+		rig.now = rig.now.Add(24 * time.Hour)
+		gate.armed.Store(true)
+		go func() { backupDone <- rig.svc.Run(context.Background()) }()
+		// A backup that is not held back prunes about as soon as the rig's
+		// first backup took to finish; give it twice that.
+		select {
+		case <-gate.pruned:
+		case <-time.After(2*gate.backupTook + time.Second):
+		}
+	}
+
+	err := rig.svc.RunDrill(ctx, nil, func(_ context.Context, r DrillResult) error {
+		*alerts = append(*alerts, r)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunDrill: %v", err)
+	}
+	got, _ := drills.LastDrill(ctx)
+	if got == nil || !got.Passed || !picked[got.Destinations[0].Archive] {
+		t.Fatalf("result = %+v, want a pass on the archive the drill picked (%v)", got, picked)
+	}
+	if len(*alerts) != 0 {
+		t.Fatalf("the drill alerted although the archive was only pruned: %+v", *alerts)
+	}
+	if err := <-backupDone; err != nil {
+		t.Fatalf("the concurrent config backup: %v", err)
+	}
+	after := remoteArchives(rig)
+	if len(after) != 1 || after[got.Destinations[0].Archive] {
+		t.Fatalf("archives after the concurrent backup = %v, want only the new one (retention keeps one)", after)
+	}
+}
+
+func TestRunDrill_AnArchiveGoneFromTheDestinationStillFailsTheDrill(t *testing.T) {
+	rig, drills, gate, alerts := remoteDrillRig(t, Retention{Daily: 7})
+	ctx := context.Background()
+	gate.hook = func(ctx context.Context) {
+		for name := range remoteArchives(rig) {
+			if _, err := rig.rclone.Run(ctx, RcloneCommand{Args: []string{"deletefile", "HOSERVADEST:bucket/hoserva/" + name}}); err != nil {
+				t.Errorf("deleting %s: %v", name, err)
+			}
+		}
+	}
+
+	err := rig.svc.RunDrill(ctx, nil, func(_ context.Context, r DrillResult) error {
+		*alerts = append(*alerts, r)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("RunDrill passed although the archive it picked was removed by something other than a backup")
+	}
+	got, _ := drills.LastDrill(ctx)
+	if got == nil || got.Passed || !strings.Contains(got.Destinations[0].Error, "fetching") {
+		t.Fatalf("result = %+v, want a failed drill naming the fetch", got)
+	}
+	if len(*alerts) != 1 {
+		t.Fatalf("alerts = %d, want the failed drill alerted", len(*alerts))
 	}
 }

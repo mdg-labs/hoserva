@@ -32,7 +32,15 @@ type Paths struct {
 type ArchiveOption func(*archiveOptions)
 
 type archiveOptions struct {
-	recipient *Recipient
+	recipient   *Recipient
+	sealSecrets string
+}
+
+// WithSecretsPassphrase seals secrets.age under passphrase instead of the
+// configured backup passphrase (Q80), so an archive is built with secrets
+// when none is configured. Empty, it changes nothing.
+func WithSecretsPassphrase(passphrase string) ArchiveOption {
+	return func(o *archiveOptions) { o.sealSecrets = passphrase }
 }
 
 // WithRecipient attaches the onboarding recipient (Q80) so BuildArchive
@@ -68,7 +76,7 @@ func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource
 		return Manifest{}, err
 	}
 
-	secrets, err := buildSecretsAge(ctx, src, cipher, stackEnvs)
+	secrets, err := buildSecretsAge(ctx, src, cipher, stackEnvs, cfg.sealSecrets)
 	if err != nil {
 		return Manifest{}, err
 	}

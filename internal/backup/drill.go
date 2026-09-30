@@ -169,9 +169,11 @@ type drillFetch struct {
 // fetchNewest copies the destination's newest archive of this installation
 // into dir, with its identity sidecar when it is encrypted. The pool gate is
 // held only for the copy, so a drill cannot hold up an array stop while it
-// verifies.
+// verifies. A config backup's write and prune of a destination wait for the
+// listing and fetch here, so the archive picked cannot be pruned before it
+// is fetched; an archive that is missing anyway fails the drill.
 func (s *Service) fetchNewest(ctx context.Context, dest Destination, dir string) (drillFetch, error) {
-	release, why := s.admitDestination(dest)
+	release, why := s.admitDestination(ctx, dest)
 	if why != "" {
 		return drillFetch{}, fmt.Errorf("the destination cannot be read now: %s", why)
 	}
@@ -181,6 +183,8 @@ func (s *Service) fetchNewest(ctx context.Context, dest Destination, dir string)
 	if err != nil {
 		return drillFetch{}, fmt.Errorf("preparing the destination: %w", err)
 	}
+	s.archiveMu.Lock()
+	defer s.archiveMu.Unlock()
 	listed, err := target.list(ctx)
 	if err != nil {
 		return drillFetch{}, fmt.Errorf("listing the destination: %w", err)

@@ -76,6 +76,7 @@ func newImportTestHandlerWithRegistry(t *testing.T) (*Handler, *job.Registry, *s
 			DB:    db,
 			Paths: backup.Paths{DBPath: dbPath},
 		},
+		RegenerateConfig: func(context.Context) error { return nil },
 	}
 	return h, registry, db, dbPath
 }
@@ -154,7 +155,7 @@ func TestImportConfig_ReplacesRunningDatabaseWithoutCorruption(t *testing.T) {
 		t.Fatalf("inserting interim user: %v", err)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -230,7 +231,7 @@ func TestImportConfig_RefusesWhileJobActive(t *testing.T) {
 		t.Fatalf("seeding an active job: %v", err)
 	}
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok {
 		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
@@ -286,7 +287,7 @@ func TestImportConfig_RefusesJobSubmittedDuringPreImportBackup(t *testing.T) {
 		return time.Now().UTC()
 	}
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok {
 		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
@@ -324,7 +325,7 @@ func TestImportConfig_MarksPreImportSafetyBackup(t *testing.T) {
 	}}
 
 	archive := exportBytes(t, h)
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -379,7 +380,7 @@ func TestImportConfig_RestoredRunningJobIsInterrupted(t *testing.T) {
 		t.Fatalf("finishing the seeded job before import: %v", err)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -391,7 +392,7 @@ func TestImportConfig_RestoredRunningJobIsInterrupted(t *testing.T) {
 		t.Fatalf("restored job status = %q, want %q", restored.Status, job.StatusInterrupted)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("second ImportConfig, refused by the first import's own restored job: %v", err)
 	}
 }
@@ -421,7 +422,8 @@ func TestImportConfig_ConcurrentSubmitDuringRestoreIsRefused(t *testing.T) {
 
 	importErrCh := make(chan error, 1)
 	go func() {
-		importErrCh <- h.ImportConfig(ctx, importReq(archive))
+		_, err := h.ImportConfig(ctx, importReq(archive))
+		importErrCh <- err
 	}()
 
 	<-inRestore
@@ -484,7 +486,7 @@ func TestImportConfig_LeavesJobInsertedDuringRestoreWindowUntouched(t *testing.T
 	}
 	t.Cleanup(func() { importPostRestoreHookForTest = nil })
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -513,7 +515,7 @@ func TestImportConfig_TruncatedArchiveIsRejected(t *testing.T) {
 	archive := exportBytes(t, h)
 	truncated := archive[:len(archive)/2]
 
-	err := h.ImportConfig(ctx, importReq(truncated))
+	_, err := h.ImportConfig(ctx, importReq(truncated))
 	assertInvalidArchive(t, err)
 }
 
@@ -524,16 +526,13 @@ func TestImportConfig_ChecksumMismatchIsRejected(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	if err := tamperStateDB(t, filepath.Join(staging, "state.db")); err != nil {
 		t.Fatalf("tampering state.db: %v", err)
 	}
 	tampered := repackTarZst(t, staging)
 
-	err := h.ImportConfig(ctx, importReq(tampered))
+	_, err := h.ImportConfig(ctx, importReq(tampered))
 	assertInvalidArchive(t, err)
 }
 
@@ -544,16 +543,13 @@ func TestImportConfig_MissingStateDBIsRejected(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	if err := os.Remove(filepath.Join(staging, "state.db")); err != nil {
 		t.Fatalf("removing state.db: %v", err)
 	}
 	stripped := repackTarZst(t, staging)
 
-	err := h.ImportConfig(ctx, importReq(stripped))
+	_, err := h.ImportConfig(ctx, importReq(stripped))
 	assertInvalidArchive(t, err)
 }
 
@@ -567,10 +563,7 @@ func TestImportConfig_OlderSchemaVersionIsIncompatible(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	stateDBPath := filepath.Join(staging, "state.db")
 	adb, err := sql.Open("sqlite", stateDBPath)
 	if err != nil {
@@ -589,7 +582,7 @@ func TestImportConfig_OlderSchemaVersionIsIncompatible(t *testing.T) {
 	resyncManifestChecksum(t, staging)
 	older := repackTarZst(t, staging)
 
-	err = h.ImportConfig(ctx, importReq(older))
+	_, err = h.ImportConfig(ctx, importReq(older))
 	assertIncompatibleArchive(t, err)
 }
 
@@ -598,10 +591,7 @@ func TestImportConfig_NewerSchemaVersionIsIncompatible(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	stateDBPath := filepath.Join(staging, "state.db")
 	adb, err := sql.Open("sqlite", stateDBPath)
 	if err != nil {
@@ -627,7 +617,7 @@ func TestImportConfig_NewerSchemaVersionIsIncompatible(t *testing.T) {
 	resyncManifestChecksum(t, staging)
 	fromTheFuture := repackTarZst(t, staging)
 
-	err = h.ImportConfig(ctx, importReq(fromTheFuture))
+	_, err = h.ImportConfig(ctx, importReq(fromTheFuture))
 	assertIncompatibleArchive(t, err)
 }
 
@@ -663,7 +653,7 @@ func TestImportConfig_SecretsAgePresentButNoPassphraseStillImports(t *testing.T)
 		t.Fatalf("reading packed archive: %v", err)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig(archive with secrets.age, no passphrase given anywhere): %v", err)
 	}
 }
@@ -692,10 +682,7 @@ func TestExportConfig_EmbedsIdentityAgeDecryptableWithPassphrase(t *testing.T) {
 
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking exported archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	identityAge, err := os.ReadFile(filepath.Join(staging, "identity.age"))
 	if err != nil {
 		t.Fatalf("exported archive has no identity.age: %v", err)
@@ -738,6 +725,19 @@ func assertIncompatibleArchive(t *testing.T, err error) {
 	if ae.statusCode != 400 || ae.code != "incompatible_archive" {
 		t.Fatalf("err = (%d, %q), want (400, incompatible_archive)", ae.statusCode, ae.code)
 	}
+}
+
+// extractArchive unpacks a valid archive into a fresh directory the test
+// then edits and repacks, through the same extraction ImportConfig verifies
+// and restores from.
+func extractArchive(t *testing.T, archive []byte) string {
+	t.Helper()
+	tree, err := backup.ExtractVerifiedArchive(writeTemp(t, archive))
+	if err != nil {
+		t.Fatalf("unpacking baseline archive: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tree) })
+	return tree
 }
 
 func writeTemp(t *testing.T, data []byte) string {
@@ -912,10 +912,7 @@ func liveFingerprint(t *testing.T, db *sql.DB) string {
 
 func rewriteArchive(t *testing.T, archive []byte, edit func(staging string)) []byte {
 	t.Helper()
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	edit(staging)
 	return repackTarZst(t, staging)
 }
@@ -970,7 +967,7 @@ func assertRefusedBeforeWriting(t *testing.T, h *Handler, db *sql.DB, archive []
 	}
 	before := liveFingerprint(t, db)
 
-	err := h.ImportConfig(context.Background(), importReq(archive))
+	_, err := h.ImportConfig(context.Background(), importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok {
 		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
@@ -1040,7 +1037,7 @@ func TestImportConfig_RefusesWhenLiveMachineKeyCheckIsMissing(t *testing.T) {
 	archive := exportBytes(t, h)
 	execAll(t, db, `DELETE FROM machine_key_check`)
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	if err == nil {
 		t.Fatal("ImportConfig = nil, want a refusal")
 	}
@@ -1123,7 +1120,7 @@ func TestImportConfig_RefusesArrayChangeMadeBeforeTheRestoreHold(t *testing.T) {
 		return time.Now().UTC()
 	}
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok || ae.statusCode != 409 || ae.code != "archive_array_mismatch" {
 		t.Fatalf("ImportConfig err = %v (%T), want 409 archive_array_mismatch", err, err)
@@ -1154,7 +1151,7 @@ func TestImportConfig_AcceptsArchiveWithIdenticalArray(t *testing.T) {
 	insertSentinelShare(t, db, "rolled-back")
 	execAll(t, db, `UPDATE array_disks SET device = '/dev/moved-after-reboot' WHERE role = 'data' AND role_index = 1`)
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig of an identical array: %v", err)
 	}
 	shares, err := store.NewShareStore(db).List(ctx)

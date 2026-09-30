@@ -869,6 +869,7 @@ func configCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "config", Short: "Config backup"}
 	var outPath string
 	var confirm, preview bool
+	var passphraseFile string
 
 	export := &cobra.Command{
 		Use:   "export",
@@ -929,6 +930,14 @@ func configCmd() *cobra.Command {
 			if !preview && !confirm {
 				return fmt.Errorf("import requires --confirm")
 			}
+			var passphrase apiv1.OptString
+			if cmd.Flags().Changed("passphrase-file") {
+				p, err := readPassphraseFile(passphraseFile)
+				if err != nil {
+					return err
+				}
+				passphrase = apiv1.NewOptString(p)
+			}
 			c, err := newAPIClient()
 			if err != nil {
 				return err
@@ -944,7 +953,8 @@ func configCmd() *cobra.Command {
 			}
 			if preview {
 				out, err := c.PreviewConfigImport(apiCtx(), &apiv1.PreviewConfigImportReq{
-					Archive: http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
+					Archive:    http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
+					Passphrase: passphrase,
 				})
 				if err != nil {
 					return mapAPIErr(err)
@@ -956,18 +966,25 @@ func configCmd() *cobra.Command {
 				}
 				return nil
 			}
-			req := &apiv1.ImportConfigReq{
-				Confirm: true,
-				Archive: http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
-			}
-			if err := c.ImportConfig(apiCtx(), req); err != nil {
+			report, err := c.ImportConfig(apiCtx(), &apiv1.ImportConfigReq{
+				Confirm:    true,
+				Archive:    http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
+				Passphrase: passphrase,
+			})
+			if err != nil {
 				return mapAPIErr(err)
+			}
+			if jsonOutput {
+				emit(report)
+			} else {
+				printConfigImportReport(report)
 			}
 			return nil
 		},
 	}
 	importCmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm import (required unless --preview)")
 	importCmd.Flags().BoolVar(&preview, "preview", false, "List what importing the archive would change, without changing anything")
+	importCmd.Flags().StringVar(&passphraseFile, "passphrase-file", "", "File holding the backup passphrase the archive's secrets were sealed under (default: the configured one)")
 
 	cmd.AddCommand(export, importCmd)
 	return cmd
@@ -980,6 +997,9 @@ var configImportCategoryLabels = map[apiv1.ConfigImportGroupCategory]string{
 	apiv1.ConfigImportGroupCategoryNotifications: "Notifications",
 	apiv1.ConfigImportGroupCategoryBackup:        "Backup destinations and appdata backup settings",
 	apiv1.ConfigImportGroupCategorySystem:        "System settings",
+	apiv1.ConfigImportGroupCategoryCustomConfig:  "Custom config files",
+	apiv1.ConfigImportGroupCategoryTemplates:     "App templates",
+	apiv1.ConfigImportGroupCategoryStacks:        "App stacks",
 }
 
 func printConfigImportPreview(p *apiv1.ConfigImportPreview) {
@@ -1008,9 +1028,102 @@ func printConfigImportPreview(p *apiv1.ConfigImportPreview) {
 	if changes == 0 && len(p.Groups) > 0 {
 		fmt.Println("\nNo changes to the configuration.")
 	}
+	fmt.Printf("\n%s\n", describeConfigImportSecrets(p.Secrets))
 	for _, n := range p.Notes {
 		fmt.Printf("\n%s\n", n.Message)
 	}
+}
+
+func describeConfigImportSecrets(s apiv1.ConfigImportSecrets) string {
+	var msg string
+	switch s.Status {
+	case apiv1.ConfigImportSecretsStatusOpened:
+		return "Secrets: the passphrase opens the archive's secrets, so its stack .env files would be restored."
+	case apiv1.ConfigImportSecretsStatusNone:
+		msg = "Secrets: the archive has no secrets section, so its stack .env files would not be restored"
+	case apiv1.ConfigImportSecretsStatusNoPassphrase:
+		msg = "Secrets: no backup passphrase is available (--passphrase-file gives one), so the archive's stack .env files would not be restored"
+	case apiv1.ConfigImportSecretsStatusPassphraseIncorrect:
+		msg = "Secrets: the configured backup passphrase does not open the archive's secrets (--passphrase-file gives another), so its stack .env files would not be restored"
+	default:
+		msg = "Secrets: " + string(s.Status)
+	}
+	if len(s.Stacks) > 0 {
+		msg += ": " + strings.Join(s.Stacks, ", ")
+	}
+	return msg + "."
+}
+
+func readPassphraseFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading the passphrase file: %w", err)
+	}
+	p := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
+	if p == "" {
+		return "", fmt.Errorf("the passphrase file %s is empty", path)
+	}
+	return p, nil
+}
+
+func printConfigImportReport(r *apiv1.ConfigImportReport) {
+	restoredAny := false
+	for _, c := range r.Restored {
+		if c.Added+c.Changed+c.Removed == 0 {
+			continue
+		}
+		if !restoredAny {
+			fmt.Println("Restored:")
+			restoredAny = true
+		}
+		var counts []string
+		for _, n := range []struct {
+			count int64
+			what  string
+		}{{c.Added, "added"}, {c.Changed, "changed"}, {c.Removed, "removed"}} {
+			if n.count > 0 {
+				counts = append(counts, fmt.Sprintf("%d %s", n.count, n.what))
+			}
+		}
+		fmt.Printf("  %s: %s\n", configImportRestoredLabel(c.Category), strings.Join(counts, ", "))
+	}
+	if !restoredAny {
+		fmt.Println("No changes to the configuration.")
+	}
+	if len(r.NotRestored) == 0 {
+		fmt.Println("\nEverything in the archive was restored.")
+	} else {
+		fmt.Println("\nNot restored:")
+		for _, n := range r.NotRestored {
+			fmt.Printf("  %s %s (%s): %s\n", n.Kind, n.Name, n.Reason, n.Message)
+		}
+	}
+	if r.PreImportArchive == "" {
+		fmt.Println("\nNo pre-import archive was written: no backup destination was written to.")
+	} else {
+		fmt.Printf("\nThe configuration as it was before the import is in %s.\n", r.PreImportArchive)
+		fmt.Println(describePreImportSecrets(r.PreImportSecrets))
+	}
+}
+
+func describePreImportSecrets(s apiv1.ConfigImportPreImportSecrets) string {
+	switch s {
+	case apiv1.ConfigImportPreImportSecretsRequest:
+		return "Its secrets, with the stack .env files the import replaced, are sealed with the passphrase you gave for this import."
+	case apiv1.ConfigImportPreImportSecretsConfigured:
+		return "Its secrets are sealed with the configured backup passphrase."
+	case apiv1.ConfigImportPreImportSecretsNone:
+		return "It has no secrets section."
+	default:
+		return "Its secrets: " + string(s)
+	}
+}
+
+func configImportRestoredLabel(c apiv1.ConfigImportRestoredCategory) string {
+	if c == apiv1.ConfigImportRestoredCategoryStackEnv {
+		return "Stack .env files"
+	}
+	return configImportCategoryLabels[apiv1.ConfigImportGroupCategory(c)]
 }
 
 func describeConfigImportChange(c apiv1.ConfigImportChange) string {

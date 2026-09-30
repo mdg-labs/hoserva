@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -98,6 +99,21 @@ type Handler struct {
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
+	// RegenerateConfig is cmd/hoservad's hook for ImportConfig (doc 10 §1):
+	// after the database has been restored it regenerates every managed
+	// config file whose inputs are in the database and applies the result to
+	// the running pool (D4). Nil refuses the import with 501, since an
+	// import that skipped it would leave the generated files describing the
+	// database it replaced.
+	RegenerateConfig func(ctx context.Context) error
+	// ExternalWriteGates is the per-disk gate Backup's writes to an external
+	// disk take a slot in (#454): eject closes it and waits for a write in
+	// flight before unmounting, and mount reopens it. It must be the same
+	// instance as Backup.ExternalGates; nil coordinates nothing.
+	ExternalWriteGates *backup.ExternalWriteGates
+	// ExternalEjectWait bounds an eject's wait for a backup write to that
+	// disk to finish. Zero uses two minutes.
+	ExternalEjectWait time.Duration
 	// Appdata is doc 10 §2's per-container appdata backup and restore,
 	// built over Backup's destinations and the Docker Engine. Nil returns
 	// 501 from those operations.

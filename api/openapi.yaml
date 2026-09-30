@@ -2694,18 +2694,44 @@ paths:
       summary: Import a config archive
       description: >-
         Restores from doc 10 §1's archive format. Requires `confirm: true`
-        — this replaces the running configuration. Every refusal happens
+        — this replaces the running configuration: the database, the custom
+        config files (`*.custom.conf`), the installed app templates and each
+        stack's compose and `meta.json` files, after which every managed
+        config file is regenerated from the restored database and the result
+        applied to the running pool. It also restores the passphrase-protected
+        part of the archive, its stacks' `.env` files: with the optional
+        `passphrase` if one is given, otherwise with the configured backup
+        passphrase. Without a passphrase that opens it, everything else is
+        restored and the report says the `.env` files were not. When the
+        import restores `.env` files, the pre-import archive's own
+        `secrets.age` is sealed with the passphrase that opened the imported
+        archive's, so it holds every `.env` the import replaces; a failure
+        to write it refuses the import. The answer is
+        the restore report: what was restored per category, what was not and
+        why, the name of the pre-import archive and which passphrase seals its
+        secrets. Every refusal happens
         before anything is written, including the pre-import backup: 400
         `invalid_archive` (it does not unpack or checksum, holds a file its
-        manifest does not list or lacks one it lists, or holds a link,
-        device, FIFO or duplicate entry), 400 `incompatible_archive` (another
+        manifest does not list or lacks one it lists, holds a link,
+        device, FIFO or duplicate entry, or has a `secrets.age` that is
+        not readable), 400 `backup_passphrase_incorrect` (a `passphrase`
+        was given and it does not open the archive's `secrets.age`), 400
+        `incompatible_archive` (another
         schema version), 409 `job_in_progress`, 409
         `archive_other_installation` (its machine key check value differs
         from this installation's or is missing; a different installation's
         archive is restored only onto a fresh install) and 409
         `archive_array_mismatch` (its disks, their removal state or the
         relocation in flight differ from the live array; the message names
-        each difference). The array's own state, running, in maintenance
+        each difference), and 409 `restore_path_unsafe` (a file it would
+        restore lands on a symbolic link or on something that is not a
+        regular file, or it names a path outside the directory it is
+        restored into; nothing is followed). A failure to stage the files
+        answers 500 `import_failed` with nothing changed; a failure once the
+        database has been replaced answers 500 `import_failed` naming the
+        pre-import archive to restore from and which of the file categories
+        were restored and which left as they were. The
+        array's own state, running, in maintenance
         mode or stopped, is kept as it is, never restored from the archive,
         so an import cannot return a stopped array to normal operation.
       tags: [config]
@@ -2724,9 +2750,21 @@ paths:
                 confirm:
                   type: boolean
                   description: Must be true — import is destructive.
+                passphrase:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+                  description: >-
+                    The backup passphrase the archive's `secrets.age` was
+                    sealed under. Optional: omitted, the configured backup
+                    passphrase is tried.
       responses:
-        "204":
-          description: Import completed.
+        "200":
+          description: Import completed; what it restored and what it did not.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigImportReport'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2741,9 +2779,17 @@ paths:
         leaves no file behind. `blockers` lists the refusals `importConfig`
         would return for this archive, with the same codes and messages
         (400 `incompatible_archive`, 409 `archive_other_installation`, 409
-        `archive_array_mismatch`); `groups` compares the archive's database
-        with the live one per category and is empty when the archive's
-        schema version differs, since the two cannot be compared. An
+        `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups`
+        compares the archive's database with the live one per category, and
+        lists the custom config files, app templates and app stack files
+        the import would replace, add and remove; it is empty when the
+        archive's schema version differs, since the two cannot be compared.
+        `secrets` says whether the archive has a passphrase-protected section
+        and whether the passphrase available opens it, and if not, which
+        stacks' `.env` files would not be restored. The optional `passphrase`
+        is tried as `importConfig` tries it, and one that does not open the
+        archive's `secrets.age` is refused as 400
+        `backup_passphrase_incorrect`. An
         archive that cannot be read is refused as `importConfig` refuses it
         (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with
         no config backup wired answers 501 `not_configured`. Nothing on a
@@ -2761,6 +2807,14 @@ paths:
                 archive:
                   type: string
                   format: binary
+                passphrase:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+                  description: >-
+                    The backup passphrase the archive's `secrets.age` was
+                    sealed under. Optional: omitted, the configured backup
+                    passphrase is tried.
       responses:
         "200":
           description: What the import would change.
@@ -7549,7 +7603,7 @@ components:
       properties:
         code:
           type: string
-          enum: [incompatible_archive, archive_other_installation, archive_array_mismatch]
+          enum: [incompatible_archive, archive_other_installation, archive_array_mismatch, restore_path_unsafe]
         message:
           type: string
 
@@ -7597,6 +7651,9 @@ components:
             - backup_passphrase
             - update_channel
             - update_check
+            - custom_config_file
+            - template_file
+            - stack_file
         name:
           type: string
           description: >-
@@ -7604,7 +7661,10 @@ components:
             a destination name; `share / user` for a permission,
             `group / user` for a membership, `user / token name` for an
             API token, `event / channel` for a route, the label of an
-            external disk, the kind of a host configuration decision.
+            external disk, the kind of a host configuration decision, the
+            path of a custom config file or template relative to its
+            directory, `stack/file` for a stack's compose or `meta.json`
+            file.
             Empty for the settings that exist once. A secret or a
             passphrase is reported as changed, never by its value.
 
@@ -7614,7 +7674,7 @@ components:
       properties:
         category:
           type: string
-          enum: [shares, accounts, schedules, notifications, backup, system]
+          enum: [shares, accounts, schedules, notifications, backup, system, custom_config, templates, stacks]
         added:
           type: array
           description: In the archive, not in the live configuration.
@@ -7647,9 +7707,33 @@ components:
           type: string
           description: The database schema version of the archive.
 
+    ConfigImportSecretsStatus:
+      type: string
+      enum: [none, opened, no_passphrase, passphrase_incorrect]
+      description: >-
+        `none`: the archive has no passphrase-protected section (it was built
+        without a backup passphrase). `opened`: the passphrase available
+        opens it. `no_passphrase`: it has one and no passphrase is
+        available. `passphrase_incorrect`: it has one and the configured
+        passphrase does not open it.
+
+    ConfigImportSecrets:
+      type: object
+      required: [status, stacks]
+      properties:
+        status:
+          $ref: '#/components/schemas/ConfigImportSecretsStatus'
+        stacks:
+          type: array
+          description: >-
+            The stacks of the archive whose `.env` files would not be
+            restored; empty when `status` is `opened`.
+          items:
+            type: string
+
     ConfigImportPreview:
       type: object
-      required: [archive, liveSchemaVersion, blockers, groups, notes]
+      required: [archive, liveSchemaVersion, blockers, groups, secrets, notes]
       properties:
         archive:
           $ref: '#/components/schemas/ConfigImportArchive'
@@ -7673,10 +7757,97 @@ components:
             when the schema versions differ.
           items:
             $ref: '#/components/schemas/ConfigImportGroup'
+        secrets:
+          $ref: '#/components/schemas/ConfigImportSecrets'
         notes:
           type: array
           items:
             $ref: '#/components/schemas/ConfigImportNote'
+
+    ConfigImportRestored:
+      type: object
+      required: [category, added, changed, removed]
+      description: >-
+        What one category of the import brought in: `added` was in the
+        archive and not on this machine, `changed` differed, `removed` was
+        on this machine and not in the archive. What was identical is not
+        counted.
+      properties:
+        category:
+          type: string
+          enum: [shares, accounts, schedules, notifications, backup, system, custom_config, templates, stacks, stack_env]
+          description: >-
+            The categories of `ConfigImportGroup`, and `stack_env`, the
+            stacks' `.env` files, counted by stack, of which `removed` is
+            always 0.
+        added:
+          type: integer
+          format: int64
+        changed:
+          type: integer
+          format: int64
+        removed:
+          type: integer
+          format: int64
+
+    ConfigImportNotRestored:
+      type: object
+      required: [kind, name, reason, message]
+      properties:
+        kind:
+          type: string
+          enum: [stack_env]
+        name:
+          type: string
+          description: The stack whose `.env` file it is.
+        reason:
+          type: string
+          enum: [no_secrets, no_passphrase, passphrase_incorrect, stack_not_in_archive, left_in_place]
+          description: >-
+            `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the
+            archive's passphrase-protected section could not be opened (see
+            `ConfigImportSecretsStatus`). `stack_not_in_archive`: that
+            section holds an `.env` for a stack the archive has no files of.
+            `left_in_place`: the `.env` on this machine was kept because the
+            archive holds none for that stack.
+        message:
+          type: string
+
+    ConfigImportPreImportSecrets:
+      type: string
+      enum: [none, request, configured]
+      description: >-
+        Which passphrase the pre-import archive's `secrets.age` is sealed
+        with. `request`: the one given with the import, which opened the
+        imported archive's secrets. `configured`: the configured backup
+        passphrase. `none`: the pre-import archive has no `secrets.age`.
+
+    ConfigImportReport:
+      type: object
+      required: [restored, notRestored, secrets, preImportArchive, preImportSecrets]
+      properties:
+        restored:
+          type: array
+          description: One entry per category, in a fixed order.
+          items:
+            $ref: '#/components/schemas/ConfigImportRestored'
+        notRestored:
+          type: array
+          description: >-
+            Everything the import did not restore, each with why. Empty when
+            everything in the archive was restored.
+          items:
+            $ref: '#/components/schemas/ConfigImportNotRestored'
+        secrets:
+          $ref: '#/components/schemas/ConfigImportSecretsStatus'
+        preImportArchive:
+          type: string
+          description: >-
+            The name of the archive of the configuration as it was before
+            the import, which a restore can go back to. Empty when no backup
+            destination was written to.
+        preImportSecrets:
+          $ref: '#/components/schemas/ConfigImportPreImportSecrets'
 
     AppdataRestorePreviewGroup:
       type: object

@@ -1130,13 +1130,28 @@ dump_hoserva_diagnostics() {
 # "massdel"/"hoserval3midsync" shares steps 3 and 5 already made), makes
 # two real, distinguishing changes on top of that export (delete the
 # share, add a throwaway user — each independently provable before the
-# import), imports the same archive back over the running config, and
+# import), imports the same archive back over the running config (HTTP 200
+# with a restore report whose notRestored is empty), and
 # asserts the delete was undone and the addition was wiped: exactly
 # "replaces the running configuration" doc 10 §1 promises, not a no-op
 # round trip that would pass even if importConfig did nothing. On failure
 # it sets CONFIG_REASON and returns 1.
 CONFIG_TEST_SHARE="hoserval3configtest"
 CONFIG_THROWAWAY_USER="hoserval3throwaway"
+# The share's own generated mount unit. deleteShare removes it (the pool
+# mount reconcile drops every unit the store no longer wants) while the
+# share's data directory on the disks stays, so its presence — unlike a
+# write through /mnt/user/<share> — separates "restored" from "never
+# deleted". The unit name is the mount path with "/" as "-" (pool.
+# UnitFileName), which for this dash-free share name is what
+# systemd-escape would give too.
+CONFIG_SHARE_UNIT="/etc/systemd/system/mnt-user-$CONFIG_TEST_SHARE.mount"
+# The custom config file the restore must put back: smb.custom.conf is
+# Samba's own include for user-owned settings (doc 10 §1, custom/). Each
+# marker is a comment line, so smb.conf stays valid whichever one it holds.
+CONFIG_CUSTOM_FILE="/etc/hoserva/smb.custom.conf"
+CONFIG_CUSTOM_ARCHIVED="# hoserva-l3-archived-custom"
+CONFIG_CUSTOM_EDITED="# hoserva-l3-edited-after-export"
 
 config_backup_restore() {
   CONFIG_NOT_YET=0
@@ -1179,6 +1194,11 @@ config_backup_restore() {
   pool_before="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   if [[ "$pool_before" != *'"role":"parity"'* || "$pool_before" != *'"role":"data"'* ]]; then
     CONFIG_REASON="getPool before export does not show the parity/data role assignment step 3 created: $pool_before"
+    return 1
+  fi
+
+  if ! vm_ssh "echo '$CONFIG_CUSTOM_ARCHIVED' | sudo tee $CONFIG_CUSTOM_FILE >/dev/null" 2>/dev/null; then
+    CONFIG_REASON="could not write the custom config file $CONFIG_CUSTOM_FILE ahead of the export"
     return 1
   fi
 
@@ -1226,6 +1246,19 @@ config_backup_restore() {
     return 1
   fi
 
+  if ! vm_ssh "echo '$CONFIG_CUSTOM_EDITED' | sudo tee $CONFIG_CUSTOM_FILE >/dev/null" 2>/dev/null; then
+    CONFIG_REASON="could not edit the custom config file $CONFIG_CUSTOM_FILE ahead of the import round-trip"
+    return 1
+  fi
+  if vm_ssh "grep -q '^\\[$CONFIG_TEST_SHARE\\]' /etc/samba/smb.conf" 2>/dev/null; then
+    CONFIG_REASON="smb.conf still has a [$CONFIG_TEST_SHARE] section after deleteShare — the import below would not prove it regenerates anything"
+    return 1
+  fi
+  if vm_ssh "test -e $CONFIG_SHARE_UNIT" 2>/dev/null; then
+    CONFIG_REASON="the share mount unit $CONFIG_SHARE_UNIT still exists after deleteShare — the import below would not prove it regenerates the share's mount"
+    return 1
+  fi
+
   local shares_mid users_mid
   shares_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
   users_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
@@ -1239,10 +1272,19 @@ config_backup_restore() {
   fi
 
   echo "vm-suite[$HOSERVA_LAB_ID]: importing the exported archive back — in-place restore (doc 10 §1)"
-  local import_status
-  import_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/import -F 'archive=@$export_remote;type=application/zstd' -F 'confirm=true'" 2>/dev/null)"
-  if [[ "$import_status" != "204" ]]; then
-    CONFIG_REASON="importConfig returned HTTP $import_status"
+  local import_response import_status import_report
+  import_response="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -w '\n%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/import -F 'archive=@$export_remote;type=application/zstd' -F 'confirm=true'" 2>/dev/null)"
+  import_status="${import_response##*$'\n'}"
+  import_report="${import_response%$'\n'*}"
+  if [[ "$import_status" != "200" ]]; then
+    CONFIG_REASON="importConfig returned HTTP $import_status, want 200 with the restore report: $import_report"
+    return 1
+  fi
+  # This round trip restores this installation's own archive, so nothing in
+  # it may be left out: a non-empty notRestored is an .env file or anything
+  # else the import could not put back.
+  if [[ "$import_report" != *'"notRestored":[]'* ]]; then
+    CONFIG_REASON="importConfig's restore report lists something it did not restore: $import_report"
     return 1
   fi
   if ! array_login; then
@@ -1269,6 +1311,35 @@ config_backup_restore() {
   fi
   if [[ "$pool_after" != *'"role":"parity"'* || "$pool_after" != *'"role":"data"'* ]]; then
     CONFIG_REASON="getPool after importConfig does not show the parity/data role assignment from before the export: $pool_after"
+    return 1
+  fi
+
+  # The import also restores the files and regenerates every managed config
+  # file from the restored database (doc 10 §1): the deleted share has its
+  # Samba section and its own mount unit again, its path works through the
+  # pool mount, and the custom config file holds its archived content, not
+  # the edit made after the export. The probe alone proves nothing about the
+  # import: deleteShare leaves the share's data directory in place, so it
+  # passes either way; the smb.conf section and the mount unit are what
+  # deleteShare removed and only the import brings back.
+  if ! vm_ssh "grep -q '^\\[$CONFIG_TEST_SHARE\\]' /etc/samba/smb.conf" 2>/dev/null; then
+    CONFIG_REASON="smb.conf has no [$CONFIG_TEST_SHARE] section after importConfig — the configs were not regenerated from the restored database"
+    return 1
+  fi
+  if ! vm_ssh "test -e $CONFIG_SHARE_UNIT" 2>/dev/null; then
+    CONFIG_REASON="the share mount unit $CONFIG_SHARE_UNIT is missing after importConfig — the share's mount was not regenerated from the restored database"
+    return 1
+  fi
+  local probe_result probe_path="/mnt/user/$CONFIG_TEST_SHARE/.l3-config-probe"
+  probe_result="$(vm_ssh "sudo sh -c 'echo l3-probe > $probe_path && cat $probe_path && rm -f $probe_path'" 2>/dev/null)"
+  if [[ "$probe_result" != "l3-probe" ]]; then
+    CONFIG_REASON="the restored share's path /mnt/user/$CONFIG_TEST_SHARE is not usable through the pool mount after importConfig (probe returned: ${probe_result:-nothing})"
+    return 1
+  fi
+  local custom_after
+  custom_after="$(vm_ssh "sudo cat $CONFIG_CUSTOM_FILE" 2>/dev/null)"
+  if [[ "$custom_after" != *"$CONFIG_CUSTOM_ARCHIVED"* || "$custom_after" == *"$CONFIG_CUSTOM_EDITED"* ]]; then
+    CONFIG_REASON="$CONFIG_CUSTOM_FILE after importConfig is not the archived content (it holds: $custom_after)"
     return 1
   fi
 

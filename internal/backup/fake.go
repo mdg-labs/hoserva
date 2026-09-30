@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // FakeSecretSource is a scriptable SecretSource for tests (CLAUDE.md).
@@ -74,9 +76,87 @@ func (f *FakeRecipientStore) SetRecipient(ctx context.Context, publicRecipient s
 type FakeDestinationStore struct {
 	mu    sync.Mutex
 	dests []Destination
+	// flags is the backup-destination flag of every registered external
+	// disk, by label.
+	flags map[string]bool
 }
 
-var _ DestinationStore = (*FakeDestinationStore)(nil)
+var (
+	_ DestinationStore         = (*FakeDestinationStore)(nil)
+	_ ExternalDestinationStore = (*FakeDestinationStore)(nil)
+)
+
+// ExternalFlags returns the backup-destination flag of every external disk
+// registered through this store, by label.
+func (f *FakeDestinationStore) ExternalFlags() map[string]bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]bool, len(f.flags))
+	for k, v := range f.flags {
+		out[k] = v
+	}
+	return out
+}
+
+func (f *FakeDestinationStore) SetExternalDestination(ctx context.Context, label string, dest *Destination) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.flags[label]; !ok {
+		return store.ErrExternalNotFound
+	}
+	f.flags[label] = dest != nil
+	id := externalDestinationPrefix + label
+	if dest == nil {
+		f.removeLocked(id)
+		return nil
+	}
+	for _, d := range f.dests {
+		if d.ID == id {
+			return nil
+		}
+	}
+	f.dests = append(f.dests, *dest)
+	return nil
+}
+
+func (f *FakeDestinationStore) PutExternalDisk(ctx context.Context, d store.ExternalDisk, dest *Destination) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.flags[d.Label]; ok {
+		return store.ErrExternalExists
+	}
+	if f.flags == nil {
+		f.flags = map[string]bool{}
+	}
+	f.flags[d.Label] = dest != nil
+	if dest != nil {
+		f.dests = append(f.dests, *dest)
+	}
+	return nil
+}
+
+func (f *FakeDestinationStore) FlaggedExternalLabels(ctx context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for label, on := range f.flags {
+		if on {
+			out = append(out, label)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (f *FakeDestinationStore) removeLocked(id string) bool {
+	for i, d := range f.dests {
+		if d.ID == id {
+			f.dests = append(f.dests[:i], f.dests[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
 
 func (f *FakeDestinationStore) ListDestinations(ctx context.Context) ([]Destination, error) {
 	f.mu.Lock()
@@ -115,11 +195,13 @@ func (f *FakeDestinationStore) SeedDestinations(ctx context.Context, ds []Destin
 func (f *FakeDestinationStore) DeleteDestination(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for i, d := range f.dests {
-		if d.ID == id {
-			f.dests = append(f.dests[:i], f.dests[i+1:]...)
-			return nil
+	if label, ok := strings.CutPrefix(id, externalDestinationPrefix); ok {
+		if _, registered := f.flags[label]; registered {
+			f.flags[label] = false
 		}
+	}
+	if f.removeLocked(id) {
+		return nil
 	}
 	return ErrDestinationNotFound
 }

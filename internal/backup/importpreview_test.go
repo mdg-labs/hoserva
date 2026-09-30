@@ -651,7 +651,7 @@ func TestPreviewImport_ReportsTheArchiveAndItsBlockers(t *testing.T) {
 	mustExec(t, arc, `UPDATE machine_key_check SET check_value = x'bb'`)
 	dir := stagePreviewArchive(t, arc, arcPath)
 
-	p, err := PreviewImport(ctx, live, dir)
+	p, err := PreviewImport(ctx, live, Paths{}, dir)
 	if err != nil {
 		t.Fatalf("PreviewImport: %v", err)
 	}
@@ -682,7 +682,7 @@ func TestPreviewImport_DifferentSchemaVersionIsABlockerWithNoComparison(t *testi
 	mustExec(t, arc, `DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations)`)
 	dir := stagePreviewArchive(t, arc, arcPath)
 
-	p, err := PreviewImport(ctx, live, dir)
+	p, err := PreviewImport(ctx, live, Paths{}, dir)
 	if err != nil {
 		t.Fatalf("PreviewImport: %v", err)
 	}
@@ -708,7 +708,7 @@ func TestPreviewImport_AnArchiveWithoutASchemaVersionIsUnreadable(t *testing.T) 
 	mustExec(t, arc, `CREATE TABLE unrelated (x TEXT)`)
 	dir := stagePreviewArchive(t, arc, arcPath)
 
-	_, err = PreviewImport(ctx, live, dir)
+	_, err = PreviewImport(ctx, live, Paths{}, dir)
 	if _, ok := err.(*UnreadableArchiveError); !ok {
 		t.Fatalf("PreviewImport err = %v (%T), want *UnreadableArchiveError", err, err)
 	}

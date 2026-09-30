@@ -5,10 +5,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
 // mockBackupDestinations is a fresh install's two local destinations
@@ -118,25 +123,87 @@ func (h *handler) CreateBackupDestination(ctx context.Context, req *apiv1.Create
 
 func (h *handler) DeleteBackupDestination(ctx context.Context, params apiv1.DeleteBackupDestinationParams) error {
 	h.backupMu.Lock()
-	defer h.backupMu.Unlock()
-	for i, d := range h.backupDestinations {
-		if d.ID == params.DestinationId {
-			h.backupDestinations = append(h.backupDestinations[:i], h.backupDestinations[i+1:]...)
-			return nil
-		}
+	removed := h.removeBackupDestinationLocked(params.DestinationId)
+	h.backupMu.Unlock()
+	if !removed {
+		return &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
 	}
-	return &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	if label, ok := strings.CutPrefix(params.DestinationId, "external:"); ok {
+		h.externalMu.Lock()
+		if d, exists := h.external[label]; exists {
+			d.BackupDestination = false
+			h.external[label] = d
+		}
+		h.externalMu.Unlock()
+	}
+	return nil
 }
 
-// TestBackupDestination reports success for any known destination: the
-// mock has no destination to write to.
-func (h *handler) TestBackupDestination(ctx context.Context, params apiv1.TestBackupDestinationParams) (*apiv1.BackupDestinationTestResult, error) {
-	h.backupMu.Lock()
-	defer h.backupMu.Unlock()
-	for _, d := range h.backupDestinations {
-		if d.ID == params.DestinationId {
-			return &apiv1.BackupDestinationTestResult{Success: true}, nil
+func (h *handler) removeBackupDestinationLocked(id string) bool {
+	for i, d := range h.backupDestinations {
+		if d.ID == id {
+			h.backupDestinations = append(h.backupDestinations[:i], h.backupDestinations[i+1:]...)
+			return true
 		}
 	}
-	return nil, &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	return false
+}
+
+// TestBackupDestination reports success for any known destination the
+// daemon would admit: the mock has no destination to write to. A local
+// destination is refused by its path, as backup.Service.admitDestination
+// refuses it (#409, #434): under /mnt/disks/<label> while that disk is
+// not mounted, and under the pool root while the pool is not mounted.
+func (h *handler) TestBackupDestination(ctx context.Context, params apiv1.TestBackupDestinationParams) (*apiv1.BackupDestinationTestResult, error) {
+	h.backupMu.Lock()
+	var dest backup.Destination
+	known := false
+	for _, d := range h.backupDestinations {
+		if d.ID == params.DestinationId {
+			dest, known = d, true
+			break
+		}
+	}
+	h.backupMu.Unlock()
+	if !known {
+		return nil, &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	}
+	if refusal := h.mockDestinationRefusal(dest); refusal != "" {
+		return &apiv1.BackupDestinationTestResult{Success: false, Error: apiv1.NewOptNilString(refusal)}, nil
+	}
+	return &apiv1.BackupDestinationTestResult{Success: true}, nil
+}
+
+// mockDestinationRefusal is admitDestination's path rule and refusal text.
+// A remote destination is never refused.
+func (h *handler) mockDestinationRefusal(dest backup.Destination) string {
+	if dest.Type != "" && dest.Type != backup.TypeLocal {
+		return ""
+	}
+	path := filepath.Clean(dest.Path)
+	if underPath(path, disk.ExternalMountRoot) {
+		label, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(path, disk.ExternalMountRoot), "/"), "/")
+		h.externalMu.Lock()
+		ext, exists := h.external[label]
+		h.externalMu.Unlock()
+		if !exists || !ext.Mounted {
+			return fmt.Sprintf("the external disk is not mounted at %q", filepath.Join(disk.ExternalMountRoot, label))
+		}
+		return ""
+	}
+	if underPath(path, pool.CatchAllPath) {
+		h.mu.Lock()
+		mounted := mockPoolStatus(h.scenario).Mounted && !h.maintenance
+		h.mu.Unlock()
+		if !mounted {
+			return fmt.Sprintf("the pool is not mounted at %q", pool.CatchAllPath)
+		}
+	}
+	return ""
+}
+
+// underPath compares by path component, so "/mnt/username" is not under
+// "/mnt/user".
+func underPath(path, root string) bool {
+	return path == root || strings.HasPrefix(path, root+"/")
 }
