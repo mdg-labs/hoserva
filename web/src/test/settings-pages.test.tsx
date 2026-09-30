@@ -1461,6 +1461,20 @@ describe("Config restore on the backup page", () => {
     expect(screen.queryByText("Nothing in this archive differs from the current configuration.")).not.toBeInTheDocument();
   });
 
+  it("lists the changes of a fresh box's upgraded archive although the schema versions differ", async () => {
+    mockRestoreApi({
+      preview: apiOk(
+        importPreview({ archive: { ...importPreview().archive, schemaVersion: "9" }, bareMetal: bareMetalPreview() }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText("Share: photos")).toBeInTheDocument();
+    expect(screen.queryByText("The changes cannot be listed")).not.toBeInTheDocument();
+  });
+
   it("shows each blocker as an error with its message and keeps the restore disabled", async () => {
     mockRestoreApi({
       preview: apiOk(

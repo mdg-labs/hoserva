@@ -1153,7 +1153,8 @@ function changeLabel(change: ConfigImportChange, t: TFn): string {
 
 function RestoreChanges({ preview }: { preview: ConfigImportPreview }): React.ReactElement {
   const { t } = useTranslation();
-  if (preview.archive.schemaVersion !== preview.liveSchemaVersion) {
+  // A fresh box's preview compares the archive after its upgrade, so its groups are listable across versions.
+  if (preview.bareMetal === undefined && preview.archive.schemaVersion !== preview.liveSchemaVersion) {
     return (
       <Banner
         tone="info"
