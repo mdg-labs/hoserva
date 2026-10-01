@@ -3,6 +3,8 @@
 // schema, the parser and validator that enforce it, the path conventions,
 // and the JSON Schema published for third-party catalog authors. The
 // catalog repository's CI runs this package through `hoserva template lint`.
+// It also resolves a template's inputs and installs it as a stack, with the
+// privilege summary read from the Compose content (Installer).
 package template
 
 import (

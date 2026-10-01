@@ -33,6 +33,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
+	"github.com/mdg-labs/hoserva/internal/template"
 	"github.com/mdg-labs/hoserva/internal/update"
 
 	_ "modernc.org/sqlite"
@@ -741,6 +742,30 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	stacks.RequireArrayRunning = h.Lifecycle.RequireArrayRunning
 	stacks.Provider = h.Lifecycle.Provider
 	stacks.AppdataRoots = h.Lifecycle.AppdataRoots
+	// Template install resolves the mock's own catalog through the real
+	// installer, against this rig's Docker fake and an empty host socket
+	// table, so the host's own listeners never decide a case.
+	procNet := t.TempDir()
+	for _, f := range []string{"tcp", "tcp6", "udp", "udp6"} {
+		if err := os.WriteFile(filepath.Join(procNet, f), []byte("  sl  local_address rem_address   st\n"), 0o644); err != nil {
+			t.Fatalf("writing the empty %s socket table: %v", f, err)
+		}
+	}
+	h.TemplateInstall = &template.Installer{
+		Catalog: template.MapCatalog{Source: template.SourceCurated, Templates: mockTemplates},
+		Stacks:  stacks,
+		Ports:   template.HostPorts{Containers: containers, ProcNet: procNet},
+		Shares: func(ctx context.Context) ([]string, error) {
+			list, err := h.Shares.List(ctx)
+			names := make([]string, len(list))
+			for i, s := range list {
+				names[i] = s.Name
+			}
+			return names, err
+		},
+		GPU:      mockGPU{},
+		Timezone: func() string { return "UTC" },
+	}
 	registry.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
 		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
 			return appdataSvc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)

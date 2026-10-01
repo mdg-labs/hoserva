@@ -30,6 +30,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
+	"github.com/mdg-labs/hoserva/internal/template"
 	"github.com/mdg-labs/hoserva/internal/update"
 )
 
@@ -193,6 +194,10 @@ type Handler struct {
 	// Stacks is the Compose stack model (doc 04 §2, D4) behind /stacks.
 	// Nil returns 501 from those operations.
 	Stacks *container.StackService
+	// TemplateInstall resolves and installs catalog templates (doc 04 §7)
+	// behind /templates/{id}/preview and /install. Nil returns 501 from
+	// those operations.
+	TemplateInstall *template.Installer
 	// ComposeRunner execs `docker compose version` for the doctor Compose
 	// v2 check. Nil uses the real container.CommandRunner.
 	ComposeRunner container.Runner

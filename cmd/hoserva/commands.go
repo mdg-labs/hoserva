@@ -423,8 +423,7 @@ func diskExternalCmd() *cobra.Command {
 
 // appCmd is `hoserva app` (doc 01 §3): the list, the lifecycle actions on
 // a container by its Engine ID or name — managed and unmanaged alike (doc 04
-// §2) — its logs and its stats. Install and Compose stack management are
-// #68 and #278's own subcommands.
+// §2) — its logs and its stats, and installing a catalog template.
 func appCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "app", Short: "App and container commands"}
 	cmd.AddCommand(&cobra.Command{
@@ -450,6 +449,7 @@ func appCmd() *cobra.Command {
 		}),
 		appRemoveCmd(),
 		appLogsCmd(),
+		appInstallCmd(),
 	)
 	return cmd
 }

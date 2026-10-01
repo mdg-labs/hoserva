@@ -2262,6 +2262,72 @@ func decodeGetUserSharePermissionsParams(args [1]string, argsEscaped bool, r *ht
 	return params, nil
 }
 
+// InstallTemplateParams is parameters of installTemplate operation.
+type InstallTemplateParams struct {
+	// The template's id.
+	ID string
+}
+
+func unpackInstallTemplateParams(packed middleware.Parameters) (params InstallTemplateParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "id",
+			In:   "path",
+		}
+		params.ID = packed[key].(string)
+	}
+	return params
+}
+
+func decodeInstallTemplateParams(args [1]string, argsEscaped bool, r *http.Request) (params InstallTemplateParams, _ error) {
+	// Decode path: id.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "id",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.ID = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // ListAppdataArchivesParams is parameters of listAppdataArchives operation.
 type ListAppdataArchivesParams struct {
 	Container OptString `json:",omitempty,omitzero"`
@@ -2652,6 +2718,72 @@ func decodeMountExternalDiskParams(args [1]string, argsEscaped bool, r *http.Req
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "label",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// PreviewTemplateInstallParams is parameters of previewTemplateInstall operation.
+type PreviewTemplateInstallParams struct {
+	// The template's id.
+	ID string
+}
+
+func unpackPreviewTemplateInstallParams(packed middleware.Parameters) (params PreviewTemplateInstallParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "id",
+			In:   "path",
+		}
+		params.ID = packed[key].(string)
+	}
+	return params
+}
+
+func decodePreviewTemplateInstallParams(args [1]string, argsEscaped bool, r *http.Request) (params PreviewTemplateInstallParams, _ error) {
+	// Decode path: id.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "id",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.ID = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "id",
 			In:   "path",
 			Err:  err,
 		}

@@ -1,0 +1,31 @@
+# Test fixture, not a curated template: a GPU device input, and a downloads
+# path with no default so the install picks the share by role.
+services:
+  render-box:
+    image: registry.example.com/render/box:2.3.1
+    environment:
+      PUID: "99"
+      PGID: "100"
+      TZ: ${TZ}
+    volumes:
+      - ${APPDATA}/render-box:/config
+      - ${DOWNLOADS}:/downloads
+    ports:
+      - ${WEBUI_PORT}:8000
+    restart: unless-stopped
+
+x-hoserva:
+  schema: 1
+  id: render-box
+  revision: 2
+  title: Render box
+  categories: [media]
+  icon: icon.svg
+  docs: https://example.com/render/docs
+  webui: http://{host}:${WEBUI_PORT}
+  inputs:
+    APPDATA:    { kind: path, role: appdata, default: /mnt/cache/appdata }
+    DOWNLOADS:  { kind: path, role: downloads, label: Downloads folder }
+    WEBUI_PORT: { kind: port, default: 8000 }
+    TZ:         { kind: timezone }
+    GPU:        { kind: device, role: gpu, label: Hardware acceleration }

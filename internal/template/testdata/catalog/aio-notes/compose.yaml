@@ -1,0 +1,46 @@
+# Test fixture, not a curated template: several services in one template,
+# with a generated secret shared by two of them.
+services:
+  app:
+    image: registry.example.com/notes/app:1.0.0
+    depends_on: [db, cache]
+    environment:
+      PUID: "99"
+      PGID: "100"
+      TZ: ${TZ}
+      SITE_NAME: ${SITE_NAME}
+      DATABASE_URL: postgres://notes:${DB_PASSWORD}@db/notes
+      REDIS_URL: redis://cache:6379
+    volumes:
+      - ${APPDATA}/notes/data:/data
+    ports:
+      - ${WEBUI_PORT}:3000
+    restart: unless-stopped
+  db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: notes
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: notes
+    volumes:
+      - ${APPDATA}/notes/db:/var/lib/postgresql/data
+    restart: unless-stopped
+  cache:
+    image: redis:7.4
+    restart: unless-stopped
+
+x-hoserva:
+  schema: 1
+  id: aio-notes
+  revision: 3
+  title: Notes (all in one)
+  categories: [productivity]
+  icon: icon.svg
+  docs: https://example.com/notes/docs
+  webui: http://{host}:${WEBUI_PORT}
+  inputs:
+    APPDATA:     { kind: path, role: appdata, default: /mnt/cache/appdata }
+    WEBUI_PORT:  { kind: port, default: 3000 }
+    DB_PASSWORD: { kind: secret, label: Database password }
+    TZ:          { kind: timezone }
+    SITE_NAME:   { kind: string, default: Notes }

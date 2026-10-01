@@ -11092,6 +11092,98 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// NewOptTemplateInputRole returns new OptTemplateInputRole with value set to v.
+func NewOptTemplateInputRole(v TemplateInputRole) OptTemplateInputRole {
+	return OptTemplateInputRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTemplateInputRole is optional TemplateInputRole.
+type OptTemplateInputRole struct {
+	Value TemplateInputRole
+	Set   bool
+}
+
+// IsSet returns true if OptTemplateInputRole was set.
+func (o OptTemplateInputRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTemplateInputRole) Reset() {
+	var v TemplateInputRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTemplateInputRole) SetTo(v TemplateInputRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTemplateInputRole) Get() (v TemplateInputRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTemplateInputRole) Or(d TemplateInputRole) TemplateInputRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptTemplateInstallRequestValues returns new OptTemplateInstallRequestValues with value set to v.
+func NewOptTemplateInstallRequestValues(v TemplateInstallRequestValues) OptTemplateInstallRequestValues {
+	return OptTemplateInstallRequestValues{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTemplateInstallRequestValues is optional TemplateInstallRequestValues.
+type OptTemplateInstallRequestValues struct {
+	Value TemplateInstallRequestValues
+	Set   bool
+}
+
+// IsSet returns true if OptTemplateInstallRequestValues was set.
+func (o OptTemplateInstallRequestValues) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTemplateInstallRequestValues) Reset() {
+	var v TemplateInstallRequestValues
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTemplateInstallRequestValues) SetTo(v TemplateInstallRequestValues) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTemplateInstallRequestValues) Get() (v TemplateInstallRequestValues, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTemplateInstallRequestValues) Or(d TemplateInstallRequestValues) TemplateInstallRequestValues {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptUPSConnection returns new OptUPSConnection with value set to v.
 func NewOptUPSConnection(v UPSConnection) OptUPSConnection {
 	return OptUPSConnection{
@@ -14335,6 +14427,516 @@ func (s *TLSCertificateKind) UnmarshalText(data []byte) error {
 		return nil
 	case TLSCertificateKindLetsEncrypt:
 		*s = TLSCertificateKindLetsEncrypt
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/TemplateInput
+type TemplateInput struct {
+	Name        string               `json:"name"`
+	Kind        TemplateInputKind    `json:"kind"`
+	Role        OptTemplateInputRole `json:"role"`
+	Label       OptString            `json:"label"`
+	Description OptString            `json:"description"`
+	// What the input resolves to. Absent for a secret, whose value is only ever written to the stack's
+	// `.env`; empty for a `device` input with no GPU chosen.
+	Value OptString `json:"value"`
+	// Present on a `port` input whose requested port is taken: the port asked for, while `value` is the
+	// next free port instead.
+	RequestedValue OptString `json:"requestedValue"`
+	// A secret that the install generates.
+	Generated bool `json:"generated"`
+	// The existing shares' paths for a `path` input that is not appdata; the host's `/dev/dri` render
+	// devices for a `device` input.
+	Suggestions []string `json:"suggestions"`
+}
+
+// GetName returns the value of Name.
+func (s *TemplateInput) GetName() string {
+	return s.Name
+}
+
+// GetKind returns the value of Kind.
+func (s *TemplateInput) GetKind() TemplateInputKind {
+	return s.Kind
+}
+
+// GetRole returns the value of Role.
+func (s *TemplateInput) GetRole() OptTemplateInputRole {
+	return s.Role
+}
+
+// GetLabel returns the value of Label.
+func (s *TemplateInput) GetLabel() OptString {
+	return s.Label
+}
+
+// GetDescription returns the value of Description.
+func (s *TemplateInput) GetDescription() OptString {
+	return s.Description
+}
+
+// GetValue returns the value of Value.
+func (s *TemplateInput) GetValue() OptString {
+	return s.Value
+}
+
+// GetRequestedValue returns the value of RequestedValue.
+func (s *TemplateInput) GetRequestedValue() OptString {
+	return s.RequestedValue
+}
+
+// GetGenerated returns the value of Generated.
+func (s *TemplateInput) GetGenerated() bool {
+	return s.Generated
+}
+
+// GetSuggestions returns the value of Suggestions.
+func (s *TemplateInput) GetSuggestions() []string {
+	return s.Suggestions
+}
+
+// SetName sets the value of Name.
+func (s *TemplateInput) SetName(val string) {
+	s.Name = val
+}
+
+// SetKind sets the value of Kind.
+func (s *TemplateInput) SetKind(val TemplateInputKind) {
+	s.Kind = val
+}
+
+// SetRole sets the value of Role.
+func (s *TemplateInput) SetRole(val OptTemplateInputRole) {
+	s.Role = val
+}
+
+// SetLabel sets the value of Label.
+func (s *TemplateInput) SetLabel(val OptString) {
+	s.Label = val
+}
+
+// SetDescription sets the value of Description.
+func (s *TemplateInput) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetValue sets the value of Value.
+func (s *TemplateInput) SetValue(val OptString) {
+	s.Value = val
+}
+
+// SetRequestedValue sets the value of RequestedValue.
+func (s *TemplateInput) SetRequestedValue(val OptString) {
+	s.RequestedValue = val
+}
+
+// SetGenerated sets the value of Generated.
+func (s *TemplateInput) SetGenerated(val bool) {
+	s.Generated = val
+}
+
+// SetSuggestions sets the value of Suggestions.
+func (s *TemplateInput) SetSuggestions(val []string) {
+	s.Suggestions = val
+}
+
+type TemplateInputKind string
+
+const (
+	TemplateInputKindPath     TemplateInputKind = "path"
+	TemplateInputKindPort     TemplateInputKind = "port"
+	TemplateInputKindString   TemplateInputKind = "string"
+	TemplateInputKindSecret   TemplateInputKind = "secret"
+	TemplateInputKindTimezone TemplateInputKind = "timezone"
+	TemplateInputKindDevice   TemplateInputKind = "device"
+)
+
+// AllValues returns all TemplateInputKind values.
+func (TemplateInputKind) AllValues() []TemplateInputKind {
+	return []TemplateInputKind{
+		TemplateInputKindPath,
+		TemplateInputKindPort,
+		TemplateInputKindString,
+		TemplateInputKindSecret,
+		TemplateInputKindTimezone,
+		TemplateInputKindDevice,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplateInputKind) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplateInputKindPath:
+		return []byte(s), nil
+	case TemplateInputKindPort:
+		return []byte(s), nil
+	case TemplateInputKindString:
+		return []byte(s), nil
+	case TemplateInputKindSecret:
+		return []byte(s), nil
+	case TemplateInputKindTimezone:
+		return []byte(s), nil
+	case TemplateInputKindDevice:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplateInputKind) UnmarshalText(data []byte) error {
+	switch TemplateInputKind(data) {
+	case TemplateInputKindPath:
+		*s = TemplateInputKindPath
+		return nil
+	case TemplateInputKindPort:
+		*s = TemplateInputKindPort
+		return nil
+	case TemplateInputKindString:
+		*s = TemplateInputKindString
+		return nil
+	case TemplateInputKindSecret:
+		*s = TemplateInputKindSecret
+		return nil
+	case TemplateInputKindTimezone:
+		*s = TemplateInputKindTimezone
+		return nil
+	case TemplateInputKindDevice:
+		*s = TemplateInputKindDevice
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type TemplateInputRole string
+
+const (
+	TemplateInputRoleAppdata   TemplateInputRole = "appdata"
+	TemplateInputRoleShare     TemplateInputRole = "share"
+	TemplateInputRoleMedia     TemplateInputRole = "media"
+	TemplateInputRoleDownloads TemplateInputRole = "downloads"
+	TemplateInputRoleGpu       TemplateInputRole = "gpu"
+)
+
+// AllValues returns all TemplateInputRole values.
+func (TemplateInputRole) AllValues() []TemplateInputRole {
+	return []TemplateInputRole{
+		TemplateInputRoleAppdata,
+		TemplateInputRoleShare,
+		TemplateInputRoleMedia,
+		TemplateInputRoleDownloads,
+		TemplateInputRoleGpu,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplateInputRole) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplateInputRoleAppdata:
+		return []byte(s), nil
+	case TemplateInputRoleShare:
+		return []byte(s), nil
+	case TemplateInputRoleMedia:
+		return []byte(s), nil
+	case TemplateInputRoleDownloads:
+		return []byte(s), nil
+	case TemplateInputRoleGpu:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplateInputRole) UnmarshalText(data []byte) error {
+	switch TemplateInputRole(data) {
+	case TemplateInputRoleAppdata:
+		*s = TemplateInputRoleAppdata
+		return nil
+	case TemplateInputRoleShare:
+		*s = TemplateInputRoleShare
+		return nil
+	case TemplateInputRoleMedia:
+		*s = TemplateInputRoleMedia
+		return nil
+	case TemplateInputRoleDownloads:
+		*s = TemplateInputRoleDownloads
+		return nil
+	case TemplateInputRoleGpu:
+		*s = TemplateInputRoleGpu
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/TemplateInstallPlan
+type TemplateInstallPlan struct {
+	Template StackTemplate `json:"template"`
+	Title    string        `json:"title"`
+	// The stack's name.
+	Name   string          `json:"name"`
+	Inputs []TemplateInput `json:"inputs"`
+	// Empty when the template asks for nothing beyond an ordinary container.
+	Privileges []TemplatePrivilege `json:"privileges"`
+	// The `docker-compose.yml` text that an install writes.
+	Compose string `json:"compose"`
+}
+
+// GetTemplate returns the value of Template.
+func (s *TemplateInstallPlan) GetTemplate() StackTemplate {
+	return s.Template
+}
+
+// GetTitle returns the value of Title.
+func (s *TemplateInstallPlan) GetTitle() string {
+	return s.Title
+}
+
+// GetName returns the value of Name.
+func (s *TemplateInstallPlan) GetName() string {
+	return s.Name
+}
+
+// GetInputs returns the value of Inputs.
+func (s *TemplateInstallPlan) GetInputs() []TemplateInput {
+	return s.Inputs
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *TemplateInstallPlan) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// GetCompose returns the value of Compose.
+func (s *TemplateInstallPlan) GetCompose() string {
+	return s.Compose
+}
+
+// SetTemplate sets the value of Template.
+func (s *TemplateInstallPlan) SetTemplate(val StackTemplate) {
+	s.Template = val
+}
+
+// SetTitle sets the value of Title.
+func (s *TemplateInstallPlan) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetName sets the value of Name.
+func (s *TemplateInstallPlan) SetName(val string) {
+	s.Name = val
+}
+
+// SetInputs sets the value of Inputs.
+func (s *TemplateInstallPlan) SetInputs(val []TemplateInput) {
+	s.Inputs = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *TemplateInstallPlan) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *TemplateInstallPlan) SetCompose(val string) {
+	s.Compose = val
+}
+
+// Ref: #/components/schemas/TemplateInstallRequest
+type TemplateInstallRequest struct {
+	// The stack's name, under the rules of `createStack`. Absent means the template's id.
+	Name OptString `json:"name"`
+	// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
+	// that is not one of the template's inputs is refused.
+	Values OptTemplateInstallRequestValues `json:"values"`
+}
+
+// GetName returns the value of Name.
+func (s *TemplateInstallRequest) GetName() OptString {
+	return s.Name
+}
+
+// GetValues returns the value of Values.
+func (s *TemplateInstallRequest) GetValues() OptTemplateInstallRequestValues {
+	return s.Values
+}
+
+// SetName sets the value of Name.
+func (s *TemplateInstallRequest) SetName(val OptString) {
+	s.Name = val
+}
+
+// SetValues sets the value of Values.
+func (s *TemplateInstallRequest) SetValues(val OptTemplateInstallRequestValues) {
+	s.Values = val
+}
+
+// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
+// that is not one of the template's inputs is refused.
+type TemplateInstallRequestValues map[string]string
+
+func (s *TemplateInstallRequestValues) init() TemplateInstallRequestValues {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
+}
+
+// Ref: #/components/schemas/TemplateInstallResult
+type TemplateInstallResult struct {
+	Stack Stack               `json:"stack"`
+	Plan  TemplateInstallPlan `json:"plan"`
+}
+
+// GetStack returns the value of Stack.
+func (s *TemplateInstallResult) GetStack() Stack {
+	return s.Stack
+}
+
+// GetPlan returns the value of Plan.
+func (s *TemplateInstallResult) GetPlan() TemplateInstallPlan {
+	return s.Plan
+}
+
+// SetStack sets the value of Stack.
+func (s *TemplateInstallResult) SetStack(val Stack) {
+	s.Stack = val
+}
+
+// SetPlan sets the value of Plan.
+func (s *TemplateInstallResult) SetPlan(val TemplateInstallPlan) {
+	s.Plan = val
+}
+
+// Ref: #/components/schemas/TemplatePrivilege
+type TemplatePrivilege struct {
+	Kind TemplatePrivilegeKind `json:"kind"`
+	// The Compose service that asks for it.
+	Service string `json:"service"`
+	// The path, process namespace or rules concerned; absent for `privileged`, `host_network` and
+	// `host_cgroup`.
+	Detail OptString `json:"detail"`
+	// Plain-language explanation of what it grants.
+	Description string `json:"description"`
+}
+
+// GetKind returns the value of Kind.
+func (s *TemplatePrivilege) GetKind() TemplatePrivilegeKind {
+	return s.Kind
+}
+
+// GetService returns the value of Service.
+func (s *TemplatePrivilege) GetService() string {
+	return s.Service
+}
+
+// GetDetail returns the value of Detail.
+func (s *TemplatePrivilege) GetDetail() OptString {
+	return s.Detail
+}
+
+// GetDescription returns the value of Description.
+func (s *TemplatePrivilege) GetDescription() string {
+	return s.Description
+}
+
+// SetKind sets the value of Kind.
+func (s *TemplatePrivilege) SetKind(val TemplatePrivilegeKind) {
+	s.Kind = val
+}
+
+// SetService sets the value of Service.
+func (s *TemplatePrivilege) SetService(val string) {
+	s.Service = val
+}
+
+// SetDetail sets the value of Detail.
+func (s *TemplatePrivilege) SetDetail(val OptString) {
+	s.Detail = val
+}
+
+// SetDescription sets the value of Description.
+func (s *TemplatePrivilege) SetDescription(val string) {
+	s.Description = val
+}
+
+type TemplatePrivilegeKind string
+
+const (
+	TemplatePrivilegeKindPrivileged        TemplatePrivilegeKind = "privileged"
+	TemplatePrivilegeKindHostNetwork       TemplatePrivilegeKind = "host_network"
+	TemplatePrivilegeKindHostPid           TemplatePrivilegeKind = "host_pid"
+	TemplatePrivilegeKindHostCgroup        TemplatePrivilegeKind = "host_cgroup"
+	TemplatePrivilegeKindDeviceCgroupRules TemplatePrivilegeKind = "device_cgroup_rules"
+	TemplatePrivilegeKindDockerSocket      TemplatePrivilegeKind = "docker_socket"
+	TemplatePrivilegeKindHostPath          TemplatePrivilegeKind = "host_path"
+)
+
+// AllValues returns all TemplatePrivilegeKind values.
+func (TemplatePrivilegeKind) AllValues() []TemplatePrivilegeKind {
+	return []TemplatePrivilegeKind{
+		TemplatePrivilegeKindPrivileged,
+		TemplatePrivilegeKindHostNetwork,
+		TemplatePrivilegeKindHostPid,
+		TemplatePrivilegeKindHostCgroup,
+		TemplatePrivilegeKindDeviceCgroupRules,
+		TemplatePrivilegeKindDockerSocket,
+		TemplatePrivilegeKindHostPath,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplatePrivilegeKind) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplatePrivilegeKindPrivileged:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostNetwork:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostPid:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostCgroup:
+		return []byte(s), nil
+	case TemplatePrivilegeKindDeviceCgroupRules:
+		return []byte(s), nil
+	case TemplatePrivilegeKindDockerSocket:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostPath:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplatePrivilegeKind) UnmarshalText(data []byte) error {
+	switch TemplatePrivilegeKind(data) {
+	case TemplatePrivilegeKindPrivileged:
+		*s = TemplatePrivilegeKindPrivileged
+		return nil
+	case TemplatePrivilegeKindHostNetwork:
+		*s = TemplatePrivilegeKindHostNetwork
+		return nil
+	case TemplatePrivilegeKindHostPid:
+		*s = TemplatePrivilegeKindHostPid
+		return nil
+	case TemplatePrivilegeKindHostCgroup:
+		*s = TemplatePrivilegeKindHostCgroup
+		return nil
+	case TemplatePrivilegeKindDeviceCgroupRules:
+		*s = TemplatePrivilegeKindDeviceCgroupRules
+		return nil
+	case TemplatePrivilegeKindDockerSocket:
+		*s = TemplatePrivilegeKindDockerSocket
+		return nil
+	case TemplatePrivilegeKindHostPath:
+		*s = TemplatePrivilegeKindHostPath
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

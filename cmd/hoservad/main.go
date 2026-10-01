@@ -555,6 +555,7 @@ func run(cfg config) error {
 	handler.Network = networkSvc
 	handler.ACME = acmeService
 	handler.Shares = shareService
+	wireTemplateInstall(handler, absStateDir, apps, shareNames(shareService))
 	handler.MoverResults = moverResults
 	wireBackup(handler, backupService)
 	// The strict topology hook, so an import that cannot apply the restored
