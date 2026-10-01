@@ -578,6 +578,33 @@ func (UnimplementedHandler) GetCacheUsage(ctx context.Context) (r NilCacheUsageB
 	return r, ht.ErrNotImplemented
 }
 
+// GetCatalogTemplate implements getCatalogTemplate operation.
+//
+// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
+// what its Compose content asks for beyond an ordinary container, computed with each input's default
+// (a secret, which has none, with a generated-shaped value) and never from anything the template
+// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
+// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+//
+// GET /catalog/{id}
+func (UnimplementedHandler) GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (r *CatalogTemplate, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetCatalogTemplateIcon implements getCatalogTemplateIcon operation.
+//
+// The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG)
+// chosen by the file's extension, never by its content. A file that is not a plain file inside the
+// template's own directory (a symlink, however it points), has another extension, or is larger than 1
+// MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`.
+// The response forbids content sniffing and scripts, styles and subresources beyond the image itself,
+// so an SVG cannot run code when it is opened directly.
+//
+// GET /catalog/{id}/icon
+func (UnimplementedHandler) GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (r GetCatalogTemplateIconRes, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCurrentSession implements getCurrentSession operation.
 //
 // The signed-in user this session cookie belongs to.
@@ -982,6 +1009,20 @@ func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ erro
 //
 // GET /backup/destinations
 func (UnimplementedHandler) ListBackupDestinations(ctx context.Context) (r *ListBackupDestinationsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListCatalog implements listCatalog operation.
+//
+// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
+// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
+// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
+// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
+// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
+// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+//
+// GET /catalog
+func (UnimplementedHandler) ListCatalog(ctx context.Context) (r *CatalogList, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

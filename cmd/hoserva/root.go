@@ -40,6 +40,7 @@ func rootCmd() *cobra.Command {
 		diskCmd(),
 		shareCmd(),
 		appCmd(),
+		catalogCmd(),
 		templateCmd(),
 		networkCmd(),
 		syncCmd(),

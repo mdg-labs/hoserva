@@ -465,6 +465,27 @@ type Invoker interface {
 	//
 	// GET /cache/usage
 	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
+	// GetCatalogTemplate invokes getCatalogTemplate operation.
+	//
+	// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
+	// what its Compose content asks for beyond an ordinary container, computed with each input's default
+	// (a secret, which has none, with a generated-shaped value) and never from anything the template
+	// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
+	// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+	//
+	// GET /catalog/{id}
+	GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (*CatalogTemplate, error)
+	// GetCatalogTemplateIcon invokes getCatalogTemplateIcon operation.
+	//
+	// The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG)
+	// chosen by the file's extension, never by its content. A file that is not a plain file inside the
+	// template's own directory (a symlink, however it points), has another extension, or is larger than 1
+	// MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`.
+	// The response forbids content sniffing and scripts, styles and subresources beyond the image itself,
+	// so an SVG cannot run code when it is opened directly.
+	//
+	// GET /catalog/{id}/icon
+	GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (GetCatalogTemplateIconRes, error)
 	// GetCurrentSession invokes getCurrentSession operation.
 	//
 	// The signed-in user this session cookie belongs to.
@@ -779,6 +800,17 @@ type Invoker interface {
 	//
 	// GET /backup/destinations
 	ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error)
+	// ListCatalog invokes listCatalog operation.
+	//
+	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
+	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
+	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
+	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
+	// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
+	// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+	//
+	// GET /catalog
+	ListCatalog(ctx context.Context) (*CatalogList, error)
 	// ListDisks invokes listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -7661,6 +7693,302 @@ func (c *Client) sendGetCacheUsage(ctx context.Context) (res NilCacheUsageBreakd
 	return result, nil
 }
 
+// GetCatalogTemplate invokes getCatalogTemplate operation.
+//
+// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
+// what its Compose content asks for beyond an ordinary container, computed with each input's default
+// (a secret, which has none, with a generated-shaped value) and never from anything the template
+// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
+// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+//
+// GET /catalog/{id}
+func (c *Client) GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (*CatalogTemplate, error) {
+	res, err := c.sendGetCatalogTemplate(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (res *CatalogTemplate, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCatalogTemplate"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog/{id}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCatalogTemplateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/catalog/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCatalogTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCatalogTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCatalogTemplateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetCatalogTemplateIcon invokes getCatalogTemplateIcon operation.
+//
+// The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG)
+// chosen by the file's extension, never by its content. A file that is not a plain file inside the
+// template's own directory (a symlink, however it points), has another extension, or is larger than 1
+// MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`.
+// The response forbids content sniffing and scripts, styles and subresources beyond the image itself,
+// so an SVG cannot run code when it is opened directly.
+//
+// GET /catalog/{id}/icon
+func (c *Client) GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (GetCatalogTemplateIconRes, error) {
+	res, err := c.sendGetCatalogTemplateIcon(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (res GetCatalogTemplateIconRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCatalogTemplateIcon"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog/{id}/icon"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCatalogTemplateIconOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/catalog/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/icon"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCatalogTemplateIconOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCatalogTemplateIconOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCatalogTemplateIconResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetCurrentSession invokes getCurrentSession operation.
 //
 // The signed-in user this session cookie belongs to.
@@ -11877,6 +12205,136 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 
 	stage = "DecodeResponse"
 	result, err := decodeListBackupDestinationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListCatalog invokes listCatalog operation.
+//
+// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
+// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
+// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
+// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
+// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
+// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+//
+// GET /catalog
+func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
+	res, err := c.sendListCatalog(ctx)
+	return res, err
+}
+
+func (c *Client) sendListCatalog(ctx context.Context) (res *CatalogList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listCatalog"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListCatalogOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/catalog"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListCatalogResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

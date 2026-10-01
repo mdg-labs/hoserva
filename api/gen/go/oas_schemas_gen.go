@@ -2659,6 +2659,225 @@ func (s *CancelDiskRemovalRequest) SetMountpoint(val string) {
 	s.Mountpoint = val
 }
 
+// Ref: #/components/schemas/CatalogEntry
+type CatalogEntry struct {
+	ID string `json:"id"`
+	// Increases with every change to the template.
+	Revision   int      `json:"revision"`
+	Title      string   `json:"title"`
+	Categories []string `json:"categories"`
+	// The upstream documentation the template was written from.
+	Docs string `json:"docs"`
+	// Where the entry came from: `hoserva` for the curated catalog.
+	Source string `json:"source"`
+	// A stack of this template id exists.
+	Installed bool `json:"installed"`
+}
+
+// GetID returns the value of ID.
+func (s *CatalogEntry) GetID() string {
+	return s.ID
+}
+
+// GetRevision returns the value of Revision.
+func (s *CatalogEntry) GetRevision() int {
+	return s.Revision
+}
+
+// GetTitle returns the value of Title.
+func (s *CatalogEntry) GetTitle() string {
+	return s.Title
+}
+
+// GetCategories returns the value of Categories.
+func (s *CatalogEntry) GetCategories() []string {
+	return s.Categories
+}
+
+// GetDocs returns the value of Docs.
+func (s *CatalogEntry) GetDocs() string {
+	return s.Docs
+}
+
+// GetSource returns the value of Source.
+func (s *CatalogEntry) GetSource() string {
+	return s.Source
+}
+
+// GetInstalled returns the value of Installed.
+func (s *CatalogEntry) GetInstalled() bool {
+	return s.Installed
+}
+
+// SetID sets the value of ID.
+func (s *CatalogEntry) SetID(val string) {
+	s.ID = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *CatalogEntry) SetRevision(val int) {
+	s.Revision = val
+}
+
+// SetTitle sets the value of Title.
+func (s *CatalogEntry) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCategories sets the value of Categories.
+func (s *CatalogEntry) SetCategories(val []string) {
+	s.Categories = val
+}
+
+// SetDocs sets the value of Docs.
+func (s *CatalogEntry) SetDocs(val string) {
+	s.Docs = val
+}
+
+// SetSource sets the value of Source.
+func (s *CatalogEntry) SetSource(val string) {
+	s.Source = val
+}
+
+// SetInstalled sets the value of Installed.
+func (s *CatalogEntry) SetInstalled(val bool) {
+	s.Installed = val
+}
+
+// Ref: #/components/schemas/CatalogList
+type CatalogList struct {
+	// The installed catalog's serial.
+	Serial int64 `json:"serial"`
+	// When the catalog archive was built; absent when its index carries no time.
+	GeneratedAt OptDateTime    `json:"generatedAt"`
+	Templates   []CatalogEntry `json:"templates"`
+}
+
+// GetSerial returns the value of Serial.
+func (s *CatalogList) GetSerial() int64 {
+	return s.Serial
+}
+
+// GetGeneratedAt returns the value of GeneratedAt.
+func (s *CatalogList) GetGeneratedAt() OptDateTime {
+	return s.GeneratedAt
+}
+
+// GetTemplates returns the value of Templates.
+func (s *CatalogList) GetTemplates() []CatalogEntry {
+	return s.Templates
+}
+
+// SetSerial sets the value of Serial.
+func (s *CatalogList) SetSerial(val int64) {
+	s.Serial = val
+}
+
+// SetGeneratedAt sets the value of GeneratedAt.
+func (s *CatalogList) SetGeneratedAt(val OptDateTime) {
+	s.GeneratedAt = val
+}
+
+// SetTemplates sets the value of Templates.
+func (s *CatalogList) SetTemplates(val []CatalogEntry) {
+	s.Templates = val
+}
+
+// Ref: #/components/schemas/CatalogTemplate
+type CatalogTemplate struct {
+	ID         string   `json:"id"`
+	Revision   int      `json:"revision"`
+	Title      string   `json:"title"`
+	Categories []string `json:"categories"`
+	Docs       string   `json:"docs"`
+	// Where the template came from: `hoserva` for the curated catalog.
+	Source string `json:"source"`
+	// The template's `compose.yaml` text, with its `x-hoserva` block.
+	Compose string `json:"compose"`
+	// Empty when the template asks for nothing beyond an ordinary container.
+	Privileges []TemplatePrivilege `json:"privileges"`
+}
+
+// GetID returns the value of ID.
+func (s *CatalogTemplate) GetID() string {
+	return s.ID
+}
+
+// GetRevision returns the value of Revision.
+func (s *CatalogTemplate) GetRevision() int {
+	return s.Revision
+}
+
+// GetTitle returns the value of Title.
+func (s *CatalogTemplate) GetTitle() string {
+	return s.Title
+}
+
+// GetCategories returns the value of Categories.
+func (s *CatalogTemplate) GetCategories() []string {
+	return s.Categories
+}
+
+// GetDocs returns the value of Docs.
+func (s *CatalogTemplate) GetDocs() string {
+	return s.Docs
+}
+
+// GetSource returns the value of Source.
+func (s *CatalogTemplate) GetSource() string {
+	return s.Source
+}
+
+// GetCompose returns the value of Compose.
+func (s *CatalogTemplate) GetCompose() string {
+	return s.Compose
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *CatalogTemplate) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// SetID sets the value of ID.
+func (s *CatalogTemplate) SetID(val string) {
+	s.ID = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *CatalogTemplate) SetRevision(val int) {
+	s.Revision = val
+}
+
+// SetTitle sets the value of Title.
+func (s *CatalogTemplate) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCategories sets the value of Categories.
+func (s *CatalogTemplate) SetCategories(val []string) {
+	s.Categories = val
+}
+
+// SetDocs sets the value of Docs.
+func (s *CatalogTemplate) SetDocs(val string) {
+	s.Docs = val
+}
+
+// SetSource sets the value of Source.
+func (s *CatalogTemplate) SetSource(val string) {
+	s.Source = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *CatalogTemplate) SetCompose(val string) {
+	s.Compose = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *CatalogTemplate) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
+}
+
 // Ref: #/components/schemas/ConfigImportArchive
 type ConfigImportArchive struct {
 	// When the archive was taken.
@@ -6332,6 +6551,218 @@ func (s GetAppLogsOK) Read(p []byte) (n int, err error) {
 	}
 	return s.Data.Read(p)
 }
+
+type GetCatalogTemplateIconOKImageJpeg struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImageJpeg) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImageJpegHeaders wraps GetCatalogTemplateIconOKImageJpeg with response headers.
+type GetCatalogTemplateIconOKImageJpegHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImageJpeg
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) GetResponse() GetCatalogTemplateIconOKImageJpeg {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) SetResponse(val GetCatalogTemplateIconOKImageJpeg) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImageJpegHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateIconOKImagePNG struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImagePNG) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImagePNGHeaders wraps GetCatalogTemplateIconOKImagePNG with response headers.
+type GetCatalogTemplateIconOKImagePNGHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImagePNG
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) GetResponse() GetCatalogTemplateIconOKImagePNG {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) SetResponse(val GetCatalogTemplateIconOKImagePNG) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImagePNGHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateIconOKImageSvgXML struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImageSvgXML) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImageSvgXMLHeaders wraps GetCatalogTemplateIconOKImageSvgXML with response headers.
+type GetCatalogTemplateIconOKImageSvgXMLHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImageSvgXML
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) GetResponse() GetCatalogTemplateIconOKImageSvgXML {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) SetResponse(val GetCatalogTemplateIconOKImageSvgXML) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImageSvgXMLHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateIconOKImageWEBP struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImageWEBP) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImageWEBPHeaders wraps GetCatalogTemplateIconOKImageWEBP with response headers.
+type GetCatalogTemplateIconOKImageWEBPHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImageWEBP
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) GetResponse() GetCatalogTemplateIconOKImageWEBP {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetResponse(val GetCatalogTemplateIconOKImageWEBP) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImageWEBPHeaders) getCatalogTemplateIconRes() {}
 
 type GetJobLogOK struct {
 	Data io.Reader

@@ -2341,6 +2341,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the catalog's templates
+         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+         */
+        get: operations["listCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/catalog/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Show one catalog template
+         * @description The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary: what its Compose content asks for beyond an ordinary container, computed with each input's default (a secret, which has none, with a generated-shaped value) and never from anything the template declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+         */
+        get: operations["getCatalogTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/catalog/{id}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a catalog template's icon
+         * @description The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG) chosen by the file's extension, never by its content. A file that is not a plain file inside the template's own directory (a symlink, however it points), has another extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and subresources beyond the image itself, so an SVG cannot run code when it is opened directly.
+         */
+        get: operations["getCatalogTemplateIcon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/templates/{id}/preview": {
         parameters: {
             query?: never;
@@ -3452,6 +3518,45 @@ export interface components {
         RemoveStackResult: {
             /** @description The appdata directories and the stack directory deleted. Empty unless `deleteAppdata` was requested. */
             deletedPaths: string[];
+        };
+        CatalogEntry: {
+            id: string;
+            /** @description Increases with every change to the template. */
+            revision: number;
+            title: string;
+            categories: string[];
+            /** @description The upstream documentation the template was written from. */
+            docs: string;
+            /** @description Where the entry came from: `hoserva` for the curated catalog. */
+            source: string;
+            /** @description A stack of this template id exists. */
+            installed: boolean;
+        };
+        CatalogList: {
+            /**
+             * Format: int64
+             * @description The installed catalog's serial.
+             */
+            serial: number;
+            /**
+             * Format: date-time
+             * @description When the catalog archive was built; absent when its index carries no time.
+             */
+            generatedAt?: string;
+            templates: components["schemas"]["CatalogEntry"][];
+        };
+        CatalogTemplate: {
+            id: string;
+            revision: number;
+            title: string;
+            categories: string[];
+            docs: string;
+            /** @description Where the template came from: `hoserva` for the curated catalog. */
+            source: string;
+            /** @description The template's `compose.yaml` text, with its `x-hoserva` block. */
+            compose: string;
+            /** @description Empty when the template asks for nothing beyond an ordinary container. */
+            privileges: components["schemas"]["TemplatePrivilege"][];
         };
         TemplateInstallRequest: {
             /** @description The stack's name, under the rules of `createStack`. Absent means the template's id. */
@@ -7938,6 +8043,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveStackResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The catalog. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCatalogTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogTemplate"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCatalogTemplateIcon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The icon. */
+            200: {
+                headers: {
+                    "Content-Security-Policy": string;
+                    "X-Content-Type-Options": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/svg+xml": string;
+                    "image/png": string;
+                    "image/webp": string;
+                    "image/jpeg": string;
                 };
             };
             default: components["responses"]["Error"];

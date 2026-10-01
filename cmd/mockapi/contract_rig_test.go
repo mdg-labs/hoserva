@@ -767,8 +767,9 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 			t.Fatalf("writing the empty %s socket table: %v", f, err)
 		}
 	}
+	h.Catalog = mockCatalog()
 	h.TemplateInstall = &template.Installer{
-		Catalog: template.MapCatalog{Source: template.SourceCurated, Templates: mockTemplates},
+		Catalog: mockCatalog(),
 		Stacks:  stacks,
 		Ports:   template.HostPorts{Containers: containers, ProcNet: procNet},
 		Shares: func(ctx context.Context) ([]string, error) {

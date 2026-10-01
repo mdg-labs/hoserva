@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/template"
 )
 
 func TestMockInstallMovesAConflictingPortAndRecordsTheStack(t *testing.T) {
@@ -99,5 +102,83 @@ func TestMockPreviewReportsThePrivilegesAndKeepsSecretsOut(t *testing.T) {
 	}
 	if _, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "aio-notes"}); err == nil {
 		t.Error("a preview created a stack")
+	}
+}
+
+func TestMockCatalogMarksAnInstalledTemplateAndNamesTheCuratedSource(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	installed := func() map[string]bool {
+		t.Helper()
+		list, err := h.ListCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, e := range list.Templates {
+			out[e.ID] = e.Installed
+			if e.Source != template.SourceCurated {
+				t.Errorf("%s: source = %q", e.ID, e.Source)
+			}
+		}
+		return out
+	}
+	before := installed()
+	if len(before) != 3 || before["aio-notes"] || before["risky-agent"] {
+		t.Fatalf("before = %v", before)
+	}
+	if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("notes")}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+		t.Fatal(err)
+	}
+	if after := installed(); !after["aio-notes"] || after["risky-agent"] {
+		t.Errorf("after installing aio-notes = %v", after)
+	}
+}
+
+func TestMockCatalogDetailReportsThePrivilegesTheProductionSummaryComputes(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := h.GetCatalogTemplate(context.Background(), apiv1.GetCatalogTemplateParams{ID: "risky-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[apiv1.TemplatePrivilegeKind]bool{}
+	for _, p := range d.Privileges {
+		kinds[p.Kind] = true
+	}
+	if !kinds[apiv1.TemplatePrivilegeKindPrivileged] || !kinds[apiv1.TemplatePrivilegeKindDockerSocket] || d.Compose != mockTemplates["risky-agent"] {
+		t.Errorf("detail = %+v", d)
+	}
+}
+
+func TestMockCatalogIconHasTheProductionHeaders(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.GetCatalogTemplateIcon(context.Background(), apiv1.GetCatalogTemplateIconParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg, ok := res.(*apiv1.GetCatalogTemplateIconOKImageSvgXMLHeaders)
+	if !ok {
+		t.Fatalf("response is %T, want the SVG response", res)
+	}
+	prod, err := (&api.Handler{Catalog: mockCatalog()}).GetCatalogTemplateIcon(context.Background(), apiv1.GetCatalogTemplateIconParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := prod.(*apiv1.GetCatalogTemplateIconOKImageSvgXMLHeaders)
+	if svg.ContentSecurityPolicy != want.ContentSecurityPolicy || svg.XContentTypeOptions != want.XContentTypeOptions {
+		t.Errorf("headers = %q %q, production %q %q", svg.ContentSecurityPolicy, svg.XContentTypeOptions, want.ContentSecurityPolicy, want.XContentTypeOptions)
+	}
+	got, _ := io.ReadAll(svg.Response)
+	if string(got) != string(mockIcons["jellyfin"]) {
+		t.Errorf("body = %q", got)
 	}
 }

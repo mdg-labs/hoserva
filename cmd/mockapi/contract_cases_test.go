@@ -785,6 +785,66 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Catalog list, detail and icon (#513) ---
+	{
+		op:   "ListCatalog",
+		name: "valid_list",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListCatalog(ctx)
+			return err
+		},
+	},
+	{
+		op:   "ListCatalog",
+		name: "valid_list_with_an_installed_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"}); err != nil {
+				return err
+			}
+			_, err := h.ListCatalog(ctx)
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplate",
+		name: "valid_privileged_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "risky-agent"})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplate",
+		name: "unknown_template_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplate",
+		name: "path_traversal_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "../jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateIcon",
+		name: "valid_svg_icon",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateIcon(ctx, apiv1.GetCatalogTemplateIconParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateIcon",
+		name: "unknown_template_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateIcon(ctx, apiv1.GetCatalogTemplateIconParams{ID: "nope"})
+			return err
+		},
+	},
 	{
 		op:   "RemoveStack",
 		name: "path_traversal_name_is_rejected",

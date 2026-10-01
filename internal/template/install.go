@@ -136,7 +136,13 @@ func invalid(format string, args ...any) error {
 }
 
 func (in *Installer) load(ctx context.Context, id string) (Entry, *Template, error) {
-	entry, err := in.Catalog.Entry(ctx, id)
+	return loadTemplate(ctx, in.Catalog, id)
+}
+
+// loadTemplate reads a catalog entry and refuses it unless it passes the
+// schema and the template rules and names the id it was found under.
+func loadTemplate(ctx context.Context, c Catalog, id string) (Entry, *Template, error) {
+	entry, err := c.Entry(ctx, id)
 	if err != nil {
 		return Entry{}, nil, err
 	}
