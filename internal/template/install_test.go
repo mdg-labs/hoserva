@@ -765,3 +765,73 @@ func TestSummaryFlagsASourceRelativeToTheStackDirectory(t *testing.T) {
 		t.Errorf("summary = %q", got)
 	}
 }
+
+const optionalProbe = "services:\n  probe:\n    image: x\n    environment:\n      CLAIM: ${CLAIM}\nx-hoserva:\n  schema: 1\n  id: probe\n  revision: 1\n  title: Probe\n  categories: [system]\n  icon: icon.svg\n  docs: https://example.com\n  inputs:\n    CLAIM: { kind: string%s }\n"
+
+func TestAnOptionalStringInputMayStayEmptyAndARequiredOneMayNot(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag string
+		values     map[string]string
+		wantErr    bool
+	}{
+		{"optional left out", ", optional: true", nil, false},
+		{"optional given empty", ", optional: true", map[string]string{"CLAIM": ""}, false},
+		{"required left out", "", nil, true},
+		{"required given empty", "", map[string]string{"CLAIM": ""}, true},
+		{"optional false left out", ", optional: false", nil, true},
+	} {
+		compose := strings.Replace(optionalProbe, "%s", tc.flag, 1)
+		for call, run := range map[string]func(*Installer) (*Plan, error){
+			"preview": func(in *Installer) (*Plan, error) {
+				return in.Preview(context.Background(), PlanRequest{ID: "probe", Values: tc.values})
+			},
+			"install": func(in *Installer) (*Plan, error) {
+				p, _, err := in.Install(context.Background(), PlanRequest{ID: "probe", Values: tc.values})
+				return p, err
+			},
+		} {
+			in, stacks := newInstaller(t)
+			in.Catalog = MapCatalog{Templates: map[string]string{"probe": compose}}
+			plan, err := run(in)
+			if tc.wantErr {
+				if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "CLAIM needs a value") || len(stacks.created) != 0 {
+					t.Errorf("%s %s: err = %v, created = %d", tc.name, call, err, len(stacks.created))
+				}
+				continue
+			}
+			if err != nil {
+				t.Errorf("%s %s: %v", tc.name, call, err)
+				continue
+			}
+			if got := input(t, plan, "CLAIM").Value; got != "" {
+				t.Errorf("%s %s: CLAIM = %q, want empty", tc.name, call, got)
+			}
+			if call == "install" {
+				if v, ok := envLines(stacks.created[0].Env)["CLAIM"]; !ok || v != "" {
+					t.Errorf("%s: .env = %q, want CLAIM written as an empty value", tc.name, stacks.created[0].Env)
+				}
+			}
+		}
+	}
+}
+
+func TestAnOptionalInputGivenAValueKeepsIt(t *testing.T) {
+	in, stacks := newInstaller(t)
+	in.Catalog = MapCatalog{Templates: map[string]string{"probe": strings.Replace(optionalProbe, "%s", ", optional: true", 1)}}
+	if _, _, err := in.Install(context.Background(), PlanRequest{ID: "probe", Values: map[string]string{"CLAIM": "claim-abc"}}); err != nil {
+		t.Fatal(err)
+	}
+	if v := envLines(stacks.created[0].Env)["CLAIM"]; v != "claim-abc" {
+		t.Errorf("CLAIM = %q", v)
+	}
+}
+
+func TestAnEmptyOptionalInputInAPrivilegeKeyIsResolvedLikeAnyEmptyValue(t *testing.T) {
+	const compose = "services:\n  probe:\n    image: x\n    privileged: ${P}\nx-hoserva:\n  schema: 1\n  id: probe\n  revision: 1\n  title: Probe\n  categories: [system]\n  icon: icon.svg\n  docs: https://example.com\n  inputs:\n    P: { kind: string, optional: true }\n"
+	in, _ := newInstaller(t)
+	in.Catalog = MapCatalog{Templates: map[string]string{"probe": compose}}
+	_, err := in.Preview(context.Background(), PlanRequest{ID: "probe"})
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "privileged") {
+		t.Fatalf("err = %v, want the empty value refused as not a boolean", err)
+	}
+}

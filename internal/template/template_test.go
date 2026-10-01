@@ -128,6 +128,13 @@ func TestLintReportsMalformedTemplates(t *testing.T) {
 		{"role on a string", "TZ:         { kind: timezone }", "TZ:         { kind: timezone, role: appdata }", "x-hoserva.inputs.TZ"},
 		{"port out of range", "{ kind: port, default: 8096 }", "{ kind: port, default: 70000 }", "x-hoserva.inputs.WEBUI_PORT.default"},
 		{"secret with a default", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    TOKEN: { kind: secret, default: abc }", "x-hoserva.inputs.TOKEN"},
+		{"optional port", "{ kind: port, default: 8096 }", "{ kind: port, default: 8096, optional: true }", "x-hoserva.inputs.WEBUI_PORT"},
+		{"optional path", "{ kind: path, role: media, default: /mnt/user/media,", "{ kind: path, role: media, optional: true, default: /mnt/user/media,", "x-hoserva.inputs.MEDIA"},
+		{"optional timezone", "TZ:         { kind: timezone }", "TZ:         { kind: timezone, optional: true }", "x-hoserva.inputs.TZ"},
+		{"optional secret", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    TOKEN: { kind: secret, optional: true }", "x-hoserva.inputs.TOKEN"},
+		{"optional device", "{ kind: device, role: gpu,", "{ kind: device, role: gpu, optional: true,", "x-hoserva.inputs.TRANSCODE_GPU"},
+		{"optional string with a default", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    NOTE: { kind: string, optional: true, default: x }", "x-hoserva.inputs.NOTE"},
+		{"optional that is not a boolean", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    NOTE: { kind: string, optional: \"yes\" }", "x-hoserva.inputs.NOTE.optional"},
 		{"device with a path role", "{ kind: device, role: gpu,", "{ kind: device, role: appdata,", "x-hoserva.inputs.TRANSCODE_GPU"},
 		{"lowercase input name", "TZ:         { kind: timezone }", "tz:         { kind: timezone }", "'tz' does not match pattern"},
 		{"appdata off cache", "default: /mnt/cache/appdata }", "default: /srv/appdata }", "appdata belongs on cache"},
@@ -158,6 +165,22 @@ func TestLintReportsMalformedTemplates(t *testing.T) {
 				t.Errorf("finding does not name its file: %q", got[0])
 			}
 		})
+	}
+}
+
+func TestLintAcceptsAnOptionalStringInput(t *testing.T) {
+	src := readFixture(t)
+	src = strings.Replace(src, "TZ: ${TZ}", "TZ: ${TZ}\n      NOTE: ${NOTE}", 1)
+	src = strings.Replace(src, "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    NOTE: { kind: string, optional: true }", 1)
+	if got := lintStrings(t, catalogFrom(t, "jellyfin", src)); len(got) != 0 {
+		t.Fatalf("an optional string input must lint clean, got:\n%s", strings.Join(got, "\n"))
+	}
+	tpl, issues := Parse([]byte(src))
+	if tpl == nil {
+		t.Fatal(issues)
+	}
+	if !tpl.Block.Inputs["NOTE"].Optional || tpl.Block.Inputs["TZ"].Optional {
+		t.Errorf("Optional not read: %+v", tpl.Block.Inputs)
 	}
 }
 

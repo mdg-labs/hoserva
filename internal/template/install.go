@@ -290,7 +290,7 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 			ri.Value = v
 		default:
 			v := firstNonEmpty(given, def)
-			if v == "" {
+			if v == "" && !spec.Optional {
 				return nil, invalid("%s needs a value", n)
 			}
 			ri.Value = v

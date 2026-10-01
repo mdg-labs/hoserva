@@ -561,6 +561,8 @@ A custom YAML schema would need its own converter to Compose and its own validat
 
 **Revised (2026-10-01, #505):** in the catalog repository a template is `templates/<id>/compose.yaml` plus an icon, inside its `templates/` folder (Q39); the published archive still holds `<id>/` at its root. Doc 04 §7.
 
+**Revised (2026-10-01, #502):** a `string` input may declare `optional: true`, so a template can offer a value the upstream image treats as optional, such as a one-time claim token. An optional input may resolve to the empty string, which is written to `.env` as an empty value, and it has no `default`; `optional` is refused on every other kind. Doc 04 §7.
+
 ### Q65 — How the catalog reaches installations
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.2, §8.4, doc 04 §4, §7, doc 01 §7, Q39, Q49, Q66
 

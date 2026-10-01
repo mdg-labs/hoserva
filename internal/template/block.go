@@ -48,6 +48,7 @@ type Input struct {
 	Default     any    `json:"default,omitempty" yaml:"default,omitempty" jsonschema:"oneof_type=string;integer,description=Preset value. A secret has none; it is generated at install time."`
 	Label       string `json:"label,omitempty" yaml:"label,omitempty" jsonschema:"minLength=1,description=Plain-language name shown in the install form."`
 	Description string `json:"description,omitempty" yaml:"description,omitempty" jsonschema:"minLength=1,description=Help text shown in the install form."`
+	Optional    bool   `json:"optional,omitempty" yaml:"optional,omitempty" jsonschema:"description=Only for string inputs: the value may be left empty and is then written to .env as an empty value. An optional input has no default."`
 }
 
 // JSONSchemaExtend adds the rules that depend on more than one field.
@@ -95,6 +96,17 @@ func (Input) JSONSchemaExtend(s *jsonschema.Schema) {
 		},
 		map[string]any{
 			"if":   whenKind(KindSecret),
+			"then": map[string]any{"not": map[string]any{"required": []any{"default"}}},
+		},
+		map[string]any{
+			"if":   whenKind(KindPath, KindPort, KindSecret, KindTimezone, KindDevice),
+			"then": map[string]any{"not": map[string]any{"required": []any{"optional"}}},
+		},
+		map[string]any{
+			"if": map[string]any{
+				"properties": map[string]any{"optional": map[string]any{"const": true}},
+				"required":   []any{"optional"},
+			},
 			"then": map[string]any{"not": map[string]any{"required": []any{"default"}}},
 		},
 	}
