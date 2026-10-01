@@ -72,7 +72,10 @@ func (c *UpdateChecker) Run(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listing images: %w", err)
 	}
-	targets := checkTargets(containers)
+	targets, err := checkTargets(ctx, c.Provider, containers)
+	if err != nil {
+		return err
+	}
 	stored, err := c.Results.ListImageUpdateChecks(ctx)
 	if err != nil {
 		return err
@@ -133,15 +136,45 @@ func (t checkTarget) key() string {
 	return t.ref.String()
 }
 
-func checkTargets(containers []Container) []checkTarget {
+// configuredRef is the reference a container was created with: the listing
+// reports an image ID instead once the tag points at a different image, which
+// would send the check to a registry repository named "sha256". It reports
+// false for a container that is pinned to a digest, or that the Engine no
+// longer has.
+func configuredRef(ctx context.Context, p Provider, ct Container) (repo, tag, raw string, ok bool, err error) {
+	if ct.Pinned {
+		return "", "", "", false, nil
+	}
+	img, err := p.ConfiguredImage(ctx, ct.ID)
+	if errors.Is(err, ErrNotFound) {
+		return "", "", "", false, nil
+	}
+	if err != nil {
+		return "", "", "", false, fmt.Errorf("reading the image reference of container %q: %w", ct.Name, err)
+	}
+	if img.Pinned {
+		return "", "", "", false, nil
+	}
+	repo, tag = splitImageRef(img.Ref)
+	return repo, tag, img.Ref, true, nil
+}
+
+func checkTargets(ctx context.Context, p Provider, containers []Container) ([]checkTarget, error) {
 	byKey := map[string]*checkTarget{}
 	var order []string
 	for _, ct := range containers {
-		if isRecreateTemp(ct.Name) || ct.Pinned {
+		if isRecreateTemp(ct.Name) {
 			continue
 		}
-		t := checkTarget{image: ct.Image + ":" + ct.Tag}
-		t.ref, t.parseErr = ParseImageRef(ct.Image, ct.Tag)
+		repo, tag, raw, ok, err := configuredRef(ctx, p, ct)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		t := checkTarget{image: raw}
+		t.ref, t.parseErr = ParseImageRef(repo, tag)
 		k := t.key()
 		if byKey[k] == nil {
 			byKey[k] = &t
@@ -154,7 +187,7 @@ func checkTargets(containers []Container) []checkTarget {
 	for _, k := range order {
 		out = append(out, *byKey[k])
 	}
-	return out
+	return out, nil
 }
 
 func isRecreateTemp(name string) bool {
@@ -303,8 +336,23 @@ func (c *UpdateChecker) Statuses(ctx context.Context) ([]ContainerUpdate, error)
 			continue
 		}
 		u := ContainerUpdate{Container: ct.Name, Image: ct.Image, Tag: ct.Tag, Status: UpdateNotChecked}
-		ref, err := ParseImageRef(ct.Image, ct.Tag)
 		if ct.Pinned {
+			u.Message = pinnedMessage
+			out = append(out, u)
+			continue
+		}
+		img, err := c.Provider.ConfiguredImage(ctx, ct.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading the image reference of container %q: %w", ct.Name, err)
+		}
+		repo, tag := splitImageRef(img.Ref)
+		u.Image, u.Tag = repo, tag
+		ref, err := ParseImageRef(repo, tag)
+		if img.Pinned {
+			u.Image, u.Tag = ct.Image, ct.Tag
 			u.Message = pinnedMessage
 		} else if err != nil {
 			u.Status, u.Message = store.UpdateFailed, err.Error()
