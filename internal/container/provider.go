@@ -214,6 +214,12 @@ type Provider interface {
 	// (the Engine's own container listing does), so an update, which moves
 	// that reference, reads it here.
 	ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error)
+	// ConfiguredPorts are the host ports the container is configured to
+	// publish. List and Inspect report published ports only for a container
+	// that is running, but a stopped one binds the same ports again when it
+	// starts, so the configuration is read from the container's own
+	// inspection. A port left to the Engine to choose has a zero HostPort.
+	ConfiguredPorts(ctx context.Context, id string) ([]Port, error)
 	Images(ctx context.Context) ([]Image, error)
 	// StartedAt is when the Engine last started the container, in UTC, and
 	// the zero time for one it has never started. The listing does not carry

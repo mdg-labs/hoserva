@@ -412,16 +412,125 @@ func envFileDefines(envFile []byte, name string) bool {
 }
 
 func (s *StackService) runCompose(ctx context.Context, timeout time.Duration, args []string, envFile string) error {
+	_, err := s.runComposeOutput(ctx, timeout, args, envFile)
+	return err
+}
+
+func (s *StackService) runComposeOutput(ctx context.Context, timeout time.Duration, args []string, envFile string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	env, err := composeEnv(envFile)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrComposeFailed, err)
 	}
-	if _, err := s.Runner.Run(ctx, env, "docker", args...); err != nil {
-		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
+	out, err := s.Runner.Run(ctx, env, "docker", args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrComposeFailed, err)
 	}
-	return nil
+	return out, nil
+}
+
+// PublishedPorts returns the host ports the services of every stack publish,
+// read from each stack's Compose file as `docker compose config` resolves it
+// with the stack's .env, so a started stack and one that was only created are
+// the same and a hand-written .env is read as Compose reads it. Every profile
+// is included, since any of them can be started. A port Compose leaves to the
+// Engine is not a port. It fails, and never returns a partial set, when any
+// stack's ports cannot be read: a port nobody could check is not known to be
+// free.
+//
+// It runs without the stack lock, which an Up holds for as long as it pulls;
+// only a stack missing a generated file takes it, to write what is missing
+// from its row as Up does.
+func (s *StackService) PublishedPorts(ctx context.Context) (map[int]bool, error) {
+	rows, err := s.Store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing the stacks to find the ports they publish: %w", err)
+	}
+	used := map[int]bool{}
+	for _, st := range rows {
+		if err := s.restoreMissingFiles(ctx, st.Name); errors.Is(err, ErrStackNotFound) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("reading the ports of stack %s: %w", st.Name, err)
+		}
+		args := s.composeArgs(st.Name, "--profile", "*", "config", "--format", "json")
+		out, err := s.runComposeOutput(ctx, composeValidateTimeout, args, filepath.Join(s.dir(st.Name), stackEnvFile))
+		if err != nil {
+			return nil, fmt.Errorf("reading the ports of stack %s: %w", st.Name, err)
+		}
+		ports, err := composePublishedPorts(out)
+		if err != nil {
+			return nil, fmt.Errorf("reading the ports of stack %s: %w", st.Name, err)
+		}
+		for _, p := range ports {
+			used[p] = true
+		}
+	}
+	return used, nil
+}
+
+// restoreMissingFiles writes the generated files of the stack that are
+// missing from its directory, under the stack lock. A stack whose row is gone
+// by then was removed: nothing is written for it and ErrStackNotFound is
+// returned, which PublishedPorts skips, since a removed stack holds no port.
+func (s *StackService) restoreMissingFiles(ctx context.Context, name string) error {
+	missing := false
+	for _, f := range stackFileNames {
+		if _, err := os.Lstat(filepath.Join(s.dir(name), f)); errors.Is(err, fs.ErrNotExist) {
+			missing = true
+		} else if err != nil {
+			return fmt.Errorf("checking %s: %w", filepath.Join(s.dir(name), f), err)
+		}
+	}
+	if !missing {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.Store.Get(ctx, name)
+	if err != nil {
+		return err
+	}
+	return s.ensureFiles(st, false)
+}
+
+// composePublishedPorts reads the host ports from the JSON of `docker compose
+// config --format json`.
+func composePublishedPorts(out []byte) ([]int, error) {
+	var cfg struct {
+		Services map[string]struct {
+			Ports []struct {
+				Published json.RawMessage `json:"published"`
+			} `json:"ports"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		return nil, fmt.Errorf("reading the resolved compose file: %w", err)
+	}
+	var ports []int
+	for svc, s := range cfg.Services {
+		for _, p := range s.Ports {
+			var raw string
+			if len(p.Published) == 0 || string(p.Published) == "null" {
+				continue
+			}
+			if err := json.Unmarshal(p.Published, &raw); err != nil {
+				raw = string(p.Published)
+			}
+			lo, hi, err := parseHostPortRange(strings.TrimSpace(raw))
+			if err != nil {
+				return nil, fmt.Errorf("service %s: %w", svc, err)
+			}
+			if lo == 0 {
+				continue
+			}
+			for n := lo; n <= hi; n++ {
+				ports = append(ports, n)
+			}
+		}
+	}
+	return ports, nil
 }
 
 func (s *StackService) now() time.Time {

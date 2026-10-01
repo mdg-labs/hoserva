@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
@@ -108,7 +111,8 @@ func (mockGPU) RenderDevices(context.Context) ([]string, error) {
 
 func (mockGPU) RenderGID(context.Context) (string, error) { return "44", nil }
 
-// mockPorts reports the host ports this mock's running apps publish.
+// mockPorts reports the host ports this mock's apps publish or are
+// configured to publish, running or stopped.
 type mockPorts struct{ h *handler }
 
 func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
@@ -116,15 +120,77 @@ func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
 	defer m.h.appsMu.Unlock()
 	used := map[int]bool{}
 	for _, a := range m.h.apps {
-		switch a.State {
-		case apiv1.AppStateRunning, apiv1.AppStateRestarting, apiv1.AppStatePaused:
-		default:
-			continue
-		}
 		for _, p := range a.Ports {
 			if hp, ok := p.HostPort.Get(); ok && hp != 0 {
 				used[hp] = true
 			}
+		}
+	}
+	return used, nil
+}
+
+// composePorts is the host ports a Compose file publishes with env
+// substituted: the first number of a `ports` entry given as a string
+// ("${PORT}:80", "127.0.0.1:8080:80"), or a long-syntax `published`. An entry
+// with no host port is the Engine's to choose and is not a port.
+func composePorts(compose, env string) map[int]bool {
+	var doc struct {
+		Services map[string]struct {
+			Ports []yaml.Node `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	used := map[int]bool{}
+	if err := yaml.Unmarshal([]byte(compose), &doc); err != nil {
+		return used
+	}
+	values := map[string]string{}
+	for _, l := range strings.Split(env, "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(l), "="); ok {
+			values[k] = strings.Trim(v, `"'`)
+		}
+	}
+	expand := func(s string) string {
+		return os.Expand(s, func(k string) string {
+			name, def, hasDef := strings.Cut(k, ":-")
+			if v := values[name]; v != "" || !hasDef {
+				return v
+			}
+			return def
+		})
+	}
+	for _, svc := range doc.Services {
+		for i := range svc.Ports {
+			var host string
+			switch svc.Ports[i].Kind {
+			case yaml.ScalarNode:
+				parts := strings.Split(expand(svc.Ports[i].Value), ":")
+				if len(parts) < 2 {
+					continue
+				}
+				host = parts[len(parts)-2]
+			case yaml.MappingNode:
+				var long struct {
+					Published string `yaml:"published"`
+				}
+				if svc.Ports[i].Decode(&long) == nil {
+					host = expand(long.Published)
+				}
+			}
+			if n, err := strconv.Atoi(host); err == nil && n > 0 {
+				used[n] = true
+			}
+		}
+	}
+	return used
+}
+
+func (m mockStackCreator) PublishedPorts(context.Context) (map[int]bool, error) {
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	used := map[int]bool{}
+	for _, ports := range m.h.stackPorts {
+		for p := range ports {
+			used[p] = true
 		}
 	}
 	return used, nil
@@ -149,6 +215,7 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 	if m.h.stacks == nil {
 		m.h.stacks = map[string]apiv1.Stack{}
 	}
+	m.h.setStackPorts(n.Name, composePorts(n.Compose, n.Env))
 	m.h.stacks[n.Name] = apiv1.Stack{
 		Name:        n.Name,
 		Template:    apiv1.StackTemplate{Source: n.TemplateSource, ID: n.TemplateID, Revision: n.TemplateRevision},

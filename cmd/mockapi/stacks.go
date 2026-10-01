@@ -69,6 +69,7 @@ func (h *handler) CreateStack(ctx context.Context, req *apiv1.CreateStackRequest
 	if h.stacks == nil {
 		h.stacks = map[string]apiv1.Stack{}
 	}
+	h.setStackPorts(req.Name, composePorts(req.Compose, req.Env.Or("")))
 	h.stacks[req.Name] = s
 	return &s, nil
 }
@@ -97,9 +98,18 @@ func (h *handler) RemoveStack(ctx context.Context, params apiv1.RemoveStackParam
 		return nil, &mockError{code: "appdata_unavailable", statusCode: 409, message: "no appdata location is configured, so appdata cannot be deleted"}
 	}
 	delete(h.stacks, params.Name)
+	delete(h.stackPorts, params.Name)
 	deleted := []string{}
 	if deleteAppdata {
 		deleted = append(deleted, "/var/lib/hoserva/stacks/"+params.Name)
 	}
 	return &apiv1.RemoveStackResult{DeletedPaths: deleted}, nil
+}
+
+// setStackPorts records the ports a stack publishes; stacksMu is held.
+func (h *handler) setStackPorts(name string, ports map[int]bool) {
+	if h.stackPorts == nil {
+		h.stackPorts = map[string]map[int]bool{}
+	}
+	h.stackPorts[name] = ports
 }

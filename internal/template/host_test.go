@@ -36,23 +36,53 @@ func procNet(t *testing.T, withV6 bool) string {
 	return dir
 }
 
-func TestHostPortsCombinesRunningContainersAndHostListeners(t *testing.T) {
+func TestHostPortsCombinesContainersAndHostListeners(t *testing.T) {
 	provider := container.NewFakeProvider()
 	provider.AddContainer(container.Container{ID: "a", Name: "a", State: "running", Ports: []container.Port{{HostPort: 9000, ContainerPort: 80, Protocol: "tcp"}, {ContainerPort: 81, Protocol: "tcp"}}})
 	provider.AddContainer(container.Container{ID: "b", Name: "b", State: "exited", Ports: []container.Port{{HostPort: 9100, ContainerPort: 80, Protocol: "tcp"}}})
+	provider.AddContainer(container.Container{ID: "c", Name: "c", State: "created", Ports: []container.Port{{HostPort: 9200, ContainerPort: 80, Protocol: "tcp"}, {ContainerPort: 82, Protocol: "tcp"}}})
 	got, err := HostPorts{Containers: provider, ProcNet: procNet(t, true)}.UsedPorts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []int{9000, 8080, 5353, 9002} {
+	for _, p := range []int{9000, 9100, 9200, 8080, 5353, 9002} {
 		if !got[p] {
 			t.Errorf("port %d should be taken: %v", p, got)
 		}
 	}
-	for _, p := range []int{9100, 443, 6000, 81} {
+	for _, p := range []int{443, 6000, 81, 82} {
 		if got[p] {
 			t.Errorf("port %d should be free: %v", p, got)
 		}
+	}
+}
+
+func TestHostPortsReadsAStoppedContainersConfiguredPortsAndFailsWhenTheyCannotBeRead(t *testing.T) {
+	provider := container.NewFakeProvider()
+	provider.AddContainer(container.Container{ID: "b", Name: "b", State: "exited", Ports: []container.Port{{HostPort: 9100, ContainerPort: 80, Protocol: "tcp"}}})
+	provider.AddContainer(container.Container{ID: "gone", Name: "gone", State: "exited", Ports: []container.Port{{HostPort: 9300, ContainerPort: 80, Protocol: "tcp"}}})
+	provider.FailOn("configured-ports", "gone", container.ErrNotFound)
+	got, err := HostPorts{Containers: provider, ProcNet: procNet(t, true)}.UsedPorts(context.Background())
+	if err != nil || !got[9100] || got[9300] {
+		t.Fatalf("got %v, %v: a container removed since the listing has no ports, a stopped one keeps its own", got, err)
+	}
+	provider.FailOn("configured-ports", "b", errors.New("inspect failed"))
+	if got, err := (HostPorts{Containers: provider, ProcNet: procNet(t, true)}).UsedPorts(context.Background()); err == nil {
+		t.Fatalf("a stopped container whose ports could not be read must fail, got %v", got)
+	}
+}
+
+func TestAStoppedContainersPortIsSkippedOverByAnInstall(t *testing.T) {
+	provider := container.NewFakeProvider()
+	provider.AddContainer(container.Container{ID: "b", Name: "b", State: "exited", Ports: []container.Port{{HostPort: 8096, ContainerPort: 8096, Protocol: "tcp"}}})
+	in, _ := newInstaller(t)
+	in.Ports = HostPorts{Containers: provider, ProcNet: procNet(t, true)}
+	plan, err := in.Preview(context.Background(), PlanRequest{ID: "jellyfin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port := input(t, plan, "WEBUI_PORT"); port.Value != "8097" || port.Requested != "8096" {
+		t.Errorf("WEBUI_PORT = %+v, want 8097 requested 8096", port)
 	}
 }
 

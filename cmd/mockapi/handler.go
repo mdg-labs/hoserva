@@ -101,6 +101,9 @@ type handler struct {
 	// lists, starting empty. CreateStack and RemoveStack change them.
 	stacksMu sync.Mutex
 	stacks   map[string]apiv1.Stack
+	// stackPorts are the host ports each stack's Compose file publishes with
+	// its .env substituted, started or not (guarded by stacksMu).
+	stackPorts map[string]map[int]bool
 
 	// appdataMu guards appdataPolicies (#61): the per-container appdata
 	// backup policy set through SetAppdataBackupContainer. A container

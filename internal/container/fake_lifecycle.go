@@ -15,7 +15,7 @@ type FakeCall struct {
 }
 
 // FailOn scripts op ("start", "stop", "restart", "remove", "recreate",
-// "recreate-swap", "recreate-local", "started-at", "created-at", "logs", "stats", "reconcile") to return
+// "recreate-swap", "recreate-local", "started-at", "created-at", "configured-ports", "logs", "stats", "reconcile") to return
 // err for the container whose ID or name is id, or for every container when
 // id is "". The container is left exactly as it was. "pull-image",
 // "tag-image" and "untag-image" are scripted per image reference instead. A

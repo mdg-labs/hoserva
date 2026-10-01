@@ -50,9 +50,9 @@ func startTemplates(handler *api.Handler, stateDir string, apps *appServices, sh
 // wireTemplateInstall is what main.go calls to make template install
 // reachable: /templates/{id}/preview and /install (Handler.TemplateInstall).
 // It installs through Handler.Stacks, so wireStacks has run first, and it
-// reads the published ports of the same Engine the Apps operations use, so
-// with no Docker service (apps nil) the operations stay 501 rather than
-// treating every port as free.
+// reads the published ports of the same Engine the Apps operations use and of
+// the stacks it installs into, so with no Docker service (apps nil) the
+// operations stay 501 rather than treating every port as free.
 func wireTemplateInstall(handler *api.Handler, stateDir string, apps *appServices, shares func(ctx context.Context) ([]string, error)) {
 	if apps == nil || handler.Stacks == nil {
 		return

@@ -165,6 +165,27 @@ func (f *FakeProvider) ConfiguredImage(ctx context.Context, id string) (Configur
 	return ConfiguredImage{}, ErrNotFound
 }
 
+// ConfiguredPorts returns the Ports AddContainer was given, whatever the
+// container's state; FailOn("configured-ports", id, err) scripts a failure.
+func (f *FakeProvider) ConfiguredPorts(ctx context.Context, id string) ([]Port, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	for _, c := range f.containers {
+		if c.ID == id || c.Name == id {
+			for _, key := range []string{id, c.ID, c.Name, ""} {
+				if err, ok := f.failures["configured-ports\x00"+key]; ok {
+					return nil, err
+				}
+			}
+			return append([]Port(nil), c.Ports...), nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 func (f *FakeProvider) Images(ctx context.Context) ([]Image, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

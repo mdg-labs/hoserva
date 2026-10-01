@@ -3,6 +3,8 @@ package container
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,6 +144,66 @@ func (c *EngineClient) ConfiguredImage(ctx context.Context, id string) (Configur
 		return ConfiguredImage{}, fmt.Errorf("container: the Engine returned no image reference for %q", name)
 	}
 	return configuredImage(info.Config.Image), nil
+}
+
+// ConfiguredPorts reads the host ports from the container's own inspection,
+// where a stopped container still has the bindings it binds when it starts. A
+// host port range expands to one Port per host port.
+func (c *EngineClient) ConfiguredPorts(ctx context.Context, id string) ([]Port, error) {
+	info, err := c.inspectEngine(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	name := strings.TrimPrefix(info.Name, "/")
+	if info.ID != id && name != id {
+		return nil, ErrNotFound
+	}
+	if info.HostConfig == nil {
+		return nil, fmt.Errorf("container: the Engine returned no host configuration for %q", name)
+	}
+	var out []Port
+	for private, bindings := range info.HostConfig.PortBindings {
+		for _, b := range bindings {
+			lo, hi, err := parseHostPortRange(b.HostPort)
+			if err != nil {
+				return nil, fmt.Errorf("container: reading the published ports of %q: %w", name, err)
+			}
+			hostIP := ""
+			if b.HostIP.IsValid() {
+				hostIP = b.HostIP.String()
+			}
+			for p := lo; p <= hi; p++ {
+				out = append(out, Port{HostIP: hostIP, HostPort: uint16(p), ContainerPort: private.Num(), Protocol: string(private.Proto())})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].HostPort != out[j].HostPort {
+			return out[i].HostPort < out[j].HostPort
+		}
+		return out[i].ContainerPort < out[j].ContainerPort
+	})
+	return out, nil
+}
+
+// parseHostPortRange reads a binding's host port: empty or "0" (the Engine
+// chooses one), a port, or a range "8000-8010". Both ends are 0 when the
+// Engine chooses.
+func parseHostPortRange(s string) (lo, hi int, err error) {
+	first, last, isRange := strings.Cut(s, "-")
+	if first == "" {
+		return 0, 0, nil
+	}
+	if lo, err = strconv.Atoi(first); err != nil || lo < 0 || lo > 65535 {
+		return 0, 0, fmt.Errorf("unexpected host port %q", s)
+	}
+	hi = lo
+	if isRange {
+		if hi, err = strconv.Atoi(last); err != nil || hi < lo || hi > 65535 {
+			return 0, 0, fmt.Errorf("unexpected host port range %q", s)
+		}
+	}
+	return lo, hi, nil
 }
 
 func (c *EngineClient) Images(ctx context.Context) ([]Image, error) {

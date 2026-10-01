@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +17,76 @@ import (
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 
+	"gopkg.in/yaml.v3"
+
 	_ "modernc.org/sqlite"
 )
+
+// resolvingRunner stands in for `docker compose`: `config --quiet` succeeds,
+// and `config --format json` prints each service's `ports` entries with the
+// stack's own .env substituted, as Compose resolves them.
+type resolvingRunner struct {
+	fail error
+}
+
+func (r *resolvingRunner) Run(_ context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+	if r.fail != nil {
+		return nil, r.fail
+	}
+	flag := func(name string) string {
+		for i, a := range args {
+			if a == name && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	if flag("--format") != "json" {
+		return nil, nil
+	}
+	compose, err := os.ReadFile(flag("--file"))
+	if err != nil {
+		return nil, err
+	}
+	envFile, err := os.ReadFile(flag("--env-file"))
+	if err != nil {
+		return nil, err
+	}
+	env := map[string]string{}
+	for _, l := range strings.Split(string(envFile), "\n") {
+		if k, v, ok := strings.Cut(l, "="); ok {
+			env[k] = strings.Trim(v, `"'`)
+		}
+	}
+	var doc struct {
+		Services map[string]struct {
+			Ports []string `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(compose, &doc); err != nil {
+		return nil, err
+	}
+	type port struct {
+		Published string `json:"published,omitempty"`
+	}
+	type service struct {
+		Ports []port `json:"ports"`
+	}
+	out := struct {
+		Services map[string]service `json:"services"`
+	}{map[string]service{}}
+	for name, s := range doc.Services {
+		svc := service{}
+		for _, spec := range s.Ports {
+			parts := strings.Split(os.Expand(spec, func(k string) string { return env[k] }), ":")
+			if len(parts) >= 2 {
+				svc.Ports = append(svc.Ports, port{Published: parts[len(parts)-2]})
+			}
+		}
+		out.Services[name] = svc
+	}
+	return json.Marshal(out)
+}
 
 // TestTemplateInstallWiring_InstallsACatalogTemplateUnderTheStateDirectory
 // builds the stack and install services the way main.go does
@@ -65,7 +135,8 @@ func TestTemplateInstallWiring_InstallsACatalogTemplateUnderTheStateDirectory(t 
 	shares := func(context.Context) ([]string, error) { return []string{"media"}, nil }
 
 	h := &api.Handler{}
-	wireStacks(h, store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
+	compose := &resolvingRunner{}
+	wireStacks(h, store.NewStackStore(db), machineKey, compose, stateDir, apps, nil)
 	wireTemplateInstall(h, stateDir, apps, shares)
 	if h.TemplateInstall == nil {
 		t.Fatal("wireTemplateInstall left Handler.TemplateInstall nil, so every /templates operation would 501")
@@ -129,6 +200,26 @@ func TestTemplateInstallWiring_InstallsACatalogTemplateUnderTheStateDirectory(t 
 	if st := h.NewError(ctx, err); st.StatusCode != 409 || st.Response.Code != "stack_exists" {
 		t.Errorf("a second install of the same name: %d %q, want 409 stack_exists", st.StatusCode, st.Response.Code)
 	}
+	second, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("jellyfin-2")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatalf("a second jellyfin under another name: %v", err)
+	}
+	for _, in := range second.Plan.Inputs {
+		if in.Name == "WEBUI_PORT" && (in.Value.Or("") != "8098" || in.RequestedValue.Or("") != "8096") {
+			t.Errorf("the second stack's WEBUI_PORT = %q (requested %q), want 8098: 8096 is another container's and 8097 the first stack's, which was never started", in.Value.Or(""), in.RequestedValue.Or(""))
+		}
+	}
+
+	compose.fail = errors.New("compose cannot resolve the stack")
+	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("jellyfin-3")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+	if st := h.NewError(ctx, err); st.StatusCode != 502 || st.Response.Code != "stack_action_failed" {
+		t.Errorf("stacks whose ports cannot be read: %d %q, want 502 stack_action_failed", st.StatusCode, st.Response.Code)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "stacks", "jellyfin-3")); err == nil {
+		t.Error("an install that could not check the ports was written anyway")
+	}
+	compose.fail = nil
+
 	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "nope"})
 	if st := h.NewError(ctx, err); st.StatusCode != 404 || st.Response.Code != "template_not_found" {
 		t.Errorf("an unknown template: %d %q, want 404 template_not_found", st.StatusCode, st.Response.Code)
