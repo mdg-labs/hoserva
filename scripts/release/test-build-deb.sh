@@ -221,7 +221,7 @@ for path in hoserva hoservad packaging/debian/.debhelper/x packaging/debian/debh
   fi
 done
 for path in cmd/hoserva/main.go cmd/hoservad/main.go; do
-  if git -C "$repo_root" check-ignore -q -- "$path"; then
+  if git -C "$repo_root" check-ignore --no-index -q -- "$path"; then
     note "FAIL: .gitignore hides $path"
     fail=1
   fi
