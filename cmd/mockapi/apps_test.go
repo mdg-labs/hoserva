@@ -156,6 +156,35 @@ func TestListAppsDistinguishesManagedFromUnmanagedContainers(t *testing.T) {
 	}
 }
 
+func TestRemoveStackTakesItsContainersDown(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	before, err := h.ListApps(t.Context())
+	if err != nil {
+		t.Fatalf("ListApps: %v", err)
+	}
+	if _, err := h.RemoveStack(t.Context(), apiv1.RemoveStackParams{Name: mockStack}); err != nil {
+		t.Fatalf("RemoveStack: %v", err)
+	}
+	after, err := h.ListApps(t.Context())
+	if err != nil {
+		t.Fatalf("ListApps: %v", err)
+	}
+	for _, a := range after.Apps {
+		if s, ok := a.Stack.Get(); ok && s == mockStack {
+			t.Fatalf("%s is still listed as managed by the removed stack %s", a.Name, mockStack)
+		}
+	}
+	if _, err := h.GetApp(t.Context(), apiv1.GetAppParams{ID: "jellyfin"}); err == nil {
+		t.Fatal("GetApp(jellyfin) found a container its removed stack brought down")
+	}
+	if len(after.Apps) != len(before.Apps)-1 {
+		t.Fatalf("%d containers listed after the removal, want %d: only the stack's own are removed", len(after.Apps), len(before.Apps)-1)
+	}
+}
+
 func TestFreshInstallScenarioHasDockerWithNoContainers(t *testing.T) {
 	h, err := newHandler("fresh-install")
 	if err != nil {

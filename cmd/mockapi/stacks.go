@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -78,7 +79,8 @@ func (h *handler) CreateStack(ctx context.Context, req *apiv1.CreateStackRequest
 // array_stopped, before the stack is looked up, while the array is not
 // running, and with appdata_unavailable, as RemoveApp is, where the mock has
 // no cache disk; a plain remove needs neither. The name is free again
-// afterwards.
+// afterwards, and so are its containers: production brings them down with
+// the stack, so they leave the list.
 func (h *handler) RemoveStack(ctx context.Context, params apiv1.RemoveStackParams) (*apiv1.RemoveStackResult, error) {
 	if !container.ValidStackName(params.Name) {
 		return nil, errInvalidStackName(params.Name)
@@ -99,6 +101,9 @@ func (h *handler) RemoveStack(ctx context.Context, params apiv1.RemoveStackParam
 	}
 	delete(h.stacks, params.Name)
 	delete(h.stackPorts, params.Name)
+	h.appsMu.Lock()
+	h.apps = slices.DeleteFunc(h.apps, func(a apiv1.App) bool { return a.Stack.Or("") == params.Name })
+	h.appsMu.Unlock()
 	deleted := []string{}
 	if deleteAppdata {
 		deleted = append(deleted, "/var/lib/hoserva/stacks/"+params.Name)
