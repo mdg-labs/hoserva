@@ -25,6 +25,16 @@ leaves the maintainer on a different branch than the one they started on.
   own extra `git diff`/`git log` calls on top of it — the script is the
   single source of truth for this report.
 
+## `--list` mode
+
+`dev-diff.sh --list` is for scripts, not for this skill's report: it prints
+only the reviewable paths of the `main...dev` diff, one per line, after the
+same fetch, fast-forward and `path_filters` exclusion logic. Errors and
+notices go to stderr, with the same non-zero exits (unclean tree, `main`
+diverged); with no local `dev` branch it prints nothing and exits 0.
+`orchestrate` uses it to budget the 100-file cap. The default output below is
+unchanged, and the steps that follow still apply to it.
+
 ## Steps
 
 1. Run `.claude/skills/dev-diff/dev-diff.sh` (no arguments).

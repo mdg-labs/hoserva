@@ -1,7 +1,30 @@
 #!/usr/bin/env bash
 # Fast-forwards local main from origin/main (without switching branches) and
 # reports how dev differs from it. Read-only w.r.t. dev: never touches its ref.
+#
+# With --list, prints only the paths CodeRabbit would review, one per line, on
+# stdout; every other line (errors, notices) goes to stderr.
 set -euo pipefail
+
+list_only=0
+case "${1-}" in
+    "") ;;
+    --list)
+        if [[ $# -gt 1 ]]; then
+            echo "usage: dev-diff.sh [--list]" >&2
+            exit 2
+        fi
+        list_only=1
+        ;;
+    *)
+        echo "usage: dev-diff.sh [--list]" >&2
+        exit 2
+        ;;
+esac
+
+if [[ "$list_only" -eq 1 ]]; then
+    exec 3>&1 1>&2
+fi
 
 start_branch="$(git rev-parse --abbrev-ref HEAD)"
 
@@ -97,6 +120,13 @@ else
     reviewable_count="$(wc -l <<<"$reviewable_files" | tr -d ' ')"
 fi
 pr_count=$(( (reviewable_count + 99) / 100 ))
+
+if [[ "$list_only" -eq 1 ]]; then
+    if [[ -n "$reviewable_files" ]]; then
+        echo "$reviewable_files" >&3
+    fi
+    exit 0
+fi
 
 echo "started-on: $start_branch"
 echo "local dev: $dev_sync"

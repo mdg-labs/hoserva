@@ -110,6 +110,14 @@ and each issue whole:
   own wiring**. Issues over ~1300 changed lines produced 61% of all
   CodeRabbit escapes; the two largest (#37, #40) passed verification first
   time and then drew 36 findings between them.
+- **Estimate the files too.** Next to the changed-lines estimate, the scope
+  hint carries `Expected files: N reviewable (<likely paths or directories>)`.
+  Count reviewable files only: leave out what `.coderabbit.yaml`'s
+  `path_filters` exclude (`api/gen/`, `internal/store/db/`, `spikes/`),
+  because CodeRabbit reviews at most 100 files per PR and `orchestrate`
+  budgets the `dev → main` promotion against that cap. Do not subtract files
+  already in the `main...dev` diff: triage never touches refs, and the diff
+  has moved by the time of the run — `orchestrate` nets it then.
 - **An issue delivers a capability someone can reach, not just a package.**
   Every `feat` or `bug` that adds or changes runtime behaviour carries an
   acceptance criterion `Reachable via: <entry point> → <capability>` — an

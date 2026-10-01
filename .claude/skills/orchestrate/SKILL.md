@@ -330,9 +330,46 @@ member) in issue-number order; place each in the first lane whose
 accumulated scope doesn't intersect its own, else start a new lane. Lanes
 run in parallel; units within a lane run serially.
 
-Print the plan before dispatching — waves, bundles and why, lanes and why.
-If T has more than ~12 issues, state the count and confirm via
-`AskUserQuestion` first.
+### Promotion-diff budget
+
+CodeRabbit reviews at most 100 files per pull request, counted after
+`.coderabbit.yaml`'s `path_filters` exclusions, and `dev` only reaches `main`
+through one `dev → main` PR (`open-pr`, then `cr-review`). Once that diff
+passes 100 reviewable files the promotion has to be split or goes partly
+unreviewed, so check what this run would add to it before dispatching
+anything. Issues that land in `mdg-labs/hoserva-catalog` (step 1a) are not
+counted — that repository promotes on its own.
+
+1. From the real repo, run
+   `.claude/skills/dev-diff/dev-diff.sh --list`. It prints the reviewable
+   paths of the current `main...dev` diff, one per line: the set `R`. If it
+   exits non-zero (unclean tree, `main` diverged from `origin/main`), show
+   its error and ask via `AskUserQuestion` whether to stop or to proceed
+   without the budget check — never treat a failed run as an empty `R`.
+2. Take each issue's expected files `E` from the `Expected files:` line of
+   its scope hint (an estimate of reviewable files, excluding what
+   `.coderabbit.yaml` filters out, plus the likely paths). An issue with no
+   such line — triaged before the estimate existed — is not blocked and not
+   sent back to refinement: derive a rough `E` from its step-3 scope (one
+   file per backticked file path, about two per backticked directory) and
+   say in the plan that you did.
+3. Net the estimate: the issue's net new files `N` are the expected files not
+   already in `R` — a file named by exact path that is in `R` is zero growth.
+   Paths given as a directory, or not named, count as new. A path two issues
+   in T both name is counted once, against the earlier one in wave order.
+4. Print one line per issue, `#n: ~E expected, ~N new`, and the total:
+   `dev→main reviewable: |R| now → ~|R|+ΣN projected (cap 100)`.
+   - **Projected over 100** — stop before dispatching anything and ask via
+     `AskUserQuestion`. Options: *promote first* (recommended — run
+     `open-pr`, merge the promotion, then run this again); *trim T* to the
+     issues that fit under the cap, in wave order; *proceed anyway*, with
+     the overrun stated in the report.
+   - **Projected 90 to 100** — proceed, and say in the plan that the next run
+     will need a promotion first.
+
+Print the plan before dispatching — waves, bundles and why, lanes and why,
+and the budget lines above. If T has more than ~12 issues, state the count
+and confirm via `AskUserQuestion` first.
 
 ## 5. Per dispatch unit: isolated scratch clone
 
@@ -743,6 +780,14 @@ gets its own issue and its own commit.
 - What step 11 routed: pulled into this run (issue → commit), deferred
   (issue → epic/milestone), added to an existing issue, and dropped (with
   why)
+- **Promotion-diff budget** — `dev→main reviewable: before → after`
+  (actual: re-run `.claude/skills/dev-diff/dev-diff.sh --list` from the real
+  repo after the last landing; `before` is step 4's `|R|`), next to step 4's
+  projection. Per issue, its actual new files are the files of its commit
+  that are in the final list and were not in `R` or in an earlier issue's
+  commit this run; name every issue whose actual count exceeds its estimate
+  by more than about 50%, as for changed lines in step 7. If the user chose
+  to proceed past a projected overrun, say so here.
 - Any stale lab containers or loop devices step 0 found
 - **What's still local, for the maintainer to read and push**: the
   `blockedBy`-held list above (and, in the rare stacking case step 8
