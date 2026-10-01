@@ -82,6 +82,7 @@ type StackStore interface {
 	Insert(ctx context.Context, st store.Stack) error
 	Get(ctx context.Context, name string) (store.Stack, error)
 	List(ctx context.Context) ([]store.Stack, error)
+	UpdateCompose(ctx context.Context, name, compose string, manuallyEdited bool) error
 	Delete(ctx context.Context, name string) error
 }
 
@@ -94,14 +95,19 @@ type SecretCipher interface {
 	Decrypt(ciphertext []byte) ([]byte, error)
 }
 
-// Stack is a stack as the API lists it: its row without the Compose text
-// and without the .env, which holds generated secrets.
+// Stack is a stack as the API returns it: its row without the .env, which
+// holds generated secrets. Compose is the stored docker-compose.yml text; a
+// listing leaves it out.
 type Stack struct {
 	Name             string
 	TemplateSource   string
 	TemplateID       string
 	TemplateRevision string
 	InstalledAt      time.Time
+	Compose          string
+	// ManuallyEdited is true once Update stored the Compose text, so a
+	// template form never silently overwrites it.
+	ManuallyEdited bool
 }
 
 // NewStack is what CreateStack stores.
@@ -151,6 +157,10 @@ type StackService struct {
 	Provider     Provider
 	AppdataRoots func(ctx context.Context) ([]string, error)
 
+	// syncDir stands in for the directory sync after Update's file write; nil
+	// means syncDir.
+	syncDir func(dir string) error
+
 	mu sync.Mutex
 }
 
@@ -173,6 +183,8 @@ func stackFrom(st store.Stack) Stack {
 		TemplateID:       st.TemplateID,
 		TemplateRevision: st.TemplateRevision,
 		InstalledAt:      st.InstalledAt,
+		Compose:          st.Compose,
+		ManuallyEdited:   st.ManuallyEdited,
 	}
 }
 
@@ -633,16 +645,23 @@ func (s *StackService) createFiles(ctx context.Context, st store.Stack, dir stri
 		return err
 	}
 	if err := s.compose(ctx, composeValidateTimeout, st.Name, "config", "--quiet"); err != nil {
-		var exit *exec.ExitError
-		switch {
-		case composePluginMissing(err):
-			return fmt.Errorf("%w: %v", ErrComposeUnavailable, err)
-		case errors.As(err, &exit):
-			return fmt.Errorf("%w: %v", ErrInvalidStack, err)
-		}
-		return fmt.Errorf("checking the compose file of stack %s: %w", st.Name, err)
+		return composeConfigError(st.Name, err)
 	}
 	return nil
+}
+
+// composeConfigError classifies a failed `docker compose config`: the plugin
+// missing, Compose rejecting the file (a non-zero exit), or anything else
+// that went wrong running it.
+func composeConfigError(name string, err error) error {
+	var exit *exec.ExitError
+	switch {
+	case composePluginMissing(err):
+		return fmt.Errorf("%w: %v", ErrComposeUnavailable, err)
+	case errors.As(err, &exit):
+		return fmt.Errorf("%w: %v", ErrInvalidStack, err)
+	}
+	return fmt.Errorf("checking the compose file of stack %s: %w", name, err)
 }
 
 // Get returns the stack named name.
@@ -668,6 +687,159 @@ func (s *StackService) List(ctx context.Context) ([]Stack, error) {
 		out[i] = stackFrom(r)
 	}
 	return out, nil
+}
+
+// Update validates compose with `docker compose config`, stores it in the
+// stack's row with the manually-edited flag, and regenerates the stack's
+// docker-compose.yml from the row. Nothing is restarted: Up makes the edit
+// take effect.
+//
+// The text is checked first, from a temporary directory holding it and a
+// copy of the stack's .env opened from the row, so a refused edit (an empty
+// file, or one Compose rejects as ErrInvalidStack) leaves the row and every
+// file as they were. With dryRun a valid file is reported and nothing else
+// is done. A stack whose .env cannot be opened cannot be checked and is
+// refused.
+//
+// The row is updated before the file is written, and put back, with the flag
+// as it was, if the write fails. Only docker-compose.yml is replaced (through
+// a temporary file and a rename); the stack's other files are written only
+// if missing, so a .env is never rewritten by an edit of the Compose file.
+// A write that fails after the rename (the directory sync) has put the new
+// text on disk, so the old text is written back before Update reports the
+// error.
+func (s *StackService) Update(ctx context.Context, name, compose string, dryRun bool) (Stack, error) {
+	if !ValidStackName(name) {
+		return Stack{}, fmt.Errorf("%w: %q", ErrInvalidStackName, name)
+	}
+	if strings.TrimSpace(compose) == "" {
+		return Stack{}, fmt.Errorf("%w: the compose file is empty", ErrInvalidStack)
+	}
+	if err := s.checkRoot(); err != nil {
+		return Stack{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	old, err := s.Store.Get(ctx, name)
+	if err != nil {
+		return Stack{}, err
+	}
+	if err := s.validateCompose(ctx, old, compose); err != nil {
+		return Stack{}, err
+	}
+	if dryRun {
+		return stackFrom(old), nil
+	}
+	if err := s.Store.UpdateCompose(ctx, name, compose, true); err != nil {
+		return Stack{}, err
+	}
+	updated := old
+	updated.Compose, updated.ManuallyEdited = compose, true
+	if err := s.writeCompose(updated); err != nil {
+		// The compensation must not be cancelled with the request, or a
+		// disconnect would leave the row and the file disagreeing.
+		cleanup := context.WithoutCancel(ctx)
+		if rerr := s.Store.UpdateCompose(cleanup, name, old.Compose, old.ManuallyEdited); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("putting back the compose file of stack %s in its row: %w", name, rerr))
+		}
+		return Stack{}, errors.Join(err, s.undoComposeWrite(old, compose))
+	}
+	return stackFrom(updated), nil
+}
+
+// validateCompose runs `docker compose config` on compose from a temporary
+// directory that also holds a copy of the stack's .env, with the stack's own
+// directory as the project directory so relative paths resolve as they will
+// when it runs. The temporary directory is removed before it returns.
+func (s *StackService) validateCompose(ctx context.Context, st store.Stack, compose string) error {
+	env, err := s.Cipher.Decrypt(st.SealedEnv)
+	if err != nil {
+		return fmt.Errorf("opening the .env of stack %s to check the compose file: %w", st.Name, err)
+	}
+	tmp, err := os.MkdirTemp("", "hoserva-stack-check-")
+	if err != nil {
+		return fmt.Errorf("creating a directory to check the compose file of stack %s: %w", st.Name, err)
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	composeFile := filepath.Join(tmp, stackComposeFile)
+	envFile := filepath.Join(tmp, stackEnvFile)
+	if err := os.WriteFile(composeFile, []byte(compose), 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", composeFile, err)
+	}
+	if err := os.WriteFile(envFile, env, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", envFile, err)
+	}
+	projectDir := s.dir(st.Name)
+	if err := plainDir(projectDir); errors.Is(err, fs.ErrNotExist) {
+		projectDir = tmp
+	} else if err != nil {
+		return err
+	}
+	args := []string{
+		"compose",
+		"--project-name", st.Name,
+		"--project-directory", projectDir,
+		"--file", composeFile,
+		"--env-file", envFile,
+		"config", "--quiet",
+	}
+	if err := s.runCompose(ctx, composeValidateTimeout, args, envFile); err != nil {
+		return composeConfigError(st.Name, err)
+	}
+	return nil
+}
+
+func (s *StackService) syncStackDir(dir string) error {
+	if s.syncDir != nil {
+		return s.syncDir(dir)
+	}
+	return syncDir(dir)
+}
+
+// writeCompose writes the stack's missing generated files from st, and then
+// replaces docker-compose.yml with st's text. The replacement is a rename, so
+// an error from writeFileAtomic means the old file is still in place; an
+// error from the directory sync means the new one is.
+func (s *StackService) writeCompose(st store.Stack) error {
+	if err := s.ensureFiles(st, false); err != nil {
+		return err
+	}
+	dir := s.dir(st.Name)
+	if err := writeFileAtomic(filepath.Join(dir, stackComposeFile), []byte(st.Compose), stackFileModes[stackComposeFile]); err != nil {
+		return err
+	}
+	return s.syncStackDir(dir)
+}
+
+// undoComposeWrite puts the previous row's text back in docker-compose.yml
+// when the file holds the text a failed Update wrote. A file that holds
+// anything else was not replaced and is left alone.
+func (s *StackService) undoComposeWrite(old store.Stack, written string) error {
+	path := filepath.Join(s.dir(old.Name), stackComposeFile)
+	cur, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("checking %s after a failed edit: %w", path, err)
+	case string(cur) != written:
+		return nil
+	}
+	if err := writeFileAtomic(path, []byte(old.Compose), stackFileModes[stackComposeFile]); err != nil {
+		return fmt.Errorf("putting back the previous compose file of stack %s: %w", old.Name, err)
+	}
+	return nil
+}
+
+// RequireRunning reports whether Up would be admitted by the array state:
+// ErrArrayStopped, ErrArrayStateUnknown or nil. A caller that queues Up
+// refuses with it before queueing.
+func (s *StackService) RequireRunning() error {
+	if s.RequireArrayRunning == nil {
+		return ErrArrayStateUnknown
+	}
+	return s.RequireArrayRunning()
 }
 
 // ensureFiles writes whichever of the stack's three files is missing from

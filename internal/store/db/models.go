@@ -374,6 +374,7 @@ type Stack struct {
 	Compose          string `json:"compose"`
 	Env              []byte `json:"env"`
 	InstalledAt      string `json:"installed_at"`
+	ManuallyEdited   int64  `json:"manually_edited"`
 }
 
 type UpsConfig struct {

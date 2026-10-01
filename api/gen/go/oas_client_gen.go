@@ -617,7 +617,8 @@ type Invoker interface {
 	GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error)
 	// GetStack invokes getStack operation.
 	//
-	// One stack's row, without its `.env`.
+	// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
+	// `.env` is never returned: it holds generated secrets.
 	//
 	// GET /stacks/{name}
 	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
@@ -1478,6 +1479,19 @@ type Invoker interface {
 	//
 	// POST /shares/{name}/relocate
 	StartShareRelocation(ctx context.Context, request *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)
+	// StartStack invokes startStack operation.
+	//
+	// Queues a `stack_start` job (service class, scoped to the stack) that runs
+	// `docker compose up --detach` for the stack: its services are created if they do not exist and
+	// recreated only where their definition changed, so an edit saved by `updateStack` takes effect.
+	// Missing generated files are written from the stack's row first. Refused with 409 `array_stopped`
+	// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+	// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+	// when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400
+	// `invalid_stack_name`.
+	//
+	// POST /stacks/{name}/start
+	StartStack(ctx context.Context, params StartStackParams) (*Job, error)
 	// StartSync invokes startSync operation.
 	//
 	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
@@ -1630,6 +1644,22 @@ type Invoker interface {
 	//
 	// PUT /shares/{name}/permissions
 	UpdateSharePermissions(ctx context.Context, request *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error)
+	// UpdateStack invokes updateStack operation.
+	//
+	// Replaces the stack's `docker-compose.yml` text. The text is first checked with
+	// `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before
+	// anything is stored or written: a file that is empty or that `docker compose config` rejects is
+	// refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file
+	// as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and
+	// nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a
+	// template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from
+	// it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack`
+	// makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup
+	// passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found`
+	// and a name that is not a valid stack name with 400 `invalid_stack_name`.
+	//
+	// PUT /stacks/{name}
+	UpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error)
 	// UpdateUPSSettings invokes updateUPSSettings operation.
 	//
 	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
@@ -10298,7 +10328,8 @@ func (c *Client) sendGetSharePermissions(ctx context.Context, params GetSharePer
 
 // GetStack invokes getStack operation.
 //
-// One stack's row, without its `.env`.
+// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
+// `.env` is never returned: it holds generated secrets.
 //
 // GET /stacks/{name}
 func (c *Client) GetStack(ctx context.Context, params GetStackParams) (*Stack, error) {
@@ -20280,6 +20311,157 @@ func (c *Client) sendStartShareRelocation(ctx context.Context, request *StartSha
 	return result, nil
 }
 
+// StartStack invokes startStack operation.
+//
+// Queues a `stack_start` job (service class, scoped to the stack) that runs
+// `docker compose up --detach` for the stack: its services are created if they do not exist and
+// recreated only where their definition changed, so an edit saved by `updateStack` takes effect.
+// Missing generated files are written from the stack's row first. Refused with 409 `array_stopped`
+// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+// when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400
+// `invalid_stack_name`.
+//
+// POST /stacks/{name}/start
+func (c *Client) StartStack(ctx context.Context, params StartStackParams) (*Job, error) {
+	res, err := c.sendStartStack(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendStartStack(ctx context.Context, params StartStackParams) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startStack"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/stacks/{name}/start"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/start"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartStackResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // StartSync invokes startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
@@ -22699,6 +22881,183 @@ func (c *Client) sendUpdateSharePermissions(ctx context.Context, request *Update
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateSharePermissionsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateStack invokes updateStack operation.
+//
+// Replaces the stack's `docker-compose.yml` text. The text is first checked with
+// `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before
+// anything is stored or written: a file that is empty or that `docker compose config` rejects is
+// refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file
+// as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and
+// nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a
+// template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from
+// it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack`
+// makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup
+// passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found`
+// and a name that is not a valid stack name with 400 `invalid_stack_name`.
+//
+// PUT /stacks/{name}
+func (c *Client) UpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error) {
+	res, err := c.sendUpdateStack(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (res *UpdateStackResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateStack"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/stacks/{name}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "dryRun" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "dryRun",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.DryRun.Get(); ok {
+				return e.EncodeValue(conv.BoolToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateStackRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateStackResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

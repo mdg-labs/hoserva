@@ -126,6 +126,9 @@ hoserva share rm media
 hoserva app list
 hoserva app install <template-id>
 hoserva app convert <unraid-template.xml>
+hoserva stack list|show <name>          # a stack's docker-compose.yml and whether it was edited by hand (doc 04 §2)
+hoserva stack edit <name> --file F [--dry-run]   # validate, store and mark manually edited; nothing restarts
+hoserva stack start <name>              # docker compose up --detach as a job, so an edit takes effect
 
 hoserva vm list
 hoserva vm create --name winvm --vcpus 4 --mem 8G --disk 100G --iso win11.iso

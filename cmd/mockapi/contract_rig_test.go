@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -162,6 +163,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeShareRelocation,
 	job.TypeACMEIssue,
 	job.TypeContainerRecreate,
+	job.TypeStackStart,
 	job.TypeContainerUpdate,
 	job.TypeRestoreDrill,
 	job.TypeConfigBackup,
@@ -895,6 +897,20 @@ func seedJellyfinUpdate(ctx context.Context, h apiv1.Handler, keep time.Duration
 type contractComposeRunner struct{ *container.FakeRunner }
 
 func (r contractComposeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	for _, a := range args {
+		if a == "config" {
+			// Stands in for `docker compose config` rejecting the file:
+			// the mock's own check (validateMockCompose) decides, so the
+			// two handlers refuse the same texts.
+			for j, f := range args {
+				if f == "--file" && j+1 < len(args) {
+					if b, rerr := os.ReadFile(args[j+1]); rerr == nil && validateMockCompose(string(b)) != nil {
+						return nil, &exec.ExitError{}
+					}
+				}
+			}
+		}
+	}
 	out, err := r.FakeRunner.Run(ctx, env, name, args...)
 	if err == nil && len(out) == 0 && strings.Contains(strings.Join(args, " "), "config --format json") {
 		return []byte(`{"services":{}}`), nil

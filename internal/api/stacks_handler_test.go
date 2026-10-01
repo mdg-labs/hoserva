@@ -43,6 +43,16 @@ func (m *stackMemStore) Get(_ context.Context, name string) (store.Stack, error)
 
 func (m *stackMemStore) List(context.Context) ([]store.Stack, error) { return nil, nil }
 
+func (m *stackMemStore) UpdateCompose(_ context.Context, name, compose string, manuallyEdited bool) error {
+	st, ok := m.rows[name]
+	if !ok {
+		return store.ErrStackNotFound
+	}
+	st.Compose, st.ManuallyEdited = compose, manuallyEdited
+	m.rows[name] = st
+	return nil
+}
+
 func (m *stackMemStore) Delete(_ context.Context, name string) error {
 	delete(m.rows, name)
 	return nil

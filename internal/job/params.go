@@ -200,6 +200,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeContainerRecreate {
 			return fmt.Errorf("job: container_recreate params require a container id")
 		}
+		if t == TypeStackStart {
+			return fmt.Errorf("job: stack_start params require a stack name")
+		}
 		if t == TypeAppdataRestore || t == TypeAppdataRestorePreview {
 			return fmt.Errorf("job: %s params require a container, an archive and a destination", t)
 		}
@@ -250,6 +253,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeContainerRecreate:
 		_, err := decodeContainerRecreateParams(params)
+		return err
+	case TypeStackStart:
+		_, err := decodeStackStartParams(params)
 		return err
 	case TypeContainerUpdate:
 		_, err := decodeContainerUpdateParams(params)

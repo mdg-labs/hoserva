@@ -2326,16 +2326,43 @@ export interface paths {
         };
         /**
          * Get a Compose stack
-         * @description One stack's row, without its `.env`.
+         * @description One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its `.env` is never returned: it holds generated secrets.
          */
         get: operations["getStack"];
-        put?: never;
+        /**
+         * Edit a Compose stack's file
+         * @description Replaces the stack's `docker-compose.yml` text. The text is first checked with `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before anything is stored or written: a file that is empty or that `docker compose config` rejects is refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack` makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found` and a name that is not a valid stack name with 400 `invalid_stack_name`.
+         */
+        put: operations["updateStack"];
         post?: never;
         /**
          * Remove a Compose stack
          * @description Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the stack's directory goes too if nothing else is in it, so the name can be used again and a file the stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down` removes every container and network of the stack's Compose project name, and with `--volumes` its named volumes, whichever file or directory they were started from. So before docker runs, every container of that project must be one Compose started from the stack's own directory: a project of the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the stack's containers that lies strictly inside an appdata location (the cache disk's `appdata` directory) and is used by no other container is deleted, and so is the stack's whole directory, before the row. Nothing is deleted if one of the stack's containers is still there after `docker compose down`. That needs the array running, like a container remove that deletes appdata: refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409 `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a directory is used by another container or another container binds a place inside the stack's directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted, leaves the row in place so the remove can be retried.
          */
         delete: operations["removeStack"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start or recreate a Compose stack
+         * @description Queues a `stack_start` job (service class, scoped to the stack) that runs `docker compose up --detach` for the stack: its services are created if they do not exist and recreated only where their definition changed, so an edit saved by `updateStack` takes effect. Missing generated files are written from the stack's row first. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400 `invalid_stack_name`.
+         */
+        post: operations["startStack"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2869,7 +2896,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -3522,6 +3549,19 @@ export interface components {
             template: components["schemas"]["StackTemplate"];
             /** Format: date-time */
             installedAt: string;
+            /** @description True once the stack's Compose text was saved by hand (`updateStack`), so the template's form must not silently overwrite it. A template install is not manually edited. */
+            manuallyEdited: boolean;
+            /** @description The stored `docker-compose.yml` text. Returned by `getStack` and `updateStack` only, never by `listStacks`. The `.env` is never returned. */
+            compose?: string;
+        };
+        UpdateStackRequest: {
+            /** @description The new `docker-compose.yml` text. */
+            compose: string;
+        };
+        UpdateStackResult: {
+            /** @description False for a `dryRun`, which changes nothing. */
+            applied: boolean;
+            stack: components["schemas"]["Stack"];
         };
         ListStacksOK: {
             stacks: components["schemas"]["Stack"][];
@@ -8071,6 +8111,37 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    updateStack: {
+        parameters: {
+            query?: {
+                /** @description Only validate the text and report the result; store and write nothing. Absent means false. */
+                dryRun?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStackRequest"];
+            };
+        };
+        responses: {
+            /** @description The text is valid. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStackResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     removeStack: {
         parameters: {
             query?: {
@@ -8093,6 +8164,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveStackResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             default: components["responses"]["Error"];

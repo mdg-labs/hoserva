@@ -38,6 +38,7 @@ const (
 	TypeConfigBackup          Type = "config_backup"
 	TypeContainerUpdate       Type = "container_update"
 	TypeContainerRecreate     Type = "container_recreate"
+	TypeStackStart            Type = "stack_start"
 	TypeACMEIssue             Type = "acme_issue"
 	TypeVMStart               Type = "vm_start"
 	TypeVMStop                Type = "vm_stop"
@@ -119,6 +120,7 @@ var classOf = map[Type]Class{
 	TypeConfigBackup:          ClassService,
 	TypeContainerUpdate:       ClassService,
 	TypeContainerRecreate:     ClassService,
+	TypeStackStart:            ClassService,
 	TypeACMEIssue:             ClassService,
 
 	TypeVMStart:           ClassVM,

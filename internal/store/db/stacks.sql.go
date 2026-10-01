@@ -22,7 +22,7 @@ func (q *Queries) DeleteStack(ctx context.Context, name string) (int64, error) {
 }
 
 const getStack = `-- name: GetStack :one
-SELECT name, template_source, template_id, template_revision, compose, env, installed_at
+SELECT name, template_source, template_id, template_revision, compose, env, installed_at, manually_edited
 FROM stacks WHERE name = ?
 `
 
@@ -37,14 +37,15 @@ func (q *Queries) GetStack(ctx context.Context, name string) (*Stack, error) {
 		&i.Compose,
 		&i.Env,
 		&i.InstalledAt,
+		&i.ManuallyEdited,
 	)
 	return &i, err
 }
 
 const insertStack = `-- name: InsertStack :exec
 
-INSERT INTO stacks (name, template_source, template_id, template_revision, compose, env, installed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO stacks (name, template_source, template_id, template_revision, compose, env, installed_at, manually_edited)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertStackParams struct {
@@ -55,6 +56,7 @@ type InsertStackParams struct {
 	Compose          string `json:"compose"`
 	Env              []byte `json:"env"`
 	InstalledAt      string `json:"installed_at"`
+	ManuallyEdited   int64  `json:"manually_edited"`
 }
 
 // sqlc input (#278): the stacks table, generated into internal/store/db/ by
@@ -68,12 +70,13 @@ func (q *Queries) InsertStack(ctx context.Context, arg InsertStackParams) error 
 		arg.Compose,
 		arg.Env,
 		arg.InstalledAt,
+		arg.ManuallyEdited,
 	)
 	return err
 }
 
 const listStacks = `-- name: ListStacks :many
-SELECT name, template_source, template_id, template_revision, compose, env, installed_at
+SELECT name, template_source, template_id, template_revision, compose, env, installed_at, manually_edited
 FROM stacks ORDER BY name ASC
 `
 
@@ -94,6 +97,7 @@ func (q *Queries) ListStacks(ctx context.Context) ([]*Stack, error) {
 			&i.Compose,
 			&i.Env,
 			&i.InstalledAt,
+			&i.ManuallyEdited,
 		); err != nil {
 			return nil, err
 		}
@@ -106,4 +110,22 @@ func (q *Queries) ListStacks(ctx context.Context) ([]*Stack, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateStackCompose = `-- name: UpdateStackCompose :execrows
+UPDATE stacks SET compose = ?, manually_edited = ? WHERE name = ?
+`
+
+type UpdateStackComposeParams struct {
+	Compose        string `json:"compose"`
+	ManuallyEdited int64  `json:"manually_edited"`
+	Name           string `json:"name"`
+}
+
+func (q *Queries) UpdateStackCompose(ctx context.Context, arg UpdateStackComposeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateStackCompose, arg.Compose, arg.ManuallyEdited, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

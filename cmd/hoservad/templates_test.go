@@ -14,6 +14,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 
@@ -136,7 +137,7 @@ func TestTemplateInstallWiring_InstallsACatalogTemplateUnderTheStateDirectory(t 
 
 	h := &api.Handler{}
 	compose := &resolvingRunner{}
-	wireStacks(h, store.NewStackStore(db), machineKey, compose, stateDir, apps, nil)
+	wireStacks(h, job.NewRegistry(), store.NewStackStore(db), machineKey, compose, stateDir, apps, nil)
 	wireTemplateInstall(h, stateDir, apps, shares)
 	if h.TemplateInstall == nil {
 		t.Fatal("wireTemplateInstall left Handler.TemplateInstall nil, so every /templates operation would 501")

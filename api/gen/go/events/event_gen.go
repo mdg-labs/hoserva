@@ -922,6 +922,7 @@ const (
 	JobTypeConfigBackup          JobType = "config_backup"
 	JobTypeContainerUpdate       JobType = "container_update"
 	JobTypeContainerRecreate     JobType = "container_recreate"
+	JobTypeStackStart            JobType = "stack_start"
 	JobTypeAcmeIssue             JobType = "acme_issue"
 	JobTypeVMStart               JobType = "vm_start"
 	JobTypeVMStop                JobType = "vm_stop"
@@ -958,6 +959,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeConfigBackup,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
+		JobTypeStackStart,
 		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
@@ -1017,6 +1019,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
 	case JobTypeContainerRecreate:
+		return []byte(s), nil
+	case JobTypeStackStart:
 		return []byte(s), nil
 	case JobTypeAcmeIssue:
 		return []byte(s), nil
@@ -1110,6 +1114,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeContainerRecreate:
 		*s = JobTypeContainerRecreate
+		return nil
+	case JobTypeStackStart:
+		*s = JobTypeStackStart
 		return nil
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
@@ -3346,6 +3353,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeContainerUpdate
 	case JobTypeContainerRecreate:
 		*s = JobTypeContainerRecreate
+	case JobTypeStackStart:
+		*s = JobTypeStackStart
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
 	case JobTypeVMStart:
@@ -4399,6 +4408,8 @@ func (s JobType) Validate() error {
 	case "container_update":
 		return nil
 	case "container_recreate":
+		return nil
+	case "stack_start":
 		return nil
 	case "acme_issue":
 		return nil

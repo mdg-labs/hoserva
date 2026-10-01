@@ -2,11 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/job"
 )
 
 func errStacksNotConfigured() error {
@@ -58,8 +62,17 @@ func stackToAPI(s container.Stack) apiv1.Stack {
 			ID:       s.TemplateID,
 			Revision: s.TemplateRevision,
 		},
-		InstalledAt: s.InstalledAt,
+		InstalledAt:    s.InstalledAt,
+		ManuallyEdited: s.ManuallyEdited,
 	}
+}
+
+// stackWithComposeToAPI is stackToAPI with the stored Compose text, which
+// only getStack and updateStack return.
+func stackWithComposeToAPI(s container.Stack) apiv1.Stack {
+	out := stackToAPI(s)
+	out.Compose = apiv1.NewOptString(s.Compose)
+	return out
 }
 
 func (h *Handler) ListStacks(ctx context.Context) (*apiv1.ListStacksOK, error) {
@@ -85,7 +98,7 @@ func (h *Handler) GetStack(ctx context.Context, params apiv1.GetStackParams) (*a
 	if err != nil {
 		return nil, mapStackError(params.Name, err, "reading")
 	}
-	out := stackToAPI(s)
+	out := stackWithComposeToAPI(s)
 	return &out, nil
 }
 
@@ -121,4 +134,44 @@ func (h *Handler) RemoveStack(ctx context.Context, params apiv1.RemoveStackParam
 		return nil, mapStackError(params.Name, err, "removing")
 	}
 	return &apiv1.RemoveStackResult{DeletedPaths: res.DeletedPaths}, nil
+}
+
+func (h *Handler) UpdateStack(ctx context.Context, req *apiv1.UpdateStackRequest, params apiv1.UpdateStackParams) (*apiv1.UpdateStackResult, error) {
+	if h.Stacks == nil {
+		return nil, errStacksNotConfigured()
+	}
+	dryRun := params.DryRun.Or(false)
+	s, err := h.Stacks.Update(ctx, params.Name, req.Compose, dryRun)
+	if err != nil {
+		return nil, mapStackError(params.Name, err, "editing")
+	}
+	return &apiv1.UpdateStackResult{Applied: !dryRun, Stack: stackWithComposeToAPI(s)}, nil
+}
+
+// StartStack queues the start as a job: `docker compose up` pulls images,
+// which can take minutes, and must not hold a request open (doc 01 §4).
+func (h *Handler) StartStack(ctx context.Context, params apiv1.StartStackParams) (*apiv1.Job, error) {
+	if h.Stacks == nil {
+		return nil, errStacksNotConfigured()
+	}
+	if h.Scheduler == nil {
+		return nil, fmt.Errorf("job scheduler not configured")
+	}
+	if _, err := h.Stacks.Get(ctx, params.Name); err != nil {
+		return nil, mapStackError(params.Name, err, "starting")
+	}
+	// Up checks again when the job runs; this refuses up front instead of
+	// queueing a job that can only fail.
+	if err := h.Stacks.RequireRunning(); err != nil {
+		return nil, mapStackError(params.Name, err, "starting")
+	}
+	body, err := json.Marshal(job.StackStartParams{Name: params.Name})
+	if err != nil {
+		return nil, fmt.Errorf("encoding stack_start params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeStackStart, []string{"stack:" + params.Name}, body)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
 }

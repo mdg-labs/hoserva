@@ -144,6 +144,9 @@ func mockApps() []apiv1.App {
 // never refused as an existing stack.
 const mockStack = "media-server"
 
+// mockStackCompose is the Compose text of the seeded stack.
+const mockStackCompose = "services:\n  jellyfin:\n    image: lscr.io/linuxserver/jellyfin:10.10.7\n    ports:\n      - \"8096:8096\"\n"
+
 // mockStacksFor is the stacks table that goes with apps: one stack for every
 // stack name an app reports, so GetStack answers for what listApps names.
 func mockStacksFor(apps []apiv1.App) map[string]apiv1.Stack {
@@ -154,8 +157,13 @@ func mockStacksFor(apps []apiv1.App) map[string]apiv1.Stack {
 				Name:        name,
 				Template:    apiv1.StackTemplate{Source: "hoserva", ID: "jellyfin", Revision: "1"},
 				InstalledAt: time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC),
+				Compose:     apiv1.NewOptString(mockStackCompose),
 			}
 		}
+	}
+	if s, ok := stacks[mockStack]; ok {
+		s.ManuallyEdited = true
+		stacks[mockStack] = s
 	}
 	return stacks
 }

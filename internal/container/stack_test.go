@@ -22,6 +22,7 @@ type memStackStore struct {
 	rows      map[string]store.Stack
 	insertErr error
 	deleteErr error
+	updateErr error
 	calls     int
 }
 
@@ -56,6 +57,23 @@ func (m *memStackStore) List(_ context.Context) ([]store.Stack, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (m *memStackStore) UpdateCompose(ctx context.Context, name, compose string, manuallyEdited bool) error {
+	m.calls++
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	st, ok := m.rows[name]
+	if !ok {
+		return store.ErrStackNotFound
+	}
+	st.Compose, st.ManuallyEdited = compose, manuallyEdited
+	m.rows[name] = st
+	return nil
 }
 
 func (m *memStackStore) Delete(ctx context.Context, name string) error {

@@ -236,10 +236,12 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 		m.h.stacks = map[string]apiv1.Stack{}
 	}
 	m.h.setStackPorts(n.Name, composePorts(n.Compose, n.Env))
+	m.h.setStackEnv(n.Name, n.Env)
 	m.h.stacks[n.Name] = apiv1.Stack{
 		Name:        n.Name,
 		Template:    apiv1.StackTemplate{Source: n.TemplateSource, ID: n.TemplateID, Revision: n.TemplateRevision},
 		InstalledAt: now,
+		Compose:     apiv1.NewOptString(n.Compose),
 	}
 	return container.Stack{Name: n.Name, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision, InstalledAt: now}, nil
 }

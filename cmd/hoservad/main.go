@@ -534,7 +534,7 @@ func run(cfg config) error {
 		handler.Container = dockerProvider
 	}
 	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready, arrayActionAdmit(scheduler))
-	wireStacks(handler, store.NewStackStore(db), machineKey, container.CommandRunner{}, absStateDir, apps, arrayActionAdmit(scheduler))
+	wireStacks(handler, registry, store.NewStackStore(db), machineKey, container.CommandRunner{}, absStateDir, apps, arrayActionAdmit(scheduler))
 	updateChecker := newUpdateChecker(apps, store.NewUpdateStore(db), &container.HTTPRegistry{})
 	if apps != nil {
 		go apps.Watcher.Run(ctx)

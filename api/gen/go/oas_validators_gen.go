@@ -3774,6 +3774,8 @@ func (s JobType) Validate() error {
 		return nil
 	case "container_recreate":
 		return nil
+	case "stack_start":
+		return nil
 	case "acme_issue":
 		return nil
 	case "vm_start":

@@ -109,6 +109,10 @@ type handler struct {
 	// stackPorts are the host ports each stack's Compose file publishes with
 	// its .env substituted, started or not (guarded by stacksMu).
 	stackPorts map[string]map[int]bool
+	// stackEnvs are the .env texts the stacks were created with, so an edit
+	// of the Compose file can work out its ports again (guarded by stacksMu).
+	// Like production they are never returned.
+	stackEnvs map[string]string
 
 	// catalogMu guards catalogChecks and catalogLast: the scripted catalog
 	// checks this mock instance has run. Nothing is checked before the first

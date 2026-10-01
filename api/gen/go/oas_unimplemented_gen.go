@@ -787,7 +787,8 @@ func (UnimplementedHandler) GetSharePermissions(ctx context.Context, params GetS
 
 // GetStack implements getStack operation.
 //
-// One stack's row, without its `.env`.
+// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
+// `.env` is never returned: it holds generated secrets.
 //
 // GET /stacks/{name}
 func (UnimplementedHandler) GetStack(ctx context.Context, params GetStackParams) (r *Stack, _ error) {
@@ -1864,6 +1865,22 @@ func (UnimplementedHandler) StartShareRelocation(ctx context.Context, req *Start
 	return r, ht.ErrNotImplemented
 }
 
+// StartStack implements startStack operation.
+//
+// Queues a `stack_start` job (service class, scoped to the stack) that runs
+// `docker compose up --detach` for the stack: its services are created if they do not exist and
+// recreated only where their definition changed, so an edit saved by `updateStack` takes effect.
+// Missing generated files are written from the stack's row first. Refused with 409 `array_stopped`
+// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+// when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400
+// `invalid_stack_name`.
+//
+// POST /stacks/{name}/start
+func (UnimplementedHandler) StartStack(ctx context.Context, params StartStackParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartSync implements startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
@@ -2064,6 +2081,25 @@ func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareReq
 //
 // PUT /shares/{name}/permissions
 func (UnimplementedHandler) UpdateSharePermissions(ctx context.Context, req *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (r *SharePermissionsResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateStack implements updateStack operation.
+//
+// Replaces the stack's `docker-compose.yml` text. The text is first checked with
+// `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before
+// anything is stored or written: a file that is empty or that `docker compose config` rejects is
+// refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file
+// as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and
+// nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a
+// template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from
+// it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack`
+// makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup
+// passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found`
+// and a name that is not a valid stack name with 400 `invalid_stack_name`.
+//
+// PUT /stacks/{name}
+func (UnimplementedHandler) UpdateStack(ctx context.Context, req *UpdateStackRequest, params UpdateStackParams) (r *UpdateStackResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

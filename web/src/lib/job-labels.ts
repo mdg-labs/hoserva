@@ -32,6 +32,7 @@ const JOB_TYPE_MEMBERS: Record<JobType, true> = {
   config_backup: true,
   container_update: true,
   container_recreate: true,
+  stack_start: true,
   acme_issue: true,
   vm_start: true,
   vm_stop: true,

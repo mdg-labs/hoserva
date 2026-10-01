@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
 )
@@ -29,6 +31,7 @@ func (h *handler) ListStacks(ctx context.Context) (*apiv1.ListStacksOK, error) {
 	defer h.stacksMu.Unlock()
 	out := &apiv1.ListStacksOK{Stacks: make([]apiv1.Stack, 0, len(h.stacks))}
 	for _, s := range h.stacks {
+		s.Compose = apiv1.OptString{}
 		out.Stacks = append(out.Stacks, s)
 	}
 	sort.Slice(out.Stacks, func(i, j int) bool { return out.Stacks[i].Name < out.Stacks[j].Name })
@@ -71,8 +74,84 @@ func (h *handler) CreateStack(ctx context.Context, req *apiv1.CreateStackRequest
 		h.stacks = map[string]apiv1.Stack{}
 	}
 	h.setStackPorts(req.Name, composePorts(req.Compose, req.Env.Or("")))
-	h.stacks[req.Name] = s
+	h.setStackEnv(req.Name, req.Env.Or(""))
+	stored := s
+	stored.Compose = apiv1.NewOptString(req.Compose)
+	h.stacks[req.Name] = stored
 	return &s, nil
+}
+
+// UpdateStack mirrors production: the name, then an empty file, are refused
+// before the stack is looked up, and the text is checked before anything is
+// stored (validateMockCompose stands in for `docker compose config`). A dry
+// run changes nothing; otherwise the text is stored and the stack is marked
+// manually edited. Its ports are worked out again from the new text.
+func (h *handler) UpdateStack(ctx context.Context, req *apiv1.UpdateStackRequest, params apiv1.UpdateStackParams) (*apiv1.UpdateStackResult, error) {
+	if !container.ValidStackName(params.Name) {
+		return nil, errInvalidStackName(params.Name)
+	}
+	if strings.TrimSpace(req.Compose) == "" {
+		return nil, errInvalidStack("the compose file is empty")
+	}
+	h.stacksMu.Lock()
+	defer h.stacksMu.Unlock()
+	s, ok := h.stacks[params.Name]
+	if !ok {
+		return nil, errStackNotFound(params.Name)
+	}
+	if err := validateMockCompose(req.Compose); err != nil {
+		return nil, errInvalidStack(err.Error())
+	}
+	if params.DryRun.Or(false) {
+		return &apiv1.UpdateStackResult{Applied: false, Stack: s}, nil
+	}
+	s.Compose = apiv1.NewOptString(req.Compose)
+	s.ManuallyEdited = true
+	h.stacks[params.Name] = s
+	h.setStackPorts(params.Name, composePorts(req.Compose, h.stackEnvs[params.Name]))
+	return &apiv1.UpdateStackResult{Applied: true, Stack: s}, nil
+}
+
+// StartStack mirrors production: the stack is looked up, then the array
+// must be running, before the stack_start job is recorded.
+func (h *handler) StartStack(ctx context.Context, params apiv1.StartStackParams) (*apiv1.Job, error) {
+	if !container.ValidStackName(params.Name) {
+		return nil, errInvalidStackName(params.Name)
+	}
+	h.stacksMu.Lock()
+	_, ok := h.stacks[params.Name]
+	h.stacksMu.Unlock()
+	if !ok {
+		return nil, errStackNotFound(params.Name)
+	}
+	if err := h.requireArrayRunning(); err != nil {
+		return nil, err
+	}
+	return h.queueServiceJob(apiv1.JobTypeStackStart)
+}
+
+func errInvalidStack(reason string) error {
+	return &mockError{code: "invalid_stack", statusCode: 400, message: fmt.Sprintf("%s: %s", container.ErrInvalidStack, reason)}
+}
+
+// validateMockCompose is the mock's `docker compose config`: the text must
+// be YAML whose top level is a mapping, and whose services, when given, are
+// a mapping too.
+func validateMockCompose(text string) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		return err
+	}
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("the compose file must be a mapping")
+	}
+	top := doc.Content[0].Content
+	for i := 0; i+1 < len(top); i += 2 {
+		if top[i].Value == "services" && top[i+1].Kind != yaml.MappingNode {
+			return fmt.Errorf("services must be a mapping")
+		}
+	}
+	return nil
 }
 
 // RemoveStack mirrors production: asking for appdata deletion is refused with
@@ -101,6 +180,7 @@ func (h *handler) RemoveStack(ctx context.Context, params apiv1.RemoveStackParam
 	}
 	delete(h.stacks, params.Name)
 	delete(h.stackPorts, params.Name)
+	delete(h.stackEnvs, params.Name)
 	h.appsMu.Lock()
 	h.apps = slices.DeleteFunc(h.apps, func(a apiv1.App) bool { return a.Stack.Or("") == params.Name })
 	h.appsMu.Unlock()
@@ -117,4 +197,12 @@ func (h *handler) setStackPorts(name string, ports map[int]bool) {
 		h.stackPorts = map[string]map[int]bool{}
 	}
 	h.stackPorts[name] = ports
+}
+
+// setStackEnv records the .env a stack was created with; stacksMu is held.
+func (h *handler) setStackEnv(name, env string) {
+	if h.stackEnvs == nil {
+		h.stackEnvs = map[string]string{}
+	}
+	h.stackEnvs[name] = env
 }

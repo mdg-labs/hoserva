@@ -14,6 +14,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 
@@ -54,7 +55,7 @@ func startedTemplatesWith(t *testing.T, stateDir string, notifier catalogPublish
 	shares := func(context.Context) ([]string, error) { return []string{"media"}, nil }
 
 	h := &api.Handler{}
-	wireStacks(h, store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
+	wireStacks(h, job.NewRegistry(), store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
 	startTemplates(h, stateDir, apps, shares, notifier)
 	if h.TemplateInstall == nil {
 		t.Fatal("startTemplates left Handler.TemplateInstall nil, so every /templates operation would 501")

@@ -7533,6 +7533,7 @@ const (
 	JobTypeConfigBackup          JobType = "config_backup"
 	JobTypeContainerUpdate       JobType = "container_update"
 	JobTypeContainerRecreate     JobType = "container_recreate"
+	JobTypeStackStart            JobType = "stack_start"
 	JobTypeAcmeIssue             JobType = "acme_issue"
 	JobTypeVMStart               JobType = "vm_start"
 	JobTypeVMStop                JobType = "vm_stop"
@@ -7569,6 +7570,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeConfigBackup,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
+		JobTypeStackStart,
 		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
@@ -7628,6 +7630,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
 	case JobTypeContainerRecreate:
+		return []byte(s), nil
+	case JobTypeStackStart:
 		return []byte(s), nil
 	case JobTypeAcmeIssue:
 		return []byte(s), nil
@@ -7721,6 +7725,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeContainerRecreate:
 		*s = JobTypeContainerRecreate
+		return nil
+	case JobTypeStackStart:
+		*s = JobTypeStackStart
 		return nil
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
@@ -15296,6 +15303,12 @@ type Stack struct {
 	Name        string        `json:"name"`
 	Template    StackTemplate `json:"template"`
 	InstalledAt time.Time     `json:"installedAt"`
+	// True once the stack's Compose text was saved by hand (`updateStack`), so the template's form must
+	// not silently overwrite it. A template install is not manually edited.
+	ManuallyEdited bool `json:"manuallyEdited"`
+	// The stored `docker-compose.yml` text. Returned by `getStack` and `updateStack` only, never by
+	// `listStacks`. The `.env` is never returned.
+	Compose OptString `json:"compose"`
 }
 
 // GetName returns the value of Name.
@@ -15313,6 +15326,16 @@ func (s *Stack) GetInstalledAt() time.Time {
 	return s.InstalledAt
 }
 
+// GetManuallyEdited returns the value of ManuallyEdited.
+func (s *Stack) GetManuallyEdited() bool {
+	return s.ManuallyEdited
+}
+
+// GetCompose returns the value of Compose.
+func (s *Stack) GetCompose() OptString {
+	return s.Compose
+}
+
 // SetName sets the value of Name.
 func (s *Stack) SetName(val string) {
 	s.Name = val
@@ -15326,6 +15349,16 @@ func (s *Stack) SetTemplate(val StackTemplate) {
 // SetInstalledAt sets the value of InstalledAt.
 func (s *Stack) SetInstalledAt(val time.Time) {
 	s.InstalledAt = val
+}
+
+// SetManuallyEdited sets the value of ManuallyEdited.
+func (s *Stack) SetManuallyEdited(val bool) {
+	s.ManuallyEdited = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *Stack) SetCompose(val OptString) {
+	s.Compose = val
 }
 
 // Ref: #/components/schemas/StackTemplate
@@ -17186,6 +17219,49 @@ func (s *UpdateShareRequest) SetSmb(val OptShareSMB) {
 // SetNfs sets the value of Nfs.
 func (s *UpdateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
+}
+
+// Ref: #/components/schemas/UpdateStackRequest
+type UpdateStackRequest struct {
+	// The new `docker-compose.yml` text.
+	Compose string `json:"compose"`
+}
+
+// GetCompose returns the value of Compose.
+func (s *UpdateStackRequest) GetCompose() string {
+	return s.Compose
+}
+
+// SetCompose sets the value of Compose.
+func (s *UpdateStackRequest) SetCompose(val string) {
+	s.Compose = val
+}
+
+// Ref: #/components/schemas/UpdateStackResult
+type UpdateStackResult struct {
+	// False for a `dryRun`, which changes nothing.
+	Applied bool  `json:"applied"`
+	Stack   Stack `json:"stack"`
+}
+
+// GetApplied returns the value of Applied.
+func (s *UpdateStackResult) GetApplied() bool {
+	return s.Applied
+}
+
+// GetStack returns the value of Stack.
+func (s *UpdateStackResult) GetStack() Stack {
+	return s.Stack
+}
+
+// SetApplied sets the value of Applied.
+func (s *UpdateStackResult) SetApplied(val bool) {
+	s.Applied = val
+}
+
+// SetStack sets the value of Stack.
+func (s *UpdateStackResult) SetStack(val Stack) {
+	s.Stack = val
 }
 
 // Ref: #/components/schemas/UpdateStatus

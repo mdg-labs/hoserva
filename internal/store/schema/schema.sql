@@ -767,7 +767,10 @@ CREATE TABLE restore_drill_result (
 -- .env text sealed under the machine key (Q28): it holds the template's
 -- generated secrets, so it is never stored in the clear. template_source,
 -- template_id and template_revision are empty for a stack no template
--- installed. installed_at is when the row was created.
+-- installed. installed_at is when the row was created. manually_edited is
+-- 1 once the Compose text was saved through updateStack (#517, doc 03
+-- §5.6), so a template form never silently overwrites it; a template
+-- install writes 0.
 CREATE TABLE stacks (
     name TEXT PRIMARY KEY,
     template_source TEXT NOT NULL,
@@ -775,7 +778,8 @@ CREATE TABLE stacks (
     template_revision TEXT NOT NULL,
     compose TEXT NOT NULL,
     env BLOB NOT NULL,
-    installed_at TEXT NOT NULL
+    installed_at TEXT NOT NULL,
+    manually_edited INTEGER NOT NULL DEFAULT 0 CHECK (manually_edited IN (0, 1))
 ) STRICT;
 
 -- The last update check's result per image (#71, doc 04 §6): one row per

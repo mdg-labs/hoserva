@@ -912,6 +912,7 @@
       "config_backup": "Config backup",
       "container_update": "Container update",
       "container_recreate": "Container recreate",
+      "stack_start": "Start or recreate app stack",
       "acme_issue": "Certificate issue",
       "vm_start": "Start VM",
       "vm_stop": "Stop VM",

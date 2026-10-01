@@ -669,6 +669,115 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	{
+		op:   "UpdateStack",
+		name: "valid_edit_marks_the_stack_manually_edited",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: "services:\n  web:\n    image: nginx:1.28\n"}, apiv1.UpdateStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStack",
+		name: "valid_dry_run",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: "services: {}\n"}, apiv1.UpdateStackParams{Name: "nginx", DryRun: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStack",
+		name: "a_file_compose_rejects_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: "services: [\n"}, apiv1.UpdateStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStack",
+		name: "an_invalid_file_is_refused_by_a_dry_run_too",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: "services: [\n"}, apiv1.UpdateStackParams{Name: "nginx", DryRun: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStack",
+		name: "empty_compose_is_rejected_before_the_stack_is_looked_up",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: " \n"}, apiv1.UpdateStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStack",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: "services: {}\n"}, apiv1.UpdateStackParams{Name: "../etc"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStack",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStack(ctx, &apiv1.UpdateStackRequest{Compose: "services: {}\n"}, apiv1.UpdateStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "StartStack",
+		name: "valid_queues_a_job",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.StartStack(ctx, apiv1.StartStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "StartStack",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartStack(ctx, apiv1.StartStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	{
+		op:   "StartStack",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartStack(ctx, apiv1.StartStackParams{Name: "../etc"})
+			return err
+		},
+	},
+	{
+		op:   "StartStack",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartStack(ctx, apiv1.StartStackParams{Name: "nginx"})
+			return err
+		},
+	},
 	// --- Template install (#280) ---
 	{
 		op:   "PreviewTemplateInstall",
