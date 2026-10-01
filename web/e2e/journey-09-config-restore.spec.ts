@@ -33,6 +33,7 @@ const adminUsername = process.env.HOSERVA_E2E_USERNAME ?? "hoserva-l3";
 const adminPassword = process.env.HOSERVA_E2E_PASSWORD ?? "hoserva-l3-suite-password";
 
 const TEMP_ADMIN = { username: "journey9-temp-admin", password: "journey9-temporary-password" };
+const JOURNEY_PASSPHRASE = "journey9-backup-passphrase";
 const JOURNEY_SHARE = "journey9share";
 const JOURNEY_USER = "journey9viewer";
 const JOURNEY_CHAIN = { startTime: "04:19", weeklyScrubDay: 5 };
@@ -164,8 +165,11 @@ function restoreErrorBanners(card: Locator): Locator {
   return card.getByRole("alert").filter({ hasNotText: new RegExp(informational.map(escapeRegExp).join("|")) });
 }
 
-async function previewArchive(card: Locator, archive: string): Promise<void> {
+async function previewArchive(card: Locator, archive: string, passphrase = ""): Promise<void> {
   await card.getByLabel(catalogString("settings.backup.restore.archive"), { exact: true }).setInputFiles(archive);
+  if (passphrase !== "") {
+    await card.getByLabel(catalogString("settings.backup.restore.passphrase"), { exact: true }).fill(passphrase);
+  }
   await card.getByRole("button", { name: catalogString("settings.backup.restore.previewAction"), exact: true }).click();
   await expectOutcome(
     card.getByText(catalogString("settings.backup.restore.preview.archiveTitle"), { exact: true }),
@@ -182,6 +186,27 @@ async function restoredCounts(card: Locator, category: string): Promise<{ added:
   const cells = await tableRow(card, category).getByRole("cell").allInnerTexts();
   expect(cells, `the restore report has no row for "${category}"`).toHaveLength(4);
   return { added: Number(cells[1]), changed: Number(cells[2]), removed: Number(cells[3]) };
+}
+
+// setBackupPassphrase sets the backup passphrase through /settings/backup, so
+// the archive exported afterwards carries secrets.age and identity.age; a
+// failed save is asserted as the overlay's own error banner.
+async function setBackupPassphrase(page: Page, passphrase: string): Promise<void> {
+  await page.goto("/settings/backup");
+  await expect(
+    page.getByText(catalogString("settings.backup.config.passphraseNotSet"), { exact: true }),
+    "expected the source box to have no backup passphrase before the journey sets one",
+  ).toBeVisible();
+  await page.getByRole("button", { name: catalogString("settings.backup.config.setPassphrase"), exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: catalogString("settings.backup.passphrase.setTitle") });
+  await dialog.getByLabel(catalogString("settings.backup.passphrase.passphrase"), { exact: true }).fill(passphrase);
+  await dialog.getByLabel(catalogString("settings.backup.passphrase.confirm"), { exact: true }).fill(passphrase);
+  await dialog.getByRole("button", { name: catalogString("settings.backup.passphrase.save"), exact: true }).click();
+  await expectOutcome(
+    page.getByText(catalogString("settings.backup.config.passphraseSet"), { exact: true }),
+    dialog.getByRole("alert").filter({ hasText: catalogString("settings.backup.passphrase.saveFailed") }),
+    "setting the backup passphrase",
+  );
 }
 
 // exportConfigArchive downloads the config archive from /settings/backup and
@@ -255,6 +280,7 @@ test("config export, fresh install and restore through the UI", async ({ browser
   expect(JSON.stringify(before)).toContain(JOURNEY_JOB.time);
   expect((before.settings as Json).timezone).toBe(journeyTimezone);
 
+  await setBackupPassphrase(page, JOURNEY_PASSPHRASE);
   const archivePath = await exportConfigArchive(page, testInfo.outputPath("config-export.tar.zst"));
 
   // The harness replaces the OS disk and installs Hoserva fresh.
@@ -330,7 +356,16 @@ test("config export, fresh install and restore through the UI", async ({ browser
       "an unreadable archive must show the preview's error banner",
     ).toBeVisible();
 
-    await previewArchive(card, archivePath);
+    // The box has nothing to seal (no apps, no secret-bearing destinations), so
+    // the archive carries identity.age but no secrets.age and the preview, which
+    // reports only secrets.age, reads "no secrets section". identity.age is
+    // checked by the restore report's nothingLeftOut and the restored box's
+    // passphraseSet.
+    await previewArchive(card, archivePath, JOURNEY_PASSPHRASE);
+    await expect(
+      card.getByText(catalogString("settings.backup.restore.secrets.statuses.none"), { exact: true }),
+      "an archive of a box with nothing to seal has no secrets section",
+    ).toBeVisible();
 
     for (const share of before.shares as Json[]) {
       await expect(
@@ -398,6 +433,13 @@ test("config export, fresh install and restore through the UI", async ({ browser
     // The temporary admin no longer exists.
     const tempLogin = await request.post("/api/v1/auth/login", { data: TEMP_ADMIN });
     expect(tempLogin.status(), "the temporary onboarding admin must no longer be able to sign in").toBe(401);
+
+    // The archive's backup passphrase is the restored box's own.
+    await fresh.goto("/settings/backup");
+    await expect(
+      fresh.getByText(catalogString("settings.backup.config.passphraseSet"), { exact: true }),
+      "the restored box must have the archive's backup passphrase set",
+    ).toBeVisible();
 
     // The array comes up.
     await expect
