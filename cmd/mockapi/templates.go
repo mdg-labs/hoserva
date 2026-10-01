@@ -137,6 +137,9 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 	if strings.TrimSpace(n.Compose) == "" {
 		return container.Stack{}, fmt.Errorf("%w: the compose file is empty", container.ErrInvalidStack)
 	}
+	if names := container.ReservedEnvDefined(n.Env); len(names) > 0 {
+		return container.Stack{}, fmt.Errorf("%w: %s", container.ErrReservedEnvName, strings.Join(names, ", "))
+	}
 	m.h.stacksMu.Lock()
 	defer m.h.stacksMu.Unlock()
 	if _, ok := m.h.stacks[n.Name]; ok {
@@ -191,6 +194,8 @@ func mapMockTemplateError(name string, err error) error {
 		return &mockError{code: "invalid_stack_name", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrInvalidStack):
 		return &mockError{code: "invalid_stack", statusCode: 400, message: err.Error()}
+	case errors.Is(err, container.ErrReservedEnvName):
+		return &mockError{code: "invalid_stack_env", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrStackExists):
 		return &mockError{code: "stack_exists", statusCode: 409, message: fmt.Sprintf("a stack named %q already exists", name)}
 	}

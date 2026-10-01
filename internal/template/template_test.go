@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mdg-labs/hoserva/internal/container"
 )
 
 var update = flag.Bool("update", false, "rewrite schema/v1.json from the Go definition")
@@ -165,6 +167,24 @@ func TestLintReportsMalformedTemplates(t *testing.T) {
 				t.Errorf("finding does not name its file: %q", got[0])
 			}
 		})
+	}
+}
+
+func TestLintRefusesAnInputNamedLikeAReservedDockerVariable(t *testing.T) {
+	for _, name := range container.ReservedEnvNames() {
+		t.Run(name, func(t *testing.T) {
+			src := strings.Replace(readFixture(t), "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: ${"+name+"}", 1)
+			src = strings.Replace(src, "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    "+name+": { kind: string, default: x }", 1)
+			got := strings.Join(lintStrings(t, catalogFrom(t, "jellyfin", src)), "\n")
+			want := "x-hoserva.inputs." + name + ": " + name + " is a variable Docker takes from the daemon's environment"
+			if !strings.Contains(got, want) {
+				t.Fatalf("findings do not mention %q:\n%s", want, got)
+			}
+		})
+	}
+	src := strings.Replace(readFixture(t), "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    MYPATH: { kind: string, optional: true }", 1)
+	if got := strings.Join(lintStrings(t, catalogFrom(t, "jellyfin", src)), "\n"); strings.Contains(got, "Docker takes from") {
+		t.Errorf("an input that only contains a reserved name was refused:\n%s", got)
 	}
 }
 

@@ -234,7 +234,10 @@ type Invoker interface {
 	// overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
 	// letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
 	// that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
-	// generated file behind.
+	// generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's
+	// environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+	// `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is
+	// stored or written, so Docker always runs with the daemon's own values for them.
 	//
 	// POST /stacks
 	CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error)
@@ -1037,10 +1040,13 @@ type Invoker interface {
 	// `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
 	// input the template marks `optional` may be left empty and is written to `.env` with an empty value);
 	// a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
-	// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
-	// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
-	// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
-	// with 503 `docker_unavailable`.
+	// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an
+	// input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`,
+	// `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
+	// `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host
+	// cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a
+	// conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503
+	// `docker_unavailable`.
 	//
 	// POST /templates/{id}/preview
 	PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error)
@@ -4076,7 +4082,10 @@ func (c *Client) sendCreateShare(ctx context.Context, request *CreateShareReques
 // overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
 // letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
 // that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
-// generated file behind.
+// generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's
+// environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+// `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is
+// stored or written, so Docker always runs with the daemon's own values for them.
 //
 // POST /stacks
 func (c *Client) CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error) {
@@ -14797,10 +14806,13 @@ func (c *Client) sendPreviewConfigImport(ctx context.Context, request *PreviewCo
 // `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
 // input the template marks `optional` may be left empty and is written to `.env` with an empty value);
 // a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
-// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
-// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
-// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
-// with 503 `docker_unavailable`.
+// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an
+// input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`,
+// `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
+// `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host
+// cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a
+// conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503
+// `docker_unavailable`.
 //
 // POST /templates/{id}/preview
 func (c *Client) PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error) {

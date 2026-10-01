@@ -19,6 +19,10 @@ func errInvalidStackName(name string) error {
 	return &mockError{code: "invalid_stack_name", statusCode: 400, message: fmt.Sprintf("%s: %q", container.ErrInvalidStackName, name)}
 }
 
+func errReservedEnv(names []string) error {
+	return &mockError{code: "invalid_stack_env", statusCode: 400, message: fmt.Sprintf("%s: %s; Docker takes these from the daemon's environment", container.ErrReservedEnvName, strings.Join(names, ", "))}
+}
+
 func (h *handler) ListStacks(ctx context.Context) (*apiv1.ListStacksOK, error) {
 	h.stacksMu.Lock()
 	defer h.stacksMu.Unlock()
@@ -49,6 +53,9 @@ func (h *handler) CreateStack(ctx context.Context, req *apiv1.CreateStackRequest
 	}
 	if strings.TrimSpace(req.Compose) == "" {
 		return nil, &mockError{code: "invalid_stack", statusCode: 400, message: fmt.Sprintf("%s: the compose file is empty", container.ErrInvalidStack)}
+	}
+	if names := container.ReservedEnvDefined(req.Env.Or("")); len(names) > 0 {
+		return nil, errReservedEnv(names)
 	}
 	h.stacksMu.Lock()
 	defer h.stacksMu.Unlock()

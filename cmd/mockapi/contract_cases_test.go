@@ -579,6 +579,14 @@ var contractCases = []contractCase{
 	},
 	{
 		op:   "CreateStack",
+		name: "env_defining_a_reserved_docker_variable_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n", Env: apiv1.NewOptString("PATH=/stack/bin\n")})
+			return err
+		},
+	},
+	{
+		op:   "CreateStack",
 		name: "duplicate_name_is_a_conflict",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			req := &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}

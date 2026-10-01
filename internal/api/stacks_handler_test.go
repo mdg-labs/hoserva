@@ -102,6 +102,21 @@ func TestStacks_ComposeFailuresAre502AndLocalFailures500(t *testing.T) {
 	}
 }
 
+func TestStacks_CreateRefusesAnEnvThatDefinesAReservedNameWith400AndWritesNothing(t *testing.T) {
+	h, root := newStacksHandler(t)
+	ctx := context.Background()
+	_, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n", Env: apiv1.NewOptString("TOKEN=x\nPATH=/stack/bin\n")})
+	if status, code := statusOf(h, err); status != 400 || code != "invalid_stack_env" {
+		t.Fatalf("CreateStack with PATH in the .env = %d %q, want 400 invalid_stack_env", status, code)
+	}
+	if _, err := os.Stat(filepath.Join(root, "nginx")); err == nil {
+		t.Error("a refused stack has a directory")
+	}
+	if list, err := h.ListStacks(ctx); err != nil || len(list.Stacks) != 0 {
+		t.Errorf("ListStacks = %+v, %v, want none", list, err)
+	}
+}
+
 func TestStacks_ErrorsAreMappedAndAUnsafeNameDeletesNothing(t *testing.T) {
 	h, root := newStacksHandler(t)
 	ctx := context.Background()

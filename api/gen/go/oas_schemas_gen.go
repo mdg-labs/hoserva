@@ -4702,7 +4702,9 @@ type CreateStackRequest struct {
 	// The `docker-compose.yml` text.
 	Compose string `json:"compose"`
 	// The `.env` text. Write-only: it is stored sealed under the machine key and never returned. Absent
-	// means an empty `.env`.
+	// means an empty `.env`. It may not define `PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`,
+	// `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or `DOCKER_TLS_VERIFY`, which Docker takes
+	// from the daemon's environment (400 `invalid_stack_env`).
 	Env      OptString        `json:"env"`
 	Template OptStackTemplate `json:"template"`
 }

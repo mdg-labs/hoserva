@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,10 @@ var (
 	// ErrInvalidStack is returned by CreateStack when the Compose file is
 	// empty or `docker compose config` rejects it.
 	ErrInvalidStack = errors.New("container: invalid compose stack")
+	// ErrReservedEnvName is returned by Create when the stack's .env defines
+	// a variable Docker needs from the daemon's environment (PATH, HOME,
+	// DOCKER_HOST, ...). Nothing is written.
+	ErrReservedEnvName = errors.New("container: the .env defines a variable Docker reserves")
 	// ErrStackNotFound is returned when no stack has the name.
 	ErrStackNotFound = store.ErrStackNotFound
 	// ErrStackExists is returned by CreateStack when a stack has the name.
@@ -339,20 +344,43 @@ func (s *StackService) compose(ctx context.Context, timeout time.Duration, name 
 
 // composeEnvNames are the only variables of the daemon's environment a
 // Compose run gets: what the Docker CLI needs to find its plugins, its
-// credential helpers and the Engine.
+// credential helpers and the Engine. They are reserved: a stack's .env may
+// not define them (ErrReservedEnvName), so the daemon's values always reach
+// Docker.
 var composeEnvNames = []string{
 	"PATH", "HOME", "XDG_RUNTIME_DIR",
 	"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
+}
+
+// ReservedEnvNames returns the variable names a stack's .env, and so a
+// template input, may not use.
+func ReservedEnvNames() []string {
+	return append([]string(nil), composeEnvNames...)
+}
+
+// ReservedEnvDefined returns the reserved names the .env text defines, in
+// ReservedEnvNames order.
+func ReservedEnvDefined(env string) []string {
+	var out []string
+	for _, name := range composeEnvNames {
+		if envFileDefines([]byte(env), name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // composeEnv is the environment of a Compose run. Compose lets a variable of
 // its own environment override the same name in --env-file, and reads its own
 // settings (COMPOSE_PROJECT_NAME, COMPOSE_FILE, ...) from there, so the
 // daemon's environment is never passed on whole: the stack's .env, whose
-// values are recorded in the database, is what Compose interpolates. Of the
-// variables Docker needs, one the .env file also defines is left out, so the
-// stack's value wins and Docker falls back to its default for it. envFile is
-// the file --env-file names, or empty for a run without one.
+// values are recorded in the database, is what Compose interpolates. The
+// variables Docker needs are the daemon's own, and a .env cannot define them
+// since a stack is created. A stack stored before that rule whose .env still
+// defines one has the daemon's value left out of the run, so the stack's
+// value wins and Docker falls back to its default for it, and a warning is
+// logged. envFile is the file --env-file names, or empty for a run without
+// one.
 func composeEnv(envFile string) ([]string, error) {
 	var defined []byte
 	if envFile != "" {
@@ -365,7 +393,11 @@ func composeEnv(envFile string) ([]string, error) {
 	env := make([]string, 0, len(composeEnvNames))
 	for _, name := range composeEnvNames {
 		v, ok := os.LookupEnv(name)
-		if !ok || envFileDefines(defined, name) {
+		if envFileDefines(defined, name) {
+			log.Printf("container: %s defines %s, which Docker needs from the daemon's environment; the daemon's value is left out of this run. Create the stack again without it", envFile, name)
+			continue
+		}
+		if !ok {
 			continue
 		}
 		env = append(env, name+"="+v)
@@ -401,7 +433,9 @@ func (s *StackService) now() time.Time {
 
 // Create stores the stack's row (its .env sealed), generates its three
 // files into <Root>/<name> and checks them with `docker compose config`.
-// Nothing is started.
+// Nothing is started. A .env that defines a reserved variable (see
+// ReservedEnvNames) is refused as ErrReservedEnvName before anything is
+// stored or written.
 //
 // An existing plain directory of that name is adopted, so a stack removed
 // without its appdata can be installed again, but one that holds a
@@ -420,6 +454,9 @@ func (s *StackService) Create(ctx context.Context, n NewStack) (Stack, error) {
 	}
 	if strings.TrimSpace(n.Compose) == "" {
 		return Stack{}, fmt.Errorf("%w: the compose file is empty", ErrInvalidStack)
+	}
+	if names := ReservedEnvDefined(n.Env); len(names) > 0 {
+		return Stack{}, fmt.Errorf("%w: %s; Docker takes these from the daemon's environment", ErrReservedEnvName, strings.Join(names, ", "))
 	}
 	if err := s.checkRoot(); err != nil {
 		return Stack{}, err

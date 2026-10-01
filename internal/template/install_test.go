@@ -869,3 +869,25 @@ func TestAnEmptyOptionalInputInAPrivilegeKeyIsResolvedLikeAnyEmptyValue(t *testi
 		t.Fatalf("err = %v, want the empty value refused as not a boolean", err)
 	}
 }
+
+func TestInstallRefusesATemplateWhoseInputIsNamedLikeAReservedDockerVariable(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.ReadFile(filepath.Join(fixtureDir, "jellyfin", ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(src), "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: ${PATH}", 1)
+	text = strings.Replace(text, "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    PATH: { kind: string, default: /x }", 1)
+	if err := os.MkdirAll(filepath.Join(dir, "jellyfin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "jellyfin", ComposeFile), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in, stacks := newInstaller(t)
+	in.Catalog = DirCatalog{Root: dir, Source: SourceCurated}
+	_, _, err = in.Install(context.Background(), PlanRequest{ID: "jellyfin"})
+	if !errors.Is(err, ErrInvalidTemplate) || !strings.Contains(err.Error(), "PATH") || len(stacks.created) != 0 {
+		t.Fatalf("err = %v, created = %d, want ErrInvalidTemplate naming PATH and no stack", err, len(stacks.created))
+	}
+}
