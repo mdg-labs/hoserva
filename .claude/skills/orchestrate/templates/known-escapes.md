@@ -77,10 +77,11 @@ existing line by adding its PR number.
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228, 382
 - **ui-states** — a dialog, overlay or panel dismissable (Escape, backdrop, Cancel) while its request runs, so the later failure lands on a closed surface — PR 382
 - **drift** — a UI rule derived from one flow's backend contract (schema versions differ → no change groups) applied unchanged to a second flow whose backend does send that data, so the page hides what the server returned — PR 474
+- **drift** — a hand-kept web list of an API enum (notification event types) not extended when the spec gains a value, so the new value gets no settings row or label — PR 531
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
-- **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357, 527
+- **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357, 527, 531
 - **i18n** — a count-bearing catalog key with no `_one`/`_other` forms, so a count of one reads "1 files" — PR 370
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
