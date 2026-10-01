@@ -20,7 +20,7 @@ export GOFLAGS = -trimpath
 	dh $@ --buildsystem=none
 
 override_dh_auto_build:
-	$(MAKE) -C $(CURDIR) web-build
+	$(MAKE) -C $(CURDIR) web-build catalog-snapshot
 	GOARCH=$(DEB_HOST_ARCH) go build -o hoservad ./cmd/hoservad
 	GOARCH=$(DEB_HOST_ARCH) go build -o hoserva ./cmd/hoserva
 

@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -300,7 +300,22 @@ web-check-outbound: web-build
 web-scan-outbound:
 	scripts/devenv/check-web-outbound.sh web/dist
 
-build: web-build
+# The curated catalog archive pinned in scripts/devenv/catalog.pin is fetched
+# from its immutable catalog release, checked against the pin and the
+# compiled-in catalog key, and placed where internal/template embeds it
+# (Q65, doc 04 §7). It fails — leaving nothing in internal/template/snapshot/
+# — on a download failure, a pin mismatch or a bad signature, so `build`
+# never ships the placeholder. Every Go build or test that ships or runs the
+# daemon depends on it.
+catalog-snapshot:
+	scripts/devenv/catalog-snapshot.sh
+
+# Fixture test for catalog-snapshot.sh's refusals (a failed download, a pin
+# mismatch, a bad signature); it never reaches the network.
+catalog-snapshot-test: catalog-snapshot
+	scripts/devenv/test-catalog-snapshot.sh
+
+build: web-build catalog-snapshot
 	@mkdir -p $(BIN_DIR)
 	@for cmd in $(CMDS); do \
 		echo "building $$cmd"; \
@@ -339,7 +354,7 @@ GO_PACKAGES = $$($(GO) list ./... | grep -v /node_modules/)
 # Go-only L1: CI's lint-and-unit job calls this so it does not also run
 # the web job's lint/test. Local `make test` / `make test-unit` still
 # include web-test (doc 06 §10).
-test-go:
+test-go: catalog-snapshot-test
 	CGO_ENABLED=0 $(GO) test $(GO_PACKAGES)
 
 test-unit: test-go

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"path/filepath"
 
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -13,6 +15,37 @@ import (
 // (doc 04 §7): /var/lib/hoserva/catalog on an installed system, the dev
 // daemon's own state directory otherwise.
 const catalogDirName = "catalog"
+
+// seedCatalog installs the curated catalog this build embeds as the on-disk
+// copy when there is none or the one there is older (doc 04 §7), so a fresh
+// install resolves its templates with no network. It runs the swap
+// recovery first, verifies the embedded signature against the compiled-in
+// catalog key every time, and leaves an equal or newer copy (a later refresh)
+// alone.
+func seedCatalog(stateDir string) error {
+	archive, sig, err := template.EmbeddedSnapshot()
+	if err != nil {
+		return err
+	}
+	store := template.CatalogStore{Dir: filepath.Join(stateDir, catalogDirName)}
+	if _, err := store.Seed(archive, sig); err != nil {
+		return fmt.Errorf("installing the embedded catalog snapshot: %w", err)
+	}
+	return nil
+}
+
+// startTemplates is what main.go calls: it seeds the on-disk catalog from
+// the embedded snapshot, then wires template install over it. A seed that
+// fails (a build with no snapshot, a snapshot that does not verify) is
+// logged and does not stop the daemon: whatever catalog an earlier start or
+// refresh left stays in use, and with none every template is
+// template_not_found.
+func startTemplates(handler *api.Handler, stateDir string, apps *appServices, shares func(ctx context.Context) ([]string, error)) {
+	if err := seedCatalog(stateDir); err != nil {
+		log.Printf("hoservad: %v — template installs use only the catalog already in %s", err, filepath.Join(stateDir, catalogDirName))
+	}
+	wireTemplateInstall(handler, stateDir, apps, shares)
+}
 
 // wireTemplateInstall is what main.go calls to make template install
 // reachable: /templates/{id}/preview and /install (Handler.TemplateInstall).

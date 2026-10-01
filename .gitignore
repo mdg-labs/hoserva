@@ -42,6 +42,14 @@ web/*.tsbuildinfo
 web/dist/*
 !web/dist/.gitkeep
 
+# internal/template/snapshot/ (the pinned catalog archive embedded via
+# internal/template/snapshot.go, Q65) is fetched by `make catalog-snapshot`
+# from scripts/devenv/catalog.pin, never committed. Its .gitkeep placeholder
+# is committed so `go:embed all:snapshot` has something to match on a clean
+# checkout that has never fetched it.
+internal/template/snapshot/*
+!internal/template/snapshot/.gitkeep
+
 # cmd/hoservad's --dev convenience (#22): database, machine key, TLS
 # certificate and job logs for a local dev run, never committed.
 .hoserva-dev/
