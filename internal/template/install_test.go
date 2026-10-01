@@ -562,7 +562,7 @@ func TestPrivilegedTemplateSurfacesEveryRequestInTheSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(privilegeKinds(plan.Privileges), "|")
-	want := "privileged:|host_network:|host_pid:host|host_cgroup:|device_cgroup_rules:c 189:* rmw|docker_socket:/var/run/docker.sock"
+	want := "privileged:|host_network:|host_pid:host|host_cgroup:|device_cgroup_rules:c 189:* rmw|added_capabilities:SYS_ADMIN|confinement_disabled:apparmor:unconfined|group_add:disk|docker_socket:/var/run/docker.sock"
 	if got != want {
 		t.Errorf("summary:\n got %s\nwant %s", got, want)
 	}
@@ -642,6 +642,35 @@ func TestPrivilegeSummaryIsReadFromTheComposeContent(t *testing.T) {
 		{"named volume bound inside the pool", "volumes:\n      - data:/d\nvolumes:\n  data:\n    driver_opts: { type: none, o: bind, device: /mnt/user/media }", "", ""},
 		{"named volume on a network share", "volumes:\n      - data:/d\nvolumes:\n  data:\n    driver_opts: { type: nfs, o: \"addr=10.0.0.2\", device: \":/export\" }", "", ""},
 		{"named volume without options", "volumes:\n      - data:/d\nvolumes:\n  data: {}", "", ""},
+		{"SYS_ADMIN added", "cap_add:\n      - SYS_ADMIN", "", "added_capabilities:SYS_ADMIN"},
+		{"a benign capability added", "cap_add: [NET_BIND_SERVICE]", "", "added_capabilities:NET_BIND_SERVICE"},
+		{"every added capability is listed", "cap_add: [NET_ADMIN, CHOWN]", "", "added_capabilities:NET_ADMIN, CHOWN"},
+		{"all capabilities added", "cap_add: [ALL]", "", "added_capabilities:ALL"},
+		{"a lone capability instead of a list", "cap_add: SYS_ADMIN", "", "added_capabilities:SYS_ADMIN"},
+		{"capability chosen by an input", "cap_add: [\"${CAP}\"]", "  inputs:\n    CAP: { kind: string, default: SYS_PTRACE }\n", "added_capabilities:SYS_PTRACE"},
+		{"capability from an empty optional input", "cap_add: [\"${CAP}\"]", "  inputs:\n    CAP: { kind: string, optional: true }\n", ""},
+		{"no capability added", "cap_add: []", "", ""},
+		{"capabilities dropped", "cap_drop: [ALL]", "", ""},
+		{"apparmor unconfined", "security_opt: [apparmor:unconfined]", "", "confinement_disabled:apparmor:unconfined"},
+		{"apparmor unconfined with an equals sign", "security_opt: [apparmor=unconfined]", "", "confinement_disabled:apparmor=unconfined"},
+		{"apparmor unconfined in capitals", "security_opt: [\"APPARMOR:UNCONFINED\"]", "", "confinement_disabled:APPARMOR:UNCONFINED"},
+		{"seccomp unconfined", "security_opt:\n      - seccomp:unconfined", "", "confinement_disabled:seccomp:unconfined"},
+		{"selinux labelling disabled", "security_opt: [label:disable]", "", "confinement_disabled:label:disable"},
+		{"no-new-privileges off", "security_opt: [no-new-privileges:false]", "", "confinement_disabled:no-new-privileges:false"},
+		{"unmasked system paths", "security_opt: [systempaths=unconfined]", "", "confinement_disabled:systempaths=unconfined"},
+		{"a seccomp profile the summary cannot read", "security_opt: [seccomp:/etc/allow-all.json]", "", "confinement_disabled:seccomp:/etc/allow-all.json"},
+		{"an selinux label", "security_opt: [label:type:spc_t]", "", "confinement_disabled:label:type:spc_t"},
+		{"a security option the summary does not know", "security_opt: [future-option:on]", "", "confinement_disabled:future-option:on"},
+		{"no-new-privileges on", "security_opt: [no-new-privileges:true]", "", ""},
+		{"no-new-privileges bare", "security_opt: [no-new-privileges]", "", ""},
+		{"a named apparmor profile", "security_opt: [apparmor:docker-default]", "", ""},
+		{"only the weakening options are listed", "security_opt: [no-new-privileges:true, seccomp:unconfined, apparmor:unconfined]", "", "confinement_disabled:seccomp:unconfined, apparmor:unconfined"},
+		{"confinement disabled by an input", "security_opt: [\"${OPT}\"]", "  inputs:\n    OPT: { kind: string, default: \"seccomp:unconfined\" }\n", "confinement_disabled:seccomp:unconfined"},
+		{"confinement option from an empty optional input", "security_opt: [\"${OPT}\"]", "  inputs:\n    OPT: { kind: string, optional: true }\n", ""},
+		{"sysctls", "sysctls:\n      net.ipv4.ip_forward: \"1\"", "", ""},
+		{"extra groups", "group_add: [video, \"44\"]", "", "group_add:video, 44"},
+		{"an extra group as a number", "group_add:\n      - 44", "", "group_add:44"},
+		{"every kind in one service", "cap_add: [SYS_ADMIN]\n    security_opt: [apparmor:unconfined]\n    group_add: [disk]", "", "added_capabilities:SYS_ADMIN|confinement_disabled:apparmor:unconfined|group_add:disk"},
 		{"raw disk as a device", "devices:\n      - /dev/sda:/dev/sda", "", "host_path:/dev/sda"},
 		{"device in a long entry", "devices:\n      - { source: /dev/sdb, target: /dev/sdb }", "", "host_path:/dev/sdb"},
 		{"device chosen by an input", "devices:\n      - ${DEV}:/dev/x:rwm", "  inputs:\n    DEV: { kind: string, default: /dev/nvme0n1 }\n", "host_path:/dev/nvme0n1"},

@@ -30817,6 +30817,12 @@ func (s *TemplatePrivilegeKind) Decode(d *jx.Decoder) error {
 		*s = TemplatePrivilegeKindHostCgroup
 	case TemplatePrivilegeKindDeviceCgroupRules:
 		*s = TemplatePrivilegeKindDeviceCgroupRules
+	case TemplatePrivilegeKindAddedCapabilities:
+		*s = TemplatePrivilegeKindAddedCapabilities
+	case TemplatePrivilegeKindConfinementDisabled:
+		*s = TemplatePrivilegeKindConfinementDisabled
+	case TemplatePrivilegeKindGroupAdd:
+		*s = TemplatePrivilegeKindGroupAdd
 	case TemplatePrivilegeKindDockerSocket:
 		*s = TemplatePrivilegeKindDockerSocket
 	case TemplatePrivilegeKindHostPath:

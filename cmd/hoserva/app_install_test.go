@@ -24,6 +24,8 @@ func testInstallPlan() apiv1.TemplateInstallPlan {
 		Privileges: []apiv1.TemplatePrivilege{
 			{Kind: apiv1.TemplatePrivilegeKindPrivileged, Service: "agent", Description: "Runs with full access to the server."},
 			{Kind: apiv1.TemplatePrivilegeKindDockerSocket, Service: "agent", Detail: apiv1.NewOptString("/var/run/docker.sock"), Description: "Can control Docker itself."},
+			{Kind: apiv1.TemplatePrivilegeKindAddedCapabilities, Service: "agent", Detail: apiv1.NewOptString("SYS_ADMIN"), Description: "Is given extra Linux capabilities."},
+			{Kind: apiv1.TemplatePrivilegeKindConfinementDisabled, Service: "agent", Detail: apiv1.NewOptString("apparmor:unconfined"), Description: "Switches off part of the container's confinement."},
 		},
 		Compose: "services: {}\n",
 	}
@@ -59,6 +61,8 @@ func TestAppInstallSendsTheNameAndValuesAndPrintsEveryPrivilege(t *testing.T) {
 		"WEBUI_PORT: 8097 (port 8096 is already in use",
 		"- privileged (service agent): Runs with full access to the server.",
 		"- docker_socket /var/run/docker.sock (service agent): Can control Docker itself.",
+		"- added_capabilities SYS_ADMIN (service agent): Is given extra Linux capabilities.",
+		"- confinement_disabled apparmor:unconfined (service agent): Switches off part of the container's confinement.",
 	} {
 		if !strings.Contains(printed, want) {
 			t.Errorf("output lacks %q:\n%s", want, printed)
@@ -98,7 +102,7 @@ func TestAppInstallJSONEmitsTheResultWithItsPrivileges(t *testing.T) {
 			Privileges []struct{ Kind string } `json:"privileges"`
 		} `json:"plan"`
 	}
-	if err := json.Unmarshal([]byte(printed), &out); err != nil || len(out.Plan.Privileges) != 2 {
+	if err := json.Unmarshal([]byte(printed), &out); err != nil || len(out.Plan.Privileges) != 4 {
 		t.Errorf("output %q: %v", printed, err)
 	}
 }

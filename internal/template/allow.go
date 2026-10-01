@@ -14,19 +14,20 @@ import (
 var topLevelKeys = setOf("services", "volumes", "networks", "name")
 
 // serviceKeys: the first group reaches nothing on the host beyond the
-// container itself; the second is read by the privilege summary or checked
-// below.
+// container itself (sysctls are the namespaced ones Docker applies inside the
+// container's own namespaces and refuses in a host one); the second is read by
+// the privilege summary or checked below.
 var serviceKeys = setOf(
 	"image", "command", "entrypoint", "environment", "restart", "healthcheck", "labels",
 	"user", "working_dir", "container_name", "hostname", "domainname", "depends_on", "links",
 	"logging", "stop_signal", "stop_grace_period", "tty", "stdin_open", "init", "read_only",
 	"tmpfs", "ulimits", "mem_limit", "memswap_limit", "mem_reservation", "cpus", "cpuset",
 	"cpu_shares", "pids_limit", "shm_size", "expose", "ports", "networks", "dns", "dns_search",
-	"extra_hosts", "sysctls", "security_opt", "cap_add", "cap_drop", "group_add", "runtime",
+	"extra_hosts", "sysctls", "cap_drop", "runtime",
 	"platform", "pull_policy", "ipc", "deploy",
 
 	"privileged", "network_mode", "pid", "cgroup", "device_cgroup_rules", "devices", "volumes",
-	"volumes_from", "extends", "env_file",
+	"volumes_from", "extends", "env_file", "cap_add", "security_opt", "group_add",
 )
 
 var (

@@ -7,6 +7,9 @@ services:
     network_mode: host
     pid: host
     cgroup: host
+    cap_add: [SYS_ADMIN]
+    security_opt: [apparmor:unconfined]
+    group_add: [disk]
     device_cgroup_rules:
       - "c 189:* rmw"
     volumes:

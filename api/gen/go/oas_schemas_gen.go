@@ -15226,8 +15226,8 @@ type TemplatePrivilege struct {
 	Kind TemplatePrivilegeKind `json:"kind"`
 	// The Compose service that asks for it.
 	Service string `json:"service"`
-	// The path, process namespace or rules concerned; absent for `privileged`, `host_network` and
-	// `host_cgroup`.
+	// The path, process namespace, rules, capabilities, security options or groups concerned,
+	// comma-separated when there are several; absent for `privileged`, `host_network` and `host_cgroup`.
 	Detail OptString `json:"detail"`
 	// Plain-language explanation of what it grants.
 	Description string `json:"description"`
@@ -15276,13 +15276,16 @@ func (s *TemplatePrivilege) SetDescription(val string) {
 type TemplatePrivilegeKind string
 
 const (
-	TemplatePrivilegeKindPrivileged        TemplatePrivilegeKind = "privileged"
-	TemplatePrivilegeKindHostNetwork       TemplatePrivilegeKind = "host_network"
-	TemplatePrivilegeKindHostPid           TemplatePrivilegeKind = "host_pid"
-	TemplatePrivilegeKindHostCgroup        TemplatePrivilegeKind = "host_cgroup"
-	TemplatePrivilegeKindDeviceCgroupRules TemplatePrivilegeKind = "device_cgroup_rules"
-	TemplatePrivilegeKindDockerSocket      TemplatePrivilegeKind = "docker_socket"
-	TemplatePrivilegeKindHostPath          TemplatePrivilegeKind = "host_path"
+	TemplatePrivilegeKindPrivileged          TemplatePrivilegeKind = "privileged"
+	TemplatePrivilegeKindHostNetwork         TemplatePrivilegeKind = "host_network"
+	TemplatePrivilegeKindHostPid             TemplatePrivilegeKind = "host_pid"
+	TemplatePrivilegeKindHostCgroup          TemplatePrivilegeKind = "host_cgroup"
+	TemplatePrivilegeKindDeviceCgroupRules   TemplatePrivilegeKind = "device_cgroup_rules"
+	TemplatePrivilegeKindAddedCapabilities   TemplatePrivilegeKind = "added_capabilities"
+	TemplatePrivilegeKindConfinementDisabled TemplatePrivilegeKind = "confinement_disabled"
+	TemplatePrivilegeKindGroupAdd            TemplatePrivilegeKind = "group_add"
+	TemplatePrivilegeKindDockerSocket        TemplatePrivilegeKind = "docker_socket"
+	TemplatePrivilegeKindHostPath            TemplatePrivilegeKind = "host_path"
 )
 
 // AllValues returns all TemplatePrivilegeKind values.
@@ -15293,6 +15296,9 @@ func (TemplatePrivilegeKind) AllValues() []TemplatePrivilegeKind {
 		TemplatePrivilegeKindHostPid,
 		TemplatePrivilegeKindHostCgroup,
 		TemplatePrivilegeKindDeviceCgroupRules,
+		TemplatePrivilegeKindAddedCapabilities,
+		TemplatePrivilegeKindConfinementDisabled,
+		TemplatePrivilegeKindGroupAdd,
 		TemplatePrivilegeKindDockerSocket,
 		TemplatePrivilegeKindHostPath,
 	}
@@ -15310,6 +15316,12 @@ func (s TemplatePrivilegeKind) MarshalText() ([]byte, error) {
 	case TemplatePrivilegeKindHostCgroup:
 		return []byte(s), nil
 	case TemplatePrivilegeKindDeviceCgroupRules:
+		return []byte(s), nil
+	case TemplatePrivilegeKindAddedCapabilities:
+		return []byte(s), nil
+	case TemplatePrivilegeKindConfinementDisabled:
+		return []byte(s), nil
+	case TemplatePrivilegeKindGroupAdd:
 		return []byte(s), nil
 	case TemplatePrivilegeKindDockerSocket:
 		return []byte(s), nil
@@ -15337,6 +15349,15 @@ func (s *TemplatePrivilegeKind) UnmarshalText(data []byte) error {
 		return nil
 	case TemplatePrivilegeKindDeviceCgroupRules:
 		*s = TemplatePrivilegeKindDeviceCgroupRules
+		return nil
+	case TemplatePrivilegeKindAddedCapabilities:
+		*s = TemplatePrivilegeKindAddedCapabilities
+		return nil
+	case TemplatePrivilegeKindConfinementDisabled:
+		*s = TemplatePrivilegeKindConfinementDisabled
+		return nil
+	case TemplatePrivilegeKindGroupAdd:
+		*s = TemplatePrivilegeKindGroupAdd
 		return nil
 	case TemplatePrivilegeKindDockerSocket:
 		*s = TemplatePrivilegeKindDockerSocket

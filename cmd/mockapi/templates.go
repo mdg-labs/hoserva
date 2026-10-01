@@ -79,6 +79,8 @@ x-hoserva:
     image: registry.example.com/agent/agent:1.0.0
     privileged: true
     network_mode: host
+    cap_add: [SYS_ADMIN]
+    security_opt: [apparmor:unconfined]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${APPDATA}/agent:/config

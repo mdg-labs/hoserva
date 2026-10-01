@@ -158,16 +158,16 @@ Arbitrary `docker run` flags as a raw string. Approach:
 | `--user` | `user` | |
 | `--workdir` | `working_dir` | |
 | `--hostname` | `hostname` | |
-| `--group-add` | `group_add` | |
+| `--group-add` | `group_add` | Every added group is a privilege-summary item |
 | `--entrypoint` | `entrypoint` | A static override shown in the side-by-side review like any other field. Docker takes the value as one executable, never split on spaces, so it becomes a one-element list (`/opt/my app/start` → `["/opt/my app/start"]`); an empty value, which clears the image's entrypoint, becomes `entrypoint: []`. Arguments stay in `<PostArgs>` → `command` |
 | `--interactive` | `stdin_open` | |
 | `--tty` | `tty` | |
 | `--init` | `init` | |
 | `--read-only` | `read_only` | |
 | `--device` | `devices` | |
-| `--cap-add` | `cap_add` | |
+| `--cap-add` | `cap_add` | Every added capability is a privilege-summary item |
 | `--cap-drop` | `cap_drop` | |
-| `--security-opt` | `security_opt` | |
+| `--security-opt` | `security_opt` | An option that switches off or replaces confinement is a privilege-summary item |
 | `--sysctl` | `sysctls` | |
 | `--ulimit` | `ulimits` | |
 | `--dns` | `dns` | |
@@ -195,7 +195,7 @@ Arbitrary `docker run` flags as a raw string. Approach:
 - **Exact duplicate** — the whole normalized entry is identical: for a volume the host path, container path, access mode (`ro`/`rw`) and every other mount option; for a port the host bind address, host port, container port and protocol; for a variable the name and value. The `ExtraParams` copy is dropped and an informational note is shown.
 - **Same target, different value** — the same container path, container port and protocol, or variable name, with anything else in the entry different (a volume from a different host path or mounted `ro` instead of `rw`, a port on a different host port or bound to `127.0.0.1` instead of every address, a variable with a different value). Access mode and bind address change what the container may write and who can reach it, so they are never treated as a match. The `<Config>` entry is kept, the `ExtraParams` one is left out of the generated file, and the conflict is a review warning listing both. Conflicting values are never silently resolved, and the warning means the conversion is not clean.
 
-**Privilege-widening flags.** `--pid=host`, `--pid=container:…`, `--cgroupns=host` and every `--device-cgroup-rule` translate, and each is a privilege-summary item in the same way as `<Privileged>`: the summary is computed from the generated Compose content (Q64), so `pid`, `cgroup` and `device_cgroup_rules` are named in it beside privileged mode, host networking and the Docker socket (§7, doc 03 §5.3, doc 01 §7).
+**Privilege-widening flags.** `--pid=host`, `--pid=container:…`, `--cgroupns=host`, every `--device-cgroup-rule`, every `--cap-add`, every `--group-add` and a `--security-opt` that disables confinement translate, and each is a privilege-summary item in the same way as `<Privileged>`: the summary is computed from the generated Compose content (Q64), so `pid`, `cgroup`, `device_cgroup_rules`, `cap_add`, `group_add` and `security_opt` are named in it beside privileged mode, host networking and the Docker socket (§7, doc 03 §5.3, doc 01 §7).
 
 Flags outside the table — `--label`, `--env-file`, `--privileged`, `--cpu-shares`, `--stop-signal` and the rest — are unknown flags under step 3 until a later change to this table adds them.
 
@@ -280,7 +280,13 @@ x-hoserva:
 - **Optional inputs.** A `string` input may declare `optional: true`: it may be left empty, and an empty value is written to `.env` as `NAME=` instead of being refused. An optional input has no `default`, because an empty value would then be replaced by it, so it could never be left empty. Every other kind needs a value — a path, a port and a time zone always resolve to one, and a secret is generated — so `hoserva template lint` refuses `optional` on them. An empty optional input interpolated into a privilege-relevant key is resolved like any other empty value (a boolean key such as `privileged` refuses it).
 - **Secrets** (`kind: secret`) are generated at install time and written only to the stack's `.env`.
 - **`revision`** increases with every change to a template. An installed stack records the source, id and revision it came from (§2), which is what "template update available" compares against.
-- **The privilege summary is computed from the Compose content** (doc 01 §7) — privileged mode, host networking, the host PID namespace, the host cgroup namespace, device cgroup rules, the Docker socket, paths outside the pool — never declared by the template, so a template cannot understate what it asks for.
+- **The privilege summary is computed from the Compose content** (doc 01 §7) — privileged mode, host networking, the host PID namespace, the host cgroup namespace, device cgroup rules, added capabilities, disabled or replaced confinement, extra groups, the Docker socket, paths outside the pool — never declared by the template, so a template cannot understate what it asks for. The additional kinds, each with its Compose key, are:
+  - **`added_capabilities`** (`cap_add`): every added capability is reported, grouped into one item per service with the names in its detail, however benign (`NET_BIND_SERVICE`, `CHOWN`) or strong (`SYS_ADMIN`, `ALL`). The summary is computed facts, not a judgement; the install wizard tiers them (doc 03). `cap_drop` only narrows and is not reported.
+  - **`confinement_disabled`** (`security_opt`): `apparmor:unconfined`, `seccomp:unconfined`, `label:disable`, `no-new-privileges:false`, `systempaths=unconfined` (`:` or `=`, any case) and every option the summary cannot judge as harmless — a custom seccomp profile, an SELinux label, an option it does not know — are reported, one item per service listing them. Only `no-new-privileges` switched on and a named AppArmor profile are left out, because they keep or tighten confinement. An unrecognised option is reported, never read as harmless.
+  - **`group_add`**: every added group is reported (one item per service). A group gives the container the access that group has to the files and devices it can reach, so the group a template names is part of what it asks for. The GPU render group that install adds for a `device` input (Q82) is not part of the template and is not listed.
+  - **`sysctls`** are not reported: Docker accepts only namespaced sysctls and refuses them under host networking or a host IPC namespace, so they change the container's own namespaces and never the server's.
+
+  An entry that is empty once the install values are substituted — for example from an empty optional input — grants nothing and is left out.
 - **The schema is a versioned contract between two repositories.** The `x-hoserva` schema and its validator live in this repository (`internal/template/`), and Hoserva also publishes the schema as a versioned JSON Schema that third-party catalog authors can use too. The `schema:` number is the compatibility boundary, and a newer Hoserva keeps reading older schema versions.
 - **CI on every change to the catalog repository** runs Hoserva's own checker from a pinned Hoserva version — for example `hoserva template lint`, run through `go run …/cmd/hoserva@<pinned>` — and does not copy the rules. The checker covers the `x-hoserva` schema, path conventions and the privilege audit; the catalog CI adds `docker compose config` and image and tag existence, which need outside services and are the reason this CI does not gate a Hoserva release (doc 12 §7).
 

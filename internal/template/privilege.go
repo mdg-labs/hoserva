@@ -14,6 +14,9 @@ const (
 	PrivilegeHostPID          = "host_pid"
 	PrivilegeHostCgroup       = "host_cgroup"
 	PrivilegeDeviceCgroupRule = "device_cgroup_rules"
+	PrivilegeAddedCaps        = "added_capabilities"
+	PrivilegeNoConfinement    = "confinement_disabled"
+	PrivilegeGroupAdd         = "group_add"
 	PrivilegeDockerSocket     = "docker_socket"
 	PrivilegeHostPath         = "host_path"
 )
@@ -24,6 +27,9 @@ var privilegeDescriptions = map[string]string{
 	PrivilegeHostPID:          "Shares a process namespace with the server or another container, so it can see and signal those processes.",
 	PrivilegeHostCgroup:       "Shares the server's control-group view, so it can see how every process on the server is set up and limited.",
 	PrivilegeDeviceCgroupRule: "Is allowed to use whole classes of devices through cgroup rules, which can reach disks and other hardware.",
+	PrivilegeAddedCaps:        "Is given extra Linux capabilities, which let it do things an ordinary container is not allowed to, such as changing network settings or, with the strongest ones, administering the server.",
+	PrivilegeNoConfinement:    "Switches off or replaces part of the container's security confinement (AppArmor, seccomp, SELinux labelling, no-new-privileges or hidden system paths), which weakens what keeps it away from the rest of the server.",
+	PrivilegeGroupAdd:         "Joins extra groups, so it gets the access those groups have to the files and devices it can reach.",
 	PrivilegeDockerSocket:     "Can control Docker itself, which is the same as full control of the server.",
 	PrivilegeHostPath:         "Mounts a folder outside the storage pool and the cache, so it can read or change system files or disks.",
 }
@@ -44,10 +50,11 @@ var dockerSockets = []string{"/var/run/docker.sock", "/run/docker.sock"}
 
 // Privileges computes the privilege summary from the Compose content with
 // the install values substituted: privileged mode, host networking, the
-// host PID and cgroup namespaces, device cgroup rules, the Docker socket
-// and host paths outside the pool and cache, whether mounted by a volume, a
-// named volume's driver options or a devices entry. Services are in name
-// order.
+// host PID and cgroup namespaces, device cgroup rules, added capabilities,
+// disabled or replaced confinement, extra groups, the Docker socket and host
+// paths outside the pool and cache, whether mounted by a volume, a named
+// volume's driver options or a devices entry. sysctls are not reported (doc
+// 04 §7). Services are in name order.
 func (t *Template) Privileges(values map[string]string) []Privilege {
 	var out []Privilege
 	services := t.services()
@@ -94,6 +101,21 @@ func servicePrivileges(name string, svc, top map[string]any, values map[string]s
 		}
 		add(PrivilegeDeviceCgroupRule, strings.Join(parts, ", "))
 	}
+	if caps := entries(svc["cap_add"], values); len(caps) > 0 {
+		add(PrivilegeAddedCaps, strings.Join(caps, ", "))
+	}
+	var weakened []string
+	for _, opt := range entries(svc["security_opt"], values) {
+		if !confinementKept(opt) {
+			weakened = append(weakened, opt)
+		}
+	}
+	if len(weakened) > 0 {
+		add(PrivilegeNoConfinement, strings.Join(weakened, ", "))
+	}
+	if groups := entries(svc["group_add"], values); len(groups) > 0 {
+		add(PrivilegeGroupAdd, strings.Join(groups, ", "))
+	}
 	hostSource := func(src string) {
 		exact, holds := exposesDockerSocket(src)
 		if exact || holds {
@@ -121,6 +143,57 @@ func servicePrivileges(name string, svc, top map[string]any, values map[string]s
 		}
 	}
 	return out
+}
+
+// entries reads a list-valued service key (or a lone scalar in its place)
+// with the install values substituted, dropping entries that are empty after
+// substitution: an empty capability, group or option grants nothing and
+// Docker refuses to start with it.
+func entries(v any, values map[string]string) []string {
+	var raw []any
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []any:
+		raw = x
+	default:
+		raw = []any{x}
+	}
+	var out []string
+	for _, e := range raw {
+		s := fmt.Sprint(e)
+		if str, ok := e.(string); ok {
+			s = interpolate(str, values)
+		}
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// confinementKept reports whether a security_opt entry leaves the container's
+// confinement as strong as its defaults: no-new-privileges switched on, or a
+// named AppArmor profile that the host has loaded. Everything else — an
+// unconfined AppArmor or seccomp, label:disable, unmasked system paths, a
+// custom seccomp profile or SELinux label the summary cannot read, and any
+// option it does not know — is reported, never read as harmless.
+func confinementKept(opt string) bool {
+	i := strings.IndexAny(opt, ":=")
+	if i < 0 {
+		return strings.EqualFold(opt, "no-new-privileges")
+	}
+	key, val := strings.ToLower(opt[:i]), strings.TrimSpace(opt[i+1:])
+	switch key {
+	case "no-new-privileges":
+		switch strings.ToLower(val) {
+		case "true", "1", "t":
+			return true
+		}
+	case "apparmor":
+		return val != "" && !strings.EqualFold(val, "unconfined")
+	}
+	return false
 }
 
 // namedVolumeDevice returns the host path a named volume of the local driver

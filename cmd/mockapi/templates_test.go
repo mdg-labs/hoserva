@@ -42,7 +42,8 @@ func TestMockPreviewReportsThePrivilegesAndKeepsSecretsOut(t *testing.T) {
 	for _, p := range plan.Privileges {
 		kinds[p.Kind] = true
 	}
-	if !kinds[apiv1.TemplatePrivilegeKindPrivileged] || !kinds[apiv1.TemplatePrivilegeKindHostNetwork] || !kinds[apiv1.TemplatePrivilegeKindDockerSocket] {
+	if !kinds[apiv1.TemplatePrivilegeKindPrivileged] || !kinds[apiv1.TemplatePrivilegeKindHostNetwork] || !kinds[apiv1.TemplatePrivilegeKindDockerSocket] ||
+		!kinds[apiv1.TemplatePrivilegeKindAddedCapabilities] || !kinds[apiv1.TemplatePrivilegeKindConfinementDisabled] {
 		t.Errorf("privileges = %+v", plan.Privileges)
 	}
 	notes, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{}, apiv1.PreviewTemplateInstallParams{ID: "aio-notes"})

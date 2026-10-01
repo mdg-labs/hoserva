@@ -7163,6 +7163,12 @@ func (s TemplatePrivilegeKind) Validate() error {
 		return nil
 	case "device_cgroup_rules":
 		return nil
+	case "added_capabilities":
+		return nil
+	case "confinement_disabled":
+		return nil
+	case "group_add":
+		return nil
 	case "docker_socket":
 		return nil
 	case "host_path":
