@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -541,11 +543,16 @@ func containerActive(state string) bool {
 // records. A record stays when its tag could not be removed, to be tried
 // again, and an image a container still runs keeps its tag until none does.
 // The kept images of a revert that already happened have no tag left to
-// remove.
+// remove. A kept-image tag with no record at all, as after a config import or
+// a restore replaced the database, is removed too, unless a container runs
+// its image; when the images or containers cannot be listed, none is.
 func (u *Updater) Prune(ctx context.Context, out io.Writer) error {
 	if err := u.ready(); err != nil {
 		return err
 	}
+	// The images are read before the records: an update records the image
+	// before it tags it, so a tag seen here has its record in the read below.
+	images, imagesErr := u.Lifecycle.Provider.Images(ctx)
 	rows, err := u.History.ListImageHistory(ctx)
 	if err != nil {
 		return err
@@ -570,7 +577,74 @@ func (u *Updater) Prune(ctx context.Context, out io.Writer) error {
 			errs = append(errs, err)
 		}
 	}
+	if imagesErr != nil {
+		errs = append(errs, fmt.Errorf("listing images to find kept images without a record: %w", imagesErr))
+	} else if err := u.pruneOrphanedKeepTags(ctx, images, rows, out); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// pruneOrphanedKeepTags removes the kept-image tags no record names. Only a
+// tag of exactly the form KeepRef makes counts as Hoserva's own.
+func (u *Updater) pruneOrphanedKeepTags(ctx context.Context, images []Image, rows []store.ImageHistory, out io.Writer) error {
+	recorded := make(map[int64]bool, len(rows))
+	for _, h := range rows {
+		recorded[h.ID] = true
+	}
+	type orphan struct{ ref, imageID string }
+	var orphans []orphan
+	for _, img := range images {
+		for _, t := range img.RepoTags {
+			id, ok := keepTagID(t)
+			if ok && !recorded[id] {
+				orphans = append(orphans, orphan{ref: t, imageID: img.ID})
+			}
+		}
+	}
+	if len(orphans) == 0 {
+		return nil
+	}
+	containers, err := u.Lifecycle.Provider.List(ctx)
+	if err != nil {
+		return fmt.Errorf("listing containers to find kept images without a record: %w", err)
+	}
+	running := make(map[string]bool, len(containers))
+	for _, c := range containers {
+		running[c.ImageID] = true
+	}
+	var errs []error
+	for _, o := range orphans {
+		if running[o.imageID] {
+			_, _ = fmt.Fprintf(out, "%s has no update record but is kept: a container runs its image\n", o.ref)
+			continue
+		}
+		err := u.Lifecycle.Provider.UntagImage(ctx, o.ref)
+		switch {
+		case err == nil:
+			_, _ = fmt.Fprintf(out, "removed %s: it has no update record\n", o.ref)
+		case errors.Is(err, ErrImageNotFound):
+		case errors.Is(err, ErrImageInUse):
+			_, _ = fmt.Fprintf(out, "%s has no update record but is kept: a container runs its image\n", o.ref)
+		default:
+			errs = append(errs, fmt.Errorf("removing %s, which has no update record: %w", o.ref, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// keepTagID is the update record id a kept-image tag names, and false for any
+// tag that is not exactly KeepRef of one.
+func keepTagID(tag string) (int64, bool) {
+	rest, ok := strings.CutPrefix(tag, keepRepository+":")
+	if !ok {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || id <= 0 || KeepRef(id) != tag {
+		return 0, false
+	}
+	return id, true
 }
 
 // BulkSelection is what a bulk update would update and what it skips.

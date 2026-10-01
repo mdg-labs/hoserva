@@ -845,6 +845,70 @@ func TestPrune_ARevertedRecordWhoseTagIsGoneIsDropped(t *testing.T) {
 	}
 }
 
+func TestPrune_RemovesOnlyKeptTagsNoRecordNames(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	r.provider.AddImage(Image{ID: "sha256:orphan", RepoTags: []string{KeepRef(9)}})
+	r.provider.AddImage(Image{ID: "sha256:inuse", RepoTags: []string{KeepRef(8), "acme/app:1"}})
+	r.provider.AddContainer(Container{ID: "id-app", Name: "app", Image: "acme/app", Tag: "1", ImageID: "sha256:inuse", State: "running"})
+	r.provider.AddImage(Image{ID: "sha256:foreign", RepoTags: []string{"hoserva-previous:latest", "hoserva-previous:09", "hoserva-previous:0", "registry.example/hoserva-previous:3", "hoserva-previous-x:4"}})
+
+	var out bytes.Buffer
+	if err := r.u.Prune(context.Background(), &out); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	tags := r.tags(t)
+	if _, kept := tags[KeepRef(9)]; kept {
+		t.Errorf("the kept tag no record names was not removed: %v", tags)
+	}
+	if tags[KeepRef(1)] != imgOld || len(r.history.rows) != 1 {
+		t.Errorf("the tag of a record inside its keep period: tags %v, records %d, want it held", tags, len(r.history.rows))
+	}
+	if tags[KeepRef(8)] != "sha256:inuse" || !strings.Contains(out.String(), KeepRef(8)) {
+		t.Errorf("the tag no record names on an image a container runs: tags %v, output %q, want it kept and said", tags, out.String())
+	}
+	for _, tag := range []string{"hoserva-previous:latest", "hoserva-previous:09", "hoserva-previous:0", "registry.example/hoserva-previous:3", "hoserva-previous-x:4"} {
+		if tags[tag] != "sha256:foreign" {
+			t.Errorf("%s is not a tag Hoserva made, but it was removed: %v", tag, tags)
+		}
+	}
+	for _, c := range r.provider.Calls() {
+		if c.Op == "untag-image" && c.ID != KeepRef(9) {
+			t.Errorf("untagged %s, want only %s", c.ID, KeepRef(9))
+		}
+	}
+}
+
+func TestPrune_WithoutAReadableImageOrContainerListRemovesNoOrphan(t *testing.T) {
+	r := newUpdaterRig()
+	r.provider.AddImage(Image{ID: "sha256:orphan", RepoTags: []string{KeepRef(9)}})
+
+	r.provider.SetUnavailable(nil)
+	if err := r.u.Prune(context.Background(), io.Discard); err == nil {
+		t.Fatal("Prune with the images unreadable returned no error")
+	}
+
+	r = newUpdaterRig()
+	r.provider.AddImage(Image{ID: "sha256:orphan", RepoTags: []string{KeepRef(9)}})
+	r.u.Lifecycle.Provider = containersUnlistable{r.provider}
+	if err := r.u.Prune(context.Background(), io.Discard); err == nil {
+		t.Fatal("Prune with the containers unreadable returned no error")
+	}
+	if r.tags(t)[KeepRef(9)] != "sha256:orphan" {
+		t.Errorf("a tag was removed without knowing whether a container runs its image: %v", r.tags(t))
+	}
+}
+
+// containersUnlistable lists no containers: the Engine answers the image
+// listing but not the container one.
+type containersUnlistable struct{ *FakeProvider }
+
+func (containersUnlistable) List(context.Context) ([]Container, error) {
+	return nil, ErrUnavailable
+}
+
 func TestBulkTargets(t *testing.T) {
 	r := newUpdaterRig()
 	r.u.Statuses = fixedStatuses{
