@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -194,5 +195,66 @@ func TestCatalogListShowsTheLastCheckWhenThereWasOne(t *testing.T) {
 	}
 	if got := catalogListSummary(testCatalogList()); strings.Contains(got, "Last checked") {
 		t.Errorf("summary names a check that never ran:\n%s", got)
+	}
+}
+
+func TestCatalogSettingsWithNoFlagsReadsAndPutsNothing(t *testing.T) {
+	var requests []string
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		writeJSON(t, w, http.StatusOK, &apiv1.CatalogSettings{RefreshInterval: apiv1.CatalogRefreshInterval12h, CheckOnOpen: true})
+	})
+	printed, err := runAppCLI(t, sock, "--json", "catalog", "settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0] != "GET /api/v1/settings/catalog" {
+		t.Fatalf("requests = %v", requests)
+	}
+	if !strings.Contains(printed, `"refreshInterval": "12h"`) && !strings.Contains(printed, `"refreshInterval":"12h"`) {
+		t.Errorf("output lacks the interval:\n%s", printed)
+	}
+}
+
+func TestCatalogSettingsSendsOnlyTheFlagsGiven(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"interval only", []string{"--interval", "6h"}, `{"refreshInterval":"6h"}`},
+		{"check-on-open off only", []string{"--check-on-open=false"}, `{"checkOnOpen":false}`},
+		{"check-on-open on only", []string{"--check-on-open"}, `{"checkOnOpen":true}`},
+		{"both", []string{"--interval", "off", "--check-on-open=false"}, `{"refreshInterval":"off","checkOnOpen":false}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var method, path, body string
+			sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				method, path = r.Method, r.URL.Path
+				b, _ := io.ReadAll(r.Body)
+				body = string(b)
+				writeJSON(t, w, http.StatusOK, &apiv1.CatalogSettings{RefreshInterval: apiv1.CatalogRefreshInterval6h, CheckOnOpen: true})
+			})
+			if _, err := runAppCLI(t, sock, append([]string{"catalog", "settings"}, c.args...)...); err != nil {
+				t.Fatal(err)
+			}
+			if method != "PUT" || path != "/api/v1/settings/catalog" {
+				t.Fatalf("request = %s %s", method, path)
+			}
+			if strings.ReplaceAll(body, " ", "") != c.want {
+				t.Fatalf("body = %s, want %s", body, c.want)
+			}
+		})
+	}
+}
+
+func TestCatalogSettingsReportsAnIntervalTheDaemonRefuses(t *testing.T) {
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusBadRequest, &apiv1.Error{Code: "invalid_catalog_interval", Message: "the catalog refresh interval must be one of off, 1h, 6h, 12h, 24h"})
+	})
+	printed, err := runAppCLI(t, sock, "catalog", "settings", "--interval", "2h")
+	if err == nil || printed != "" {
+		t.Fatalf("printed %q, err %v, want an error and no output", printed, err)
 	}
 }

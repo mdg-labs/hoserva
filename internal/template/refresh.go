@@ -2,6 +2,8 @@ package template
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -74,9 +76,21 @@ type CheckResult struct {
 	Message   string
 }
 
+// Trigger is what started a check. A manual check always reports a
+// verification failure; an automatic one (the interval, check-on-open) does
+// not repeat a notification for a failure already raised.
+type Trigger int
+
+const (
+	TriggerManual Trigger = iota
+	TriggerInterval
+	TriggerOpen
+)
+
 // Refresher fetches the latest signed catalog and installs it into Store
 // (doc 04 §7). One check is one conditional request for the archive and, only
-// after a 200, one for its signature.
+// after a 200, one for its signature; a signature that fails verification
+// makes the check fetch the pair once more before it reports the failure.
 type Refresher struct {
 	Store CatalogStore
 	// URL is the directory the archive and signature are served from; empty
@@ -90,10 +104,14 @@ type Refresher struct {
 	Notify func(ctx context.Context, r CheckResult) error
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// Finished is called once with the result of every finished check,
+	// whatever started it. Nil calls nothing.
+	Finished func(r CheckResult)
 
-	mu     sync.Mutex
-	flight *checkFlight
-	last   *CheckResult
+	mu       sync.Mutex
+	flight   *checkFlight
+	last     *CheckResult
+	reported string
 }
 
 type checkFlight struct {
@@ -101,13 +119,19 @@ type checkFlight struct {
 	result CheckResult
 }
 
-// Refresh runs one check now. A call made while another check is running
-// shares that check's request and result, and the result is returned to every
-// caller. The error is only the caller's own context ending while it waited.
+// Refresh runs one manual check now. A call made while another check is
+// running shares that check's request and result, and the result is returned
+// to every caller. The error is only the caller's own context ending while it
+// waited.
 func (r *Refresher) Refresh(ctx context.Context) (CheckResult, error) {
-	r.mu.Lock()
-	if f := r.flight; f != nil {
-		r.mu.Unlock()
+	return r.Check(ctx, TriggerManual)
+}
+
+// Check is Refresh for a check started by trigger. Joining a check already
+// running leaves that check's own trigger in force.
+func (r *Refresher) Check(ctx context.Context, trigger Trigger) (CheckResult, error) {
+	f, leader := r.begin()
+	if !leader {
 		select {
 		case <-f.done:
 			return f.result, nil
@@ -115,10 +139,34 @@ func (r *Refresher) Refresh(ctx context.Context) (CheckResult, error) {
 			return CheckResult{}, ctx.Err()
 		}
 	}
-	f := &checkFlight{done: make(chan struct{})}
-	r.flight = f
-	r.mu.Unlock()
+	r.run(ctx, f, trigger)
+	return f.result, nil
+}
 
+// StartBackground starts a check of trigger without waiting for it, unless
+// one is already running, and reports whether it started one. The check does
+// not end with ctx.
+func (r *Refresher) StartBackground(ctx context.Context, trigger Trigger) bool {
+	f, leader := r.begin()
+	if !leader {
+		return false
+	}
+	go r.run(ctx, f, trigger)
+	return true
+}
+
+// begin registers a new check, or returns the running one.
+func (r *Refresher) begin() (f *checkFlight, leader bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.flight != nil {
+		return r.flight, false
+	}
+	r.flight = &checkFlight{done: make(chan struct{})}
+	return r.flight, true
+}
+
+func (r *Refresher) run(ctx context.Context, f *checkFlight, trigger Trigger) {
 	defer func() {
 		r.mu.Lock()
 		r.flight = nil
@@ -132,8 +180,10 @@ func (r *Refresher) Refresh(ctx context.Context) (CheckResult, error) {
 	// A caller that goes away must not abort a check others are waiting on.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
 	defer cancel()
-	f.result = r.check(runCtx)
-	return f.result, nil
+	f.result = r.check(runCtx, trigger)
+	if r.Finished != nil {
+		r.Finished(f.result)
+	}
 }
 
 // Last is the most recent check's result since the daemon started, and false
@@ -161,61 +211,98 @@ func (r *Refresher) baseURL() string {
 	return DefaultCatalogURL
 }
 
-func (r *Refresher) check(ctx context.Context) CheckResult {
-	res := r.fetchAndInstall(ctx)
+func (r *Refresher) check(ctx context.Context, trigger Trigger) CheckResult {
+	res, served := r.fetchAndInstall(ctx)
 	res.CheckedAt = r.now().UTC()
-	if res.Outcome == OutcomeFailed && res.Reason.verification() && r.Notify != nil {
-		if err := r.Notify(ctx, res); err != nil {
-			res.Message = fmt.Sprintf("%s (the notification could not be raised: %v)", res.Message, err)
+	switch {
+	case res.Outcome != OutcomeFailed:
+		r.setReported("")
+	case res.Reason.verification() && r.Notify != nil:
+		key := string(res.Reason) + "/" + served
+		if trigger == TriggerManual || !r.isReported(key) {
+			if err := r.Notify(ctx, res); err != nil {
+				res.Message = fmt.Sprintf("%s (the notification could not be raised: %v)", res.Message, err)
+			} else {
+				r.setReported(key)
+			}
 		}
 	}
 	return res
+}
+
+// isReported and setReported keep the failure the last notification was
+// raised for: its reason and the digest of the archive the host served. A
+// check that installs or confirms the catalog clears it, so the same failure
+// reported again after a good check is a new notification.
+func (r *Refresher) isReported(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reported == key
+}
+
+func (r *Refresher) setReported(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reported = key
 }
 
 func failure(reason FailReason, err error) CheckResult {
 	return CheckResult{Outcome: OutcomeFailed, Reason: reason, Message: err.Error()}
 }
 
-func (r *Refresher) fetchAndInstall(ctx context.Context) CheckResult {
+// fetchAndInstall runs the check and returns its result and, when an archive
+// was downloaded, the hex SHA-256 of the last one served.
+func (r *Refresher) fetchAndInstall(ctx context.Context) (CheckResult, string) {
 	archiveURL, err := catalogURL(r.baseURL(), catalogArchiveName)
 	if err != nil {
-		return failure(ReasonFetchFailed, err)
+		return failure(ReasonFetchFailed, err), ""
 	}
 	sigURL, err := catalogURL(r.baseURL(), catalogSignatureName)
 	if err != nil {
-		return failure(ReasonFetchFailed, err)
+		return failure(ReasonFetchFailed, err), ""
 	}
 	client := r.httpClient()
-
 	prior := r.Store.Validators()
-	archive, got, notModified, err := fetch(ctx, client, archiveURL, maxFetchArchiveBytes, prior)
-	if err != nil {
-		return failure(ReasonFetchFailed, err)
-	}
-	if notModified {
-		return CheckResult{Outcome: OutcomeUnchanged}
-	}
-	sig, _, _, err := fetch(ctx, client, sigURL, maxFetchSigBytes, Validators{})
-	if err != nil {
-		return failure(ReasonFetchFailed, err)
-	}
 
-	fetched, err := r.Store.InstallFetched(archive, sig, got)
-	switch {
-	case errors.Is(err, ErrBadSignature):
-		return failure(ReasonBadSignature, err)
-	case errors.Is(err, ErrNotNewer):
-		return failure(ReasonNotNewer, err)
-	case errors.Is(err, ErrBadArchive):
-		return failure(ReasonBadArchive, err)
-	case err != nil:
-		return failure(ReasonInstallFailed, err)
+	var served string
+	// The archive and its signature are two files a static host caches
+	// separately, so during a publish one can be new and the other old. A
+	// signature that does not verify is fetched, with its archive, once more
+	// before it is reported.
+	for attempt := 0; ; attempt++ {
+		archive, got, notModified, err := fetch(ctx, client, archiveURL, maxFetchArchiveBytes, prior)
+		if err != nil {
+			return failure(ReasonFetchFailed, err), served
+		}
+		if notModified {
+			return CheckResult{Outcome: OutcomeUnchanged}, served
+		}
+		sum := sha256.Sum256(archive)
+		served = hex.EncodeToString(sum[:])
+		sig, _, _, err := fetch(ctx, client, sigURL, maxFetchSigBytes, Validators{})
+		if err != nil {
+			return failure(ReasonFetchFailed, err), served
+		}
+
+		fetched, err := r.Store.InstallFetched(archive, sig, got)
+		switch {
+		case errors.Is(err, ErrBadSignature) && attempt == 0:
+			continue
+		case errors.Is(err, ErrBadSignature):
+			return failure(ReasonBadSignature, err), served
+		case errors.Is(err, ErrNotNewer):
+			return failure(ReasonNotNewer, err), served
+		case errors.Is(err, ErrBadArchive):
+			return failure(ReasonBadArchive, err), served
+		case err != nil:
+			return failure(ReasonInstallFailed, err), served
+		}
+		if !fetched.Installed {
+			return CheckResult{Outcome: OutcomeUnchanged}, served
+		}
+		added, changed := diffIndexes(fetched.Previous, fetched.Current)
+		return CheckResult{Outcome: OutcomeUpdated, New: added, Updated: changed}, served
 	}
-	if !fetched.Installed {
-		return CheckResult{Outcome: OutcomeUnchanged}
-	}
-	added, changed := diffIndexes(fetched.Previous, fetched.Current)
-	return CheckResult{Outcome: OutcomeUpdated, New: added, Updated: changed}
 }
 
 // diffIndexes counts the templates of current that previous does not list,

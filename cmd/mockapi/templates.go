@@ -14,6 +14,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
@@ -353,6 +354,35 @@ func (h *handler) RefreshCatalog(context.Context) (*apiv1.CatalogRefresh, error)
 	last := *out
 	h.catalogLast = &last
 	return out, nil
+}
+
+func (h *handler) GetCatalogSettings(context.Context) (*apiv1.CatalogSettings, error) {
+	h.catalogMu.Lock()
+	defer h.catalogMu.Unlock()
+	return mockCatalogSettings(h.catalogSettings), nil
+}
+
+func mockCatalogSettings(s store.CatalogSettings) *apiv1.CatalogSettings {
+	return &apiv1.CatalogSettings{RefreshInterval: apiv1.CatalogRefreshInterval(s.RefreshInterval), CheckOnOpen: s.CheckOnOpen}
+}
+
+func (h *handler) UpdateCatalogSettings(_ context.Context, req *apiv1.CatalogSettingsUpdate) (*apiv1.CatalogSettings, error) {
+	h.catalogMu.Lock()
+	defer h.catalogMu.Unlock()
+	next := h.catalogSettings
+	if v, ok := req.RefreshInterval.Get(); ok {
+		switch string(v) {
+		case store.CatalogIntervalOff, store.CatalogInterval1h, store.CatalogInterval6h, store.CatalogInterval12h, store.CatalogInterval24h:
+			next.RefreshInterval = string(v)
+		default:
+			return nil, &mockError{code: "invalid_catalog_interval", statusCode: 400, message: fmt.Sprintf("%s: %q", store.ErrCatalogInterval, string(v))}
+		}
+	}
+	if v, ok := req.CheckOnOpen.Get(); ok {
+		next.CheckOnOpen = v
+	}
+	h.catalogSettings = next
+	return mockCatalogSettings(next), nil
 }
 
 func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalogTemplateParams) (*apiv1.CatalogTemplate, error) {

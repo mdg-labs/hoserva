@@ -51,6 +51,9 @@ type fakeCatalogHost struct {
 	requests []string
 	bytes    int64
 	hold     func()
+	// sigQueue holds signatures served, one per signature request, before
+	// sig is: a signature cached from an earlier publish.
+	sigQueue [][]byte
 }
 
 func (f *fakeCatalogHost) serve(archive, sig []byte, etag string) {
@@ -98,6 +101,9 @@ func (f *fakeCatalogHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/catalog.tar.zst.sig":
 		body = f.sig
+		if len(f.sigQueue) > 0 {
+			body, f.sigQueue = f.sigQueue[0], f.sigQueue[1:]
+		}
 	default:
 		http.NotFound(w, r)
 		return

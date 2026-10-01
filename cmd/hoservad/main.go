@@ -554,7 +554,7 @@ func run(cfg config) error {
 	handler.Network = networkSvc
 	handler.ACME = acmeService
 	handler.Shares = shareService
-	startTemplates(handler, absStateDir, apps, shareNames(shareService), notifyService)
+	catalogChecks := startTemplates(handler, absStateDir, apps, shareNames(shareService), notifyService, store.NewCatalogSettingsStore(db))
 	handler.MoverResults = moverResults
 	wireBackup(handler, backupService)
 	// The strict topology hook, so an import that cannot apply the restored
@@ -705,6 +705,9 @@ func run(cfg config) error {
 	wireRestoreDrillSchedule(schedRunner, backupService, scheduler, notifyService)
 	wireContainerUpdateSchedule(schedRunner, updateChecker, scheduler, randomUpdateCheckJitter)
 	go runScheduleLoop(ctx, schedRunner, scheduleTickInterval)
+	if catalogChecks != nil {
+		go catalogChecks.Run(ctx)
+	}
 
 	errCh := make(chan error, 2)
 	go func() {
@@ -1036,7 +1039,7 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 		return nil, fmt.Errorf("building generated API server: %w", err)
 	}
 
-	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, ContainerHub: containerHubOf(handler), Authenticate: tcpEventsAuthenticate(authService)}
+	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, ContainerHub: containerHubOf(handler), CatalogHub: handler.CatalogChecks, Authenticate: tcpEventsAuthenticate(authService)}
 
 	mux := http.NewServeMux()
 	// http.MaxBytesHandler wraps both API routes, not the SPA branch
@@ -1095,7 +1098,7 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	// The connection's own SO_PEERCRED already authorized it before any
 	// request on it reaches this handler at all (unixSocketAuthMiddleware,
 	// below) — there is nothing left to authenticate for /events.
-	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, ContainerHub: containerHubOf(handler), Authenticate: func(r *http.Request) error { return nil }}
+	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, ContainerHub: containerHubOf(handler), CatalogHub: handler.CatalogChecks, Authenticate: func(r *http.Request) error { return nil }}
 
 	mux := http.NewServeMux()
 	// http.MaxBytesHandler wraps both API routes — see

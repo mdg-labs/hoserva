@@ -2377,10 +2377,34 @@ export interface paths {
         };
         /**
          * List the catalog's templates
-         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has run since the daemon started, also starts one catalog check in the background, never a second while one is running. The answer is the on-disk copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
          */
         get: operations["listCatalog"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the catalog refresh settings
+         * @description How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+         */
+        get: operations["getCatalogSettings"];
+        /**
+         * Set the catalog refresh settings
+         * @description Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`, `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing reaches the catalog host except `refreshCatalog`. The background check applies a changed interval without a daemon restart.
+         */
+        put: operations["updateCatalogSettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2399,7 +2423,7 @@ export interface paths {
         put?: never;
         /**
          * Check for catalog updates now
-         * @description Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65) and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed catalog only if its signature verifies against the compiled-in catalog key and its serial is strictly higher (`updated`, with the number of new and of updated templates, compared by id and revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure does not. A check that fails is still a completed check, answered 200. Calls made while a check is running share that check's request and result. Nothing is fetched from `api.github.com`.
+         * @description Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65) and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed catalog only if its signature verifies against the compiled-in catalog key and its serial is strictly higher (`updated`, with the number of new and of updated templates, compared by id and revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure does not. A check that fails is still a completed check, answered 200. Calls made while a check is running share that check's request and result. A signature that does not verify makes the check fetch the archive and its signature once more before it reports `bad_signature`, because the two files are cached separately and can briefly disagree while a catalog is being published. Every finished check, whoever started it, is announced as a `catalog` event on `/api/v1/events`. Nothing is fetched from `api.github.com`.
          */
         post: operations["refreshCatalog"];
         delete?: never;
@@ -2999,8 +3023,17 @@ export interface components {
                 createdAt: string;
             };
         };
+        /** @description A catalog check finished, whether the background interval, check-on-open or `refreshCatalog` started it. `data` is the check's outcome, the same object `refreshCatalog` answers with. */
+        CatalogEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "catalog";
+            data: components["schemas"]["CatalogRefresh"];
+        };
         /** @description The full set of `/api/v1/events` SSE event types (doc 01 §5). */
-        Event: components["schemas"]["JobProgressEvent"] | components["schemas"]["DiskStateEvent"] | components["schemas"]["ContainerStateEvent"] | components["schemas"]["NotificationEvent"];
+        Event: components["schemas"]["JobProgressEvent"] | components["schemas"]["DiskStateEvent"] | components["schemas"]["ContainerStateEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["CatalogEvent"];
         /**
          * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
          * @enum {string}
@@ -3616,6 +3649,21 @@ export interface components {
          * @enum {string}
          */
         CatalogCheckOutcome: "updated" | "unchanged" | "failed";
+        /**
+         * @description How often the daemon checks the catalog host in the background. Each wait is lengthened by a random extra of up to 10% of the interval; `off` sends no automatic request.
+         * @enum {string}
+         */
+        CatalogRefreshInterval: "off" | "1h" | "6h" | "12h" | "24h";
+        CatalogSettings: {
+            refreshInterval: components["schemas"]["CatalogRefreshInterval"];
+            /** @description Whether listing the catalog starts a background check when the last one is older than 15 minutes. */
+            checkOnOpen: boolean;
+        };
+        CatalogSettingsUpdate: {
+            refreshInterval?: components["schemas"]["CatalogRefreshInterval"];
+            /** @description Left out, it stays unchanged. */
+            checkOnOpen?: boolean;
+        };
         CatalogRefresh: {
             /**
              * Format: date-time
@@ -8209,6 +8257,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCatalogSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current catalog refresh settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCatalogSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The settings now saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSettings"];
                 };
             };
             default: components["responses"]["Error"];

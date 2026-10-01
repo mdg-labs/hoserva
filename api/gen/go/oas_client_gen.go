@@ -465,6 +465,13 @@ type Invoker interface {
 	//
 	// GET /cache/usage
 	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
+	// GetCatalogSettings invokes getCatalogSettings operation.
+	//
+	// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
+	// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+	//
+	// GET /settings/catalog
+	GetCatalogSettings(ctx context.Context) (*CatalogSettings, error)
 	// GetCatalogTemplate invokes getCatalogTemplate operation.
 	//
 	// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
@@ -804,13 +811,17 @@ type Invoker interface {
 	// ListCatalog invokes listCatalog operation.
 	//
 	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
-	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
-	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-	// Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most
-	// recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check
-	// has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503
-	// `catalog_unavailable`, never answered with an empty list.
+	// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
+	// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
+	// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
+	// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
+	// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
+	// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
+	// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
+	// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
+	// run since the daemon started, also starts one catalog check in the background, never a second while
+	// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
+	// `catalog` event on `/api/v1/events`.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
@@ -1130,8 +1141,11 @@ type Invoker interface {
 	// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
 	// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
 	// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
-	// while a check is running share that check's request and result. Nothing is fetched from
-	// `api.github.com`.
+	// while a check is running share that check's request and result. A signature that does not verify
+	// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
+	// because the two files are cached separately and can briefly disagree while a catalog is being
+	// published. Every finished check, whoever started it, is announced as a `catalog` event on
+	// `/api/v1/events`. Nothing is fetched from `api.github.com`.
 	//
 	// POST /catalog/refresh
 	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
@@ -1572,6 +1586,15 @@ type Invoker interface {
 	//
 	// PATCH /backup/destinations/{destinationId}
 	UpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error)
+	// UpdateCatalogSettings invokes updateCatalogSettings operation.
+	//
+	// Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`,
+	// `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing
+	// reaches the catalog host except `refreshCatalog`. The background check applies a changed interval
+	// without a daemon restart.
+	//
+	// PUT /settings/catalog
+	UpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (*CatalogSettings, error)
 	// UpdateExternalDisk invokes updateExternalDisk operation.
 	//
 	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
@@ -7741,6 +7764,132 @@ func (c *Client) sendGetCacheUsage(ctx context.Context) (res NilCacheUsageBreakd
 	return result, nil
 }
 
+// GetCatalogSettings invokes getCatalogSettings operation.
+//
+// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
+// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+//
+// GET /settings/catalog
+func (c *Client) GetCatalogSettings(ctx context.Context) (*CatalogSettings, error) {
+	res, err := c.sendGetCatalogSettings(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetCatalogSettings(ctx context.Context) (res *CatalogSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCatalogSettings"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/catalog"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCatalogSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/catalog"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCatalogSettingsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetCatalogTemplate invokes getCatalogTemplate operation.
 //
 // The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
@@ -12264,13 +12413,17 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 // ListCatalog invokes listCatalog operation.
 //
 // The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
-// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
-// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-// Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most
-// recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check
-// has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503
-// `catalog_unavailable`, never answered with an empty list.
+// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
+// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
+// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
+// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
+// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
+// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
+// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
+// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
+// run since the daemon started, also starts one catalog check in the background, never a second while
+// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
+// `catalog` event on `/api/v1/events`.
 //
 // GET /catalog
 func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
@@ -15784,8 +15937,11 @@ func (c *Client) sendRecreateApp(ctx context.Context, params RecreateAppParams) 
 // catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
 // (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
 // a network failure does not. A check that fails is still a completed check, answered 200. Calls made
-// while a check is running share that check's request and result. Nothing is fetched from
-// `api.github.com`.
+// while a check is running share that check's request and result. A signature that does not verify
+// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
+// because the two files are cached separately and can briefly disagree while a catalog is being
+// published. Every finished check, whoever started it, is announced as a `catalog` event on
+// `/api/v1/events`. Nothing is fetched from `api.github.com`.
 //
 // POST /catalog/refresh
 func (c *Client) RefreshCatalog(ctx context.Context) (*CatalogRefresh, error) {
@@ -21593,6 +21749,137 @@ func (c *Client) sendUpdateBackupDestination(ctx context.Context, request *Updat
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateBackupDestinationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateCatalogSettings invokes updateCatalogSettings operation.
+//
+// Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`,
+// `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing
+// reaches the catalog host except `refreshCatalog`. The background check applies a changed interval
+// without a daemon restart.
+//
+// PUT /settings/catalog
+func (c *Client) UpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (*CatalogSettings, error) {
+	res, err := c.sendUpdateCatalogSettings(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (res *CatalogSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateCatalogSettings"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/catalog"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateCatalogSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/catalog"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateCatalogSettingsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateCatalogSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

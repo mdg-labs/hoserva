@@ -259,3 +259,27 @@ type fixedRefresher struct{ res template.CheckResult }
 
 func (f fixedRefresher) Refresh(context.Context) (template.CheckResult, error) { return f.res, nil }
 func (f fixedRefresher) Last() (template.CheckResult, bool)                    { return f.res, true }
+
+func TestMockCatalogSettingsStartDailyAndOnAndChangeOneFieldAtATime(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if got, err := h.GetCatalogSettings(ctx); err != nil || got.RefreshInterval != apiv1.CatalogRefreshInterval24h || !got.CheckOnOpen {
+		t.Fatalf("GetCatalogSettings = %+v, %v, want 24h and on", got, err)
+	}
+	if got, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{CheckOnOpen: apiv1.NewOptBool(false)}); err != nil || got.RefreshInterval != apiv1.CatalogRefreshInterval24h || got.CheckOnOpen {
+		t.Fatalf("check-on-open only = %+v, %v", got, err)
+	}
+	if got, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{RefreshInterval: apiv1.NewOptCatalogRefreshInterval(apiv1.CatalogRefreshInterval12h)}); err != nil || got.RefreshInterval != apiv1.CatalogRefreshInterval12h || got.CheckOnOpen {
+		t.Fatalf("interval only = %+v, %v", got, err)
+	}
+	_, err = h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{RefreshInterval: apiv1.NewOptCatalogRefreshInterval("2h"), CheckOnOpen: apiv1.NewOptBool(true)})
+	if err == nil || mockErrorCode(t, err) != "invalid_catalog_interval" {
+		t.Fatalf("an unknown interval = %v, want invalid_catalog_interval", err)
+	}
+	if got, _ := h.GetCatalogSettings(ctx); got.RefreshInterval != apiv1.CatalogRefreshInterval12h || got.CheckOnOpen {
+		t.Fatalf("a refused update changed the settings: %+v", got)
+	}
+}

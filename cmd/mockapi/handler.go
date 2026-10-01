@@ -120,6 +120,9 @@ type handler struct {
 	catalogMu     sync.Mutex
 	catalogChecks int
 	catalogLast   *apiv1.CatalogRefresh
+	// catalogSettings are the catalog refresh settings (guarded by
+	// catalogMu); the mock never checks by itself, whatever they say.
+	catalogSettings store.CatalogSettings
 
 	// appdataMu guards appdataPolicies (#61): the per-container appdata
 	// backup policy set through SetAppdataBackupContainer. A container
@@ -201,8 +204,9 @@ func newHandler(scenario string) (*handler, error) {
 		appsDown:     appsDown,
 		stacks:       mockStacksFor(apps),
 
-		bulkExcluded:  make(map[string]bool),
-		imageKeepDays: store.DefaultImageKeepDays,
+		bulkExcluded:    make(map[string]bool),
+		imageKeepDays:   store.DefaultImageKeepDays,
+		catalogSettings: store.DefaultCatalogSettings,
 
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),

@@ -6428,6 +6428,52 @@ func (s *CatalogRefresh) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes CatalogRefreshInterval as json.
+func (s CatalogRefreshInterval) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CatalogRefreshInterval from json.
+func (s *CatalogRefreshInterval) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogRefreshInterval to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CatalogRefreshInterval(v) {
+	case CatalogRefreshIntervalOff:
+		*s = CatalogRefreshIntervalOff
+	case CatalogRefreshInterval1h:
+		*s = CatalogRefreshInterval1h
+	case CatalogRefreshInterval6h:
+		*s = CatalogRefreshInterval6h
+	case CatalogRefreshInterval12h:
+		*s = CatalogRefreshInterval12h
+	case CatalogRefreshInterval24h:
+		*s = CatalogRefreshInterval24h
+	default:
+		*s = CatalogRefreshInterval(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CatalogRefreshInterval) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogRefreshInterval) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes CatalogRefreshReason as json.
 func (s CatalogRefreshReason) Encode(e *jx.Encoder) {
 	e.Str(string(s))
@@ -6470,6 +6516,197 @@ func (s CatalogRefreshReason) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *CatalogRefreshReason) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogSettings) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogSettings) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("refreshInterval")
+		s.RefreshInterval.Encode(e)
+	}
+	{
+		e.FieldStart("checkOnOpen")
+		e.Bool(s.CheckOnOpen)
+	}
+}
+
+var jsonFieldsNameOfCatalogSettings = [2]string{
+	0: "refreshInterval",
+	1: "checkOnOpen",
+}
+
+// Decode decodes CatalogSettings from json.
+func (s *CatalogSettings) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogSettings to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "refreshInterval":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.RefreshInterval.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"refreshInterval\"")
+			}
+		case "checkOnOpen":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.CheckOnOpen = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checkOnOpen\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogSettings")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCatalogSettings) {
+					name = jsonFieldsNameOfCatalogSettings[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogSettings) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogSettings) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogSettingsUpdate) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogSettingsUpdate) encodeFields(e *jx.Encoder) {
+	{
+		if s.RefreshInterval.Set {
+			e.FieldStart("refreshInterval")
+			s.RefreshInterval.Encode(e)
+		}
+	}
+	{
+		if s.CheckOnOpen.Set {
+			e.FieldStart("checkOnOpen")
+			s.CheckOnOpen.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfCatalogSettingsUpdate = [2]string{
+	0: "refreshInterval",
+	1: "checkOnOpen",
+}
+
+// Decode decodes CatalogSettingsUpdate from json.
+func (s *CatalogSettingsUpdate) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogSettingsUpdate to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "refreshInterval":
+			if err := func() error {
+				s.RefreshInterval.Reset()
+				if err := s.RefreshInterval.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"refreshInterval\"")
+			}
+		case "checkOnOpen":
+			if err := func() error {
+				s.CheckOnOpen.Reset()
+				if err := s.CheckOnOpen.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checkOnOpen\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogSettingsUpdate")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogSettingsUpdate) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogSettingsUpdate) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -21526,6 +21763,39 @@ func (s OptCatalogCheckOutcome) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptCatalogCheckOutcome) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogRefreshInterval as json.
+func (o OptCatalogRefreshInterval) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes CatalogRefreshInterval from json.
+func (o *OptCatalogRefreshInterval) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCatalogRefreshInterval to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCatalogRefreshInterval) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCatalogRefreshInterval) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

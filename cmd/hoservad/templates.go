@@ -73,19 +73,45 @@ func wireCatalog(handler *api.Handler, stateDir string, notifier catalogPublishe
 	handler.CatalogRefresh = newCatalogRefresher(stateDir, notifier)
 }
 
+// wireCatalogChecks is what makes the automatic catalog checks and their
+// settings reachable: every finished check, whatever started it, is published
+// on Handler.CatalogChecks for /api/v1/events; /settings/catalog
+// (Handler.CatalogSettings) reads and writes the settings; and listing the
+// catalog starts the check-on-open check (Handler.CatalogOpen). It returns the
+// loop main.go runs for the background interval. With no settings store there
+// is no automatic check at all, and nil is returned.
+func wireCatalogChecks(handler *api.Handler, settings api.CatalogSettingsStore) *template.AutoRefresher {
+	hub := template.NewCheckHub()
+	handler.CatalogChecks = hub
+	refresher, ok := handler.CatalogRefresh.(*template.Refresher)
+	if !ok {
+		return nil
+	}
+	refresher.Finished = hub.Publish
+	if settings == nil {
+		return nil
+	}
+	handler.CatalogSettings = settings
+	auto := &template.AutoRefresher{Refresher: refresher, Settings: settings}
+	handler.CatalogOpen = auto
+	return auto
+}
+
 // startTemplates is what main.go calls: it seeds the on-disk catalog from
 // the embedded snapshot, then wires the catalog operations (with the catalog
-// check, which publishes through notifier) and template install over it. A
+// check, which publishes through notifier, and the automatic checks that
+// follow settings) and template install over it. A
 // seed that fails (a build with no snapshot, a snapshot that does not verify)
 // is logged and does not stop the daemon: whatever catalog an earlier start or
 // refresh left stays in use, and with none the catalog list is
 // catalog_unavailable and every template is template_not_found.
-func startTemplates(handler *api.Handler, stateDir string, apps *appServices, shares func(ctx context.Context) ([]string, error), notifier catalogPublisher) {
+func startTemplates(handler *api.Handler, stateDir string, apps *appServices, shares func(ctx context.Context) ([]string, error), notifier catalogPublisher, settings api.CatalogSettingsStore) *template.AutoRefresher {
 	if err := seedCatalog(stateDir); err != nil {
 		log.Printf("hoservad: %v — template installs use only the catalog already in %s", err, filepath.Join(stateDir, catalogDirName))
 	}
 	wireCatalog(handler, stateDir, notifier)
 	wireTemplateInstall(handler, stateDir, apps, shares)
+	return wireCatalogChecks(handler, settings)
 }
 
 // wireTemplateInstall is what main.go calls to make template install

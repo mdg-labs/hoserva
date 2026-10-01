@@ -2937,6 +2937,71 @@ func (s *CatalogRefresh) SetMessage(val OptString) {
 	s.Message = val
 }
 
+// How often the daemon checks the catalog host in the background. Each wait is lengthened by a random
+// extra of up to 10% of the interval; `off` sends no automatic request.
+// Ref: #/components/schemas/CatalogRefreshInterval
+type CatalogRefreshInterval string
+
+const (
+	CatalogRefreshIntervalOff CatalogRefreshInterval = "off"
+	CatalogRefreshInterval1h  CatalogRefreshInterval = "1h"
+	CatalogRefreshInterval6h  CatalogRefreshInterval = "6h"
+	CatalogRefreshInterval12h CatalogRefreshInterval = "12h"
+	CatalogRefreshInterval24h CatalogRefreshInterval = "24h"
+)
+
+// AllValues returns all CatalogRefreshInterval values.
+func (CatalogRefreshInterval) AllValues() []CatalogRefreshInterval {
+	return []CatalogRefreshInterval{
+		CatalogRefreshIntervalOff,
+		CatalogRefreshInterval1h,
+		CatalogRefreshInterval6h,
+		CatalogRefreshInterval12h,
+		CatalogRefreshInterval24h,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogRefreshInterval) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogRefreshIntervalOff:
+		return []byte(s), nil
+	case CatalogRefreshInterval1h:
+		return []byte(s), nil
+	case CatalogRefreshInterval6h:
+		return []byte(s), nil
+	case CatalogRefreshInterval12h:
+		return []byte(s), nil
+	case CatalogRefreshInterval24h:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogRefreshInterval) UnmarshalText(data []byte) error {
+	switch CatalogRefreshInterval(data) {
+	case CatalogRefreshIntervalOff:
+		*s = CatalogRefreshIntervalOff
+		return nil
+	case CatalogRefreshInterval1h:
+		*s = CatalogRefreshInterval1h
+		return nil
+	case CatalogRefreshInterval6h:
+		*s = CatalogRefreshInterval6h
+		return nil
+	case CatalogRefreshInterval12h:
+		*s = CatalogRefreshInterval12h
+		return nil
+	case CatalogRefreshInterval24h:
+		*s = CatalogRefreshInterval24h
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered
 // something unusable (not notified). `bad_signature`: the signature does not verify against the
 // catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the
@@ -3002,6 +3067,60 @@ func (s *CatalogRefreshReason) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/CatalogSettings
+type CatalogSettings struct {
+	RefreshInterval CatalogRefreshInterval `json:"refreshInterval"`
+	// Whether listing the catalog starts a background check when the last one is older than 15 minutes.
+	CheckOnOpen bool `json:"checkOnOpen"`
+}
+
+// GetRefreshInterval returns the value of RefreshInterval.
+func (s *CatalogSettings) GetRefreshInterval() CatalogRefreshInterval {
+	return s.RefreshInterval
+}
+
+// GetCheckOnOpen returns the value of CheckOnOpen.
+func (s *CatalogSettings) GetCheckOnOpen() bool {
+	return s.CheckOnOpen
+}
+
+// SetRefreshInterval sets the value of RefreshInterval.
+func (s *CatalogSettings) SetRefreshInterval(val CatalogRefreshInterval) {
+	s.RefreshInterval = val
+}
+
+// SetCheckOnOpen sets the value of CheckOnOpen.
+func (s *CatalogSettings) SetCheckOnOpen(val bool) {
+	s.CheckOnOpen = val
+}
+
+// Ref: #/components/schemas/CatalogSettingsUpdate
+type CatalogSettingsUpdate struct {
+	RefreshInterval OptCatalogRefreshInterval `json:"refreshInterval"`
+	// Left out, it stays unchanged.
+	CheckOnOpen OptBool `json:"checkOnOpen"`
+}
+
+// GetRefreshInterval returns the value of RefreshInterval.
+func (s *CatalogSettingsUpdate) GetRefreshInterval() OptCatalogRefreshInterval {
+	return s.RefreshInterval
+}
+
+// GetCheckOnOpen returns the value of CheckOnOpen.
+func (s *CatalogSettingsUpdate) GetCheckOnOpen() OptBool {
+	return s.CheckOnOpen
+}
+
+// SetRefreshInterval sets the value of RefreshInterval.
+func (s *CatalogSettingsUpdate) SetRefreshInterval(val OptCatalogRefreshInterval) {
+	s.RefreshInterval = val
+}
+
+// SetCheckOnOpen sets the value of CheckOnOpen.
+func (s *CatalogSettingsUpdate) SetCheckOnOpen(val OptBool) {
+	s.CheckOnOpen = val
 }
 
 // Ref: #/components/schemas/CatalogTemplate
@@ -10609,6 +10728,52 @@ func (o OptCatalogCheckOutcome) Get() (v CatalogCheckOutcome, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptCatalogCheckOutcome) Or(d CatalogCheckOutcome) CatalogCheckOutcome {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCatalogRefreshInterval returns new OptCatalogRefreshInterval with value set to v.
+func NewOptCatalogRefreshInterval(v CatalogRefreshInterval) OptCatalogRefreshInterval {
+	return OptCatalogRefreshInterval{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogRefreshInterval is optional CatalogRefreshInterval.
+type OptCatalogRefreshInterval struct {
+	Value CatalogRefreshInterval
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogRefreshInterval was set.
+func (o OptCatalogRefreshInterval) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogRefreshInterval) Reset() {
+	var v CatalogRefreshInterval
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogRefreshInterval) SetTo(v CatalogRefreshInterval) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogRefreshInterval) Get() (v CatalogRefreshInterval, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogRefreshInterval) Or(d CatalogRefreshInterval) CatalogRefreshInterval {
 	if v, ok := o.Get(); ok {
 		return v
 	}

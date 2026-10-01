@@ -23,7 +23,9 @@ CREATE TABLE schema_info (
     backup_passphrase BLOB,
     update_channel TEXT NOT NULL DEFAULT 'stable' CHECK (update_channel IN ('stable', 'beta')),
     update_check_enabled INTEGER NOT NULL DEFAULT 1 CHECK (update_check_enabled IN (0, 1)),
-    previous_version TEXT
+    previous_version TEXT,
+    catalog_refresh_interval TEXT NOT NULL DEFAULT '24h' CHECK (catalog_refresh_interval IN ('off', '1h', '6h', '12h', '24h')),
+    catalog_check_on_open INTEGER NOT NULL DEFAULT 1 CHECK (catalog_check_on_open IN (0, 1))
 ) STRICT;
 
 -- Jobs (#19, doc 01 §4): the persisted record behind every long-running

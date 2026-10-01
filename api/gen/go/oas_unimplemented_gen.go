@@ -578,6 +578,16 @@ func (UnimplementedHandler) GetCacheUsage(ctx context.Context) (r NilCacheUsageB
 	return r, ht.ErrNotImplemented
 }
 
+// GetCatalogSettings implements getCatalogSettings operation.
+//
+// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
+// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+//
+// GET /settings/catalog
+func (UnimplementedHandler) GetCatalogSettings(ctx context.Context) (r *CatalogSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCatalogTemplate implements getCatalogTemplate operation.
 //
 // The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
@@ -1016,13 +1026,17 @@ func (UnimplementedHandler) ListBackupDestinations(ctx context.Context) (r *List
 // ListCatalog implements listCatalog operation.
 //
 // The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
-// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
-// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-// Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most
-// recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check
-// has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503
-// `catalog_unavailable`, never answered with an empty list.
+// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
+// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
+// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
+// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
+// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
+// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
+// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
+// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
+// run since the daemon started, also starts one catalog check in the background, never a second while
+// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
+// `catalog` event on `/api/v1/events`.
 //
 // GET /catalog
 func (UnimplementedHandler) ListCatalog(ctx context.Context) (r *CatalogList, _ error) {
@@ -1420,8 +1434,11 @@ func (UnimplementedHandler) RecreateApp(ctx context.Context, params RecreateAppP
 // catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
 // (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
 // a network failure does not. A check that fails is still a completed check, answered 200. Calls made
-// while a check is running share that check's request and result. Nothing is fetched from
-// `api.github.com`.
+// while a check is running share that check's request and result. A signature that does not verify
+// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
+// because the two files are cached separately and can briefly disagree while a catalog is being
+// published. Every finished check, whoever started it, is announced as a `catalog` event on
+// `/api/v1/events`. Nothing is fetched from `api.github.com`.
 //
 // POST /catalog/refresh
 func (UnimplementedHandler) RefreshCatalog(ctx context.Context) (r *CatalogRefresh, _ error) {
@@ -1982,6 +1999,18 @@ func (UnimplementedHandler) UpdateAppSettings(ctx context.Context, req *AppSetti
 //
 // PATCH /backup/destinations/{destinationId}
 func (UnimplementedHandler) UpdateBackupDestination(ctx context.Context, req *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (r *BackupDestination, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateCatalogSettings implements updateCatalogSettings operation.
+//
+// Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`,
+// `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing
+// reaches the catalog host except `refreshCatalog`. The background check applies a changed interval
+// without a daemon restart.
+//
+// PUT /settings/catalog
+func (UnimplementedHandler) UpdateCatalogSettings(ctx context.Context, req *CatalogSettingsUpdate) (r *CatalogSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

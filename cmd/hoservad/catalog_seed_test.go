@@ -33,6 +33,19 @@ func startedTemplates(t *testing.T, stateDir string) *api.Handler {
 // startTemplates.
 func startedTemplatesWith(t *testing.T, stateDir string, notifier catalogPublisher) *api.Handler {
 	t.Helper()
+	return startedTemplatesIn(t, stateDir, notifier, false)
+}
+
+// startedTemplatesWithSettings is startedTemplatesWith with the catalog
+// settings store main.go hands startTemplates, so the automatic checks and
+// /settings/catalog are wired.
+func startedTemplatesWithSettings(t *testing.T, stateDir string, notifier catalogPublisher) *api.Handler {
+	t.Helper()
+	return startedTemplatesIn(t, stateDir, notifier, true)
+}
+
+func startedTemplatesIn(t *testing.T, stateDir string, notifier catalogPublisher, withSettings bool) *api.Handler {
+	t.Helper()
 	ctx := context.Background()
 	migrations, err := store.Load()
 	if err != nil {
@@ -56,7 +69,11 @@ func startedTemplatesWith(t *testing.T, stateDir string, notifier catalogPublish
 
 	h := &api.Handler{}
 	wireStacks(h, job.NewRegistry(), store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
-	startTemplates(h, stateDir, apps, shares, notifier)
+	var settings api.CatalogSettingsStore
+	if withSettings {
+		settings = store.NewCatalogSettingsStore(db)
+	}
+	startTemplates(h, stateDir, apps, shares, notifier, settings)
 	if h.TemplateInstall == nil {
 		t.Fatal("startTemplates left Handler.TemplateInstall nil, so every /templates operation would 501")
 	}

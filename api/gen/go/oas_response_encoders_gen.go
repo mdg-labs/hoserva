@@ -528,6 +528,19 @@ func encodeGetCacheUsageResponse(response NilCacheUsageBreakdown, w http.Respons
 	return nil
 }
 
+func encodeGetCatalogSettingsResponse(response *CatalogSettings, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeGetCatalogTemplateResponse(response *CatalogTemplate, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -2000,6 +2013,19 @@ func encodeUpdateAppSettingsResponse(response *AppSettings, w http.ResponseWrite
 }
 
 func encodeUpdateBackupDestinationResponse(response *BackupDestination, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeUpdateCatalogSettingsResponse(response *CatalogSettings, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

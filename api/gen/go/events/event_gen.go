@@ -150,6 +150,231 @@ func (s *AppState) UnmarshalText(data []byte) error {
 	}
 }
 
+// How a catalog check ended.
+// Ref: #/components/schemas/CatalogCheckOutcome
+type CatalogCheckOutcome string
+
+const (
+	CatalogCheckOutcomeUpdated   CatalogCheckOutcome = "updated"
+	CatalogCheckOutcomeUnchanged CatalogCheckOutcome = "unchanged"
+	CatalogCheckOutcomeFailed    CatalogCheckOutcome = "failed"
+)
+
+// AllValues returns all CatalogCheckOutcome values.
+func (CatalogCheckOutcome) AllValues() []CatalogCheckOutcome {
+	return []CatalogCheckOutcome{
+		CatalogCheckOutcomeUpdated,
+		CatalogCheckOutcomeUnchanged,
+		CatalogCheckOutcomeFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogCheckOutcome) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogCheckOutcomeUpdated:
+		return []byte(s), nil
+	case CatalogCheckOutcomeUnchanged:
+		return []byte(s), nil
+	case CatalogCheckOutcomeFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogCheckOutcome) UnmarshalText(data []byte) error {
+	switch CatalogCheckOutcome(data) {
+	case CatalogCheckOutcomeUpdated:
+		*s = CatalogCheckOutcomeUpdated
+		return nil
+	case CatalogCheckOutcomeUnchanged:
+		*s = CatalogCheckOutcomeUnchanged
+		return nil
+	case CatalogCheckOutcomeFailed:
+		*s = CatalogCheckOutcomeFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// A catalog check finished, whether the background interval, check-on-open or `refreshCatalog` started
+// it. `data` is the check's outcome, the same object `refreshCatalog` answers with.
+// Ref: #/components/schemas/CatalogEvent
+type CatalogEvent struct {
+	Event string         `json:"event"`
+	Data  CatalogRefresh `json:"data"`
+}
+
+// GetEvent returns the value of Event.
+func (s *CatalogEvent) GetEvent() string {
+	return s.Event
+}
+
+// GetData returns the value of Data.
+func (s *CatalogEvent) GetData() CatalogRefresh {
+	return s.Data
+}
+
+// SetEvent sets the value of Event.
+func (s *CatalogEvent) SetEvent(val string) {
+	s.Event = val
+}
+
+// SetData sets the value of Data.
+func (s *CatalogEvent) SetData(val CatalogRefresh) {
+	s.Data = val
+}
+
+// Ref: #/components/schemas/CatalogRefresh
+type CatalogRefresh struct {
+	// When the check finished.
+	CheckedAt time.Time           `json:"checkedAt"`
+	Outcome   CatalogCheckOutcome `json:"outcome"`
+	// Templates the new catalog lists that the replaced one did not. Present only when `outcome` is
+	// `updated`.
+	NewTemplates OptInt `json:"newTemplates"`
+	// Templates both catalogs list under a different revision. Present only when `outcome` is `updated`.
+	UpdatedTemplates OptInt `json:"updatedTemplates"`
+	// Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered
+	// something unusable (not notified). `bad_signature`: the signature does not verify against the
+	// catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the
+	// signed archive is not a catalog. `install_failed`: the verified archive could not be written to
+	// disk. The three verification reasons raise a `catalog_check_failed` notification.
+	Reason OptCatalogRefreshReason `json:"reason"`
+	// Present only when `outcome` is `failed`.
+	Message OptString `json:"message"`
+}
+
+// GetCheckedAt returns the value of CheckedAt.
+func (s *CatalogRefresh) GetCheckedAt() time.Time {
+	return s.CheckedAt
+}
+
+// GetOutcome returns the value of Outcome.
+func (s *CatalogRefresh) GetOutcome() CatalogCheckOutcome {
+	return s.Outcome
+}
+
+// GetNewTemplates returns the value of NewTemplates.
+func (s *CatalogRefresh) GetNewTemplates() OptInt {
+	return s.NewTemplates
+}
+
+// GetUpdatedTemplates returns the value of UpdatedTemplates.
+func (s *CatalogRefresh) GetUpdatedTemplates() OptInt {
+	return s.UpdatedTemplates
+}
+
+// GetReason returns the value of Reason.
+func (s *CatalogRefresh) GetReason() OptCatalogRefreshReason {
+	return s.Reason
+}
+
+// GetMessage returns the value of Message.
+func (s *CatalogRefresh) GetMessage() OptString {
+	return s.Message
+}
+
+// SetCheckedAt sets the value of CheckedAt.
+func (s *CatalogRefresh) SetCheckedAt(val time.Time) {
+	s.CheckedAt = val
+}
+
+// SetOutcome sets the value of Outcome.
+func (s *CatalogRefresh) SetOutcome(val CatalogCheckOutcome) {
+	s.Outcome = val
+}
+
+// SetNewTemplates sets the value of NewTemplates.
+func (s *CatalogRefresh) SetNewTemplates(val OptInt) {
+	s.NewTemplates = val
+}
+
+// SetUpdatedTemplates sets the value of UpdatedTemplates.
+func (s *CatalogRefresh) SetUpdatedTemplates(val OptInt) {
+	s.UpdatedTemplates = val
+}
+
+// SetReason sets the value of Reason.
+func (s *CatalogRefresh) SetReason(val OptCatalogRefreshReason) {
+	s.Reason = val
+}
+
+// SetMessage sets the value of Message.
+func (s *CatalogRefresh) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered
+// something unusable (not notified). `bad_signature`: the signature does not verify against the
+// catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the
+// signed archive is not a catalog. `install_failed`: the verified archive could not be written to
+// disk. The three verification reasons raise a `catalog_check_failed` notification.
+type CatalogRefreshReason string
+
+const (
+	CatalogRefreshReasonFetchFailed   CatalogRefreshReason = "fetch_failed"
+	CatalogRefreshReasonBadSignature  CatalogRefreshReason = "bad_signature"
+	CatalogRefreshReasonNotNewer      CatalogRefreshReason = "not_newer"
+	CatalogRefreshReasonBadArchive    CatalogRefreshReason = "bad_archive"
+	CatalogRefreshReasonInstallFailed CatalogRefreshReason = "install_failed"
+)
+
+// AllValues returns all CatalogRefreshReason values.
+func (CatalogRefreshReason) AllValues() []CatalogRefreshReason {
+	return []CatalogRefreshReason{
+		CatalogRefreshReasonFetchFailed,
+		CatalogRefreshReasonBadSignature,
+		CatalogRefreshReasonNotNewer,
+		CatalogRefreshReasonBadArchive,
+		CatalogRefreshReasonInstallFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogRefreshReason) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogRefreshReasonFetchFailed:
+		return []byte(s), nil
+	case CatalogRefreshReasonBadSignature:
+		return []byte(s), nil
+	case CatalogRefreshReasonNotNewer:
+		return []byte(s), nil
+	case CatalogRefreshReasonBadArchive:
+		return []byte(s), nil
+	case CatalogRefreshReasonInstallFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogRefreshReason) UnmarshalText(data []byte) error {
+	switch CatalogRefreshReason(data) {
+	case CatalogRefreshReasonFetchFailed:
+		*s = CatalogRefreshReasonFetchFailed
+		return nil
+	case CatalogRefreshReasonBadSignature:
+		*s = CatalogRefreshReasonBadSignature
+		return nil
+	case CatalogRefreshReasonNotNewer:
+		*s = CatalogRefreshReasonNotNewer
+		return nil
+	case CatalogRefreshReasonBadArchive:
+		*s = CatalogRefreshReasonBadArchive
+		return nil
+	case CatalogRefreshReasonInstallFailed:
+		*s = CatalogRefreshReasonInstallFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // A container's state or health changed — sent when the Engine reports it (a start, die, pause,
 // unpause or health check result, including a container killed from outside Hoserva) and when a start,
 // stop, restart or recreate through the API finishes. `state` is the Engine's own vocabulary. `health`
@@ -495,6 +720,7 @@ type Event struct {
 	DiskStateEvent      DiskStateEvent
 	ContainerStateEvent ContainerStateEvent
 	NotificationEvent   NotificationEvent
+	CatalogEvent        CatalogEvent
 }
 
 // EventType is oneOf type of Event.
@@ -506,6 +732,7 @@ const (
 	DiskStateEventEvent      EventType = "disk_state"
 	ContainerStateEventEvent EventType = "container_state"
 	NotificationEventEvent   EventType = "notification"
+	CatalogEventEvent        EventType = "catalog"
 )
 
 // IsJobProgressEvent reports whether Event is JobProgressEvent.
@@ -519,6 +746,9 @@ func (s Event) IsContainerStateEvent() bool { return s.Type == ContainerStateEve
 
 // IsNotificationEvent reports whether Event is NotificationEvent.
 func (s Event) IsNotificationEvent() bool { return s.Type == NotificationEventEvent }
+
+// IsCatalogEvent reports whether Event is CatalogEvent.
+func (s Event) IsCatalogEvent() bool { return s.Type == CatalogEventEvent }
 
 // SetJobProgressEvent sets Event to JobProgressEvent.
 func (s *Event) SetJobProgressEvent(v JobProgressEvent) {
@@ -601,6 +831,27 @@ func (s Event) GetNotificationEvent() (v NotificationEvent, ok bool) {
 func NewNotificationEventEvent(v NotificationEvent) Event {
 	var s Event
 	s.SetNotificationEvent(v)
+	return s
+}
+
+// SetCatalogEvent sets Event to CatalogEvent.
+func (s *Event) SetCatalogEvent(v CatalogEvent) {
+	s.Type = CatalogEventEvent
+	s.CatalogEvent = v
+}
+
+// GetCatalogEvent returns CatalogEvent and true boolean if Event is CatalogEvent.
+func (s Event) GetCatalogEvent() (v CatalogEvent, ok bool) {
+	if !s.IsCatalogEvent() {
+		return v, false
+	}
+	return s.CatalogEvent, true
+}
+
+// NewCatalogEventEvent returns new Event from CatalogEvent.
+func NewCatalogEventEvent(v CatalogEvent) Event {
+	var s Event
+	s.SetCatalogEvent(v)
 	return s
 }
 
@@ -1578,6 +1829,52 @@ func (o OptAppHealth) Or(d AppHealth) AppHealth {
 	return d
 }
 
+// NewOptCatalogRefreshReason returns new OptCatalogRefreshReason with value set to v.
+func NewOptCatalogRefreshReason(v CatalogRefreshReason) OptCatalogRefreshReason {
+	return OptCatalogRefreshReason{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogRefreshReason is optional CatalogRefreshReason.
+type OptCatalogRefreshReason struct {
+	Value CatalogRefreshReason
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogRefreshReason was set.
+func (o OptCatalogRefreshReason) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogRefreshReason) Reset() {
+	var v CatalogRefreshReason
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogRefreshReason) SetTo(v CatalogRefreshReason) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogRefreshReason) Get() (v CatalogRefreshReason, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogRefreshReason) Or(d CatalogRefreshReason) CatalogRefreshReason {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptErrorDetails returns new OptErrorDetails with value set to v.
 func NewOptErrorDetails(v ErrorDetails) OptErrorDetails {
 	return OptErrorDetails{
@@ -1618,6 +1915,52 @@ func (o OptErrorDetails) Get() (v ErrorDetails, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptErrorDetails) Or(d ErrorDetails) ErrorDetails {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptInt returns new OptInt with value set to v.
+func NewOptInt(v int) OptInt {
+	return OptInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt is optional int.
+type OptInt struct {
+	Value int
+	Set   bool
+}
+
+// IsSet returns true if OptInt was set.
+func (o OptInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt) SetTo(v int) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt) Get() (v int, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt) Or(d int) int {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -1828,6 +2171,52 @@ func (o OptNilInt32) Or(d int32) int32 {
 	return d
 }
 
+// NewOptString returns new OptString with value set to v.
+func NewOptString(v string) OptString {
+	return OptString{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptString is optional string.
+type OptString struct {
+	Value string
+	Set   bool
+}
+
+// IsSet returns true if OptString was set.
+func (o OptString) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptString) Reset() {
+	var v string
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptString) SetTo(v string) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptString) Get() (v string, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // Encode encodes AppHealth as json.
 func (s AppHealth) Encode(e *jx.Encoder) {
 	e.Str(string(s))
@@ -1918,6 +2307,384 @@ func (s AppState) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *AppState) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogCheckOutcome as json.
+func (s CatalogCheckOutcome) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CatalogCheckOutcome from json.
+func (s *CatalogCheckOutcome) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogCheckOutcome to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CatalogCheckOutcome(v) {
+	case CatalogCheckOutcomeUpdated:
+		*s = CatalogCheckOutcomeUpdated
+	case CatalogCheckOutcomeUnchanged:
+		*s = CatalogCheckOutcomeUnchanged
+	case CatalogCheckOutcomeFailed:
+		*s = CatalogCheckOutcomeFailed
+	default:
+		*s = CatalogCheckOutcome(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CatalogCheckOutcome) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogCheckOutcome) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogEvent) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogEvent) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("event")
+		e.Str("catalog")
+	}
+	{
+		e.FieldStart("data")
+		s.Data.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfCatalogEvent = [2]string{
+	0: "event",
+	1: "data",
+}
+
+// Decode decodes CatalogEvent from json.
+func (s *CatalogEvent) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogEvent to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "event":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Event = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"event\"")
+			}
+		case "data":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Data.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"data\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogEvent")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCatalogEvent) {
+					name = jsonFieldsNameOfCatalogEvent[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogEvent) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogEvent) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogRefresh) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogRefresh) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("checkedAt")
+		json.EncodeDateTime(e, s.CheckedAt)
+	}
+	{
+		e.FieldStart("outcome")
+		s.Outcome.Encode(e)
+	}
+	{
+		if s.NewTemplates.Set {
+			e.FieldStart("newTemplates")
+			s.NewTemplates.Encode(e)
+		}
+	}
+	{
+		if s.UpdatedTemplates.Set {
+			e.FieldStart("updatedTemplates")
+			s.UpdatedTemplates.Encode(e)
+		}
+	}
+	{
+		if s.Reason.Set {
+			e.FieldStart("reason")
+			s.Reason.Encode(e)
+		}
+	}
+	{
+		if s.Message.Set {
+			e.FieldStart("message")
+			s.Message.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfCatalogRefresh = [6]string{
+	0: "checkedAt",
+	1: "outcome",
+	2: "newTemplates",
+	3: "updatedTemplates",
+	4: "reason",
+	5: "message",
+}
+
+// Decode decodes CatalogRefresh from json.
+func (s *CatalogRefresh) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogRefresh to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "checkedAt":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.CheckedAt = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checkedAt\"")
+			}
+		case "outcome":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Outcome.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"outcome\"")
+			}
+		case "newTemplates":
+			if err := func() error {
+				s.NewTemplates.Reset()
+				if err := s.NewTemplates.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"newTemplates\"")
+			}
+		case "updatedTemplates":
+			if err := func() error {
+				s.UpdatedTemplates.Reset()
+				if err := s.UpdatedTemplates.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"updatedTemplates\"")
+			}
+		case "reason":
+			if err := func() error {
+				s.Reason.Reset()
+				if err := s.Reason.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reason\"")
+			}
+		case "message":
+			if err := func() error {
+				s.Message.Reset()
+				if err := s.Message.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"message\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogRefresh")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCatalogRefresh) {
+					name = jsonFieldsNameOfCatalogRefresh[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogRefresh) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogRefresh) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogRefreshReason as json.
+func (s CatalogRefreshReason) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CatalogRefreshReason from json.
+func (s *CatalogRefreshReason) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogRefreshReason to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CatalogRefreshReason(v) {
+	case CatalogRefreshReasonFetchFailed:
+		*s = CatalogRefreshReasonFetchFailed
+	case CatalogRefreshReasonBadSignature:
+		*s = CatalogRefreshReasonBadSignature
+	case CatalogRefreshReasonNotNewer:
+		*s = CatalogRefreshReasonNotNewer
+	case CatalogRefreshReasonBadArchive:
+		*s = CatalogRefreshReasonBadArchive
+	case CatalogRefreshReasonInstallFailed:
+		*s = CatalogRefreshReasonInstallFailed
+	default:
+		*s = CatalogRefreshReason(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CatalogRefreshReason) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogRefreshReason) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -2738,6 +3505,16 @@ func (s Event) encodeFields(e *jx.Encoder) {
 				s.Data.Encode(e)
 			}
 		}
+	case CatalogEventEvent:
+		e.FieldStart("event")
+		e.Str("catalog")
+		{
+			s := s.CatalogEvent
+			{
+				e.FieldStart("data")
+				s.Data.Encode(e)
+			}
+		}
 	}
 }
 
@@ -2776,6 +3553,9 @@ func (s *Event) Decode(d *jx.Decoder) error {
 				case "notification":
 					s.Type = NotificationEventEvent
 					found = true
+				case "catalog":
+					s.Type = CatalogEventEvent
+					found = true
 				default:
 					return errors.Errorf("unknown type %s", typ)
 				}
@@ -2804,6 +3584,10 @@ func (s *Event) Decode(d *jx.Decoder) error {
 		}
 	case NotificationEventEvent:
 		if err := s.NotificationEvent.Decode(d); err != nil {
+			return err
+		}
+	case CatalogEventEvent:
+		if err := s.CatalogEvent.Decode(d); err != nil {
 			return err
 		}
 	default:
@@ -3850,6 +4634,39 @@ func (s *OptAppHealth) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes CatalogRefreshReason as json.
+func (o OptCatalogRefreshReason) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes CatalogRefreshReason from json.
+func (o *OptCatalogRefreshReason) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCatalogRefreshReason to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCatalogRefreshReason) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCatalogRefreshReason) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ErrorDetails as json.
 func (o OptErrorDetails) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -3880,6 +4697,41 @@ func (s OptErrorDetails) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptErrorDetails) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int as json.
+func (o OptInt) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Int(int(o.Value))
+}
+
+// Decode decodes int from json.
+func (o *OptInt) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptInt to nil")
+	}
+	o.Set = true
+	v, err := d.Int()
+	if err != nil {
+		return err
+	}
+	o.Value = int(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptInt) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptInt) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -4035,6 +4887,41 @@ func (s *OptNilInt32) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes string as json.
+func (o OptString) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes string from json.
+func (o *OptString) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptString to nil")
+	}
+	o.Set = true
+	v, err := d.Str()
+	if err != nil {
+		return err
+	}
+	o.Value = string(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptString) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptString) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 func (s AppHealth) Validate() error {
 	switch s {
 	case "none":
@@ -4065,6 +4952,156 @@ func (s AppState) Validate() error {
 	case "exited":
 		return nil
 	case "dead":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s CatalogCheckOutcome) Validate() error {
+	switch s {
+	case "updated":
+		return nil
+	case "unchanged":
+		return nil
+	case "failed":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *CatalogEvent) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Data.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "data",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *CatalogRefresh) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Outcome.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "outcome",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.NewTemplates.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           0,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "newTemplates",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.UpdatedTemplates.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           0,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "updatedTemplates",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Reason.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "reason",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s CatalogRefreshReason) Validate() error {
+	switch s {
+	case "fetch_failed":
+		return nil
+	case "bad_signature":
+		return nil
+	case "not_newer":
+		return nil
+	case "bad_archive":
+		return nil
+	case "install_failed":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -4221,6 +5258,11 @@ func (s Event) Validate() error {
 		return nil
 	case NotificationEventEvent:
 		if err := s.NotificationEvent.Validate(); err != nil {
+			return err
+		}
+		return nil
+	case CatalogEventEvent:
+		if err := s.CatalogEvent.Validate(); err != nil {
 			return err
 		}
 		return nil

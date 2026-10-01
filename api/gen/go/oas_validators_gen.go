@@ -1449,6 +1449,23 @@ func (s *CatalogRefresh) Validate() error {
 	return nil
 }
 
+func (s CatalogRefreshInterval) Validate() error {
+	switch s {
+	case "off":
+		return nil
+	case "1h":
+		return nil
+	case "6h":
+		return nil
+	case "12h":
+		return nil
+	case "24h":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s CatalogRefreshReason) Validate() error {
 	switch s {
 	case "fetch_failed":
@@ -1464,6 +1481,59 @@ func (s CatalogRefreshReason) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s *CatalogSettings) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.RefreshInterval.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "refreshInterval",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *CatalogSettingsUpdate) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.RefreshInterval.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "refreshInterval",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s *CatalogTemplate) Validate() error {

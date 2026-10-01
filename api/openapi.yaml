@@ -4233,7 +4233,7 @@ paths:
       summary: List the catalog's templates
       description: >-
         The templates of the catalog installed on disk (doc 04 §7), read from
-        its `index.json` and never from the network, with the catalog's
+        its `index.json` and never waiting on the network, with the catalog's
         `serial` and `generatedAt`. Every entry names the `source` it came
         from (`hoserva`, the curated catalog, is the only source) and says
         whether a stack of that template id already exists (`installed`,
@@ -4243,6 +4243,12 @@ paths:
         daemon started, and are absent before any check has run. A catalog
         that is not installed or whose `index.json` cannot be read is refused
         with 503 `catalog_unavailable`, never answered with an empty list.
+        With `checkOnOpen` on (`getCatalogSettings`), a call made when the last
+        check is older than 15 minutes, or when none has run since the daemon
+        started, also starts one catalog check in the background, never a
+        second while one is running. The answer is the on-disk copy as it is
+        now; the finished check is announced as a `catalog` event on
+        `/api/v1/events`.
       tags: [templates]
       x-hoserva-role: viewer
       responses:
@@ -4252,6 +4258,53 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogList'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/catalog:
+    get:
+      operationId: getCatalogSettings
+      summary: Get the catalog refresh settings
+      description: >-
+        How the catalog checks for updates by itself (doc 04 §7, Q65): the
+        background `refreshInterval` and whether opening the catalog starts a
+        check (`checkOnOpen`). Every install starts at `24h` and on.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The current catalog refresh settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateCatalogSettings
+      summary: Set the catalog refresh settings
+      description: >-
+        Sets either or both settings; a field left out stays as it is. An
+        interval other than `off`, `1h`, `6h`, `12h` or `24h` is refused with
+        400. With the interval `off` and
+        `checkOnOpen` off, nothing reaches the catalog host except
+        `refreshCatalog`. The background check applies a changed interval
+        without a daemon restart.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogSettingsUpdate'
+      responses:
+        "200":
+          description: The settings now saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSettings'
         default:
           $ref: '#/components/responses/Error'
 
@@ -4274,7 +4327,12 @@ paths:
         a `catalog_check_failed` notification, and a network failure does not.
         A check that fails is still a completed check, answered 200. Calls
         made while a check is running share that check's request and result.
-        Nothing is fetched from `api.github.com`.
+        A signature that does not verify makes the check fetch the archive
+        and its signature once more before it reports `bad_signature`, because
+        the two files are cached separately and can briefly disagree while a
+        catalog is being published. Every finished check, whoever started it,
+        is announced as a `catalog` event on `/api/v1/events`. Nothing is
+        fetched from `api.github.com`.
       tags: [templates]
       x-hoserva-role: admin
       responses:
@@ -5454,6 +5512,20 @@ components:
               type: string
               format: date-time
 
+    CatalogEvent:
+      type: object
+      description: >-
+        A catalog check finished, whether the background interval,
+        check-on-open or `refreshCatalog` started it. `data` is the check's
+        outcome, the same object `refreshCatalog` answers with.
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: catalog
+        data:
+          $ref: '#/components/schemas/CatalogRefresh'
+
     Event:
       description: The full set of `/api/v1/events` SSE event types (doc 01 §5).
       oneOf:
@@ -5461,6 +5533,7 @@ components:
         - $ref: '#/components/schemas/DiskStateEvent'
         - $ref: '#/components/schemas/ContainerStateEvent'
         - $ref: '#/components/schemas/NotificationEvent'
+        - $ref: '#/components/schemas/CatalogEvent'
       discriminator:
         propertyName: event
         mapping:
@@ -5468,6 +5541,7 @@ components:
           disk_state: '#/components/schemas/DiskStateEvent'
           container_state: '#/components/schemas/ContainerStateEvent'
           notification: '#/components/schemas/NotificationEvent'
+          catalog: '#/components/schemas/CatalogEvent'
 
     NotificationEventType:
       type: string
@@ -6715,6 +6789,35 @@ components:
       type: string
       enum: [updated, unchanged, failed]
       description: How a catalog check ended.
+
+    CatalogRefreshInterval:
+      type: string
+      enum: ['off', '1h', '6h', '12h', '24h']
+      description: >-
+        How often the daemon checks the catalog host in the background. Each
+        wait is lengthened by a random extra of up to 10% of the interval;
+        `off` sends no automatic request.
+
+    CatalogSettings:
+      type: object
+      required: [refreshInterval, checkOnOpen]
+      properties:
+        refreshInterval:
+          $ref: '#/components/schemas/CatalogRefreshInterval'
+        checkOnOpen:
+          type: boolean
+          description: >-
+            Whether listing the catalog starts a background check when the
+            last one is older than 15 minutes.
+
+    CatalogSettingsUpdate:
+      type: object
+      properties:
+        refreshInterval:
+          $ref: '#/components/schemas/CatalogRefreshInterval'
+        checkOnOpen:
+          type: boolean
+          description: Left out, it stays unchanged.
 
     CatalogRefresh:
       type: object

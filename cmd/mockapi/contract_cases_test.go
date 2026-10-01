@@ -923,6 +923,44 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "GetCatalogSettings",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogSettings(ctx)
+			return err
+		},
+	},
+	{
+		op:   "UpdateCatalogSettings",
+		name: "valid_both_settings",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{
+				RefreshInterval: apiv1.NewOptCatalogRefreshInterval(apiv1.CatalogRefreshInterval6h),
+				CheckOnOpen:     apiv1.NewOptBool(false),
+			})
+			return err
+		},
+	},
+	{
+		op:   "UpdateCatalogSettings",
+		name: "valid_only_the_interval_keeps_check_on_open",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{CheckOnOpen: apiv1.NewOptBool(false)}); err != nil {
+				return err
+			}
+			_, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{RefreshInterval: apiv1.NewOptCatalogRefreshInterval(apiv1.CatalogRefreshIntervalOff)})
+			return err
+		},
+	},
+	{
+		op:   "UpdateCatalogSettings",
+		name: "unknown_interval_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{RefreshInterval: apiv1.NewOptCatalogRefreshInterval("2h")})
+			return err
+		},
+	},
+	{
 		op:   "GetCatalogTemplate",
 		name: "valid_privileged_template",
 		run: func(ctx context.Context, h apiv1.Handler) error {
