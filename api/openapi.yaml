@@ -4157,7 +4157,8 @@ paths:
         with these values substituted — privileged mode, host networking,
         the host PID or cgroup namespace, device cgroup rules, added
         capabilities, disabled or replaced confinement, extra groups, the
-        Docker socket and host paths outside the pool and cache — never from
+        Docker socket and host paths outside the pool and cache (the cache
+        itself and Docker's data-root on it count as outside) — never from
         anything the template declares. `compose` is the file an install
         would write. An input that is not the template's, a value that does
         not fit its kind, a path input with no value, no default and no

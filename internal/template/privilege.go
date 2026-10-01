@@ -317,12 +317,17 @@ func interpolateVolume(v any, values map[string]string) any {
 
 // insideLayout reports whether a bind mount's host side lies in the pool
 // or on the cache, the two places Hoserva's own layout puts data (D10). A
-// path relative to the stack directory is outside both.
+// path relative to the stack directory is outside both. The cache itself and
+// Docker's data-root on it are not: they hold every container's layers and
+// named volumes, privileged containers' included.
 func insideLayout(src string) bool {
 	if !strings.HasPrefix(src, "/") {
 		return false
 	}
 	p := path.Clean(src)
+	if p == cacheRoot || under(p, dockerDataRoot) {
+		return false
+	}
 	return under(p, poolRoot) || under(p, cacheRoot)
 }
 
