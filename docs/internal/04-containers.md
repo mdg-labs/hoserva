@@ -243,7 +243,7 @@ Hoserva's catalog is its own template repository (D19) — `mdg-labs/hoserva-cat
 
 ### Template format (Q64)
 
-A template is a directory in the catalog repository — `<id>/compose.yaml` plus its icon — and `compose.yaml` is **a valid Compose file with an `x-hoserva` extension block**. Compose ignores `x-` fields, so every template can be checked with `docker compose config` and run by hand; the block carries only what the install flow needs:
+A template is a directory in the catalog repository's `templates/` folder — `templates/<id>/compose.yaml` plus its icon — and the published archive keeps `<id>/` at its root, next to `index.json`. `compose.yaml` is **a valid Compose file with an `x-hoserva` extension block**. Compose ignores `x-` fields, so every template can be checked with `docker compose config` and run by hand; the block carries only what the install flow needs:
 
 ```yaml
 services:
