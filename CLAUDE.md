@@ -141,6 +141,7 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 - Conventional commits (`feat(parity): …`, `fix(mover): …`), one issue per commit, `Fixes #n` trailer. Not tool-enforced; caught in review.
 - Every commit carries a DCO `Signed-off-by:` trailer (CONTRIBUTING.md, doc 13 Q2) — run `make hooks-install` once per clone (including a scratch clone) and it's automatic; CI's `dco` job rejects a commit that's missing one.
 - `make test` (L1 + L2) before landing. If a workflow isn't a `make` target, it doesn't exist.
+- A subagent's prompt is passed inline, in full, in the Agent call. Never write it to a file and point the agent at that file. Review convention, not tool-enforced.
 - File and directory names follow the language's usual conventions, short and idiomatic like their siblings, and never carry a phase, milestone, epic, wave or issue number.
 
 # Anti-patterns specific to this project

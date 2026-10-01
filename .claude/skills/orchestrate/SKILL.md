@@ -464,6 +464,12 @@ Agent({
 })
 ```
 
+**The filled template is the prompt, inline and in full** — never write it
+to a file and send a short prompt that points the agent at that file. This
+holds for every dispatch: refiner, executor and verifier, and fix rounds
+too. A script may fill the template, but its output goes into `prompt`
+verbatim, however long it is.
+
 **All lane-head dispatches for a wave go in one assistant message**, so they
 run concurrently.
 
@@ -828,4 +834,5 @@ report as your final message.
 - **Only blocking findings fail an issue or reach a fix round**; a fix round's verifier checks closure and the change, not the whole issue afresh.
 - **Surfaced findings are filed and routed as they arrive** — pulled into this run when they belong to its scope, otherwise attached to the open epic they belong to.
 - **Every written artifact uses its template** — dispatch prompts, the executor's report, the verifier's comment.
+- **Every dispatch prompt is passed inline in full** — never as a pointer to a file holding it.
 - **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message — unless it was started with `--no-discord`.
