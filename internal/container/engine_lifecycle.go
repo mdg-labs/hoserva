@@ -142,6 +142,44 @@ func (c *EngineClient) inspectEngine(ctx context.Context, id string) (dockercont
 	return res.Container, nil
 }
 
+func (c *EngineClient) StartedAt(ctx context.Context, id string) (time.Time, error) {
+	ct, err := c.resolve(ctx, id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	info, err := c.inspectEngine(ctx, ct.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if info.State == nil {
+		return time.Time{}, fmt.Errorf("container: the Engine returned no state for %q", ct.Name)
+	}
+	started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("container: reading when %q last started: %w", ct.Name, err)
+	}
+	return started.UTC(), nil
+}
+
+func (c *EngineClient) CreatedAt(ctx context.Context, id string) (time.Time, error) {
+	ct, err := c.resolve(ctx, id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	info, err := c.inspectEngine(ctx, ct.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	created, err := time.Parse(time.RFC3339Nano, info.Created)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("container: reading when %q was created: %w", ct.Name, err)
+	}
+	if created.IsZero() {
+		return time.Time{}, fmt.Errorf("container: the Engine gave no creation time for %q", ct.Name)
+	}
+	return created.UTC(), nil
+}
+
 func (c *EngineClient) Stats(ctx context.Context, id string) (Stats, error) {
 	ct, err := c.resolve(ctx, id)
 	if err != nil {

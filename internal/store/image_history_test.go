@@ -83,6 +83,46 @@ func TestImageHistoryStore_RecordsAndRevertsAnUpdate(t *testing.T) {
 	}
 }
 
+func TestImageHistoryStore_RecordsARestoredSnapshotOnItsOwnRowOnly(t *testing.T) {
+	ctx := context.Background()
+	s := newImageHistoryStoreForTest(t)
+	at := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	older, err := s.InsertImageHistory(ctx, ImageHistory{Container: "jellyfin", Image: "jellyfin:10", PreviousImageID: "sha256:a", SnapshotArchive: "a.tar.zst", SnapshotDestination: "pool", UpdatedAt: at, KeepUntil: at.Add(24 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := s.InsertImageHistory(ctx, ImageHistory{Container: "jellyfin", Image: "jellyfin:10", PreviousImageID: "sha256:b", SnapshotArchive: "b.tar.zst", SnapshotDestination: "pool", UpdatedAt: at.Add(time.Hour), KeepUntil: at.Add(25 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !older.SnapshotRestoredAt.IsZero() || !newer.SnapshotRestoredAt.IsZero() {
+		t.Fatalf("a new row says its snapshot was restored: %+v %+v", older, newer)
+	}
+
+	restoredAt := at.Add(2 * time.Hour)
+	if err := s.MarkImageHistorySnapshotRestored(ctx, older.ID, restoredAt); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ListImageHistory(ctx)
+	if err != nil || len(all) != 2 || !all[0].SnapshotRestoredAt.IsZero() || !all[1].SnapshotRestoredAt.Equal(restoredAt) || !all[1].RevertedAt.IsZero() {
+		t.Fatalf("List = %+v, %v, want only the marked row to carry the restore", all, err)
+	}
+	latest, _, err := s.LatestImageHistory(ctx, "jellyfin")
+	if err != nil || latest.ID != newer.ID || !latest.SnapshotRestoredAt.IsZero() {
+		t.Fatalf("Latest = %+v, %v, want the newer row, not marked", latest, err)
+	}
+
+	if err := s.MarkImageHistoryReverted(ctx, older.ID, at.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkImageHistorySnapshotRestored(ctx, older.ID, at.Add(4*time.Hour)); !errors.Is(err, ErrImageHistoryNotFound) {
+		t.Fatalf("marking a reverted row = %v, want ErrImageHistoryNotFound", err)
+	}
+	if err := s.MarkImageHistorySnapshotRestored(ctx, 9999, restoredAt); !errors.Is(err, ErrImageHistoryNotFound) {
+		t.Fatalf("marking a missing row = %v, want ErrImageHistoryNotFound", err)
+	}
+}
+
 func TestImageHistoryStore_BulkExclusion(t *testing.T) {
 	ctx := context.Background()
 	s := newImageHistoryStoreForTest(t)

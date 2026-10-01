@@ -803,6 +803,11 @@ CREATE TABLE image_update_checks (
 -- and snapshot_destination name the pre-update appdata archive (doc 10 §2),
 -- both empty when the container has no appdata on the cache disk.
 -- reverted_at is empty until a revert has put the previous image back.
+-- snapshot_restored_at is empty until a revert has restored the snapshot
+-- completely, then the time that restore began; a revert that failed
+-- afterwards then finishes without the snapshot only while the container that
+-- was in place during the restore has not run since, which the Engine's creation
+-- and start times of the container tell.
 CREATE TABLE container_image_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     container TEXT NOT NULL,
@@ -812,7 +817,8 @@ CREATE TABLE container_image_history (
     snapshot_destination TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     keep_until TEXT NOT NULL,
-    reverted_at TEXT NOT NULL
+    reverted_at TEXT NOT NULL,
+    snapshot_restored_at TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 CREATE INDEX container_image_history_container ON container_image_history (container, id);

@@ -37,6 +37,7 @@ type UpdateHistory interface {
 	LatestImageHistory(ctx context.Context, container string) (store.ImageHistory, bool, error)
 	ListImageHistory(ctx context.Context) ([]store.ImageHistory, error)
 	MarkImageHistoryReverted(ctx context.Context, id int64, at time.Time) error
+	MarkImageHistorySnapshotRestored(ctx context.Context, id int64, at time.Time) error
 	DeleteImageHistory(ctx context.Context, id int64) error
 	SetBulkExcluded(ctx context.Context, container string, excluded bool) error
 	BulkExcluded(ctx context.Context) ([]string, error)
@@ -362,49 +363,91 @@ func (u *Updater) undo(ctx context.Context, c Container, ref string, rec *store.
 // nothing changed: the newest record of the container is unreverted and
 // within its keep period, the container runs the reference and a different
 // image than the record names, the kept image is still there, and so is the
-// snapshot.
-func (u *Updater) checkRevert(ctx context.Context, name string) (store.ImageHistory, Container, error) {
+// snapshot, unless an earlier revert restored it and the container that was in
+// place then has not run since (restoreStands). The bool reports that case.
+func (u *Updater) checkRevert(ctx context.Context, name string) (store.ImageHistory, Container, bool, error) {
 	c, err := u.Lifecycle.Provider.Inspect(ctx, name)
 	if err != nil {
-		return store.ImageHistory{}, Container{}, err
+		return store.ImageHistory{}, Container{}, false, err
 	}
 	h, ok, err := u.History.LatestImageHistory(ctx, c.Name)
 	if err != nil {
-		return store.ImageHistory{}, Container{}, err
+		return store.ImageHistory{}, Container{}, false, err
 	}
 	var ref string
 	if ok {
 		img, err := u.Lifecycle.Provider.ConfiguredImage(ctx, c.ID)
 		if err != nil {
-			return h, c, err
+			return h, c, false, err
 		}
 		ref = img.Ref
 	}
 	switch {
 	case !ok:
-		return h, c, fmt.Errorf("%w: %s has no recorded update", ErrNothingToRevert, c.Name)
+		return h, c, false, fmt.Errorf("%w: %s has no recorded update", ErrNothingToRevert, c.Name)
 	case !h.RevertedAt.IsZero():
-		return h, c, fmt.Errorf("%w: its latest update was already reverted", ErrNothingToRevert)
+		return h, c, false, fmt.Errorf("%w: its latest update was already reverted", ErrNothingToRevert)
 	case c.ImageID == h.PreviousImageID:
-		return h, c, fmt.Errorf("%w: %s already runs the previous image", ErrNothingToRevert, c.Name)
+		return h, c, false, fmt.Errorf("%w: %s already runs the previous image", ErrNothingToRevert, c.Name)
 	case ref != h.Image:
-		return h, c, fmt.Errorf("%w: %s now uses %s, not %s", ErrNothingToRevert, c.Name, ref, h.Image)
+		return h, c, false, fmt.Errorf("%w: %s now uses %s, not %s", ErrNothingToRevert, c.Name, ref, h.Image)
 	case !u.now().Before(h.KeepUntil):
-		return h, c, fmt.Errorf("%w: the previous image was only kept until %s", ErrRevertUnavailable, h.KeepUntil.UTC().Format(time.RFC3339))
+		return h, c, false, fmt.Errorf("%w: the previous image was only kept until %s", ErrRevertUnavailable, h.KeepUntil.UTC().Format(time.RFC3339))
 	}
 	images, err := u.Lifecycle.Provider.Images(ctx)
 	if err != nil {
-		return h, c, err
+		return h, c, false, err
 	}
 	if !keepsImage(images, h) {
-		return h, c, fmt.Errorf("%w: the previous image %s is no longer held on this host", ErrRevertUnavailable, h.PreviousImageID)
+		return h, c, false, fmt.Errorf("%w: the previous image %s is no longer held on this host", ErrRevertUnavailable, h.PreviousImageID)
 	}
+	restored := false
 	if h.SnapshotArchive != "" {
-		if err := u.Snapshots.Find(ctx, c.Name, SnapshotRef{Archive: h.SnapshotArchive, DestinationID: h.SnapshotDestination}); err != nil {
-			return h, c, fmt.Errorf("%w: the pre-update snapshot %s is gone: %w", ErrRevertUnavailable, h.SnapshotArchive, err)
+		restored = u.restoreStands(ctx, h, c)
+		if !restored {
+			if err := u.Snapshots.Find(ctx, c.Name, SnapshotRef{Archive: h.SnapshotArchive, DestinationID: h.SnapshotDestination}); err != nil {
+				return h, c, false, fmt.Errorf("%w: the pre-update snapshot %s is gone: %w; %s", ErrRevertUnavailable, h.SnapshotArchive, err, goneRecovery(h, c.Name))
+			}
 		}
 	}
-	return h, c, nil
+	return h, c, restored, nil
+}
+
+// restoreStands reports whether the restore recorded on h still is what the
+// appdata of c holds: it was recorded, c is not running, the Engine created
+// c no later than the restore began, and did not start it after. A container
+// that ran since may have written to the restored data with the updated
+// image, so the record then says nothing. A recreation hides that: it makes a
+// new container that reports no start even when the one it replaced ran, so
+// only the container that was in place during the restore is covered, and a
+// replacement created after it is not. A creation or start time that cannot
+// be read says nothing either, since an error is not proof that the container
+// did not run. The record's time has whole seconds, which can only make a
+// time look later than it was, never earlier.
+func (u *Updater) restoreStands(ctx context.Context, h store.ImageHistory, c Container) bool {
+	if h.SnapshotRestoredAt.IsZero() || containerActive(c.State) {
+		return false
+	}
+	created, err := u.Lifecycle.Provider.CreatedAt(ctx, c.ID)
+	if err != nil || created.IsZero() || created.After(h.SnapshotRestoredAt) {
+		return false
+	}
+	started, err := u.Lifecycle.Provider.StartedAt(ctx, c.ID)
+	if err != nil {
+		return false
+	}
+	return !started.After(h.SnapshotRestoredAt)
+}
+
+// goneRecovery is what the refusal says about the appdata of a container
+// whose snapshot is gone: a restore of it may have run, so it names the
+// pre-restore archive that restore wrote, which holds what the updated image
+// had written before.
+func goneRecovery(h store.ImageHistory, name string) string {
+	if h.SnapshotRestoredAt.IsZero() {
+		return fmt.Sprintf("if an earlier revert of this update began restoring it and was cut short, the appdata of %s may already be the pre-update content, and the pre-restore archive that revert took holds the appdata the updated image had written", name)
+	}
+	return fmt.Sprintf("an earlier revert of this update restored it, but %s has run or been recreated since, or whether it has could not be checked, so its appdata is no longer known to be that restored content; the pre-restore archive that revert took holds the appdata the updated image had written before it", name)
 }
 
 func keepsImage(images []Image, h store.ImageHistory) bool {
@@ -431,7 +474,7 @@ func (u *Updater) CheckRevert(ctx context.Context, name string) error {
 	if err := u.Lifecycle.RequireArrayRunning(); err != nil {
 		return err
 	}
-	_, _, err := u.checkRevert(ctx, name)
+	_, _, _, err := u.checkRevert(ctx, name)
 	return err
 }
 
@@ -447,9 +490,19 @@ func (u *Updater) CheckRevert(ctx context.Context, name string) error {
 // stopped, a failure leaves it stopped, whether the restore failed (which may
 // have replaced the appdata before it did) or a later step did, because the
 // updated image must not run against restored data; the record stays usable,
-// and reverting again finishes it, restoring the snapshot once more. That
-// retry leaves the container stopped too, since it cannot tell that it ran
-// before, and the error says to start it. A failure to stop the container
+// and reverting again finishes it. A restore that completed is recorded on
+// the update's record, with the time it began, and a retry then skips it and
+// needs the snapshot no more, so it finishes even once a later archive has
+// pruned the snapshot, but only while the appdata can still be that restored
+// content: the container is not running, the Engine created it no later than
+// the restore began (a recreation since made a new container, which reports no
+// start even if the one it replaced ran), and has not started it since the
+// restore began. Otherwise, or when its creation or start time cannot be read,
+// or when the record could not be written, the retry takes the snapshot as not
+// restored: it stops the container if it runs, restores the snapshot again,
+// and refuses once the snapshot is gone. A retry that skipped the restore
+// leaves the container stopped too, since it cannot tell that it ran before,
+// and the error says to start it. A failure to stop the container
 // changes nothing. A container that was stopped stays stopped. A container
 // with no snapshot to restore is only recreated, which starts it if it ran.
 // sharers are the other containers the restore may stop.
@@ -460,7 +513,7 @@ func (u *Updater) Revert(ctx context.Context, name string, sharers []string, out
 	if err := u.Lifecycle.RequireArrayRunning(); err != nil {
 		return err
 	}
-	h, c, err := u.checkRevert(ctx, name)
+	h, c, restored, err := u.checkRevert(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -468,8 +521,7 @@ func (u *Updater) Revert(ctx context.Context, name string, sharers []string, out
 	// stopped is set once this revert has stopped a running container, which
 	// it alone then starts again.
 	stopped := false
-	restored := false
-	if h.SnapshotArchive != "" {
+	if h.SnapshotArchive != "" && !restored {
 		if containerActive(c.State) {
 			_, _ = fmt.Fprintf(out, "stopping %s\n", c.Name)
 			if _, err := u.Lifecycle.Stop(ctx, c.Name); err != nil {
@@ -478,10 +530,14 @@ func (u *Updater) Revert(ctx context.Context, name string, sharers []string, out
 			stopped = true
 		}
 		_, _ = fmt.Fprintf(out, "restoring the appdata snapshot %s\n", h.SnapshotArchive)
+		// Taken before the restore, so a start at any moment of it, the
+		// container being stopped, shows up as later than the record.
+		restoreBegan := u.now()
 		if err := u.Snapshots.Restore(ctx, c.Name, SnapshotRef{Archive: h.SnapshotArchive, DestinationID: h.SnapshotDestination}, sharers, out); err != nil {
 			return fmt.Errorf("restoring the pre-update snapshot of %s failed, so it was not reverted; it is left stopped, because the failed restore may already have replaced its appdata and the updated image must not run against that; revert again to finish, then start it: %w", c.Name, err)
 		}
 		restored = true
+		u.recordRestored(ctx, h, restoreBegan, out)
 	}
 
 	left := "it still runs the updated image; revert again to finish"
@@ -516,6 +572,19 @@ func (u *Updater) Revert(ctx context.Context, name string, sharers []string, out
 	}
 	_, _ = fmt.Fprintf(out, "%s reverted to its previous image\n", c.Name)
 	return nil
+}
+
+// recordRestored marks the update's record as having its snapshot restored,
+// the restore having begun at began, however the request or job context
+// ended. The revert goes on when it cannot: only a retry needs the mark, and
+// without it that retry restores the snapshot again or refuses once it is
+// gone, never skips a restore.
+func (u *Updater) recordRestored(ctx context.Context, h store.ImageHistory, began time.Time, out io.Writer) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
+	defer cancel()
+	if err := u.History.MarkImageHistorySnapshotRestored(ctx, h.ID, began); err != nil {
+		_, _ = fmt.Fprintf(out, "warning: recording that the snapshot %s was restored failed, so a retry of a failed revert needs it still on its destination: %v\n", h.SnapshotArchive, err)
+	}
 }
 
 // startAgain starts a container this revert stopped, however the request or

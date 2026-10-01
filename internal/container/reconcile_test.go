@@ -529,3 +529,69 @@ func TestReconcile_RemovalFailureIsReturnedAndTheOriginalStaysInPlace(t *testing
 		t.Fatal("the original is not in place")
 	}
 }
+
+func TestEngineClient_StartedAtReadsTheEnginesLastStart(t *testing.T) {
+	e := newStateEngine(true)
+	want, err := time.Parse(time.RFC3339Nano, e.containers[0].info.State.StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &EngineClient{cli: e}
+	got, err := c.StartedAt(context.Background(), "jellyfin")
+	if err != nil || !got.Equal(want) || got.Location() != time.UTC {
+		t.Fatalf("StartedAt = %v, %v, want %v in UTC", got, err, want)
+	}
+
+	e.containers[0].info.State.StartedAt = neverStamp
+	if got, err := c.StartedAt(context.Background(), "jellyfin"); err != nil || !got.IsZero() {
+		t.Fatalf("StartedAt of a container never started = %v, %v, want the zero time", got, err)
+	}
+}
+
+// An error is never a time: a start time that cannot be read is no start
+// time, so a caller cannot take the container for one that never ran.
+func TestEngineClient_StartedAtFailsWhenTheEngineGivesNoTime(t *testing.T) {
+	c := &EngineClient{cli: newStateEngine(true)}
+	if _, err := c.StartedAt(context.Background(), "other"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("StartedAt of an unknown container = %v, want ErrNotFound", err)
+	}
+	for name, stamp := range map[string]string{"empty": "", "garbled": "last tuesday"} {
+		t.Run(name, func(t *testing.T) {
+			e := newStateEngine(true)
+			e.containers[0].info.State.StartedAt = stamp
+			if got, err := (&EngineClient{cli: e}).StartedAt(context.Background(), "jellyfin"); err == nil {
+				t.Fatalf("StartedAt = %v, nil, want an error", got)
+			}
+		})
+	}
+}
+
+func TestEngineClient_CreatedAtReadsWhenTheEngineCreatedTheContainer(t *testing.T) {
+	e := newStateEngine(true)
+	want, err := time.Parse(time.RFC3339Nano, e.containers[0].info.Created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&EngineClient{cli: e}).CreatedAt(context.Background(), "jellyfin")
+	if err != nil || !got.Equal(want) || got.Location() != time.UTC {
+		t.Fatalf("CreatedAt = %v, %v, want %v in UTC", got, err, want)
+	}
+}
+
+// An error is never a time: a creation time that cannot be read, or the zero
+// time the Engine gives for none, is not one a caller may compare.
+func TestEngineClient_CreatedAtFailsWhenTheEngineGivesNoTime(t *testing.T) {
+	c := &EngineClient{cli: newStateEngine(true)}
+	if _, err := c.CreatedAt(context.Background(), "other"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreatedAt of an unknown container = %v, want ErrNotFound", err)
+	}
+	for name, stamp := range map[string]string{"empty": "", "garbled": "last tuesday", "zero": neverStamp} {
+		t.Run(name, func(t *testing.T) {
+			e := newStateEngine(true)
+			e.containers[0].info.Created = stamp
+			if got, err := (&EngineClient{cli: e}).CreatedAt(context.Background(), "jellyfin"); err == nil {
+				t.Fatalf("CreatedAt = %v, nil, want an error", got)
+			}
+		})
+	}
+}

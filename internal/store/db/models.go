@@ -122,6 +122,7 @@ type ContainerImageHistory struct {
 	UpdatedAt           string `json:"updated_at"`
 	KeepUntil           string `json:"keep_until"`
 	RevertedAt          string `json:"reverted_at"`
+	SnapshotRestoredAt  string `json:"snapshot_restored_at"`
 }
 
 type ContainerUpdatePolicy struct {

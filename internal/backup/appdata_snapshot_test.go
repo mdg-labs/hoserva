@@ -197,6 +197,11 @@ func (h *updateHistory) MarkImageHistoryReverted(_ context.Context, id int64, at
 	return nil
 }
 
+func (h *updateHistory) MarkImageHistorySnapshotRestored(_ context.Context, id int64, at time.Time) error {
+	h.rows[id-1].SnapshotRestoredAt = at
+	return nil
+}
+
 func (h *updateHistory) DeleteImageHistory(context.Context, int64) error { return nil }
 
 func (h *updateHistory) SetBulkExcluded(context.Context, string, bool) error { return nil }

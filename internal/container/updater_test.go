@@ -19,8 +19,8 @@ type memHistory struct {
 	nextID   int64
 	excluded map[string]bool
 	days     int
-	// failDelete and failMark script the matching call to fail.
-	failDelete, failMark error
+	// failDelete, failMark and failMarkRestored script the matching call to fail.
+	failDelete, failMark, failMarkRestored error
 }
 
 func newMemHistory() *memHistory {
@@ -58,6 +58,19 @@ func (m *memHistory) MarkImageHistoryReverted(_ context.Context, id int64, at ti
 	for i := range m.rows {
 		if m.rows[i].ID == id {
 			m.rows[i].RevertedAt = at
+			return nil
+		}
+	}
+	return store.ErrImageHistoryNotFound
+}
+
+func (m *memHistory) MarkImageHistorySnapshotRestored(_ context.Context, id int64, at time.Time) error {
+	if m.failMarkRestored != nil {
+		return m.failMarkRestored
+	}
+	for i := range m.rows {
+		if m.rows[i].ID == id && m.rows[i].RevertedAt.IsZero() {
+			m.rows[i].SnapshotRestoredAt = at
 			return nil
 		}
 	}
@@ -180,6 +193,7 @@ type updaterRig struct {
 
 func newUpdaterRig() *updaterRig {
 	r := &updaterRig{provider: NewFakeProvider(), history: newMemHistory(), now: time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)}
+	r.provider.SetClock(func() time.Time { return r.now })
 	r.provider.AddContainer(Container{
 		ID: "id-jf", Name: "jellyfin", Image: "lscr.io/linuxserver/jellyfin", Tag: "10.9.7",
 		ImageID: imgOld, State: "running",
@@ -525,7 +539,11 @@ func TestRevert_RefusesBeforeChangingAnythingWhenItCannotComplete(t *testing.T) 
 		"snapshot gone from its destination": {func(r *updaterRig) { r.snapshots.findErr = errors.New("no such appdata archive") }, ErrRevertUnavailable},
 		"keep period over":                   {func(r *updaterRig) { r.now = r.now.AddDate(0, 0, 8) }, ErrRevertUnavailable},
 		"container uses another reference": {func(r *updaterRig) {
-			r.provider.RemoveContainer("id-jf")
+			current, err := r.provider.Inspect(context.Background(), "jellyfin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.provider.RemoveContainer(current.ID)
 			r.provider.AddContainer(Container{ID: "id-jf", Name: "jellyfin", Image: "lscr.io/linuxserver/jellyfin", Tag: "10.10.0", ImageID: imgNew, State: "running"})
 		}, ErrNothingToRevert},
 	}
@@ -651,11 +669,350 @@ func TestRevert_AFailureAfterTheRestoreLeavesTheContainerStoppedAndCanBeRetried(
 			if c, _ := r.provider.Inspect(context.Background(), "jellyfin"); c.State == "running" || c.ImageID != imgOld {
 				t.Fatalf("after the retry the container is %s on %s, want it stopped on the previous image", c.State, c.ImageID)
 			}
-			if len(r.snapshots.restores) != 2 || r.history.rows[0].RevertedAt.IsZero() {
-				t.Fatalf("after the retry: restores %v, records %+v, want the snapshot restored again and the revert recorded", r.snapshots.restores, r.history.rows)
+			if len(r.snapshots.restores) != 1 || r.history.rows[0].RevertedAt.IsZero() {
+				t.Fatalf("after the retry: restores %v, records %+v, want the snapshot restored once, by the first attempt, and the revert recorded", r.snapshots.restores, r.history.rows)
 			}
 		})
 	}
+}
+
+// A revert that failed after its restore leaves the live appdata as the
+// pre-update content. A later archive of the container can then prune that
+// snapshot, and the retry must still finish the image swap: it needs no
+// snapshot, and refusing would leave the container stopped for good.
+func TestRevert_ARetryAfterTheRestoreFinishesEvenOnceTheSnapshotIsPruned(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	startsBefore := len(r.provider.Starts())
+	r.provider.FailOn("tag-image", jfRef, errors.New("engine busy"))
+	if _, err := r.revert(t); err == nil {
+		t.Fatal("Revert succeeded with the swap failing")
+	}
+	if r.history.rows[0].SnapshotRestoredAt.IsZero() {
+		t.Fatal("the update's record does not say its snapshot was restored")
+	}
+
+	r.snapshots.findErr = errors.New("no such appdata archive")
+	r.provider.FailOn("tag-image", jfRef, nil)
+	if err := r.u.CheckRevert(context.Background(), "jellyfin"); err != nil {
+		t.Fatalf("CheckRevert with the restored snapshot pruned = %v, want the revert still offered", err)
+	}
+	out, err := r.revert(t)
+	if err != nil {
+		t.Fatalf("retried Revert with the restored snapshot pruned: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(r.snapshots.restores, []string{jfArchive}) {
+		t.Fatalf("restores %v, want the one by the first attempt and none by the retry", r.snapshots.restores)
+	}
+	if r.imageID(t) != imgOld || r.tags(t)[jfRef] != imgOld || r.history.rows[0].RevertedAt.IsZero() {
+		t.Fatalf("container on %s, tags %v, records %+v, want the previous image and the revert recorded", r.imageID(t), r.tags(t), r.history.rows)
+	}
+	if got := r.provider.Starts()[startsBefore:]; len(got) != 0 {
+		t.Fatalf("starts = %+v, want none: the retry leaves the container stopped, as the first error said", got)
+	}
+	if c, _ := r.provider.Inspect(context.Background(), "jellyfin"); c.State == "running" {
+		t.Fatal("the retry started the container")
+	}
+}
+
+// A restore that failed has not put the pre-update data back, so a retry
+// must not take the snapshot as restored: once it is pruned the revert
+// refuses, and the message names how to recover.
+func TestRevert_ARetryAfterAFailedRestoreStillRefusesOnceTheSnapshotIsPruned(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	r.snapshots.restoreErr = errors.New("destination unreadable")
+	if _, err := r.revert(t); err == nil {
+		t.Fatal("Revert succeeded with the restore failing")
+	}
+	if !r.history.rows[0].SnapshotRestoredAt.IsZero() {
+		t.Fatal("a failed restore was recorded as done")
+	}
+
+	r.snapshots.restoreErr = nil
+	r.snapshots.findErr = errors.New("no such appdata archive")
+	callsBefore := len(r.provider.Calls())
+	_, err := r.revert(t)
+	if !errors.Is(err, ErrRevertUnavailable) {
+		t.Fatalf("retried Revert = %v, want ErrRevertUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "pre-restore archive") || strings.Contains(err.Error(), "by hand") {
+		t.Fatalf("Revert = %q, want the message to name the pre-restore archive and not to send the operator to start the container", err)
+	}
+	if len(r.snapshots.restores) != 0 || len(r.provider.Calls()) != callsBefore || r.imageID(t) != imgNew || !r.history.rows[0].RevertedAt.IsZero() {
+		t.Fatalf("a refused retry changed things: restores %v, image %s, records %+v", r.snapshots.restores, r.imageID(t), r.history.rows)
+	}
+}
+
+// When the mark cannot be written, a retry cannot know the restore happened:
+// it restores again while the snapshot is there and refuses once it is gone,
+// and never skips a restore on the strength of a mark it does not have.
+func TestRevert_AMarkThatCannotBeWrittenNeverMakesARetrySkipTheRestore(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	r.history.failMarkRestored = errors.New("database is locked")
+	r.provider.FailOn("tag-image", jfRef, errors.New("engine busy"))
+	out, err := r.revert(t)
+	if err == nil || !strings.Contains(out, "warning: recording that the snapshot") {
+		t.Fatalf("Revert = %v, output %q, want the swap failure and a warning that the restore was not recorded", err, out)
+	}
+	if !r.history.rows[0].SnapshotRestoredAt.IsZero() {
+		t.Fatal("the restore was recorded though writing the mark failed")
+	}
+
+	r.provider.FailOn("tag-image", jfRef, nil)
+	r.snapshots.findErr = errors.New("no such appdata archive")
+	if _, err := r.revert(t); !errors.Is(err, ErrRevertUnavailable) || len(r.snapshots.restores) != 1 {
+		t.Fatalf("retried Revert = %v, restores %v, want a refusal with no further restore", err, r.snapshots.restores)
+	}
+
+	r.snapshots.findErr = nil
+	if _, err := r.revert(t); err != nil || len(r.snapshots.restores) != 2 || r.imageID(t) != imgOld {
+		t.Fatalf("Revert with the snapshot back = %v, restores %v, image %s, want it restored again and finished", err, r.snapshots.restores, r.imageID(t))
+	}
+}
+
+// The mark belongs to one update's record. After a revert failed behind its
+// restore, a newer update of the container has a record of its own with no
+// mark, so a revert of it restores its own snapshot and, with that snapshot
+// gone, refuses, whatever the older record says.
+func TestRevert_ARestoreMarkOfAnOlderUpdateDoesNotCoverANewerOne(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	r.provider.FailOn("tag-image", jfRef, errors.New("engine busy"))
+	if _, err := r.revert(t); err == nil {
+		t.Fatal("Revert succeeded with the swap failing")
+	}
+	r.provider.FailOn("tag-image", jfRef, nil)
+	if err := r.provider.Start(context.Background(), "jellyfin"); err != nil {
+		t.Fatal(err)
+	}
+
+	r.provider.AddImage(Image{ID: "sha256:newer"})
+	r.provider.SetPull(jfRef, "sha256:newer")
+	r.snapshots.archive = SnapshotRef{Archive: "second.pre-update.tar.zst", DestinationID: jfSnapshot}
+	if _, err := r.update(t); err != nil {
+		t.Fatalf("second update: %v", err)
+	}
+	if len(r.history.rows) != 2 || r.history.rows[0].SnapshotRestoredAt.IsZero() || !r.history.rows[1].SnapshotRestoredAt.IsZero() {
+		t.Fatalf("records %+v, want the older marked and the newer not", r.history.rows)
+	}
+
+	r.snapshots.findErr = errors.New("no such appdata archive")
+	if _, err := r.revert(t); !errors.Is(err, ErrRevertUnavailable) || len(r.snapshots.restores) != 1 {
+		t.Fatalf("Revert of the newer update = %v, restores %v, want a refusal that skipped nothing it needed", err, r.snapshots.restores)
+	}
+}
+
+// restoredThenFailed updates the container and reverts it with the swap
+// failing behind a completed restore, leaving it stopped on the updated image
+// with the update's record marked, and the swap working again.
+func (r *updaterRig) restoredThenFailed(t *testing.T) {
+	t.Helper()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	r.provider.FailOn("tag-image", jfRef, errors.New("engine busy"))
+	if _, err := r.revert(t); err == nil {
+		t.Fatal("Revert succeeded with the swap failing")
+	}
+	if r.history.rows[0].SnapshotRestoredAt.IsZero() {
+		t.Fatal("the update's record does not say its snapshot was restored")
+	}
+	r.provider.FailOn("tag-image", jfRef, nil)
+}
+
+func (r *updaterRig) stops() int {
+	n := 0
+	for _, call := range r.provider.Calls() {
+		if call.Op == "stop" {
+			n++
+		}
+	}
+	return n
+}
+
+// The mark says the live appdata is the restored content, which holds only
+// while the container has not run since. A container started on the updated
+// image after the failed revert, by hand or by its restart policy, may have
+// written to that data, so the retry must treat the mark as absent: stop it,
+// restore the snapshot again while it exists, and refuse once it is gone. It
+// must never swap the image under a container that is running.
+func TestRevert_AContainerStartedSinceTheRestoreIsNotCoveredByTheMark(t *testing.T) {
+	cases := map[string]func(r *updaterRig){
+		"left running": func(r *updaterRig) {
+			r.now = r.now.Add(time.Hour)
+			if err := r.provider.Start(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"started and stopped again": func(r *updaterRig) {
+			r.now = r.now.Add(time.Hour)
+			if err := r.provider.Start(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.provider.Stop(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"stopped again with a start time that cannot be read": func(r *updaterRig) {
+			if err := r.provider.Start(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.provider.Stop(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			r.provider.FailOn("started-at", "jellyfin", errors.New("engine busy"))
+		},
+		"stopped again, then recreated while stopped, which reports no start": func(r *updaterRig) {
+			r.now = r.now.Add(time.Hour)
+			if err := r.provider.Start(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.provider.Stop(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			r.now = r.now.Add(time.Hour)
+			if err := r.provider.Recreate(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			if started, err := r.provider.StartedAt(context.Background(), "jellyfin"); err != nil || !started.IsZero() {
+				t.Fatalf("StartedAt of the replacement = %v, %v, want the zero time of a container never started", started, err)
+			}
+		},
+		"recreated while stopped, nothing having run": func(r *updaterRig) {
+			r.now = r.now.Add(time.Hour)
+			if err := r.provider.Recreate(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"stopped, with a creation time that cannot be read": func(r *updaterRig) {
+			r.provider.FailOn("created-at", "jellyfin", errors.New("engine busy"))
+		},
+		"running, whatever its start time says": func(r *updaterRig) {
+			if err := r.provider.Start(context.Background(), "jellyfin"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.provider.SetStartedAt("jellyfin", r.now.Add(-time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, startIt := range cases {
+		t.Run(name+", snapshot still there", func(t *testing.T) {
+			r := newUpdaterRig()
+			r.restoredThenFailed(t)
+			startIt(r)
+			wasRunning := r.stateOf(t) == "running"
+			stopsBefore := r.stops()
+
+			if _, err := r.revert(t); err != nil {
+				t.Fatalf("retried Revert: %v", err)
+			}
+			if !reflect.DeepEqual(r.snapshots.restores, []string{jfArchive, jfArchive}) {
+				t.Fatalf("restores %v, want the snapshot restored again: the container ran since the first restore", r.snapshots.restores)
+			}
+			if wasRunning && r.stops() != stopsBefore+1 {
+				t.Fatalf("stops %d -> %d, want the running container stopped before the restore and the swap", stopsBefore, r.stops())
+			}
+			if r.imageID(t) != imgOld || r.history.rows[0].RevertedAt.IsZero() {
+				t.Fatalf("container on %s, records %+v, want the previous image and the revert recorded", r.imageID(t), r.history.rows)
+			}
+		})
+		t.Run(name+", snapshot pruned", func(t *testing.T) {
+			r := newUpdaterRig()
+			r.restoredThenFailed(t)
+			startIt(r)
+			state := r.stateOf(t)
+			r.snapshots.findErr = errors.New("no such appdata archive")
+			callsBefore := len(r.provider.Calls())
+
+			for _, check := range []func() error{
+				func() error { return r.u.CheckRevert(context.Background(), "jellyfin") },
+				func() error { _, err := r.revert(t); return err },
+			} {
+				err := check()
+				if !errors.Is(err, ErrRevertUnavailable) {
+					t.Fatalf("with the snapshot pruned and the container run since the restore: %v, want ErrRevertUnavailable", err)
+				}
+				if !strings.Contains(err.Error(), "pre-restore archive") || strings.Contains(err.Error(), "by hand") {
+					t.Fatalf("%q: want the message to name the pre-restore archive and not to send the operator to start the container", err)
+				}
+			}
+			if len(r.snapshots.restores) != 1 || len(r.provider.Calls()) != callsBefore {
+				t.Fatalf("a refused retry changed things: restores %v, calls %v", r.snapshots.restores, r.provider.Calls()[callsBefore:])
+			}
+			if r.imageID(t) != imgNew || r.stateOf(t) != state || !r.history.rows[0].RevertedAt.IsZero() {
+				t.Fatalf("container on %s (%s), records %+v, want it as the failed revert and the operator left it", r.imageID(t), r.stateOf(t), r.history.rows)
+			}
+		})
+	}
+}
+
+// A retry after a failure that leaves the original container in place is the
+// case the mark exists for: that container was created before the restore
+// began, so the retry finishes without the snapshot even once it is pruned.
+func TestRevert_ARetryAfterAFailedSwapOfTheOriginalContainerFinishesOnceTheSnapshotIsPruned(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	r.now = r.now.Add(time.Hour)
+	r.provider.FailOn("recreate-local", "jellyfin", errors.New("starting the replacement container: no such file"))
+	if _, err := r.revert(t); err == nil {
+		t.Fatal("Revert succeeded with the swap failing")
+	}
+	created, err := r.provider.CreatedAt(context.Background(), "jellyfin")
+	if err != nil || !created.Before(r.history.rows[0].SnapshotRestoredAt) {
+		t.Fatalf("container created %v, %v, restore began %v, want it created before the restore", created, err, r.history.rows[0].SnapshotRestoredAt)
+	}
+
+	r.provider.FailOn("recreate-local", "jellyfin", nil)
+	r.snapshots.findErr = errors.New("no such appdata archive")
+	if _, err := r.revert(t); err != nil || len(r.snapshots.restores) != 1 || r.imageID(t) != imgOld {
+		t.Fatalf("retried Revert = %v, restores %v, image %s, want it finished without the snapshot", err, r.snapshots.restores, r.imageID(t))
+	}
+}
+
+// A container the Engine has not started since the restore is still on the
+// restored content, whatever its start time says about earlier runs.
+func TestRevert_AContainerNotStartedSinceTheRestoreStaysCoveredByTheMark(t *testing.T) {
+	for name, startedAt := range map[string]time.Time{
+		"never started":                {},
+		"started before":               time.Date(2026, 10, 1, 7, 0, 0, 0, time.UTC),
+		"started at the mark":          time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC),
+		"zone of the Engine":           time.Date(2026, 10, 1, 10, 0, 0, 0, time.FixedZone("CEST", 2*3600)),
+		"started just before the mark": time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC).Add(-time.Nanosecond),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newUpdaterRig()
+			r.restoredThenFailed(t)
+			if err := r.provider.SetStartedAt("jellyfin", startedAt); err != nil {
+				t.Fatal(err)
+			}
+			r.snapshots.findErr = errors.New("no such appdata archive")
+			if _, err := r.revert(t); err != nil || len(r.snapshots.restores) != 1 || r.imageID(t) != imgOld {
+				t.Fatalf("retried Revert = %v, restores %v, image %s, want it finished without the snapshot", err, r.snapshots.restores, r.imageID(t))
+			}
+		})
+	}
+}
+
+func (r *updaterRig) stateOf(t *testing.T) string {
+	t.Helper()
+	c, err := r.provider.Inspect(context.Background(), "jellyfin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.State
 }
 
 // A container that was stopped stays stopped.

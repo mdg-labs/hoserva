@@ -37,6 +37,11 @@ type ImageHistory struct {
 	UpdatedAt           time.Time
 	KeepUntil           time.Time
 	RevertedAt          time.Time // zero until a revert has put the previous image back
+	// SnapshotRestoredAt is zero until a revert has restored the snapshot
+	// completely, and then the time that restore began; a retry of that
+	// revert needs no snapshot only while the container that was in place
+	// during the restore has not run since.
+	SnapshotRestoredAt time.Time
 }
 
 // ImageHistoryStore persists container update history, the bulk-update
@@ -51,7 +56,7 @@ func NewImageHistoryStore(db storedb.DBTX) *ImageHistoryStore {
 }
 
 // InsertImageHistory creates the row for h and returns it with its ID. Its
-// RevertedAt is always empty.
+// RevertedAt and SnapshotRestoredAt are always empty.
 func (s *ImageHistoryStore) InsertImageHistory(ctx context.Context, h ImageHistory) (ImageHistory, error) {
 	id, err := s.q.InsertContainerImageHistory(ctx, storedb.InsertContainerImageHistoryParams{
 		Container:           h.Container,
@@ -67,6 +72,7 @@ func (s *ImageHistoryStore) InsertImageHistory(ctx context.Context, h ImageHisto
 	}
 	h.ID = id
 	h.RevertedAt = time.Time{}
+	h.SnapshotRestoredAt = time.Time{}
 	return h, nil
 }
 
@@ -118,7 +124,29 @@ func imageHistoryFromRow(row *storedb.ContainerImageHistory) (ImageHistory, erro
 			return ImageHistory{}, fmt.Errorf("store: parsing reverted_at of update record %d: %w", row.ID, err)
 		}
 	}
+	if row.SnapshotRestoredAt != "" {
+		if h.SnapshotRestoredAt, err = time.Parse(TimeFormat, row.SnapshotRestoredAt); err != nil {
+			return ImageHistory{}, fmt.Errorf("store: parsing snapshot_restored_at of update record %d: %w", row.ID, err)
+		}
+	}
 	return h, nil
+}
+
+// MarkImageHistorySnapshotRestored records that a revert restored the
+// snapshot of row id completely, the restore having begun at at. It returns ErrImageHistoryNotFound
+// for a row that does not exist or was reverted already.
+func (s *ImageHistoryStore) MarkImageHistorySnapshotRestored(ctx context.Context, id int64, at time.Time) error {
+	n, err := s.q.MarkContainerImageHistorySnapshotRestored(ctx, storedb.MarkContainerImageHistorySnapshotRestoredParams{
+		SnapshotRestoredAt: at.UTC().Format(TimeFormat),
+		ID:                 id,
+	})
+	if err != nil {
+		return fmt.Errorf("store: marking the snapshot of update record %d restored: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %d", ErrImageHistoryNotFound, id)
+	}
+	return nil
 }
 
 // MarkImageHistoryReverted records that row id was reverted at at. It

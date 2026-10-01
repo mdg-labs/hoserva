@@ -215,6 +215,17 @@ type Provider interface {
 	// that reference, reads it here.
 	ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error)
 	Images(ctx context.Context) ([]Image, error)
+	// StartedAt is when the Engine last started the container, in UTC, and
+	// the zero time for one it has never started. The listing does not carry
+	// it, so it is an inspection of its own, and an error is never a time:
+	// a caller that cannot learn it must not assume the container did not
+	// run.
+	StartedAt(ctx context.Context, id string) (time.Time, error)
+	// CreatedAt is when the Engine created the container, in UTC. A
+	// recreation makes a new container, so this is later than any start of
+	// the one it replaced. An error is never a time, and a container the
+	// Engine gives no creation time for is an error too.
+	CreatedAt(ctx context.Context, id string) (time.Time, error)
 
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error

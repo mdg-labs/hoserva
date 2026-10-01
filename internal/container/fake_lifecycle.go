@@ -15,7 +15,7 @@ type FakeCall struct {
 }
 
 // FailOn scripts op ("start", "stop", "restart", "remove", "recreate",
-// "recreate-swap", "recreate-local", "logs", "stats", "reconcile") to return
+// "recreate-swap", "recreate-local", "started-at", "created-at", "logs", "stats", "reconcile") to return
 // err for the container whose ID or name is id, or for every container when
 // id is "". The container is left exactly as it was. "pull-image",
 // "tag-image" and "untag-image" are scripted per image reference instead. A
@@ -166,6 +166,7 @@ func (f *FakeProvider) setState(op, id, state, status string) error {
 	f.containers[i].Status = status
 	if state == "running" {
 		f.starts = append(f.starts, FakeStart{Name: f.containers[i].Name, ImageID: f.containers[i].ImageID})
+		f.markStartedLocked(f.containers[i])
 	}
 	change := changeOf(f.containers[i], "")
 	f.mu.Unlock()
@@ -247,6 +248,7 @@ func (f *FakeProvider) Recreate(ctx context.Context, id string) error {
 	if err := f.failureLocked("recreate-swap", f.containers[i]); err != nil {
 		return err
 	}
+	f.replaceLocked(i)
 	if ok {
 		f.containers[i].ImageID = pulled
 		if f.containers[i].State == "running" {
@@ -254,6 +256,23 @@ func (f *FakeProvider) Recreate(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+// replaceLocked models the Engine making a new container for a recreation:
+// it has a new ID and creation time and has not started, unless the
+// container it replaces ran, in which case the swap starts it.
+func (f *FakeProvider) replaceLocked(i int) {
+	old := f.containers[i].ID
+	f.replaced++
+	f.containers[i].ID = fmt.Sprintf("%s-r%d", old, f.replaced)
+	delete(f.started, old)
+	if f.created == nil {
+		f.created = make(map[string]time.Time)
+	}
+	f.created[f.containers[i].ID] = f.nowLocked().UTC()
+	if f.containers[i].State == "running" {
+		f.markStartedLocked(f.containers[i])
+	}
 }
 
 // PullImage records a "pull-image" call (ID is the reference) and, for a
@@ -288,6 +307,7 @@ func (f *FakeProvider) RecreateLocal(ctx context.Context, id string) error {
 	for _, img := range f.images {
 		for _, t := range img.RepoTags {
 			if t == ref {
+				f.replaceLocked(i)
 				f.containers[i].ImageID = img.ID
 				if f.containers[i].State == "running" {
 					f.starts = append(f.starts, FakeStart{Name: f.containers[i].Name, ImageID: img.ID})
@@ -413,6 +433,100 @@ func (f *FakeProvider) Logs(ctx context.Context, id string, opts LogOptions) (io
 		return nil, err
 	}
 	return io.NopCloser(strings.NewReader(f.logs[f.containers[i].ID])), nil
+}
+
+// SetClock scripts the time a start records as the container's start time;
+// without it that is the real time.
+func (f *FakeProvider) SetClock(now func() time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clock = now
+}
+
+// SetStartedAt scripts when the Engine last started the container, as if it
+// had run then. A container nothing started has the zero time.
+func (f *FakeProvider) SetStartedAt(id string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.indexLocked(id)
+	if i < 0 {
+		return ErrNotFound
+	}
+	if f.started == nil {
+		f.started = make(map[string]time.Time)
+	}
+	f.started[f.containers[i].ID] = at.UTC()
+	return nil
+}
+
+func (f *FakeProvider) nowLocked() time.Time {
+	if f.clock != nil {
+		return f.clock()
+	}
+	return time.Now()
+}
+
+func (f *FakeProvider) markStartedLocked(c Container) {
+	if f.started == nil {
+		f.started = make(map[string]time.Time)
+	}
+	f.started[c.ID] = f.nowLocked().UTC()
+}
+
+// SetCreatedAt scripts when the Engine created the container. A container
+// nothing scripted and no recreation made was created at the Unix epoch.
+func (f *FakeProvider) SetCreatedAt(id string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.indexLocked(id)
+	if i < 0 {
+		return ErrNotFound
+	}
+	if f.created == nil {
+		f.created = make(map[string]time.Time)
+	}
+	f.created[f.containers[i].ID] = at.UTC()
+	return nil
+}
+
+// CreatedAt returns when a Recreate or RecreateLocal made the container, or
+// what SetCreatedAt scripted. FailOn("created-at", …) scripts an error.
+func (f *FakeProvider) CreatedAt(ctx context.Context, id string) (time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return time.Time{}, f.listErr
+	}
+	i := f.indexLocked(id)
+	if i < 0 {
+		return time.Time{}, ErrNotFound
+	}
+	if err := f.failureLocked("created-at", f.containers[i]); err != nil {
+		return time.Time{}, err
+	}
+	if at, ok := f.created[f.containers[i].ID]; ok {
+		return at, nil
+	}
+	return time.Unix(0, 0).UTC(), nil
+}
+
+// StartedAt returns when a Start, Restart or running Recreate last ran the
+// container, or what SetStartedAt scripted. FailOn("started-at", …) scripts
+// an error.
+func (f *FakeProvider) StartedAt(ctx context.Context, id string) (time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return time.Time{}, f.listErr
+	}
+	i := f.indexLocked(id)
+	if i < 0 {
+		return time.Time{}, ErrNotFound
+	}
+	if err := f.failureLocked("started-at", f.containers[i]); err != nil {
+		return time.Time{}, err
+	}
+	return f.started[f.containers[i].ID], nil
 }
 
 func (f *FakeProvider) Stats(ctx context.Context, id string) (Stats, error) {

@@ -11,16 +11,19 @@ RETURNING id;
 
 -- name: GetLatestContainerImageHistory :one
 SELECT id, container, image, previous_image_id, snapshot_archive, snapshot_destination,
-       updated_at, keep_until, reverted_at
+       updated_at, keep_until, reverted_at, snapshot_restored_at
 FROM container_image_history WHERE container = ? ORDER BY id DESC LIMIT 1;
 
 -- name: ListContainerImageHistory :many
 SELECT id, container, image, previous_image_id, snapshot_archive, snapshot_destination,
-       updated_at, keep_until, reverted_at
+       updated_at, keep_until, reverted_at, snapshot_restored_at
 FROM container_image_history ORDER BY id DESC;
 
 -- name: MarkContainerImageHistoryReverted :execrows
 UPDATE container_image_history SET reverted_at = ? WHERE id = ? AND reverted_at = '';
+
+-- name: MarkContainerImageHistorySnapshotRestored :execrows
+UPDATE container_image_history SET snapshot_restored_at = ? WHERE id = ? AND reverted_at = '';
 
 -- name: DeleteContainerImageHistory :exec
 DELETE FROM container_image_history WHERE id = ?;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FakeProvider is a scriptable Provider (CLAUDE.md, doc 06 §2): a test
@@ -26,6 +27,10 @@ type FakeProvider struct {
 	logs           map[string]string
 	stats          map[string]Stats
 	watchers       map[chan StateChange]struct{}
+	started        map[string]time.Time
+	created        map[string]time.Time
+	replaced       int
+	clock          func() time.Time
 }
 
 // NewFakeProvider returns a FakeProvider that reports a recent, reachable

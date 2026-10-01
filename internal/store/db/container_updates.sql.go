@@ -31,7 +31,7 @@ func (q *Queries) GetContainerUpdateSettings(ctx context.Context) (int64, error)
 
 const getLatestContainerImageHistory = `-- name: GetLatestContainerImageHistory :one
 SELECT id, container, image, previous_image_id, snapshot_archive, snapshot_destination,
-       updated_at, keep_until, reverted_at
+       updated_at, keep_until, reverted_at, snapshot_restored_at
 FROM container_image_history WHERE container = ? ORDER BY id DESC LIMIT 1
 `
 
@@ -48,6 +48,7 @@ func (q *Queries) GetLatestContainerImageHistory(ctx context.Context, container 
 		&i.UpdatedAt,
 		&i.KeepUntil,
 		&i.RevertedAt,
+		&i.SnapshotRestoredAt,
 	)
 	return &i, err
 }
@@ -118,7 +119,7 @@ func (q *Queries) ListBulkExcludedContainers(ctx context.Context) ([]string, err
 
 const listContainerImageHistory = `-- name: ListContainerImageHistory :many
 SELECT id, container, image, previous_image_id, snapshot_archive, snapshot_destination,
-       updated_at, keep_until, reverted_at
+       updated_at, keep_until, reverted_at, snapshot_restored_at
 FROM container_image_history ORDER BY id DESC
 `
 
@@ -141,6 +142,7 @@ func (q *Queries) ListContainerImageHistory(ctx context.Context) ([]*ContainerIm
 			&i.UpdatedAt,
 			&i.KeepUntil,
 			&i.RevertedAt,
+			&i.SnapshotRestoredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -166,6 +168,23 @@ type MarkContainerImageHistoryRevertedParams struct {
 
 func (q *Queries) MarkContainerImageHistoryReverted(ctx context.Context, arg MarkContainerImageHistoryRevertedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markContainerImageHistoryReverted, arg.RevertedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markContainerImageHistorySnapshotRestored = `-- name: MarkContainerImageHistorySnapshotRestored :execrows
+UPDATE container_image_history SET snapshot_restored_at = ? WHERE id = ? AND reverted_at = ''
+`
+
+type MarkContainerImageHistorySnapshotRestoredParams struct {
+	SnapshotRestoredAt string `json:"snapshot_restored_at"`
+	ID                 int64  `json:"id"`
+}
+
+func (q *Queries) MarkContainerImageHistorySnapshotRestored(ctx context.Context, arg MarkContainerImageHistorySnapshotRestoredParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markContainerImageHistorySnapshotRestored, arg.SnapshotRestoredAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
