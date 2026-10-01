@@ -41,8 +41,10 @@ func mapStackError(name string, err error, verb string) error {
 		return &apiError{code: "appdata_shared", statusCode: 409, message: err.Error()}
 	case errors.Is(err, container.ErrAppdataUnavailable):
 		return &apiError{code: "appdata_unavailable", statusCode: 409, message: err.Error()}
-	default:
+	case errors.Is(err, container.ErrComposeFailed):
 		return &apiError{code: "stack_action_failed", statusCode: 502, message: fmt.Sprintf("%s stack %q failed: %v", verb, name, err)}
+	default:
+		return &apiError{code: "stack_action_failed", statusCode: 500, message: fmt.Sprintf("%s stack %q failed: %v", verb, name, err)}
 	}
 }
 

@@ -69,6 +69,39 @@ func TestStacks_NotConfiguredIs501(t *testing.T) {
 	}
 }
 
+type stackFailingInsert struct{ *stackMemStore }
+
+func (stackFailingInsert) Insert(context.Context, store.Stack) error {
+	return errors.New("disk I/O error")
+}
+
+type stackFailingRunner struct{}
+
+func (stackFailingRunner) Run(context.Context, string, ...string) ([]byte, error) {
+	return nil, errors.New("signal: killed")
+}
+
+// A failure of `docker compose` itself is a 502; a failure inside the daemon
+// (here, the database) is a 500, not blamed on an upstream.
+func TestStacks_ComposeFailuresAre502AndLocalFailures500(t *testing.T) {
+	ctx := context.Background()
+	req := &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}
+
+	h, _ := newStacksHandler(t)
+	h.Stacks.Runner = stackFailingRunner{}
+	_, err := h.CreateStack(ctx, req)
+	if status, code := statusOf(h, err); status != 502 || code != "stack_action_failed" {
+		t.Fatalf("CreateStack with compose failing = %d %q, want 502 stack_action_failed", status, code)
+	}
+
+	h, _ = newStacksHandler(t)
+	h.Stacks.Store = stackFailingInsert{&stackMemStore{rows: map[string]store.Stack{}}}
+	_, err = h.CreateStack(ctx, req)
+	if status, code := statusOf(h, err); status != 500 || code != "stack_action_failed" {
+		t.Fatalf("CreateStack with the database failing = %d %q, want 500 stack_action_failed", status, code)
+	}
+}
+
 func TestStacks_ErrorsAreMappedAndAUnsafeNameDeletesNothing(t *testing.T) {
 	h, root := newStacksHandler(t)
 	ctx := context.Background()

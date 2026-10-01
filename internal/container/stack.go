@@ -57,6 +57,9 @@ var (
 	// container of that project is not the stack's own (a project of the
 	// same name that something else runs). Nothing is removed.
 	ErrStackProjectShared = errors.New("container: a Compose project of the stack's name that is not the stack's is running")
+	// ErrComposeFailed wraps every failure of a `docker compose` run, so a
+	// caller can tell Compose failing from a local failure of the daemon.
+	ErrComposeFailed = errors.New("container: docker compose failed")
 )
 
 var stackNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -337,8 +340,10 @@ func (s *StackService) compose(ctx context.Context, timeout time.Duration, name 
 func (s *StackService) runCompose(ctx context.Context, timeout time.Duration, args []string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, err := s.Runner.Run(ctx, "docker", args...)
-	return err
+	if _, err := s.Runner.Run(ctx, "docker", args...); err != nil {
+		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
+	}
+	return nil
 }
 
 func (s *StackService) now() time.Time {
