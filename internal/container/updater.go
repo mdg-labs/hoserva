@@ -227,7 +227,9 @@ func (u *Updater) checkUpdate(ctx context.Context, name string) (Container, stri
 // removes the update's record and kept tag, so the container is left on its
 // previous image and the error says so; a step that cannot be put back is
 // named in the error, and its leftovers are cleaned up when their keep
-// period ends.
+// period ends. A replacement that fails is only undone this way once the
+// container is confirmed to still run its previous image; otherwise the
+// update is kept, revertible (failedUpdate).
 func (u *Updater) Update(ctx context.Context, name string, out io.Writer) error {
 	c, ref, err := u.checkUpdate(ctx, name)
 	if err != nil {
@@ -311,22 +313,25 @@ func snapshotLabel(s SnapshotRef) string {
 	return s.Archive
 }
 
-// failedUpdate reports a RecreateLocal that failed and puts back what the
-// update changed. The container is left as RecreateLocal left it (the
-// original, under its own name).
+// failedUpdate reports a RecreateLocal that failed. Only when the container
+// is confirmed to still run its previous image is what the update changed put
+// back. A swap can fail after the replacement took over the name (the
+// original could not be removed), and then the container runs the new image:
+// the record and the kept image stay so the update can be reverted, since
+// undoing it would leave an update no revert can reach. When the state cannot
+// be read, the update may have taken effect, so they stay too.
 func (u *Updater) failedUpdate(ctx context.Context, c Container, rec store.ImageHistory, ref string, cause error) error {
 	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
 	defer cancel()
-	state := "its state could not be read afterwards"
-	if now, err := u.Lifecycle.Provider.Inspect(undoCtx, c.Name); err == nil {
-		if now.ImageID == c.ImageID {
-			state = "it still runs its previous image"
-		} else {
-			state = "it does not run its previous image"
-		}
+	now, err := u.Lifecycle.Provider.Inspect(undoCtx, c.Name)
+	switch {
+	case err != nil:
+		return fmt.Errorf("updating %s failed and its state could not be read afterwards (%v), so the update record and the kept image %s stay; if it runs the new image, the update can be reverted: %w", c.Name, err, KeepRef(rec.ID), cause)
+	case now.ImageID != c.ImageID:
+		return fmt.Errorf("updating %s failed after its replacement started on the new image, so the update is kept and can be reverted: %w", c.Name, cause)
 	}
 	return errors.Join(
-		fmt.Errorf("updating %s failed and %s: %w", c.Name, state, cause),
+		fmt.Errorf("updating %s failed and it still runs its previous image: %w", c.Name, cause),
 		u.undo(ctx, c, ref, &rec),
 	)
 }
@@ -549,13 +554,20 @@ func (u *Updater) Revert(ctx context.Context, name string, sharers []string, out
 		return fmt.Errorf("%s: pointing %s at the previous image failed, so %s: %w", c.Name, h.Image, left, err)
 	}
 	_, _ = fmt.Fprintf(out, "replacing %s with its previous image\n", c.Name)
-	if _, err := u.Lifecycle.RecreateLocal(ctx, c.Name); err != nil {
-		return fmt.Errorf("%s: replacing the container with its previous image failed, so %s: %w", c.Name, left, err)
-	}
-
 	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
 	defer cancel()
 	var errs []error
+	if _, err := u.Lifecycle.RecreateLocal(ctx, c.Name); err != nil {
+		// A swap that failed after the replacement took over has put the
+		// container on its previous image; a retry would find nothing to
+		// revert, so the revert is finished and recorded here.
+		now, inspectErr := prov.Inspect(finish, c.Name)
+		if inspectErr != nil || now.ImageID != h.PreviousImageID {
+			return fmt.Errorf("%s: replacing the container with its previous image failed, so %s: %w", c.Name, left, err)
+		}
+		errs = append(errs, fmt.Errorf("%s was reverted, but replacing the container did not finish cleanly: %w", c.Name, err))
+	}
+
 	if err := u.History.MarkImageHistoryReverted(finish, h.ID, u.now()); err != nil {
 		errs = append(errs, fmt.Errorf("%s was reverted, but recording it failed: %w", c.Name, err))
 	} else if err := prov.UntagImage(finish, KeepRef(h.ID)); err != nil && !errors.Is(err, ErrImageNotFound) {

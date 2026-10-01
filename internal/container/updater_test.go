@@ -1345,3 +1345,111 @@ func TestScopes(t *testing.T) {
 		t.Fatalf("UpdateScope of an unknown container = %v, want ErrNotFound", err)
 	}
 }
+
+// lateSwapProvider models a recreate whose swap fails after the replacement
+// took over the container's name, as when the original cannot be removed:
+// the container has already changed when lateErr is returned. With
+// inspectErr set, every Inspect after that recreate fails too.
+type lateSwapProvider struct {
+	*FakeProvider
+	lateErr, inspectErr error
+	swapped             bool
+}
+
+func (p *lateSwapProvider) RecreateLocal(ctx context.Context, id string) error {
+	if err := p.FakeProvider.RecreateLocal(ctx, id); err != nil || p.lateErr == nil {
+		return err
+	}
+	p.swapped = true
+	return p.lateErr
+}
+
+func (p *lateSwapProvider) Inspect(ctx context.Context, id string) (Container, error) {
+	if p.swapped && p.inspectErr != nil {
+		return Container{}, p.inspectErr
+	}
+	return p.FakeProvider.Inspect(ctx, id)
+}
+
+func (r *updaterRig) lateSwap(lateErr, inspectErr error) *lateSwapProvider {
+	p := &lateSwapProvider{FakeProvider: r.provider, lateErr: lateErr, inspectErr: inspectErr}
+	r.u.Lifecycle.Provider = p
+	return p
+}
+
+// A swap that fails after the replacement took over leaves the container on
+// the new image. Undoing the update then would drop its record and kept image
+// and leave an update no revert can reach, its pre-update snapshot with no
+// record pointing to it. The update is kept, and reverting it works.
+func TestUpdate_AFailureAfterTheReplacementTookOverKeepsTheUpdateRevertible(t *testing.T) {
+	r := newUpdaterRig()
+	p := r.lateSwap(errors.New("the container was replaced, but the original (jellyfin_hoserva-old) could not be removed"), nil)
+
+	_, err := r.update(t)
+	if err == nil || !strings.Contains(err.Error(), "could not be removed") || !strings.Contains(err.Error(), "can be reverted") {
+		t.Fatalf("Update error = %v, want the failure and that the update is kept for a revert", err)
+	}
+	if got := r.imageID(t); got != imgNew {
+		t.Fatalf("container runs %s, want the new image the replacement started with", got)
+	}
+	tags := r.tags(t)
+	if tags[KeepRef(1)] != imgOld || tags[jfRef] != imgNew {
+		t.Fatalf("tags after the late failure = %v, want the previous image kept and the reference on the new image", tags)
+	}
+	if len(r.history.rows) != 1 || r.history.rows[0].SnapshotArchive != jfArchive {
+		t.Fatalf("update records = %+v, want the update with its snapshot", r.history.rows)
+	}
+
+	p.lateErr = nil
+	if _, err := r.revert(t); err != nil || r.imageID(t) != imgOld || len(r.snapshots.restores) != 1 {
+		t.Fatalf("Revert = %v, image %s, restores %v, want the update reverted with its snapshot", err, r.imageID(t), r.snapshots.restores)
+	}
+}
+
+// When the container's state cannot be read after a failed swap, whether the
+// update took effect is unknown, so nothing that would make it revertible is
+// removed.
+func TestUpdate_AnUnreadableStateAfterAFailedSwapKeepsTheUpdate(t *testing.T) {
+	r := newUpdaterRig()
+	r.lateSwap(errors.New("the container was replaced, but the original (jellyfin_hoserva-old) could not be removed"), errors.New("engine unreachable"))
+
+	_, err := r.update(t)
+	if err == nil || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("Update error = %v, want the failure and that the state could not be read", err)
+	}
+	if len(r.history.rows) != 1 || r.tags(t)[KeepRef(1)] != imgOld {
+		t.Fatalf("records %+v, tags %v, want the update record and its kept image left", r.history.rows, r.tags(t))
+	}
+	for _, c := range r.provider.Calls() {
+		if c.Op == "untag-image" {
+			t.Fatalf("provider calls %v: the kept image was untagged although the container's state was unknown", r.provider.Calls())
+		}
+	}
+}
+
+// A revert whose swap fails after the replacement took over has put the
+// container on its previous image, so the revert is recorded and finished; a
+// retry would otherwise find nothing to revert and the record would never
+// say it was reverted.
+func TestRevert_AFailureAfterTheReplacementTookOverIsRecorded(t *testing.T) {
+	r := newUpdaterRig()
+	if _, err := r.update(t); err != nil {
+		t.Fatal(err)
+	}
+	startsBefore := len(r.provider.Starts())
+	r.lateSwap(errors.New("the container was replaced, but the original (jellyfin_hoserva-old) could not be removed"), nil)
+
+	_, err := r.revert(t)
+	if err == nil || !strings.Contains(err.Error(), "could not be removed") || !strings.Contains(err.Error(), "was reverted") {
+		t.Fatalf("Revert error = %v, want the failure and that the container was reverted", err)
+	}
+	if r.imageID(t) != imgOld || r.history.rows[0].RevertedAt.IsZero() {
+		t.Fatalf("image %s, record %+v, want the previous image and the revert recorded", r.imageID(t), r.history.rows[0])
+	}
+	if _, kept := r.tags(t)[KeepRef(1)]; kept {
+		t.Fatalf("tags %v: the kept-image tag outlived a recorded revert", r.tags(t))
+	}
+	if r.stateOf(t) != "running" || len(r.provider.Starts()) <= startsBefore {
+		t.Fatalf("container %s, starts %+v, want the container this revert stopped started again", r.stateOf(t), r.provider.Starts()[startsBefore:])
+	}
+}
