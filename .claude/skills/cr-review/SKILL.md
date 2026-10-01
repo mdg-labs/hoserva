@@ -1,5 +1,5 @@
 ---
-name: coderabbit-review
+name: cr-review
 description: Works a CodeRabbit review on an open pull request end to end — reads every CodeRabbit finding (critical/security first), confirms each is real before fixing it directly on dev, runs the test suite before replying to anything, replies to every comment with the fix commit or the reason nothing was done, and routes out-of-scope findings to an existing or new issue via github-triage. Use when the maintainer says "address CodeRabbit's findings on PR #n" or hands over a PR number for review triage.
 argument-hint: <PR number>
 allowed-tools:
@@ -17,7 +17,7 @@ allowed-tools:
   - Bash(gh api *)
 ---
 
-# coderabbit-review
+# cr-review
 
 Triages and resolves a CodeRabbit review round on one PR, landing real fixes
 directly on `dev` (that PR's head branch is always `dev` — see
@@ -141,6 +141,11 @@ No CodeRabbit comment is left unanswered. For each:
   for inline comments (this replies in-thread — already repository-scoped
   REST), or `scripts/gh-rest.sh pr-comment <n> --body-file <file>` quoting
   which point it answers for top-level/review comments.
+- **A reply posted as a top-level PR comment starts with `@coderabbitai`
+  on its first line** — this covers answers to review-summary nitpicks,
+  walkthrough points and top-level CodeRabbit comments. Without the mention
+  CodeRabbit does not read the reply. Inline in-thread replies (through
+  `pulls/<n>/comments/<comment_id>/replies`) do not need it.
 - **False positive** → reply with the concrete reason (cite the code/doc
   that shows the concern doesn't apply).
 - **Deferred / out of scope for this PR** → reply with the issue number

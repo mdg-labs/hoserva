@@ -3,7 +3,7 @@
 Defect patterns that passed a `task-verifier` PASS and were later confirmed
 real by CodeRabbit on a `dev → main` pull request. `task-executor` checks its
 change against this list before committing; `task-verifier` checks each
-commit against it under layers 6 and 7. `coderabbit-review` appends a line
+commit against it under layers 6 and 7. `cr-review` appends a line
 whenever it fixes a confirmed finding whose pattern is not here yet.
 
 One line per pattern: **category** — what goes wrong — where it was seen.
