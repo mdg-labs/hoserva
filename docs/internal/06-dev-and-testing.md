@@ -89,6 +89,8 @@ Any change to generated output shows up as a reviewable diff in the PR. This is 
 
 **The template corpus is written by the project.** `testdata/unraid-templates/` holds Unraid-format XML templates authored for testing — every field in doc 04 §5, common `ExtraParams` flags, path and network edge cases, and malformed input — never copied from a third-party catalog. `make test-corpus` converts all of them and reports the clean-conversion rate (Q36); CI fails if it regresses.
 
+**Curated templates in tests come from the pinned snapshot.** The curated catalog lives in its own repository (doc 12 §7, Q39), so this repository has no `templates/` directory. Tests that need curated templates — install resolution and the privilege summary — read the pinned catalog archive this repository embeds (doc 04 §7), never a live fetch, so a test never depends on the network or on a catalog change that has not been pinned. Templates a test needs in a shape no curated template has (multi-service, secret inputs, a GPU device) are fixtures in the package that uses them, such as `internal/template/testdata/`.
+
 ---
 
 ## 3. L2 — The loop-device harness

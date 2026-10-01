@@ -176,10 +176,10 @@ Doc 01 had HTTP on `:8008` and also "HTTPS by default, HTTP redirects" with no H
 Binding to a specific address breaks the first time DHCP hands out a new lease. Filtering on source address expresses the actual intent ("not reachable from the internet") and survives address changes. Including CGNAT keeps Tailscale, the safe remote-access path, working out of the box.
 
 ### Q66 — Where releases and the catalog are published
-**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 04 §7, doc 05 §7, doc 07 §1, doc 12 §6, Q3, Q50, Q65, Q67
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 04 §7, doc 05 §7, doc 07 §1, doc 12 §6, Q3, Q39, Q50, Q65, Q67
 
-**Default: until 1.0, every tag attaches the amd64 and arm64 `.deb` to a GitHub Release — stable versions as releases, beta versions as pre-releases — with a `SHA256SUMS` file carrying a detached Ed25519 signature. One static project site at `hoserva.dev`, deployed from GitHub Pages by a single workflow, holds the docs at the root, the catalog under `/catalog/`, and a signed release index under `/releases/` listing each channel's versions, asset URLs and checksums. At 1.0 the signed apt repository joins the site under `/apt/`: built with aptly, signed with a key held only as a CI secret, trusted through a `hoserva-archive-keyring` package and a `signed-by` source entry, each channel keeping the last five releases per architecture.**
-Before 1.0 only opt-in beta users run Hoserva, and GitHub Releases keeps every version at no operating cost; an apt repository is worth its key management once stable users expect `apt upgrade` to work. A release installs with `apt install ./hoserva_<version>_<arch>.deb`, which still resolves mergerfs and SnapRAID from Debian. A repository gets one GitHub Pages site and Q3 and Q65 both want it, so everything shares it by path; the index and catalog URLs compiled into `hoservad` must never change, which is why they live on a domain the project owns, registered before the first public release (Q50).
+**Default: until 1.0, every tag attaches the amd64 and arm64 `.deb` to a GitHub Release — stable versions as releases, beta versions as pre-releases — with a `SHA256SUMS` file carrying a detached Ed25519 signature. One static project site at `hoserva.dev`, deployed from GitHub Pages by a single workflow, holds the docs at the root and a signed release index under `/releases/` listing each channel's versions, asset URLs and checksums. At 1.0 the signed apt repository joins the site under `/apt/`: built with aptly, signed with a key held only as a CI secret, trusted through a `hoserva-archive-keyring` package and a `signed-by` source entry, each channel keeping the last five releases per architecture. The catalog is not on this site: it is built and published from its own repository at `catalog.hoserva.dev` (Q39, Q65).**
+Before 1.0 only opt-in beta users run Hoserva, and GitHub Releases keeps every version at no operating cost; an apt repository is worth its key management once stable users expect `apt upgrade` to work. A release installs with `apt install ./hoserva_<version>_<arch>.deb`, which still resolves mergerfs and SnapRAID from Debian. A repository gets one GitHub Pages site, so this repository's site shares it by path between the docs, the release index and later the apt repository (Q3). The catalog is built and reviewed in its own repository (Q39) and so gets its own Pages site on its own subdomain, `catalog.hoserva.dev`, rather than a path here; `apps.hoserva.dev` stays free for a future browsable app listing. The index and catalog URLs compiled into `hoservad` must never change, which is why they live on a domain the project owns, registered before the first public release (Q50).
 
 ### Q67 — How Hoserva updates and rolls back itself
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §7, doc 03 §8.6, doc 12 §6, Q49, Q66
@@ -506,9 +506,11 @@ A live request-time walk would wake the cache for every UI poll and would also b
 **No third-party catalog feed is built in.** The catalog is Hoserva's own (doc 04 §7).
 
 ### Q35 — Licensing of catalog templates
-**Status:** Settled → D19 · **Affects:** doc 04 §7
+**Status:** Settled → D19 · **Affects:** doc 04 §7, Q39
 
 **Every curated template is written by the project from the application's upstream documentation, so the catalog carries no third-party template license.** Each packaged application keeps its own upstream license.
+
+The catalog repository (`mdg-labs/hoserva-catalog`, Q39) is licensed **MIT**, not this repository's AGPL-3.0 (D17): templates are configuration that users copy and change for their own servers, and third-party catalog authors should be able to reuse them without taking on copyleft obligations. Contributions to it carry the same DCO sign-off as this repository (Q2).
 
 ### Q36 — What counts as a "clean" template conversion
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §5, doc 06 §2
@@ -536,23 +538,32 @@ The floor is `dockerEngineMinVersion` in `internal/api/doctor.go`, raised over t
 A loopback image that must be manually resized when it fills is one of the most common Docker complaints on Unraid, and it is self-inflicted: standard Docker Engine already defaults to directory-based `overlay2` storage, and the loopback image is an Unraid-specific choice to keep Docker's storage in one movable file. Hoserva has no reason to reproduce it — the Engine is a normal prerequisite (D8) pointed at a normal directory, sized by the cache device itself, which already has its own capacity monitoring (doc 02 §3). One less way to run out of space by surprise.
 
 ### Q39 — Where curated templates live
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §2, §7
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §1, §2, §7, Q35, Q65, Q66
 
-**Default: `templates/` in this monorepo, with its CI validation, until the first external template PR, then split per doc 12 §7.**
+**Default: the curated catalog lives in its own repository, `mdg-labs/hoserva-catalog`, from the start — before any template exists. It holds `<id>/compose.yaml` plus an icon per template (Q64), its own CI, its own issue tracker for template requests and PRs, and its own MIT license (Q35). This monorepo keeps the `x-hoserva` schema and its validator (`internal/template/`); the catalog repository's CI runs Hoserva's own checker from a pinned Hoserva version instead of copying its rules. The schema is published as a versioned JSON Schema, its `schema:` number is the compatibility boundary, and a newer Hoserva keeps reading older schema versions. This repository embeds a pinned catalog archive (Q65), and tests that use curated templates read that pinned snapshot, never a live fetch.**
+This replaces the earlier default of `templates/` in the monorepo until the first external template PR, and the reasons to split now rather than then:
+- Nothing exists yet. Splitting now costs a docs change; splitting at the first external PR means moving history, CI, issues and labels while contributors already use the old layout.
+- The issue tracker here is the project plan. Template requests and template PRs are a different kind of work with a different review bar, and they belong in their own tracker.
+- Catalog CI depends on outside services (registry image and tag existence, `docker compose config` per template) and should not gate a Hoserva release (doc 12 §7).
+- Our catalog becomes a normal instance of the user-source format (doc 04 §4): built in its own repository exactly as a third party's would be.
+
+Issue tracking follows the split: Hoserva-side catalog engineering (schema, validator, lint command, fetch and verify, UI) stays on `mdg-labs/hoserva`, and template content work is tracked in the catalog repository. The Unraid corpus in `testdata/unraid-templates/` stays here (doc 06 §2).
 
 ---
 
 ### Q64 — Template format
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §2
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, Q39
 
-**Default: a template is `templates/<id>/compose.yaml` plus an icon — a valid Compose file with an `x-hoserva` extension block holding its inputs (kind, path role, default), metadata and a revision. The privilege summary is computed from the Compose content, never declared by the template.**
+**Default: a template is `<id>/compose.yaml` plus an icon in the catalog repository (Q39) — a valid Compose file with an `x-hoserva` extension block holding its inputs (kind, path role, default), metadata and a revision. The privilege summary is computed from the Compose content, never declared by the template.**
 A custom YAML schema would need its own converter to Compose and its own validator. A Compose file with an extension block is checkable with `docker compose config` and runnable as-is, and it is the format contributors already know.
 
 ### Q65 — How the catalog reaches installations
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §4, §7, doc 01 §7, Q49
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.2, §8.4, doc 04 §4, §7, doc 01 §7, Q39, Q49, Q66
 
-**Default: CI publishes one signed `catalog.tar.zst` as static files under `/catalog/` on the project site (Q66). `hoservad` embeds a snapshot at build time, keeps the refreshed copy in `/var/lib/hoserva/catalog/`, and refreshes once a day with a conditional request. A new archive is used only if its Ed25519 signature verifies against a compiled-in key and its serial is higher; an installed app never changes — a newer template revision is offered as a diff.**
-One static, conditional request a day stays clear of any rate limit, works behind a CDN and degrades to the on-disk copy offline, where per-template fetches through the GitHub API would hit the unauthenticated limit. Templates can request privileged access, so an unsigned or replayed catalog must never be trusted.
+**Default: the catalog repository's CI (Q39) publishes one signed `catalog.tar.zst` and its detached Ed25519 signature as static files from that repository's own GitHub Pages site at `catalog.hoserva.dev`; the compiled-in default catalog URL points there. The catalog has its own Ed25519 key, separate from the release-signing key: the private half is the GitHub Actions secret `HOSERVA_CATALOG_SIGNING_KEY` on `mdg-labs/hoserva-catalog` and is held nowhere else, the public half is `signing-key.pub.pem` at that repository's root (both OpenSSL PEM), and before signing CI checks that the secret's public half matches the published one, the same integrity check `release.yml` runs for the release key. `hoservad` compiles in two public keys, one for updates (Q67) and one for the catalog, and checks each file only against its own. `hoservad` embeds a snapshot at build time: this repository commits one published archive's serial and SHA-256, and the build fetches that archive, checks the pin and the signature, and embeds it, so an update to the snapshot is a normal commit that bumps the pin. The refreshed copy lives in `/var/lib/hoserva/catalog/`, and every refresh is one conditional request with the same signature and serial checks. The triggers are a background interval the user sets — off, hourly, every 6 hours, every 12 hours or daily, daily by default, each with random jitter; a check when the catalog is read through the API and the last check is older than 15 minutes, on by default and never waiting on the network; and a manual *Check for updates* that always works. With the interval off and check-on-open off, Hoserva contacts the catalog host only when the user presses the button. A new archive is used only if its signature verifies against the compiled-in catalog key and its serial is higher; an installed app never changes — a newer template revision is offered as a diff.**
+One static, conditional request stays clear of any rate limit, works behind a CDN and degrades to the on-disk copy offline, where per-template fetches through the GitHub API would hit the unauthenticated limit. Nothing comes from `api.github.com`, and an unchanged catalog answers `304 Not Modified` and downloads nothing, which is why checking when the catalog is opened costs little: a template published during the day shows up on the next open, where a once-a-day check would hide it until the next morning. Templates can request privileged access, so an unsigned or replayed catalog must never be trusted. The key is separate because the catalog repository has more contributors and CI that signs on every merge: a leaked catalog key can at worst get templates signed, never a Hoserva release, a signature made for one kind of file can never pass as another, and each key can be replaced without touching the other. The archive is trusted through its signature, not its host, so the host can move later without a trust change.
+
+The interval and the check-on-open switch are stored as additive columns on the `schema_info` settings row next to `update_check_enabled`, not as a `schedule_jobs` row: widening that table's `job_id` `CHECK` would need a table rebuild (D16). The check-on-open trigger lives in `hoservad`, so the CLI and the UI behave the same (D5), and completion is announced on `/api/v1/events` so the UI refreshes.
 
 
 ### Q81 — Checking containers for updates
@@ -694,6 +705,8 @@ Doc 12 §6 prescribed "feature branches, squash-merged", and doc 12 §5 a "prote
 
 **Revised again (maintainer, 2026-09-21, #229):** the working branch is renamed `beta` → `dev`. The model from the two revisions above is otherwise unchanged — a working branch that CI runs on every push to, promoted to `main` only through a pull request gated by required status checks — only the branch's name changes. The rename removes a naming collision: `beta` was both "the branch everything lands on first" and "a pre-release build" (`vX.Y.Z-beta.N` tags, GitHub pre-releases, and eventually the apt beta channel). The release channel names `stable`/`beta` are unaffected — `scripts/release/lib.sh`'s `hoserva_channel_from_tag()` derives them purely from the tag string, not from which branch the tag sits on; only `hoserva_verify_tag_ancestry()`'s `beta`-channel → ancestor-of-branch mapping changes, from `beta` to `dev`. `dev` was cut fresh from `main` (not by renaming/rebasing the old `beta`, which would have dragged its superseded history along) once #228 — the last promotion PR still targeting the old branch — merged. The old `origin/beta` branch is deleted only after `dev` is confirmed working end to end and the maintainer gives explicit go-ahead. Full detail in doc 12 §6.
 
+**Revised (maintainer, 2026-09-30, #484):** the model extends to the catalog repository, `mdg-labs/hoserva-catalog` (Q39). It has a `dev` working branch and keeps `main` as its release-only GitHub default branch. `orchestrate` lands a verified commit for an issue with a `Lands in: mdg-labs/hoserva-catalog` line on the catalog's `dev` and pushes `origin dev`; `main` moves only via a `dev → main` pull request. The issue's `Fixes mdg-labs/hoserva#<n>` trailer therefore closes it on reaching the catalog's `main`, the same as here. Doc 12 §1, §6.
+
 ### Q78 — Recovering the admin account
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §7, doc 03 §7, Q44
 
@@ -734,7 +747,7 @@ Extracting strings later is a rewrite of every component. Doing it from day one 
 ### Q49 — Telemetry *(gap)*
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.6
 
-**Default: none. The only outbound requests Hoserva makes on its own are its update check against its own release index (Q67), the daily catalog refresh (Q65) and the daily container update check (Q81); none sends anything beyond a plain HTTP request, and each can be disabled. Any future opt-in usage statistics require a new entry here.**
+**Default: none. The only outbound requests Hoserva makes on its own are its update check against its own release index (Q67), the catalog refresh (Q65) and the daily container update check (Q81); none sends anything beyond a plain HTTP request, and each automatic check can be disabled (the catalog host is then contacted only when the user presses *Check for updates*). Any future opt-in usage statistics require a new entry here.**
 A home server that phones home by default undermines the trust an open project depends on.
 
 ### Q50 — Name clearance

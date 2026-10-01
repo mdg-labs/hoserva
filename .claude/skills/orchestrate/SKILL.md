@@ -28,6 +28,12 @@ this skill entirely: it only moves via a `dev → main` pull request the
 maintainer opens by hand, gated by GitHub's required status checks (doc 12
 §6).
 
+An issue whose body carries a `Lands in: mdg-labs/hoserva-catalog` line is
+still tracked here, but its commits land in the catalog repository instead,
+on that repository's `dev` (step 1a), which follows the same `dev`/`main`
+model. Everything below says "the real repo" for the default,
+`mdg-labs/hoserva`, case.
+
 **You (the current session) are the orchestrator.** You spawn `issue-refiner`,
 `task-executor` and `task-verifier` subagents and drive the loop yourself —
 this skill is not itself a subagent. Follow the steps in order. An epic
@@ -82,6 +88,7 @@ docker ps --filter name=hoserva-lab- --format '{{.Names}}' 2>&1
 find /sys/devices/virtual/block -maxdepth 3 -path '*/loop/backing_file' -exec cat {} + 2>&1
 ls -l /dev/kvm 2>&1; command -v qemu-system-x86_64 qemu-img 2>&1; grep -E '^vm-(up|destroy):' Makefile 2>&1
 virsh -c qemu:///session list --all --name 2>&1
+C=$(cd <real repo> && realpath -- "${HOSERVA_CATALOG_REPO:-../hoserva-catalog}") && git -C "$C" status -sb 2>&1 | head -1; ls "$C/scripts/devenv/hooks" 2>&1   # only when an issue lands in the catalog repository (step 1a)
 ```
 
 That tells you whether the lab exists (`LAB_AVAILABLE`), whether Docker is
@@ -155,6 +162,42 @@ separately, never something a dependent issue needs to wait for.
 
 Also read the design context each issue cites (`## Design references`) —
 you are about to judge its scope, and the docs are where scope lives.
+
+## 1a. Resolve each issue's landing repository
+
+For every issue in T, from the body already read in step 1:
+
+```
+scripts/gh-rest.sh issue-view <n> --jq '.body' | grep -m1 '^Lands in:'
+```
+
+- **No such line:** `LANDING_REPO = mdg-labs/hoserva`, the real repo.
+  `HOSERVA_ROOT` is the scratch clone itself.
+- **`Lands in: mdg-labs/hoserva-catalog`:** the landing clone is
+  ```
+  CATALOG=$(cd <real repo> && realpath -- "${HOSERVA_CATALOG_REPO:-../hoserva-catalog}")
+  ```
+  — the path comes from `HOSERVA_CATALOG_REPO`, never hard-coded. Require
+  that it is a git clone whose `origin` URL names `mdg-labs/hoserva-catalog`,
+  on `dev`, clean, and in sync with `origin/dev` (`git -C "$CATALOG" fetch
+  origin && git -C "$CATALOG" merge --ff-only origin/dev`, then
+  `git -C "$CATALOG" rev-parse HEAD` must equal `git -C "$CATALOG" rev-parse
+  origin/dev` — a fast-forward also succeeds when local `dev` is *ahead*, and
+  those unpushed commits would be cloned and later pushed with work no
+  verifier reviewed); if any of that fails, leave the issue out of T and
+  report why. The catalog repository has
+  the same `dev`/`main` model as this one (Q46): its commits land on `dev`
+  and `main` only moves via a `dev → main` pull request. `HOSERVA_ROOT` for its
+  executor and verifier is the real `mdg-labs/hoserva` repo, read-only —
+  it holds the status scripts, `CLAUDE.md`, the design docs and
+  `known-escapes.md`, none of which the catalog clone has.
+- **Any other value:** leave the issue out of T and report it.
+
+The issue, its `status:*` labels, its epic and its comments stay on
+`mdg-labs/hoserva` either way: `scripts/issue-status.sh`,
+`scripts/epic-status.sh` and `scripts/gh-rest.sh` are always run from the real
+`mdg-labs/hoserva` repo's `scripts/` with `GH_REPO` unset, and the catalog
+repository gets no `status:*` label.
 
 ## 1b. Readiness gate — refine thin or stale issues before anything else
 
@@ -248,6 +291,10 @@ For each issue in T, derive the set of top-level paths it will touch:
 - **Entry points are in scope.** An issue's `Reachable via:` criterion names where its capability must be reachable from — `cmd/hoservad/main.go` (and its sibling wiring files), `cmd/hoserva/`, `web/src/routes/`, `Makefile`, `.github/workflows/`. Add every such file to the issue's scope as its own entry, the same way as an always-shared file, so lanes serialize on it. An issue with a runtime capability but no `Reachable via:` criterion is not ready — step 1b sends it to `issue-refiner` first. Leaving the entry point out of scope is what turned 17 finished features into later "wire it into hoservad" issues.
 - An `api/openapi.yaml` change also puts `cmd/mockapi/` in scope: the mock mirrors production validation.
 - Can't confidently bound it → its scope is **the whole repo**, which serializes it against everything.
+- A scope is relative to the issue's landing repository. Scopes in different
+  landing repositories never intersect, but two units landing in the same
+  clone are placed by their paths in it as usual, and "the whole repo" means
+  that landing repository.
 
 ## 4. Batch into waves, then bundles, then lanes
 
@@ -267,6 +314,7 @@ first, delete that edge, re-layer the waves.
 
 **Never bundle:**
 
+- issues with different landing repositories (step 1a);
 - an issue scoped "the whole repo";
 - an issue whose thread carries a verification FAIL, or that is entering a fix round;
 - a `safety-critical` issue — it gets its own agent, its own verifier, and its own line in the report;
@@ -292,14 +340,23 @@ Never work in the real repo; never share a clone between concurrent units.
 
 ```
 mkdir -p <scratchpad dir>/orchestrate
-git clone <real repo path> <scratchpad dir>/orchestrate/<unit-id>-a1
+git clone <landing clone path> <scratchpad dir>/orchestrate/<unit-id>-a1
 git -C <scratchpad dir>/orchestrate/<unit-id>-a1 config core.hooksPath scripts/devenv/hooks
 ```
+
+`<landing clone path>` is the real repo for a `mdg-labs/hoserva` landing and
+`$CATALOG` (step 1a, from `HOSERVA_CATALOG_REPO`) for a
+`mdg-labs/hoserva-catalog` one.
 
 A plain `git clone` doesn't carry hooks over — the second line points this
 clone at the repo-tracked `prepare-commit-msg` hook (CONTRIBUTING.md, doc 13
 Q2) so every commit the executor makes here is signed off automatically,
-the same as `make hooks-install` does for a human clone.
+the same as `make hooks-install` does for a human clone. **Run it only if
+`<clone>/scripts/devenv/hooks` exists.** A clone without it (the catalog
+repository has none) gets no hook, so its commits — the executor's, and your
+landing commit in step 8 — are made with `git commit -s`, and every one still
+carries `Signed-off-by`. Fill the executor template's `NO_HOOKS` blocks
+accordingly.
 
 `<unit-id>` is the issue number (`57-a1`) or bundle members joined with `+`
 (`57+58-a1`). **The lab id is derived from it**: `HOSERVA_LAB_ID=<unit-id>`
@@ -318,9 +375,12 @@ Every issue carries exactly **one** `status:*` label. Everything goes through:
 scripts/issue-status.sh <issue-number> <status>
 ```
 
-You run it from the real repo; agents run their clone's copy. The script
-targets `mdg-labs/hoserva` explicitly, because `gh` cannot infer a repo from
-a clone whose `origin` is a local path.
+You run it from the real repo; agents run their clone's copy — or, for a
+`mdg-labs/hoserva-catalog` landing, the real repo's copy (`HOSERVA_ROOT`),
+since the catalog clone has none. The script targets `mdg-labs/hoserva`
+explicitly, because `gh` cannot infer a repo from a clone whose `origin` is a
+local path, and so it targets it for every tracked issue whichever repository
+the issue lands in.
 
 | Transition | Set by | When |
 |---|---|---|
@@ -337,17 +397,26 @@ the executor runs after claiming a sub-issue and the verifier after each
 verdict. Pass the epic as `{{EPIC_NUMBER}}`; omit that block for an issue
 with no epic.
 
-- **You never set `status:closed`.** The trailer only closes the issue once its commit reaches `main` — for most work that's the later `dev → main` promotion, not this run's push to `dev`; the workflow labels it when it happens.
+- **You never set `status:closed`.** The trailer only closes the issue once its commit reaches `main` — that's the later `dev → main` promotion, not this run's push to `dev`; the workflow labels it when it happens. This holds for a `mdg-labs/hoserva-catalog` landing too: its `Fixes mdg-labs/hoserva#<n>` trailer closes the issue when the commit reaches the catalog's `main`.
 - **You own the abandonment transitions:** an issue leaving your hands still open (executor `blocked`, or escalated after three FAILs) goes back to `status:ready`.
 
 ## 6. Dispatch `task-executor`
 
 Read `.claude/skills/orchestrate/templates/executor-prompt.md` and fill every
 `{{…}}` token: the shared preamble once (workspace, lab id, what step 0 found
-about the machine), then the per-issue block once per issue in bundle order —
-number, title, body, **comment thread**, scope, and whether it is
-`safety-critical` or a `spike`. On a fix round, the rejected SHA and the
+about the machine, and from step 1a `LANDING_REPO` — named in the dispatch —
+and `HOSERVA_ROOT`), then the per-issue block once per issue in bundle order —
+number, title, body, **comment thread**, scope, `FIXES_TRAILER`, and whether
+it is `safety-critical` or a `spike`. On a fix round, the rejected SHA and the
 verifier's findings verbatim.
+
+`FIXES_TRAILER` is `Fixes #<n>` for a `mdg-labs/hoserva` landing and
+`Fixes mdg-labs/hoserva#<n>` for a `mdg-labs/hoserva-catalog` one. Fill the
+template's `IF LANDING_REPO is mdg-labs/hoserva-catalog` blocks for the latter,
+so its executor and verifier run the catalog repository's own checks instead
+of `make test`, and the `NO_HOOKS` blocks when the clone has no
+`scripts/devenv/hooks` (step 5). The verifier dispatch (step 7) takes the same
+`LANDING_REPO` and `HOSERVA_ROOT`.
 
 ```
 Agent({
@@ -410,7 +479,8 @@ haven't heard back. When a notification arrives, route its findings
 
 Read `.claude/skills/orchestrate/templates/verifier-prompt.md` and fill it:
 per issue, its details, the same comment thread, its scope, its flags, and
-**its own commit SHA**; once, the workspace, lab id, attempt number and epic.
+**its own commit SHA**; once, the workspace, lab id, attempt number, epic and
+`LANDING_REPO`/`HOSERVA_ROOT` (step 1a).
 On a fix round, fill the `FIX_ROUND` block too: the rejected SHA, where it
 can be read, and the previous round's **blocking** findings verbatim — the
 verifier checks those are closed and reviews what changed, rather than
@@ -459,7 +529,7 @@ branch once the unit is resolved:
 **Large diffs get the Opus verifier too.** Before dispatching, measure the
 unit's changed lines excluding generated code:
 ```
-git -C <workspace> diff --numstat dev..HEAD -- . ':!api/gen' ':!internal/store/db' ':!**/package-lock.json' | awk '{s+=$1+$2} END {print s}'
+git -C <workspace> diff --numstat <landing branch>..HEAD -- . ':!api/gen' ':!internal/store/db' ':!**/package-lock.json' | awk '{s+=$1+$2} END {print s}'
 ```
 Above ~1000, dispatch the verifier on Opus and say so in the report. Escapes
 scale with size — the top quarter of issues by size (over ~1300 lines)
@@ -481,7 +551,11 @@ re-deriving them from GitHub.
 
 ## 8. On PASS — land, sequentially, never in parallel
 
-Land one commit at a time, in bundle order, skipping members that FAILed:
+Land one commit at a time, in bundle order, skipping members that FAILed.
+Every git command in this step runs in the unit's landing clone, the real repo
+or, for a `mdg-labs/hoserva-catalog` landing, `$CATALOG` (step 1a) — add
+`-C "$CATALOG"`. The same gates apply in both: a verifier PASS first, the
+same `dev` branch, the same held-back rule, no force-push.
 
 ```
 git fetch <scratch workspace path> <sha>
@@ -507,9 +581,11 @@ git cherry-pick -n FETCH_HEAD
   Commit with the executor's message, adding `Fixes #<epic>` only if it is
   really the last. This runs in the real repo, so it needs `make
   hooks-install` run there once (CONTRIBUTING.md, doc 13 Q2) — the
-  `prepare-commit-msg` hook then adds the `Signed-off-by` trailer itself:
+  `prepare-commit-msg` hook then adds the `Signed-off-by` trailer itself. In
+  a clone without `scripts/devenv/hooks` (the catalog clone) there is no hook,
+  so the commit is made with `-s` and the trailer is still there:
   ```
-  git commit -m "$(cat <<'EOF'
+  git commit -s -m "$(cat <<'EOF'
   <the executor's own commit message>
 
   Fixes #<issue-number>
@@ -517,7 +593,18 @@ git cherry-pick -n FETCH_HEAD
   EOF
   )"
   ```
-  You may change only the message, never the diff.
+  Drop the `-s` only where the hook exists (the real repo). You may change
+  only the message, never the diff.
+
+  For a `mdg-labs/hoserva-catalog` landing the trailers are
+  `Fixes mdg-labs/hoserva#<issue-number>` and, only if it is really the
+  epic's last, `Fixes mdg-labs/hoserva#<epic-number>` — never the bare
+  `Fixes #<n>`, which the catalog repository would read as one of its own
+  issues. The push is `git -C "$CATALOG" push origin dev`. Like a
+  `mdg-labs/hoserva` landing, it closes the issue (and the epic, when that
+  trailer is present) only when the commit reaches the catalog's `main`
+  through a `dev → main` pull request; `status:implemented` is the landing
+  signal until then.
 
   **Push, unless this issue now carries an open `blockedBy`** (a follow-up
   step 11 filed against it during this run, limiting trust in the fix —
@@ -683,7 +770,7 @@ report as your final message.
 
 ## Non-negotiables
 
-- **Commits land on local `dev` and are pushed to `origin/dev` immediately after landing, including `safety-critical` ones.** Only a commit held back by a fresh `blockedBy` added during this run is never pushed by you — the maintainer reads and pushes that. Before any push, confirm no held-back commit sits unpushed underneath the one you're landing (step 8) — pushing would carry it along too. `main` is never touched by this skill at all; it only moves via a maintainer-run `dev → main` promotion. A scratch clone's own branch is internal and disposable.
+- **Commits land on local `dev` and are pushed to `origin/dev` immediately after landing, including `safety-critical` ones** — or, for an issue with a `Lands in: mdg-labs/hoserva-catalog` line, on `dev` of the clone at `HOSERVA_CATALOG_REPO`, pushed to its `origin/dev`. Only a commit held back by a fresh `blockedBy` added during this run is never pushed by you — the maintainer reads and pushes that. Before any push, confirm no held-back commit sits unpushed underneath the one you're landing (step 8) — pushing would carry it along too. `main` — in either repository — is never touched by this skill at all; it only moves via a maintainer-run `dev → main` promotion. A scratch clone's own branch is internal and disposable.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
 - **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.
 - **Every lab is destroyed** before its clone is deleted, and no lane ever uses another lane's lab id.

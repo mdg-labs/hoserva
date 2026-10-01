@@ -251,7 +251,7 @@ func TestScheduler_ServiceDifferentContainersRunConcurrently(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeContainerUpdate, false)
-	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"}, nil)
+	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"}, []byte(`{"mode":"check"}`))
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestScheduler_ServiceSameContainerQueues(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeContainerUpdate, false)
-	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"}, nil)
+	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"}, []byte(`{"mode":"check"}`))
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}

@@ -61,23 +61,48 @@ type Mount struct {
 // container this part lists is, today, honestly unmanaged, since nothing
 // in Hoserva has installed one yet.
 type Container struct {
-	ID     string
-	Name   string
-	Image  string // repository, without its tag
-	Tag    string
+	ID    string
+	Name  string
+	Image string // repository, without its tag
+	Tag   string
+	// ImageID is the local image the container runs, matched against
+	// Image.ID to find the registry digest it was pulled as.
+	ImageID string
+	// Pinned is set for a container created from a digest reference
+	// ("nginx@sha256:..."): it runs exactly that image, so there is no tag
+	// to look for an update of.
+	Pinned bool
 	State  string
 	Status string
 	Health string // one of the Health constants
 	Ports  []Port
 	Mounts []Mount
+	// Labels are the container's Engine labels; StackService reads the
+	// Compose project label to find a stack's containers.
+	Labels map[string]string
 }
+
+// composeProjectLabel is the label Docker Compose puts on every container
+// of a project, the project being the stack's name.
+const composeProjectLabel = "com.docker.compose.project"
+
+// composeWorkingDirLabel and composeConfigFilesLabel record where Compose
+// started a container from: the project directory and the comma-separated
+// compose files. Two projects can share a name, and these tell them apart.
+const (
+	composeWorkingDirLabel  = "com.docker.compose.project.working_dir"
+	composeConfigFilesLabel = "com.docker.compose.project.config_files"
+)
 
 // Image is one image the Docker Engine holds locally.
 type Image struct {
 	ID       string
 	RepoTags []string
-	Size     int64
-	Created  time.Time
+	// RepoDigests are the registry manifest digests the image was pulled
+	// as, each "repository@sha256:...".
+	RepoDigests []string
+	Size        int64
+	Created     time.Time
 }
 
 // ErrRunning is returned by Remove for a container that is not stopped:

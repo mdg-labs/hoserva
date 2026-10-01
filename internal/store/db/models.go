@@ -133,6 +133,15 @@ type HostConfig struct {
 	AppliedAt string `json:"applied_at"`
 }
 
+type ImageUpdateCheck struct {
+	Image        string `json:"image"`
+	CheckedAt    string `json:"checked_at"`
+	Status       string `json:"status"`
+	Kind         string `json:"kind"`
+	AvailableTag string `json:"available_tag"`
+	Message      string `json:"message"`
+}
+
 type Job struct {
 	ID           string         `json:"id"`
 	Type         string         `json:"type"`
@@ -332,6 +341,16 @@ type SpinEvent struct {
 	FromState string `json:"from_state"`
 	ToState   string `json:"to_state"`
 	At        string `json:"at"`
+}
+
+type Stack struct {
+	Name             string `json:"name"`
+	TemplateSource   string `json:"template_source"`
+	TemplateID       string `json:"template_id"`
+	TemplateRevision string `json:"template_revision"`
+	Compose          string `json:"compose"`
+	Env              []byte `json:"env"`
+	InstalledAt      string `json:"installed_at"`
 }
 
 type UpsConfig struct {

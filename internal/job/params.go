@@ -203,6 +203,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeAppdataRestore || t == TypeAppdataRestorePreview {
 			return fmt.Errorf("job: %s params require a container, an archive and a destination", t)
 		}
+		if t == TypeContainerUpdate {
+			return fmt.Errorf("job: container_update params require a mode")
+		}
 		return nil
 	}
 	switch t {
@@ -247,6 +250,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeContainerRecreate:
 		_, err := decodeContainerRecreateParams(params)
+		return err
+	case TypeContainerUpdate:
+		_, err := decodeContainerUpdateParams(params)
 		return err
 	case TypeAppdataBackup:
 		_, err := decodeAppdataBackupParams(params)

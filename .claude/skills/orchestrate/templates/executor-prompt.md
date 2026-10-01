@@ -30,14 +30,23 @@ full isolation from other agents working on other issues at the same time.
   another scratch clone.
 - You may commit inside `WORKSPACE`. You may **not** push, add a remote, or
   fetch from anywhere.
-- `WORKSPACE/CLAUDE.md` applies to you exactly as in the real repo — read it
+- `{{HOSERVA_ROOT}}/CLAUDE.md` applies to you exactly as in the real repo — read it
   first. Its "Real disks are off-limits" and "Safety rules" sections are
   restated below because they are the ones that cannot be learned by mistake.
-- The design docs in `WORKSPACE/docs/internal/` are the authority for
+- The design docs in `{{HOSERVA_ROOT}}/docs/internal/` are the authority for
   anything the issue text doesn't spell out. `D`-numbered decisions (doc 00
   §5) are settled; `Q`-numbered defaults (doc 13) are what the docs assume —
   follow them, and if your work shows one is wrong, say so under
   "Deviations" rather than silently diverging.
+
+`LANDING_REPO = {{LANDING_REPO}}` (`mdg-labs/hoserva`, or
+`mdg-labs/hoserva-catalog`) — the repository your commits land in; in both,
+the orchestrator lands on its `dev` branch. `HOSERVA_ROOT = {{HOSERVA_ROOT}}`: for a
+`mdg-labs/hoserva` landing it is `WORKSPACE` itself; for a
+`mdg-labs/hoserva-catalog` landing it is the real `mdg-labs/hoserva` repo,
+which holds the status scripts, `CLAUDE.md`, the design docs and the
+known-escapes list. Read those and run the `scripts/` there; **never write to
+`HOSERVA_ROOT`** when it is not `WORKSPACE`.
 {{IF FIX_ROUND_SAME_WORKSPACE:}}- This is **not** a fresh clone — a rejected attempt already committed
   here, kept so you can amend it. See "This is fix attempt {{ATTEMPT}} of
   {{MAX_ATTEMPTS}}" below before touching anything.
@@ -163,7 +172,7 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   `hoservad`, build the handler the way `main.go` does). If the wiring needs
   a file outside your declared scope, stop and report the issue `blocked`
   with that file named — never report it done with the wiring missing.
-- **Read `WORKSPACE/.claude/skills/orchestrate/templates/known-escapes.md`
+- **Read `{{HOSERVA_ROOT}}/.claude/skills/orchestrate/templates/known-escapes.md`
   before you start** — the defect patterns that got past verification here
   before — and check your change against it before each commit.
 - **Walk every failure path before you commit** — these are the defect
@@ -219,6 +228,11 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   - Docs: every `doc NN §N` and `Qn` reference you add or touch resolves to a
     real section or doc 13 entry; the doc 00 table and doc 13 index still
     match what exists
+  {{IF LANDING_REPO is mdg-labs/hoserva-catalog:}}This commit lands in the catalog repository, which has no `make test`:
+  run that repository's **own** checks — whatever its `README.md`,
+  `CONTRIBUTING.md`, `Makefile` and `.github/workflows/` define — and treat
+  the list above as applying only where the catalog repository has the same
+  kind of file (shell, workflows, docs).{{END IF}}
   If nothing applies, or a check isn't available on this machine, say so
   plainly in your report — never skip it silently.
 - **Never** run `sudo`, a package install, or edit anything under `/etc`. If
@@ -256,7 +270,7 @@ other tool call. Not "early in your process," not "once you're about to
 start editing" — first:
 
 ```
-{{WORKSPACE_PATH}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-progress
+{{HOSERVA_ROOT}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-progress
 ```
 
 The orchestrator may already have run this for you (it claims a unit's
@@ -272,7 +286,7 @@ a commit is ready.
 {{IF EPIC_NUMBER:}}Then roll it up to its epic:
 
 ```
-{{WORKSPACE_PATH}}/scripts/epic-status.sh {{EPIC_NUMBER}}
+{{HOSERVA_ROOT}}/scripts/epic-status.sh {{EPIC_NUMBER}}
 ```
 
 Don't try to work out whether you are the first sub-issue started — other
@@ -346,12 +360,12 @@ git -C {{WORKSPACE_PATH}} add <specific files>
 
 {{IF FIX_ROUND_SAME_WORKSPACE:}}
 ```
-git -C {{WORKSPACE_PATH}} commit --amend -m "$(cat <<'EOF'
+git -C {{WORKSPACE_PATH}} commit {{IF NO_HOOKS:}}-s {{END IF}}--amend -m "$(cat <<'EOF'
 <type>(<scope>): <one-line summary>
 
 <why, and what changed in generated output if anything>
 
-Fixes #{{ISSUE_NUMBER}}
+{{FIXES_TRAILER}}
 EOF
 )"
 ```
@@ -360,25 +374,34 @@ Report the **new** SHA the amend produced.
 {{END IF}}
 {{IF NOT FIX_ROUND_SAME_WORKSPACE:}}
 ```
-git -C {{WORKSPACE_PATH}} commit -m "$(cat <<'EOF'
+git -C {{WORKSPACE_PATH}} commit {{IF NO_HOOKS:}}-s {{END IF}}-m "$(cat <<'EOF'
 <type>(<scope>): <one-line summary>
 
 <why, and what changed in generated output if anything>
 
-Fixes #{{ISSUE_NUMBER}}
+{{FIXES_TRAILER}}
 EOF
 )"
 ```
 {{END IF}}
 
-One commit, this issue only, one `Fixes #` trailer. Do **not** add a
-`Fixes #<epic>` trailer — the orchestrator adds it at landing after
+One commit, this issue only, one `Fixes` trailer. Do **not** add a
+`Fixes` trailer for the epic — the orchestrator adds it at landing after
 confirming it is true.
+
+{{FIXES_TRAILER}} is `Fixes #{{ISSUE_NUMBER}}` for a `mdg-labs/hoserva`
+landing. For a `mdg-labs/hoserva-catalog` landing it is
+`Fixes mdg-labs/hoserva#{{ISSUE_NUMBER}}` — the issue is tracked in
+`mdg-labs/hoserva`, and a bare `Fixes #{{ISSUE_NUMBER}}` would name an
+unrelated issue of the catalog repository. `-s` (the `Signed-off-by`
+trailer) appears only where the clone has no `scripts/devenv/hooks`: there
+the hook that adds the trailer does not exist, so you add it yourself; every
+commit must carry it.
 
 Then hand it to verification — **after** the commit succeeds, never before:
 
 ```
-{{WORKSPACE_PATH}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-review
+{{HOSERVA_ROOT}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-review
 ```
 
 If you could not complete this issue — genuinely blocked, not just

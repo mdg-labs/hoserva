@@ -394,7 +394,14 @@ var sealedColumns = []sealedColumn{
 	{"ups_config", "network_password", "connection", "X''"},
 	{"backup_destinations", "secrets", "name", "X''"},
 	{"schema_info", "backup_passphrase", "''", "NULL"},
+	{"stacks", "env", "name", "X''"},
 }
+
+// sealedRowKeys names the column that identifies a row, for the sealed
+// columns whose table has no id column.
+var sealedRowKeys = map[string]string{"stacks": "name"}
+
+func (c sealedColumn) rowKey() string { return rowKey(c.table) }
 
 // unsealedBlobColumns are the schema's BLOB columns that are not sealed
 // under the machine key, each with why.
@@ -421,10 +428,11 @@ var unsealedBlobColumns = map[string]string{
 //     keeps its recorded device unless a matched disk now has it;
 //   - every column in sealedColumns that holds something is cleared, and
 //     users' TOTP enrolment with it so the next login enrols again, except
-//     each database secret secrets.age carries, which is sealed under this
-//     installation's machine key (cipher) and written back into its own
-//     table, column and row, and the backup passphrase that opened secrets,
-//     which becomes this installation's own.
+//     each database secret secrets.age carries, and each stack's .env it
+//     carries for a stack the archive has files of (written to stacks.env),
+//     which are sealed under this installation's machine key (cipher) and
+//     written back into their own table, column and row, and the backup
+//     passphrase that opened secrets, which becomes this installation's own.
 //
 // Everything is sealed before the first write, so a passphrase that opens
 // the archive but a cipher that cannot seal, or a secret this Hoserva cannot
@@ -607,7 +615,7 @@ func disksNotRestored(mapped []MappedDisk) []NotRestored {
 func clearSealedColumns(ctx context.Context, tx *sql.Tx, keep sealedRestore) ([]NotRestored, error) {
 	var out []NotRestored
 	for _, c := range sealedColumns {
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT CAST(id AS TEXT), %s FROM %s WHERE length(%s) > 0 ORDER BY 2, 1`, c.label, c.table, c.column))
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT CAST(%s AS TEXT), %s FROM %s WHERE length(%s) > 0 ORDER BY 2, 1`, c.rowKey(), c.label, c.table, c.column))
 		if err != nil {
 			return nil, fmt.Errorf("reading %s.%s: %w", c.table, c.column, err)
 		}
@@ -631,15 +639,18 @@ func clearSealedColumns(ctx context.Context, tx *sql.Tx, keep sealedRestore) ([]
 			return nil, err
 		}
 		for _, r := range todo {
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET %s = %s WHERE CAST(id AS TEXT) = ?`, c.table, c.column, c.empty), r.id); err != nil {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET %s = %s WHERE CAST(%s AS TEXT) = ?`, c.table, c.column, c.empty, c.rowKey()), r.id); err != nil {
 				return nil, fmt.Errorf("clearing %s.%s: %w", c.table, c.column, err)
 			}
 			name := c.table + "." + c.column
 			if r.label != "" {
 				name += " (" + r.label + ")"
 			}
-			out = append(out, NotRestored{Kind: NotRestoredDatabaseSecret, Name: name, Reason: NotRestoredSealedUnderOtherKey,
-				Message: fmt.Sprintf("%s was sealed under the machine key of the installation the archive came from and is cleared; enter it again", name)})
+			message := fmt.Sprintf("%s was sealed under the machine key of the installation the archive came from and is cleared; enter it again", name)
+			if c.table == "stacks" {
+				message = fmt.Sprintf("the .env of stack %s was sealed under the machine key of the installation the archive came from and is cleared from the database; the stack keeps the .env file in its directory, and with none there it cannot be started, so remove the stack and install it again", r.id)
+			}
+			out = append(out, NotRestored{Kind: NotRestoredDatabaseSecret, Name: name, Reason: NotRestoredSealedUnderOtherKey, Message: message})
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_confirmed_at = NULL, totp_last_step = 0`); err != nil {

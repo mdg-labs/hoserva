@@ -24,11 +24,18 @@ never pass something because its neighbour was good.
 
 `WORKSPACE = {{WORKSPACE_PATH}}`
 `HOSERVA_LAB_ID = {{LAB_ID}}`
+`LANDING_REPO = {{LANDING_REPO}}`
+`HOSERVA_ROOT = {{HOSERVA_ROOT}}`
 
 A throwaway clone where `task-executor` committed the changes above. You
 **inspect and run checks only** — never modify anything here, in the real
 repo, or anywhere else. Never push, never touch a remote or another clone.
-`WORKSPACE/CLAUDE.md` and `WORKSPACE/docs/internal/` are your reference for
+`LANDING_REPO` is where the commits land: `mdg-labs/hoserva`, or
+`mdg-labs/hoserva-catalog`, each on its `dev` branch. `HOSERVA_ROOT` is `WORKSPACE` for the former; for
+the latter it is the real `mdg-labs/hoserva` repo, which holds the status
+scripts, `CLAUDE.md`, the design docs and the known-escapes list — read and
+run from it, never write to it.
+`{{HOSERVA_ROOT}}/CLAUDE.md` and `{{HOSERVA_ROOT}}/docs/internal/` are your reference for
 what correct looks like.
 
 ## What the orchestrator found on this machine
@@ -92,7 +99,7 @@ commit holds only its own issue's files and only its own `Fixes #` trailer.
 
 ## Known escapes — read first
 
-`WORKSPACE/.claude/skills/orchestrate/templates/known-escapes.md` lists the
+`{{HOSERVA_ROOT}}/.claude/skills/orchestrate/templates/known-escapes.md` lists the
 defect patterns that passed this verification before and were then found
 by CodeRabbit. Read it before reviewing, and check each commit against
 every pattern that applies to the files it touches (layers 6 and 7).
@@ -108,6 +115,12 @@ every pattern that applies to the files it touches (layers 6 and 7).
    workflows — `actionlint` if available; docs — every `doc NN §N` and `Qn`
    reference resolves. A check that isn't available on this machine is
    named as such, not silently skipped.
+   {{IF LANDING_REPO is mdg-labs/hoserva-catalog:}}This unit lands in the catalog repository, which has no `make test`: run
+   that repository's **own** checks — whatever its `README.md`,
+   `CONTRIBUTING.md`, `Makefile` and `.github/workflows/` define — and apply
+   the list above only where it has the same kind of file. Also confirm each
+   commit's trailer is `Fixes mdg-labs/hoserva#<n>` (never a bare `Fixes #<n>`,
+   which would name an unrelated catalog issue) and carries `Signed-off-by`.{{END IF}}
 2. **Scope.** Does the diff implement what the issue asks — no more, no
    less — against its acceptance criteria *as the comment thread leaves
    them*? Unrelated refactors and drive-by fixes are findings, as is missing
@@ -296,15 +309,15 @@ issue." Never summarize it away.}}
    (every `{{…}}` token; omit each findings section that is empty) into a
    temp file. One comment per issue.
 2. Post it:
-   `{{WORKSPACE_PATH}}/scripts/gh-rest.sh issue-comment {{ISSUE_NUMBER}} --body-file <that file>`
+   `{{HOSERVA_ROOT}}/scripts/gh-rest.sh issue-comment {{ISSUE_NUMBER}} --body-file <that file>`
    — repository-scoped REST, never a GraphQL-backed `gh issue comment`; your
    workspace's origin is a local path anyway, so `GH_REPO` (default
    `mdg-labs/hoserva`) is what points it at the real repo.
 3. Move this issue's label:
 
    ```
-   {{WORKSPACE_PATH}}/scripts/issue-status.sh {{ISSUE_NUMBER}} implemented   # PASS
-   {{WORKSPACE_PATH}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-progress   # FAIL
+   {{HOSERVA_ROOT}}/scripts/issue-status.sh {{ISSUE_NUMBER}} implemented   # PASS
+   {{HOSERVA_ROOT}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-progress   # FAIL
    ```
 
    A PASS means "verified, awaiting the landing commit" — not closed.
@@ -312,7 +325,7 @@ issue." Never summarize it away.}}
 4. Roll it up, on a PASS **and** a FAIL:
 
    ```
-   {{WORKSPACE_PATH}}/scripts/epic-status.sh {{EPIC_NUMBER}}
+   {{HOSERVA_ROOT}}/scripts/epic-status.sh {{EPIC_NUMBER}}
    ```
 {{END IF}}
 

@@ -60,6 +60,20 @@ func (f *FakeProvider) AddContainer(c Container) {
 	f.containers = append(f.containers, c)
 }
 
+// RemoveContainer drops the container with the ID from what List and Inspect
+// return, as if the Engine had deleted it.
+func (f *FakeProvider) RemoveContainer(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kept := f.containers[:0:0]
+	for _, c := range f.containers {
+		if c.ID != id {
+			kept = append(kept, c)
+		}
+	}
+	f.containers = kept
+}
+
 // AddImage adds i to what Images returns.
 func (f *FakeProvider) AddImage(i Image) {
 	f.mu.Lock()

@@ -100,6 +100,13 @@ tags:
       03 §7) is stored here too, editable from either the share or the
       user/group; enforcing it in generated Samba/mergerfs config is a
       later issue.
+  - name: stacks
+    description: >-
+      Docker Compose stacks (doc 04 §2, D4): one `stacks` row per stack,
+      from which `docker-compose.yml`, `.env` and `meta.json` under the
+      stacks directory (`<state dir>/stacks/<name>/`, `/var/lib/hoserva/
+      stacks/<name>/` on an installed system) are generated. A stack's
+      Compose project is run with `docker compose`, never through a shell.
   - name: apps
     description: >-
       Docker Engine containers and images (`hoserva app list`, doc 04 §2,
@@ -3459,6 +3466,35 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /apps/updates:
+    get:
+      operationId: listAppUpdates
+      summary: Container update status
+      description: >-
+        What the daily registry check (doc 04 §6, Q81) last found for each
+        container's image: a new build of the same tag (`new_build`) is
+        reported apart from a newer version tag (`new_version`, named by
+        `availableTag`). The check asks each registry for manifests and tag
+        names only, never a pull. `skipped` means the registry was rate
+        limiting requests and is asked again at the next check, `failed`
+        that the check could not tell, and `not_checked` that no check has
+        reached the image yet or that it could not look: the registry wants a
+        login (registries are checked anonymously only) or the container is
+        pinned to an image digest, so there is no tag to update. The
+        `message` says which. None of them means up to date. available is
+        false, with no error, whenever Docker itself is not reachable.
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: One entry per container, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppUpdatesOK'
+        default:
+          $ref: '#/components/responses/Error'
+
   /apps/{id}:
     parameters:
       - name: id
@@ -3720,6 +3756,144 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AppStats'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /stacks:
+    get:
+      operationId: listStacks
+      summary: List Compose stacks
+      description: >-
+        Every stack Hoserva has a row for, sorted by name. A stack's
+        `.env` is never returned: it holds generated secrets.
+      tags: [stacks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The stacks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListStacksOK'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createStack
+      summary: Create a Compose stack
+      description: >-
+        Stores the stack's row (D4, `.env` sealed under the machine key) and
+        generates `docker-compose.yml`, `.env` and `meta.json` into the
+        directory named after the stack, then checks the result with
+        `docker compose config`. Nothing is started. Refused with 409
+        `stack_exists` when a stack of that name exists. A directory of
+        that name already under the stacks directory (what a removed
+        stack's own files left behind) is used as it is, and only the three
+        generated files are written into it; it is refused with 409
+        `stack_dir_exists` when it holds a `docker-compose.yml`, which is
+        never overwritten. A name that is not 1 to 63 lowercase letters,
+        digits, `-` or `_`, starting with a letter or digit, is refused
+        with 400 `invalid_stack_name` before anything is touched. A Compose
+        file that `docker compose config` rejects is refused with 400
+        `invalid_stack`, and leaves no row and no generated file behind.
+      tags: [stacks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStackRequest'
+      responses:
+        "200":
+          description: The created stack.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stack'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /stacks/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The stack's name.
+    get:
+      operationId: getStack
+      summary: Get a Compose stack
+      description: One stack's row, without its `.env`.
+      tags: [stacks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The stack.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stack'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: removeStack
+      summary: Remove a Compose stack
+      description: >-
+        Runs `docker compose down` for the stack (its containers and
+        networks are removed; named volumes are kept), deletes its generated
+        `docker-compose.yml`, `.env` and `meta.json`, and then its row; the
+        stack's directory goes too if nothing else is in it, so the name
+        can be used again and a file the stack keeps there stays. Taking
+        the stack down does not need its `.env`. `docker compose down`
+        removes every container and network of the stack's Compose project
+        name, and with `--volumes` its named volumes, whichever file or
+        directory they were started from. So before docker runs, every
+        container of that project must be one Compose started from the
+        stack's own directory: a project of the same name that something
+        else runs (a hand-run `~/immich/compose.yml` is project `immich`) is
+        refused with 409 `stack_project_shared`, whether or not the stack
+        has its `.env` and whether or not appdata is deleted. Since that
+        cannot be checked otherwise, a remove is also refused, as any
+        docker failure is, when the project's containers cannot be listed
+        (503 `docker_unavailable` when Docker is not reachable). Appdata is
+        deleted only when `deleteAppdata` is explicitly true: then the
+        stack's named volumes are removed with `docker compose down
+        --volumes`, each bind-mount directory of the stack's containers
+        that lies strictly inside an appdata location (the cache disk's
+        `appdata` directory) and is used by no other container is deleted,
+        and so is the stack's whole directory, before the row. Nothing is
+        deleted if one of the stack's containers is still there after
+        `docker compose down`. That needs the array running, like a
+        container remove that deletes appdata: refused with 409
+        `array_stopped` (or 503 `array_state_unknown`) before anything is
+        changed, with 409 `appdata_unavailable` when no appdata location
+        is known, and with 409 `appdata_shared` when a directory is used
+        by another container or another container binds a place inside the
+        stack's directory. A name that is not a valid stack name is
+        refused with 400 `invalid_stack_name` before anything is touched.
+        A `docker compose down` that fails, or a directory that cannot be
+        deleted, leaves the row in place so the remove can be retried.
+      tags: [stacks]
+      x-hoserva-role: admin
+      parameters:
+        - name: deleteAppdata
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: >-
+            Also delete the stack's appdata (its named volumes and the
+            bind-mount directories inside the appdata location that no
+            other container uses) and its whole directory. Never implied by
+            anything else; absent means false.
+      responses:
+        "200":
+          description: The stack was removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveStackResult'
         default:
           $ref: '#/components/responses/Error'
 
@@ -5781,6 +5955,72 @@ components:
             was requested — and possibly empty then too, when none of the
             container's mounts lay inside the appdata location.
 
+    StackTemplate:
+      type: object
+      required: [source, id, revision]
+      properties:
+        source:
+          type: string
+          description: Where the template came from; empty for a stack no template installed.
+        id:
+          type: string
+        revision:
+          type: string
+
+    Stack:
+      type: object
+      required: [name, template, installedAt]
+      properties:
+        name:
+          type: string
+        template:
+          $ref: '#/components/schemas/StackTemplate'
+        installedAt:
+          type: string
+          format: date-time
+
+    ListStacksOK:
+      type: object
+      required: [stacks]
+      properties:
+        stacks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stack'
+
+    CreateStackRequest:
+      type: object
+      required: [name, compose]
+      properties:
+        name:
+          type: string
+          description: >-
+            1 to 63 lowercase letters, digits, `-` or `_`, starting with a
+            letter or digit. It is the stack's directory name and its
+            Compose project name.
+        compose:
+          type: string
+          description: The `docker-compose.yml` text.
+        env:
+          type: string
+          description: >-
+            The `.env` text. Write-only: it is stored sealed under the
+            machine key and never returned. Absent means an empty `.env`.
+        template:
+          $ref: '#/components/schemas/StackTemplate'
+
+    RemoveStackResult:
+      type: object
+      required: [deletedPaths]
+      properties:
+        deletedPaths:
+          type: array
+          items:
+            type: string
+          description: >-
+            The appdata directories and the stack directory deleted. Empty
+            unless `deleteAppdata` was requested.
+
     AppPort:
       type: object
       required: [containerPort, protocol]
@@ -5852,6 +6092,53 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/App'
+
+    ListAppUpdatesOK:
+      type: object
+      required: [available, updates]
+      properties:
+        available:
+          type: boolean
+          description: False when the Docker Engine is not reachable (doc 04 §3).
+        message:
+          type: string
+          description: Set alongside available=false with the reason and a remediation.
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppUpdate'
+
+    AppUpdate:
+      type: object
+      required: [container, image, tag, status]
+      properties:
+        container:
+          type: string
+          description: The container's name.
+        image:
+          type: string
+        tag:
+          type: string
+        status:
+          type: string
+          enum: [up_to_date, update_available, skipped, failed, not_checked]
+        kind:
+          type: string
+          enum: [new_build, new_version]
+          description: >-
+            Set with status update_available. new_build: the registry serves
+            a different build under the same tag (the `latest` case).
+            new_version: a newer version tag exists, named by availableTag.
+        availableTag:
+          type: string
+          description: Set with kind new_version.
+        message:
+          type: string
+          description: Why the check was skipped or failed, or what it could not look for.
+        checkedAt:
+          type: string
+          format: date-time
+          description: When the image was last checked; absent when no check has reached the image.
 
     AppImage:
       type: object

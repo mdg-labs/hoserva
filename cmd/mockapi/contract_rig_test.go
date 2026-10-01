@@ -622,6 +622,15 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 				return []string{appdata}, nil
 			},
 		},
+		// Stacks is the real StackService over this rig's migrated
+		// database, a temporary stacks directory and a scripted docker
+		// compose, so no case runs a real container or writes outside it.
+		Stacks: &container.StackService{
+			Store:  store.NewStackStore(db),
+			Cipher: contractStackCipher{},
+			Runner: container.NewFakeRunner(),
+			Root:   filepath.Join(t.TempDir(), "stacks"),
+		},
 		ArrayStore: arrayStore,
 		// ArrayReady: CancelDiskRemoval (#361) is the only handler method
 		// that calls it directly rather than through a job — this rig
@@ -726,6 +735,12 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		JournalPath: filepath.Join(t.TempDir(), "appdata-stopped.json"),
 	}
 	h.Appdata = appdataSvc
+	// The stacks take the array check, appdata location and container
+	// listing hoservad's wireStacks gives them: the same Lifecycle's.
+	stacks := h.Stacks
+	stacks.RequireArrayRunning = h.Lifecycle.RequireArrayRunning
+	stacks.Provider = h.Lifecycle.Provider
+	stacks.AppdataRoots = h.Lifecycle.AppdataRoots
 	registry.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
 		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
 			return appdataSvc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)
@@ -798,3 +813,10 @@ func newContractRig(t *testing.T, scenario string) (prod apiv1.Handler, mock api
 	t.Helper()
 	return newContractProductionHandler(t, scenario), newContractMockHandler(t, scenario)
 }
+
+// contractStackCipher stands in for the machine key: the contract compares
+// status and error code, never the sealed bytes.
+type contractStackCipher struct{}
+
+func (contractStackCipher) Encrypt(p []byte) ([]byte, error) { return append([]byte(nil), p...), nil }
+func (contractStackCipher) Decrypt(c []byte) ([]byte, error) { return append([]byte(nil), c...), nil }

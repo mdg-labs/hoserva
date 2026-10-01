@@ -261,6 +261,24 @@ func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareReq
 	return r, ht.ErrNotImplemented
 }
 
+// CreateStack implements createStack operation.
+//
+// Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`,
+// `.env` and `meta.json` into the directory named after the stack, then checks the result with
+// `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that
+// name exists. A directory of that name already under the stacks directory (what a removed stack's own
+// files left behind) is used as it is, and only the three generated files are written into it; it is
+// refused with 409 `stack_dir_exists` when it holds a `docker-compose.yml`, which is never
+// overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
+// letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
+// that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
+// generated file behind.
+//
+// POST /stacks
+func (UnimplementedHandler) CreateStack(ctx context.Context, req *CreateStackRequest) (r *Stack, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateUser implements createUser operation.
 //
 // Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin
@@ -726,6 +744,15 @@ func (UnimplementedHandler) GetSharePermissions(ctx context.Context, params GetS
 	return r, ht.ErrNotImplemented
 }
 
+// GetStack implements getStack operation.
+//
+// One stack's row, without its `.env`.
+//
+// GET /stacks/{name}
+func (UnimplementedHandler) GetStack(ctx context.Context, params GetStackParams) (r *Stack, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetStatus implements getStatus operation.
 //
 // One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -853,6 +880,23 @@ func (UnimplementedHandler) ListAppImages(ctx context.Context) (r *ListAppImages
 	return r, ht.ErrNotImplemented
 }
 
+// ListAppUpdates implements listAppUpdates operation.
+//
+// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
+// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
+// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
+// `skipped` means the registry was rate limiting requests and is asked again at the next check,
+// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
+// that it could not look: the registry wants a login (registries are checked anonymously only) or the
+// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
+// of them means up to date. available is false, with no error, whenever Docker itself is not
+// reachable.
+//
+// GET /apps/updates
+func (UnimplementedHandler) ListAppUpdates(ctx context.Context) (r *ListAppUpdatesOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListAppdataArchives implements listAppdataArchives operation.
 //
 // The appdata archives this installation wrote to each enabled backup destination, newest first,
@@ -951,6 +995,16 @@ func (UnimplementedHandler) ListSessions(ctx context.Context) (r *ListSessionsOK
 //
 // GET /shares
 func (UnimplementedHandler) ListShares(ctx context.Context) (r *ListSharesOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListStacks implements listStacks operation.
+//
+// Every stack Hoserva has a row for, sorted by name. A stack's `.env` is never returned: it holds
+// generated secrets.
+//
+// GET /stacks
+func (UnimplementedHandler) ListStacks(ctx context.Context) (r *ListStacksOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1256,6 +1310,37 @@ func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *Regis
 //
 // DELETE /apps/{id}
 func (UnimplementedHandler) RemoveApp(ctx context.Context, params RemoveAppParams) (r *RemoveAppResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RemoveStack implements removeStack operation.
+//
+// Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are
+// kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the
+// stack's directory goes too if nothing else is in it, so the name can be used again and a file the
+// stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down`
+// removes every container and network of the stack's Compose project name, and with `--volumes` its
+// named volumes, whichever file or directory they were started from. So before docker runs, every
+// container of that project must be one Compose started from the stack's own directory: a project of
+// the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is
+// refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not
+// appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker
+// failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is
+// not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's
+// named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the
+// stack's containers that lies strictly inside an appdata location (the cache disk's `appdata`
+// directory) and is used by no other container is deleted, and so is the stack's whole directory,
+// before the row. Nothing is deleted if one of the stack's containers is still there after
+// `docker compose down`. That needs the array running, like a container remove that deletes appdata:
+// refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409
+// `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a
+// directory is used by another container or another container binds a place inside the stack's
+// directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before
+// anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted,
+// leaves the row in place so the remove can be retried.
+//
+// DELETE /stacks/{name}
+func (UnimplementedHandler) RemoveStack(ctx context.Context, params RemoveStackParams) (r *RemoveStackResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

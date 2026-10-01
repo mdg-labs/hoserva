@@ -57,6 +57,8 @@ existing line by adding its PR number.
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
+- **errors** — a catch-all default maps every unclassified error to 502, so a local database or filesystem failure is blamed on an upstream; reserve 502 for errors wrapped as coming from the external process — PR 491
+- **errors** — a per-group result (one row per image) failed by one member that cannot be evaluated, hiding the result its comparable siblings produced — PR 491
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
 - **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
 - **errors** — a fixed deadline sized for the small case applied to a transfer whose size is unbounded (a multi-gigabyte archive over rclone), so large inputs fail on size alone — PR 453
@@ -82,12 +84,14 @@ existing line by adding its PR number.
 
 ## Validation and contracts
 - **validation** — duplicate entries accepted (same device in two roles, repeated mount path, duplicate grant ids) — PR 150, 221
+- **validation** — an "exact duplicate" rule compares only some fields, so entries that differ in access mode or bind address count as identical and one is silently dropped — PR 491
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
 - **doc-drift** — a command example in a skill or prompt drops a required operand (`issue-edit --body-file` with no issue number or file), so an agent following it literally fails — PR 412
 - **doc-drift** — a design doc states an external source's conditions more broadly than the source does (an advisory's exploit trigger), so a reader misjudges the exposure — PR 433
+- **doc-drift** — a dispatch prompt tells an agent to do what its agent definition forbids (run scripts outside its workspace), so the agent cannot obey both — PR 491
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
@@ -100,6 +104,7 @@ existing line by adding its PR number.
 
 ## Security
 - **security** — host or URL checked by substring instead of parsed host (including allowlist entries left unanchored beside anchored ones); redirects not validated — PR 201, 228, 474
+- **security** — an allowlist exemption decided on a truncated capture (a URL cut short inside a `${…}` interpolation), so a fixed host after the cut passes — PR 491
 - **security** — destructive CLI command that sends `confirm: true` itself — PR 193, 201
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
 - **security** — user or state values written into a config format without escaping control characters — PR 254
@@ -128,4 +133,6 @@ existing line by adding its PR number.
 - **platform** — `[[ -e path ]]` is false for a dangling symlink, so a script that then creates the path fails on it; test `-L` too — PR 382
 - **platform** — systemd `systemctl stop` of a busy mount reports a failed job without EBUSY text, so a retry that matches only strerror never runs — PR 344
 - **platform** — a filesystem path concatenated into a URI or DSN (SQLite `file:`) unescaped, so a `?`, `#` or `%` in it opens a different file and drops the query options — PR 403
+- **platform** — Docker `--entrypoint` is one executable, never an argument list; splitting it on spaces runs a different program — PR 491
+- **platform** — `git merge --ff-only origin/<b>` as a sync check also succeeds when the local branch is ahead; compare `HEAD` to the remote ref — PR 491
 - **platform** — GitHub Actions: a job `timeout-minutes` at or below a step timeout it contains, so the job backstop cancels a step still inside its own bound — PR 403

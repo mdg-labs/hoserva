@@ -170,26 +170,41 @@ func containerFromSummary(s dockercontainer.Summary) Container {
 		})
 	}
 	return Container{
-		ID:     s.ID,
-		Name:   name,
-		Image:  repo,
-		Tag:    tag,
-		State:  string(s.State),
-		Status: s.Status,
-		Health: healthFromStatus(s.Status),
-		Ports:  ports,
-		Mounts: mounts,
+		ID:      s.ID,
+		Name:    name,
+		Image:   repo,
+		Tag:     tag,
+		ImageID: s.ImageID,
+		Pinned:  isDigestPinned(s.Image),
+		State:   string(s.State),
+		Status:  s.Status,
+		Health:  healthFromStatus(s.Status),
+		Ports:   ports,
+		Mounts:  mounts,
+		Labels:  s.Labels,
 	}
 }
 
 // imageFromSummary maps one Engine image listing into Image.
 func imageFromSummary(s dockerimage.Summary) Image {
 	return Image{
-		ID:       s.ID,
-		RepoTags: s.RepoTags,
-		Size:     s.Size,
-		Created:  time.Unix(s.Created, 0).UTC(),
+		ID:          s.ID,
+		RepoTags:    s.RepoTags,
+		RepoDigests: s.RepoDigests,
+		Size:        s.Size,
+		Created:     time.Unix(s.Created, 0).UTC(),
 	}
+}
+
+// isDigestPinned reports whether an image reference names a digest, with or
+// without a tag.
+func isDigestPinned(image string) bool {
+	ref, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return false
+	}
+	_, ok := ref.(reference.Digested)
+	return ok
 }
 
 // splitImageRef splits a Docker image reference (as the Engine reports it
@@ -197,8 +212,9 @@ func imageFromSummary(s dockerimage.Summary) Image {
 // same reference parser the Engine and Compose themselves use rather than
 // a hand-rolled split on ':' — which would mis-parse a registry host with
 // a port, e.g. "registry.example.com:5000/app:latest". An unparseable or
-// digest-only reference (no tag) returns the original string as the
-// repository and an empty tag, never an error: this is display data, not
+// digest-only reference has an empty tag (the digest is dropped from the
+// repository); a reference that does not parse comes back unchanged as the
+// repository with an empty tag. Never an error: this is display data, not
 // something Inspect can refuse over.
 func splitImageRef(image string) (repo, tag string) {
 	ref, err := reference.ParseNormalizedNamed(image)
