@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,6 +138,158 @@ func TestRefresh_AnAutomaticCheckDoesNotRepeatANotificationForTheSameServedFailu
 	}
 	if n := len(*g.notified); n != 4 {
 		t.Fatalf("the same failure after a good check made %d notifications in total, want 4", n)
+	}
+}
+
+func TestRefresh_AutomaticChecksDoNotDownloadAnArchiveThatAlreadyFailedVerification(t *testing.T) {
+	g := newAutoRig(t)
+	ctx := context.Background()
+	g.badServed(t, "one")
+
+	first, err := g.refresher.Check(ctx, TriggerInterval)
+	if err != nil || first.Outcome != OutcomeFailed || first.Reason != ReasonBadSignature {
+		t.Fatalf("first check = %+v, %v, want failed bad_signature", first, err)
+	}
+	if reqs, bytes := g.host.log(); len(reqs) != 4 || bytes == 0 {
+		t.Fatalf("first check: requests = %v, bytes = %d, want the pair fetched twice", reqs, bytes)
+	}
+
+	g.host.reset()
+	for _, trigger := range []Trigger{TriggerInterval, TriggerOpen, TriggerInterval} {
+		res, err := g.refresher.Check(ctx, trigger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome != OutcomeFailed || res.Reason != ReasonBadSignature || res.Message != first.Message {
+			t.Fatalf("repeat check = %+v, want the first check's failure", res)
+		}
+	}
+	reqs, bytes := g.host.log()
+	want := " inm=\"bad-one\""
+	if len(reqs) != 3 || bytes != 0 {
+		t.Fatalf("requests = %v, bytes = %d, want three conditional archive requests and no body", reqs, bytes)
+	}
+	for _, req := range reqs {
+		if req != "/catalog.tar.zst"+want {
+			t.Fatalf("request %q, want the archive asked with the bad archive's ETag", req)
+		}
+	}
+	if n := len(*g.notified); n != 1 {
+		t.Fatalf("notifications = %d, want the one from the first check", n)
+	}
+
+	g.host.mu.Lock()
+	g.host.status = 503
+	g.host.mu.Unlock()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonFetchFailed {
+		t.Fatalf("result = %+v, want fetch_failed", res)
+	}
+	g.badServed(t, "one")
+	g.host.reset()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v, want bad_signature", res)
+	}
+	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
+		t.Fatalf("after a network failure: requests = %v, bytes = %d, want one request and no body", reqs, bytes)
+	}
+}
+
+func TestRefresh_AnAutomaticCheckFetchesAndVerifiesADifferentArchiveAfterAFailure(t *testing.T) {
+	g := newAutoRig(t)
+	ctx := context.Background()
+	g.badServed(t, "one")
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v", res)
+	}
+
+	g.badServed(t, "two")
+	g.host.reset()
+	res, _ := g.refresher.Check(ctx, TriggerInterval)
+	if res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v, want the new archive verified and refused", res)
+	}
+	if reqs, bytes := g.host.log(); len(reqs) != 4 || bytes == 0 {
+		t.Fatalf("requests = %v, bytes = %d, want the new pair fetched twice", reqs, bytes)
+	}
+	if n := len(*g.notified); n != 2 {
+		t.Fatalf("notifications = %d, want one per distinct bad archive", n)
+	}
+
+	g.host.reset()
+	_, _ = g.refresher.Check(ctx, TriggerInterval)
+	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
+		t.Fatalf("requests = %v, bytes = %d, want the new bad archive remembered in place of the first", reqs, bytes)
+	}
+
+	g.publish(t, `"good"`, catalogEntries(60, "good", map[string]int{"a": 1}))
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Outcome != OutcomeUpdated {
+		t.Fatalf("result = %+v, want the fixed archive installed", res)
+	}
+}
+
+func TestRefresh_AManualCheckAfterAFailureFetchesTheArchiveInFullAndReportsItAgain(t *testing.T) {
+	g := newAutoRig(t)
+	ctx := context.Background()
+	g.badServed(t, "one")
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v", res)
+	}
+
+	g.host.reset()
+	res, err := g.refresher.Refresh(ctx)
+	if err != nil || res.Outcome != OutcomeFailed || res.Reason != ReasonBadSignature {
+		t.Fatalf("manual check = %+v, %v, want failed bad_signature", res, err)
+	}
+	reqs, bytes := g.host.log()
+	if len(reqs) != 4 || bytes == 0 {
+		t.Fatalf("requests = %v, bytes = %d, want the archive and signature fetched in full, twice", reqs, bytes)
+	}
+	for _, req := range reqs {
+		if strings.Contains(req, "bad-one") {
+			t.Fatalf("a manual check sent the bad archive's validators: %v", reqs)
+		}
+	}
+	if n := len(*g.notified); n != 2 {
+		t.Fatalf("notifications = %d, want the manual check to report again", n)
+	}
+
+	g.host.reset()
+	_, _ = g.refresher.Check(ctx, TriggerInterval)
+	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
+		t.Fatalf("automatic check after the manual one: requests = %v, bytes = %d, want a conditional request and no body", reqs, bytes)
+	}
+}
+
+func TestRefresh_AGoodCheckForgetsTheArchiveThatFailedVerification(t *testing.T) {
+	g := newAutoRig(t)
+	ctx := context.Background()
+	seed, seedSig := signed(t, g.priv, catalogEntries(10, "seed", map[string]int{"a": 1}))
+	if _, err := g.store.Seed(seed, seedSig); err != nil {
+		t.Fatal(err)
+	}
+	g.publish(t, `"v11"`, catalogEntries(11, "installed", map[string]int{"a": 1}))
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Outcome != OutcomeUpdated {
+		t.Fatalf("result = %+v", res)
+	}
+
+	g.badServed(t, "one")
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v", res)
+	}
+
+	g.publish(t, `"v11"`, catalogEntries(11, "installed", map[string]int{"a": 1}))
+	g.host.reset()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Outcome != OutcomeUnchanged {
+		t.Fatalf("result = %+v, want unchanged once the host serves the installed archive again", res)
+	}
+
+	g.badServed(t, "one")
+	g.host.reset()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v", res)
+	}
+	if reqs, bytes := g.host.log(); len(reqs) != 4 || bytes == 0 {
+		t.Fatalf("requests = %v, bytes = %d, want the same bad archive downloaded again after a good check", reqs, bytes)
 	}
 }
 
