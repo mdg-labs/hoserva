@@ -6530,6 +6530,36 @@ components:
           type: string
         readWrite:
           type: boolean
+        location:
+          $ref: '#/components/schemas/AppMountLocation'
+
+    AppMountLocation:
+      type: object
+      required: [kind]
+      description: >-
+        Which storage a mount's host path lies on, decided from the path
+        alone against the daemon's known mount points (the pool at
+        `/mnt/user`, each data disk's and the cache disk's mount point).
+        Nothing is read from a data disk to decide it, so a listing never
+        wakes one (doc 02 §1).
+      properties:
+        kind:
+          type: string
+          enum: [pool, disk, cache, outside]
+          description: >-
+            `pool` is a path under `/mnt/user`, whose files may be on any
+            data disk. `disk` is a path under one data disk's own mount
+            point. `cache` is a path under the cache disk. `outside` is
+            anywhere else, including the boot device.
+        share:
+          type: string
+          description: >-
+            For `pool`, the first directory under `/mnt/user`, which is the
+            share's name. Absent for the pool's root itself.
+        disk:
+          type: integer
+          minimum: 1
+          description: For `disk`, the data disk's number.
 
     App:
       type: object
@@ -6560,6 +6590,25 @@ components:
             stack manages (one started by hand or by another tool). Set by
             `listApps` and `getApp`; the responses of the start, stop and
             restart operations do not carry it.
+        createdAt:
+          type: string
+          format: date-time
+          description: >-
+            When the Engine created the container. Set by `getApp` only; the
+            listing and the responses of the start, stop and restart
+            operations do not carry it.
+        startedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the Engine last started the container. Absent for a
+            container that has never run. Set by `getApp` only.
+        restartCount:
+          type: integer
+          minimum: 0
+          description: >-
+            How many times the Engine's restart policy has restarted the
+            container. Set by `getApp` only.
         ports:
           type: array
           items:
@@ -6568,6 +6617,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AppMount'
+          description: >-
+            Each mount with a host path carries its `location`, set by
+            `listApps` and `getApp`.
 
     ListAppsOK:
       type: object

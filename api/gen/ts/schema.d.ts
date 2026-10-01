@@ -3516,6 +3516,19 @@ export interface components {
             destination: string;
             mode?: string;
             readWrite: boolean;
+            location?: components["schemas"]["AppMountLocation"];
+        };
+        /** @description Which storage a mount's host path lies on, decided from the path alone against the daemon's known mount points (the pool at `/mnt/user`, each data disk's and the cache disk's mount point). Nothing is read from a data disk to decide it, so a listing never wakes one (doc 02 §1). */
+        AppMountLocation: {
+            /**
+             * @description `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one data disk's own mount point. `cache` is a path under the cache disk. `outside` is anywhere else, including the boot device.
+             * @enum {string}
+             */
+            kind: "pool" | "disk" | "cache" | "outside";
+            /** @description For `pool`, the first directory under `/mnt/user`, which is the share's name. Absent for the pool's root itself. */
+            share?: string;
+            /** @description For `disk`, the data disk's number. */
+            disk?: number;
         };
         App: {
             id: string;
@@ -3529,7 +3542,20 @@ export interface components {
             status: string;
             /** @description The name of the installed stack that started this container, decided by the daemon from the container's Compose project and the directory Compose ran it from. Absent for a container no stack manages (one started by hand or by another tool). Set by `listApps` and `getApp`; the responses of the start, stop and restart operations do not carry it. */
             stack?: string;
+            /**
+             * Format: date-time
+             * @description When the Engine created the container. Set by `getApp` only; the listing and the responses of the start, stop and restart operations do not carry it.
+             */
+            createdAt?: string;
+            /**
+             * Format: date-time
+             * @description When the Engine last started the container. Absent for a container that has never run. Set by `getApp` only.
+             */
+            startedAt?: string;
+            /** @description How many times the Engine's restart policy has restarted the container. Set by `getApp` only. */
+            restartCount?: number;
             ports: components["schemas"]["AppPort"][];
+            /** @description Each mount with a host path carries its `location`, set by `listApps` and `getApp`. */
             mounts: components["schemas"]["AppMount"][];
         };
         ListAppsOK: {

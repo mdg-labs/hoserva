@@ -7,6 +7,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 func errAppNotFound(id string) error {
@@ -39,9 +40,13 @@ func (h *Handler) ListApps(ctx context.Context) (*apiv1.ListAppsOK, error) {
 	if err != nil {
 		return nil, err
 	}
+	disks, err := h.arrayDisks(ctx)
+	if err != nil {
+		return nil, err
+	}
 	apps := make([]apiv1.App, 0, len(containers))
 	for _, c := range containers {
-		apps = append(apps, withStack(containerToAPI(c), stacks[c.ID]))
+		apps = append(apps, withMountLocations(withStack(containerToAPI(c), stacks[c.ID]), disks))
 	}
 	return &apiv1.ListAppsOK{Available: true, Apps: apps}, nil
 }
@@ -61,6 +66,49 @@ func (h *Handler) managingStacks(ctx context.Context, containers []container.Con
 	return stacks, nil
 }
 
+// arrayDisks is the stored array topology that classifies a mount's storage,
+// read from the database, never from a disk. With no array, or no store, no
+// disk is known, so only the pool's own path classifies; a store that cannot
+// answer fails the request, so an error never reads as "outside the array".
+func (h *Handler) arrayDisks(ctx context.Context) ([]store.ArrayDisk, error) {
+	if h.ArrayStore == nil {
+		return nil, nil
+	}
+	_, disks, err := h.ArrayStore.GetArray(ctx)
+	if err != nil {
+		if errors.Is(err, store.ErrNoArray) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("loading the array topology to place container mounts: %w", err)
+	}
+	return disks, nil
+}
+
+// withMountLocations sets each mount that has a host path to the storage it
+// lies on. It builds a new mounts slice, leaving the one app came with alone.
+func withMountLocations(app apiv1.App, disks []store.ArrayDisk) apiv1.App {
+	mounts := make([]apiv1.AppMount, len(app.Mounts))
+	for i, m := range app.Mounts {
+		if src, ok := m.Source.Get(); ok && src != "" {
+			m.Location = apiv1.NewOptAppMountLocation(mountLocationToAPI(container.ClassifyMount(src, disks)))
+		}
+		mounts[i] = m
+	}
+	app.Mounts = mounts
+	return app
+}
+
+func mountLocationToAPI(l container.MountLocation) apiv1.AppMountLocation {
+	out := apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKind(l.Kind)}
+	if l.Share != "" {
+		out.Share = apiv1.NewOptString(l.Share)
+	}
+	if l.Disk != 0 {
+		out.Disk = apiv1.NewOptInt(l.Disk)
+	}
+	return out
+}
+
 func withStack(app apiv1.App, stack string) apiv1.App {
 	if stack != "" {
 		app.Stack = apiv1.NewOptString(stack)
@@ -74,20 +122,41 @@ func (h *Handler) GetApp(ctx context.Context, params apiv1.GetAppParams) (*apiv1
 	}
 	c, err := h.Container.Inspect(ctx, params.ID)
 	if err != nil {
-		if errors.Is(err, container.ErrNotFound) {
-			return nil, errAppNotFound(params.ID)
-		}
-		if errors.Is(err, container.ErrUnavailable) {
-			return nil, &apiError{code: "docker_unavailable", statusCode: 503, message: fmt.Sprintf("Docker is not installed or not reachable: %v", err)}
-		}
-		return nil, fmt.Errorf("inspecting container %q: %w", params.ID, err)
+		return nil, mapInspectError(params.ID, err)
+	}
+	rt, err := h.Container.Runtime(ctx, c.ID)
+	if err != nil {
+		return nil, mapInspectError(params.ID, err)
 	}
 	stacks, err := h.managingStacks(ctx, []container.Container{c})
 	if err != nil {
 		return nil, err
 	}
-	app := withStack(containerToAPI(c), stacks[c.ID])
+	disks, err := h.arrayDisks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	app := withRuntime(withMountLocations(withStack(containerToAPI(c), stacks[c.ID]), disks), rt)
 	return &app, nil
+}
+
+func mapInspectError(id string, err error) error {
+	if errors.Is(err, container.ErrNotFound) {
+		return errAppNotFound(id)
+	}
+	if errors.Is(err, container.ErrUnavailable) {
+		return &apiError{code: "docker_unavailable", statusCode: 503, message: fmt.Sprintf("Docker is not installed or not reachable: %v", err)}
+	}
+	return fmt.Errorf("inspecting container %q: %w", id, err)
+}
+
+func withRuntime(app apiv1.App, rt container.Runtime) apiv1.App {
+	app.CreatedAt = apiv1.NewOptDateTime(rt.CreatedAt)
+	if !rt.StartedAt.IsZero() {
+		app.StartedAt = apiv1.NewOptDateTime(rt.StartedAt)
+	}
+	app.RestartCount = apiv1.NewOptInt(rt.RestartCount)
+	return app
 }
 
 func (h *Handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, error) {

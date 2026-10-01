@@ -4,6 +4,7 @@ import type { components } from "@/lib/api/client";
 export type App = components["schemas"]["App"];
 export type AppPort = components["schemas"]["AppPort"];
 export type AppState = components["schemas"]["AppState"];
+export type AppMountLocation = components["schemas"]["AppMountLocation"];
 export type AppUpdate = components["schemas"]["AppUpdate"];
 export type LifecycleAction = "start" | "stop" | "restart";
 export const START = "start" as const;
@@ -14,6 +15,10 @@ export function appDetailPath(name: string): string {
   return `/apps/${encodeURIComponent(name)}`;
 }
 
+export function appComposePath(name: string): string {
+  return `${appDetailPath(name)}/compose`;
+}
+
 // The Engine refuses to start a paused or dead container and to stop one that
 // is not running, so each action is offered only where it can work.
 export function canStart(state: AppState): boolean {
@@ -22,6 +27,48 @@ export function canStart(state: AppState): boolean {
 
 export function canStop(state: AppState): boolean {
   return state === "running" || state === "restarting" || state === "paused";
+}
+
+// A container that is still running is never removed by itself: the daemon
+// refuses it (app_running), so the action is offered only where it can work.
+// A stack's containers are the exception, since removing the stack takes them
+// down first.
+export function canRemove(state: AppState): boolean {
+  return state === "created" || state === "exited" || state === "dead";
+}
+
+export type DurationPart = { unit: "day" | "hour" | "minute"; count: number };
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+// The two largest non-zero units of a duration, or none for less than a
+// minute.
+export function durationParts(ms: number): DurationPart[] {
+  const days = Math.floor(ms / DAY_MS);
+  const hours = Math.floor((ms % DAY_MS) / HOUR_MS);
+  const minutes = Math.floor((ms % HOUR_MS) / MINUTE_MS);
+  const parts: DurationPart[] = [
+    { unit: "day", count: days },
+    { unit: "hour", count: hours },
+    { unit: "minute", count: minutes },
+  ];
+  return parts.filter((part) => part.count > 0).slice(0, 2);
+}
+
+// The refusals the daemon gives a removal that the page explains in its own
+// words; any other code falls back to the server's message alone.
+const REMOVE_REFUSALS = new Set([
+  "app_running",
+  "appdata_shared",
+  "appdata_unavailable",
+  "array_stopped",
+  "stack_project_shared",
+]);
+
+export function removeRefusalKey(code: string | undefined): string | null {
+  return code !== undefined && REMOVE_REFUSALS.has(code) ? code : null;
 }
 
 export function stateTone(state: AppState): StatusTone {

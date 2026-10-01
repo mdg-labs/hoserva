@@ -5,7 +5,6 @@ import { Link } from "react-router-dom";
 
 import { Banner } from "@/components/patterns/banner";
 import { ConfirmDialog } from "@/components/patterns/confirm";
-import { CopyValue } from "@/components/patterns/copy-value";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { showFeedbackToast } from "@/components/patterns/feedback-toast";
 import { LoadingBlock } from "@/components/patterns/loading";
@@ -18,6 +17,7 @@ import { getAppUpdates, getApps, postAppRestart, postAppStart, postAppStop } fro
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { ContainerView } from "@/routes/apps/container-view";
+import { DockerBanner } from "@/routes/apps/docker-banner";
 import {
   canStart,
   canStop,
@@ -31,7 +31,6 @@ import { LogsPanel } from "@/routes/apps/logs-panel";
 
 type ListAppsOK = components["schemas"]["ListAppsOK"];
 type ListAppUpdatesOK = components["schemas"]["ListAppUpdatesOK"];
-type DoctorCheck = components["schemas"]["DoctorCheck"];
 
 type ViewMode = "cards" | "table";
 type BulkAction = "start" | "stop";
@@ -43,34 +42,6 @@ const CARDS = "cards" as const;
 const TABLE = "table" as const;
 const VIEW_FIELD = "apps-view";
 const CATALOG_PATH = "/apps/catalog";
-
-// The install commands come from the daemon's own doctor check, never from
-// text written here.
-function isDockerCheck(check: DoctorCheck): boolean {
-  return (check.id === "docker" || check.id === "docker_compose") && check.status !== "pass";
-}
-
-function DockerBanner({ message, checks }: { message?: string; checks: DoctorCheck[] }): React.ReactElement {
-  const { t } = useTranslation();
-  const remediations = checks.filter((check) => isDockerCheck(check) && check.remediation);
-  return (
-    <Banner
-      tone="warning"
-      title={t("apps.docker.title")}
-      description={
-        <div className="flex flex-col gap-3">
-          <p>{message ?? t("apps.docker.description")}</p>
-          {remediations.map((check) => (
-            <div key={check.id} className="flex flex-col gap-1">
-              <span className="font-medium">{check.name}</span>
-              <CopyValue value={check.remediation ?? ""} label={check.name} />
-            </div>
-          ))}
-        </div>
-      }
-    />
-  );
-}
 
 function bulkTargets(apps: App[], action: BulkAction): App[] {
   return apps.filter((app) => (action === "start" ? canStart(app.state) : canStop(app.state)));

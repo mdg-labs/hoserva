@@ -462,8 +462,17 @@ type App struct {
 	// container's Compose project and the directory Compose ran it from. Absent for a container no stack
 	// manages (one started by hand or by another tool). Set by `listApps` and `getApp`; the responses of
 	// the start, stop and restart operations do not carry it.
-	Stack  OptString  `json:"stack"`
-	Ports  []AppPort  `json:"ports"`
+	Stack OptString `json:"stack"`
+	// When the Engine created the container. Set by `getApp` only; the listing and the responses of the
+	// start, stop and restart operations do not carry it.
+	CreatedAt OptDateTime `json:"createdAt"`
+	// When the Engine last started the container. Absent for a container that has never run. Set by
+	// `getApp` only.
+	StartedAt OptDateTime `json:"startedAt"`
+	// How many times the Engine's restart policy has restarted the container. Set by `getApp` only.
+	RestartCount OptInt    `json:"restartCount"`
+	Ports        []AppPort `json:"ports"`
+	// Each mount with a host path carries its `location`, set by `listApps` and `getApp`.
 	Mounts []AppMount `json:"mounts"`
 }
 
@@ -505,6 +514,21 @@ func (s *App) GetStatus() string {
 // GetStack returns the value of Stack.
 func (s *App) GetStack() OptString {
 	return s.Stack
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *App) GetCreatedAt() OptDateTime {
+	return s.CreatedAt
+}
+
+// GetStartedAt returns the value of StartedAt.
+func (s *App) GetStartedAt() OptDateTime {
+	return s.StartedAt
+}
+
+// GetRestartCount returns the value of RestartCount.
+func (s *App) GetRestartCount() OptInt {
+	return s.RestartCount
 }
 
 // GetPorts returns the value of Ports.
@@ -555,6 +579,21 @@ func (s *App) SetStatus(val string) {
 // SetStack sets the value of Stack.
 func (s *App) SetStack(val OptString) {
 	s.Stack = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *App) SetCreatedAt(val OptDateTime) {
+	s.CreatedAt = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *App) SetStartedAt(val OptDateTime) {
+	s.StartedAt = val
+}
+
+// SetRestartCount sets the value of RestartCount.
+func (s *App) SetRestartCount(val OptInt) {
+	s.RestartCount = val
 }
 
 // SetPorts sets the value of Ports.
@@ -675,10 +714,11 @@ func (s *AppImage) SetCreatedAt(val OptDateTime) {
 
 // Ref: #/components/schemas/AppMount
 type AppMount struct {
-	Source      OptString `json:"source"`
-	Destination string    `json:"destination"`
-	Mode        OptString `json:"mode"`
-	ReadWrite   bool      `json:"readWrite"`
+	Source      OptString           `json:"source"`
+	Destination string              `json:"destination"`
+	Mode        OptString           `json:"mode"`
+	ReadWrite   bool                `json:"readWrite"`
+	Location    OptAppMountLocation `json:"location"`
 }
 
 // GetSource returns the value of Source.
@@ -701,6 +741,11 @@ func (s *AppMount) GetReadWrite() bool {
 	return s.ReadWrite
 }
 
+// GetLocation returns the value of Location.
+func (s *AppMount) GetLocation() OptAppMountLocation {
+	return s.Location
+}
+
 // SetSource sets the value of Source.
 func (s *AppMount) SetSource(val OptString) {
 	s.Source = val
@@ -719,6 +764,115 @@ func (s *AppMount) SetMode(val OptString) {
 // SetReadWrite sets the value of ReadWrite.
 func (s *AppMount) SetReadWrite(val bool) {
 	s.ReadWrite = val
+}
+
+// SetLocation sets the value of Location.
+func (s *AppMount) SetLocation(val OptAppMountLocation) {
+	s.Location = val
+}
+
+// Which storage a mount's host path lies on, decided from the path alone against the daemon's known
+// mount points (the pool at `/mnt/user`, each data disk's and the cache disk's mount point). Nothing
+// is read from a data disk to decide it, so a listing never wakes one (doc 02 §1).
+// Ref: #/components/schemas/AppMountLocation
+type AppMountLocation struct {
+	// `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one
+	// data disk's own mount point. `cache` is a path under the cache disk. `outside` is anywhere else,
+	// including the boot device.
+	Kind AppMountLocationKind `json:"kind"`
+	// For `pool`, the first directory under `/mnt/user`, which is the share's name. Absent for the pool's
+	// root itself.
+	Share OptString `json:"share"`
+	// For `disk`, the data disk's number.
+	Disk OptInt `json:"disk"`
+}
+
+// GetKind returns the value of Kind.
+func (s *AppMountLocation) GetKind() AppMountLocationKind {
+	return s.Kind
+}
+
+// GetShare returns the value of Share.
+func (s *AppMountLocation) GetShare() OptString {
+	return s.Share
+}
+
+// GetDisk returns the value of Disk.
+func (s *AppMountLocation) GetDisk() OptInt {
+	return s.Disk
+}
+
+// SetKind sets the value of Kind.
+func (s *AppMountLocation) SetKind(val AppMountLocationKind) {
+	s.Kind = val
+}
+
+// SetShare sets the value of Share.
+func (s *AppMountLocation) SetShare(val OptString) {
+	s.Share = val
+}
+
+// SetDisk sets the value of Disk.
+func (s *AppMountLocation) SetDisk(val OptInt) {
+	s.Disk = val
+}
+
+// `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one
+// data disk's own mount point. `cache` is a path under the cache disk. `outside` is anywhere else,
+// including the boot device.
+type AppMountLocationKind string
+
+const (
+	AppMountLocationKindPool    AppMountLocationKind = "pool"
+	AppMountLocationKindDisk    AppMountLocationKind = "disk"
+	AppMountLocationKindCache   AppMountLocationKind = "cache"
+	AppMountLocationKindOutside AppMountLocationKind = "outside"
+)
+
+// AllValues returns all AppMountLocationKind values.
+func (AppMountLocationKind) AllValues() []AppMountLocationKind {
+	return []AppMountLocationKind{
+		AppMountLocationKindPool,
+		AppMountLocationKindDisk,
+		AppMountLocationKindCache,
+		AppMountLocationKindOutside,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppMountLocationKind) MarshalText() ([]byte, error) {
+	switch s {
+	case AppMountLocationKindPool:
+		return []byte(s), nil
+	case AppMountLocationKindDisk:
+		return []byte(s), nil
+	case AppMountLocationKindCache:
+		return []byte(s), nil
+	case AppMountLocationKindOutside:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppMountLocationKind) UnmarshalText(data []byte) error {
+	switch AppMountLocationKind(data) {
+	case AppMountLocationKindPool:
+		*s = AppMountLocationKindPool
+		return nil
+	case AppMountLocationKindDisk:
+		*s = AppMountLocationKindDisk
+		return nil
+	case AppMountLocationKindCache:
+		*s = AppMountLocationKindCache
+		return nil
+	case AppMountLocationKindOutside:
+		*s = AppMountLocationKindOutside
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/AppPort
@@ -9379,6 +9533,52 @@ func (s *NotificationWebhookMethod) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// NewOptAppMountLocation returns new OptAppMountLocation with value set to v.
+func NewOptAppMountLocation(v AppMountLocation) OptAppMountLocation {
+	return OptAppMountLocation{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptAppMountLocation is optional AppMountLocation.
+type OptAppMountLocation struct {
+	Value AppMountLocation
+	Set   bool
+}
+
+// IsSet returns true if OptAppMountLocation was set.
+func (o OptAppMountLocation) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptAppMountLocation) Reset() {
+	var v AppMountLocation
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptAppMountLocation) SetTo(v AppMountLocation) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptAppMountLocation) Get() (v AppMountLocation, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptAppMountLocation) Or(d AppMountLocation) AppMountLocation {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptAppUpdateKind returns new OptAppUpdateKind with value set to v.

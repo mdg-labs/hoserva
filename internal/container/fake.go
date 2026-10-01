@@ -29,6 +29,7 @@ type FakeProvider struct {
 	watchers       map[chan StateChange]struct{}
 	started        map[string]time.Time
 	created        map[string]time.Time
+	restarts       map[string]int
 	replaced       int
 	clock          func() time.Time
 }

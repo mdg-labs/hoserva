@@ -1000,6 +1000,24 @@ func (s *App) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.CreatedAt.Set {
+			e.FieldStart("createdAt")
+			s.CreatedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		if s.StartedAt.Set {
+			e.FieldStart("startedAt")
+			s.StartedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		if s.RestartCount.Set {
+			e.FieldStart("restartCount")
+			s.RestartCount.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("ports")
 		e.ArrStart()
 		for _, elem := range s.Ports {
@@ -1017,17 +1035,20 @@ func (s *App) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfApp = [10]string{
-	0: "id",
-	1: "name",
-	2: "health",
-	3: "image",
-	4: "tag",
-	5: "state",
-	6: "status",
-	7: "stack",
-	8: "ports",
-	9: "mounts",
+var jsonFieldsNameOfApp = [13]string{
+	0:  "id",
+	1:  "name",
+	2:  "health",
+	3:  "image",
+	4:  "tag",
+	5:  "state",
+	6:  "status",
+	7:  "stack",
+	8:  "createdAt",
+	9:  "startedAt",
+	10: "restartCount",
+	11: "ports",
+	12: "mounts",
 }
 
 // Decode decodes App from json.
@@ -1129,8 +1150,38 @@ func (s *App) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"stack\"")
 			}
+		case "createdAt":
+			if err := func() error {
+				s.CreatedAt.Reset()
+				if err := s.CreatedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"createdAt\"")
+			}
+		case "startedAt":
+			if err := func() error {
+				s.StartedAt.Reset()
+				if err := s.StartedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
+			}
+		case "restartCount":
+			if err := func() error {
+				s.RestartCount.Reset()
+				if err := s.RestartCount.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"restartCount\"")
+			}
 		case "ports":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				s.Ports = make([]AppPort, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1148,7 +1199,7 @@ func (s *App) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"ports\"")
 			}
 		case "mounts":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 4
 			if err := func() error {
 				s.Mounts = make([]AppMount, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1176,7 +1227,7 @@ func (s *App) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b01111111,
-		0b00000011,
+		0b00011000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -1454,13 +1505,20 @@ func (s *AppMount) encodeFields(e *jx.Encoder) {
 		e.FieldStart("readWrite")
 		e.Bool(s.ReadWrite)
 	}
+	{
+		if s.Location.Set {
+			e.FieldStart("location")
+			s.Location.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfAppMount = [4]string{
+var jsonFieldsNameOfAppMount = [5]string{
 	0: "source",
 	1: "destination",
 	2: "mode",
 	3: "readWrite",
+	4: "location",
 }
 
 // Decode decodes AppMount from json.
@@ -1516,6 +1574,16 @@ func (s *AppMount) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"readWrite\"")
 			}
+		case "location":
+			if err := func() error {
+				s.Location.Reset()
+				if err := s.Location.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"location\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -1568,6 +1636,178 @@ func (s *AppMount) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *AppMount) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *AppMountLocation) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *AppMountLocation) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("kind")
+		s.Kind.Encode(e)
+	}
+	{
+		if s.Share.Set {
+			e.FieldStart("share")
+			s.Share.Encode(e)
+		}
+	}
+	{
+		if s.Disk.Set {
+			e.FieldStart("disk")
+			s.Disk.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfAppMountLocation = [3]string{
+	0: "kind",
+	1: "share",
+	2: "disk",
+}
+
+// Decode decodes AppMountLocation from json.
+func (s *AppMountLocation) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode AppMountLocation to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "kind":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Kind.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"kind\"")
+			}
+		case "share":
+			if err := func() error {
+				s.Share.Reset()
+				if err := s.Share.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"share\"")
+			}
+		case "disk":
+			if err := func() error {
+				s.Disk.Reset()
+				if err := s.Disk.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"disk\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode AppMountLocation")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfAppMountLocation) {
+					name = jsonFieldsNameOfAppMountLocation[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *AppMountLocation) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *AppMountLocation) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes AppMountLocationKind as json.
+func (s AppMountLocationKind) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes AppMountLocationKind from json.
+func (s *AppMountLocationKind) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode AppMountLocationKind to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch AppMountLocationKind(v) {
+	case AppMountLocationKindPool:
+		*s = AppMountLocationKindPool
+	case AppMountLocationKindDisk:
+		*s = AppMountLocationKindDisk
+	case AppMountLocationKindCache:
+		*s = AppMountLocationKindCache
+	case AppMountLocationKindOutside:
+		*s = AppMountLocationKindOutside
+	default:
+		*s = AppMountLocationKind(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s AppMountLocationKind) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *AppMountLocationKind) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -20094,6 +20334,39 @@ func (s NotificationWebhookMethod) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *NotificationWebhookMethod) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes AppMountLocation as json.
+func (o OptAppMountLocation) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes AppMountLocation from json.
+func (o *OptAppMountLocation) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptAppMountLocation to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptAppMountLocation) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptAppMountLocation) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

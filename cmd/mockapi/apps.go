@@ -20,18 +20,24 @@ import (
 // mockApps is deterministic per instance (doc 06 §8): every screen must be
 // reachable with no real Docker daemon behind this mock. jellyfin is the one
 // container an installed stack manages (mockStack); the rest are started by
-// hand, so they are unmanaged.
+// hand, so they are unmanaged. Their mounts cover every storage location kind
+// (cache, pool, data disk, outside the array), and each carries the
+// created, started and restart facts only getApp reports (withoutRuntime).
 func mockApps() []apiv1.App {
+	now := time.Now().UTC()
 	return []apiv1.App{
 		{
-			ID:     "3f2a9c1e4b5d",
-			Name:   "jellyfin",
-			Image:  "lscr.io/linuxserver/jellyfin",
-			Tag:    "10.9.7",
-			State:  apiv1.AppStateRunning,
-			Status: "Up 3 hours (healthy)",
-			Health: apiv1.AppHealthHealthy,
-			Stack:  apiv1.NewOptString(mockStack),
+			ID:           "3f2a9c1e4b5d",
+			Name:         "jellyfin",
+			Image:        "lscr.io/linuxserver/jellyfin",
+			Tag:          "10.9.7",
+			State:        apiv1.AppStateRunning,
+			Status:       "Up 3 hours (healthy)",
+			Health:       apiv1.AppHealthHealthy,
+			Stack:        apiv1.NewOptString(mockStack),
+			CreatedAt:    apiv1.NewOptDateTime(now.Add(-30 * 24 * time.Hour)),
+			StartedAt:    apiv1.NewOptDateTime(now.Add(-3 * time.Hour)),
+			RestartCount: apiv1.NewOptInt(1),
 			Ports: []apiv1.AppPort{
 				{
 					HostIP:        apiv1.NewOptString("0.0.0.0"),
@@ -46,66 +52,87 @@ func mockApps() []apiv1.App {
 					Destination: "/config",
 					Mode:        apiv1.NewOptString("rw"),
 					ReadWrite:   true,
+					Location:    apiv1.NewOptAppMountLocation(apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKindCache}),
 				},
 				{
 					Source:      apiv1.NewOptString("/mnt/user/media"),
 					Destination: "/data/media",
 					Mode:        apiv1.NewOptString("ro"),
 					ReadWrite:   false,
+					Location:    apiv1.NewOptAppMountLocation(apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKindPool, Share: apiv1.NewOptString("media")}),
 				},
 			},
 		},
 		{
-			ID:     "7d3f1a9e5c20",
-			Name:   "postgres",
-			Image:  "postgres",
-			Tag:    "16.4",
-			State:  apiv1.AppStateRunning,
-			Status: "Up 3 hours",
-			Health: apiv1.AppHealthNone,
-			Ports:  []apiv1.AppPort{},
+			ID:           "7d3f1a9e5c20",
+			Name:         "postgres",
+			Image:        "postgres",
+			Tag:          "16.4",
+			State:        apiv1.AppStateRunning,
+			Status:       "Up 3 hours",
+			Health:       apiv1.AppHealthNone,
+			CreatedAt:    apiv1.NewOptDateTime(now.Add(-45 * 24 * time.Hour)),
+			StartedAt:    apiv1.NewOptDateTime(now.Add(-3 * time.Hour)),
+			RestartCount: apiv1.NewOptInt(0),
+			Ports:        []apiv1.AppPort{},
 			Mounts: []apiv1.AppMount{
 				{
 					Source:      apiv1.NewOptString("/mnt/cache/appdata/postgres"),
 					Destination: "/var/lib/postgresql/data",
 					Mode:        apiv1.NewOptString("rw"),
 					ReadWrite:   true,
+					Location:    apiv1.NewOptAppMountLocation(apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKindCache}),
 				},
 			},
 		},
 		{
-			ID:     "9b1d7e2f6a3c",
-			Name:   "portainer",
-			Image:  "portainer/portainer-ce",
-			Tag:    "2.21.4",
-			State:  apiv1.AppStateExited,
-			Status: "Exited (0) 2 days ago",
-			Health: apiv1.AppHealthNone,
-			Ports:  []apiv1.AppPort{},
+			ID:           "9b1d7e2f6a3c",
+			Name:         "portainer",
+			Image:        "portainer/portainer-ce",
+			Tag:          "2.21.4",
+			State:        apiv1.AppStateExited,
+			Status:       "Exited (0) 2 days ago",
+			Health:       apiv1.AppHealthNone,
+			CreatedAt:    apiv1.NewOptDateTime(now.Add(-60 * 24 * time.Hour)),
+			StartedAt:    apiv1.NewOptDateTime(now.Add(-50 * time.Hour)),
+			RestartCount: apiv1.NewOptInt(0),
+			Ports:        []apiv1.AppPort{},
 			Mounts: []apiv1.AppMount{
 				{
 					Source:      apiv1.NewOptString("/var/run/docker.sock"),
 					Destination: "/var/run/docker.sock",
 					Mode:        apiv1.NewOptString("rw"),
 					ReadWrite:   true,
+					Location:    apiv1.NewOptAppMountLocation(apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKindOutside}),
 				},
 			},
 		},
 		{
-			ID:     "4c8e0d2a7b91",
-			Name:   "transcoder",
-			Image:  "example/transcoder",
-			Tag:    "1.4.0",
-			State:  apiv1.AppStateExited,
-			Status: "Exited (0) 5 hours ago",
-			Health: apiv1.AppHealthNone,
-			Ports:  []apiv1.AppPort{},
+			ID:           "4c8e0d2a7b91",
+			Name:         "transcoder",
+			Image:        "example/transcoder",
+			Tag:          "1.4.0",
+			State:        apiv1.AppStateExited,
+			Status:       "Exited (0) 5 hours ago",
+			Health:       apiv1.AppHealthNone,
+			CreatedAt:    apiv1.NewOptDateTime(now.Add(-7 * 24 * time.Hour)),
+			StartedAt:    apiv1.NewOptDateTime(now.Add(-6 * time.Hour)),
+			RestartCount: apiv1.NewOptInt(4),
+			Ports:        []apiv1.AppPort{},
 			Mounts: []apiv1.AppMount{
 				{
 					Source:      apiv1.NewOptString("/mnt/cache/appdata/jellyfin/transcode"),
 					Destination: "/transcode",
 					Mode:        apiv1.NewOptString("rw"),
 					ReadWrite:   true,
+					Location:    apiv1.NewOptAppMountLocation(apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKindCache}),
+				},
+				{
+					Source:      apiv1.NewOptString("/mnt/disk1/scratch"),
+					Destination: "/scratch",
+					Mode:        apiv1.NewOptString("rw"),
+					ReadWrite:   true,
+					Location:    apiv1.NewOptAppMountLocation(apiv1.AppMountLocation{Kind: apiv1.AppMountLocationKindDisk, Disk: apiv1.NewOptInt(1)}),
 				},
 			},
 		},
@@ -185,7 +212,35 @@ func (h *handler) ListApps(ctx context.Context) (*apiv1.ListAppsOK, error) {
 	if h.appsDown != "" {
 		return &apiv1.ListAppsOK{Available: false, Apps: []apiv1.App{}, Message: apiv1.NewOptString(h.appsDown)}, nil
 	}
-	return &apiv1.ListAppsOK{Available: true, Apps: append([]apiv1.App{}, h.apps...)}, nil
+	apps := make([]apiv1.App, 0, len(h.apps))
+	for _, app := range h.apps {
+		apps = append(apps, withoutRuntime(app))
+	}
+	return &apiv1.ListAppsOK{Available: true, Apps: apps}, nil
+}
+
+// withoutRuntime is the app as listApps and the start, stop and restart
+// operations report it, which carries neither the created, started and
+// restart facts nor, for those three, the mounts' locations; only getApp
+// reports them.
+func withoutRuntime(app apiv1.App) apiv1.App {
+	app.CreatedAt = apiv1.OptDateTime{}
+	app.StartedAt = apiv1.OptDateTime{}
+	app.RestartCount = apiv1.OptInt{}
+	return app
+}
+
+// withoutLocations is withoutRuntime for the start, stop and restart
+// responses, which do not place the mounts either.
+func withoutLocations(app apiv1.App) apiv1.App {
+	app = withoutRuntime(app)
+	mounts := make([]apiv1.AppMount, len(app.Mounts))
+	for i, m := range app.Mounts {
+		m.Location = apiv1.OptAppMountLocation{}
+		mounts[i] = m
+	}
+	app.Mounts = mounts
+	return app
 }
 
 func errAppNotFound(id string) error {
@@ -226,7 +281,10 @@ func (h *handler) setAppState(id string, state apiv1.AppState, status string) (*
 	}
 	h.apps[i].State = state
 	h.apps[i].Status = status
-	app := h.apps[i]
+	if state == apiv1.AppStateRunning {
+		h.apps[i].StartedAt = apiv1.NewOptDateTime(time.Now().UTC())
+	}
+	app := withoutLocations(h.apps[i])
 	return &app, nil
 }
 

@@ -103,6 +103,15 @@ const (
 	composeConfigFilesLabel = "com.docker.compose.project.config_files"
 )
 
+// Runtime is the timing and restart facts of one container, from the
+// Engine's inspection of it.
+type Runtime struct {
+	CreatedAt time.Time
+	// StartedAt is the zero time for a container that has never run.
+	StartedAt    time.Time
+	RestartCount int
+}
+
 // Image is one image the Docker Engine holds locally.
 type Image struct {
 	ID       string
@@ -232,6 +241,11 @@ type Provider interface {
 	// the one it replaced. An error is never a time, and a container the
 	// Engine gives no creation time for is an error too.
 	CreatedAt(ctx context.Context, id string) (time.Time, error)
+	// Runtime is what one inspection of the container reports about its
+	// life: when it was created and last started and how often the Engine
+	// restarted it. The errors of CreatedAt and StartedAt apply: a missing
+	// creation time is an error, and an error is never a time or a count.
+	Runtime(ctx context.Context, id string) (Runtime, error)
 
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error

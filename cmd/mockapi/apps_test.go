@@ -197,3 +197,65 @@ func TestMigrationPendingScenarioHasNoDocker(t *testing.T) {
 		t.Fatalf("GetApp code = %q, want docker_unavailable", code)
 	}
 }
+
+// getApp is the one operation that reports when a container was created and
+// started and how often it restarted, and the listing and the start, stop
+// and restart responses, like hoservad's, report none of it nor the mounts'
+// locations on the actions.
+func TestGetAppCarriesTheContainersLifeAndOnlyGetAppDoes(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	app, err := h.GetApp(t.Context(), apiv1.GetAppParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatalf("GetApp: %v", err)
+	}
+	if !app.CreatedAt.Set || !app.StartedAt.Set || app.RestartCount.Value != 1 {
+		t.Fatalf("GetApp(jellyfin) = created %v started %v restarts %v, want all three set", app.CreatedAt, app.StartedAt, app.RestartCount)
+	}
+
+	list, err := h.ListApps(t.Context())
+	if err != nil {
+		t.Fatalf("ListApps: %v", err)
+	}
+	for _, a := range list.Apps {
+		if a.CreatedAt.Set || a.StartedAt.Set || a.RestartCount.Set {
+			t.Errorf("ListApps carries the life of %s", a.Name)
+		}
+	}
+
+	started, err := h.StartApp(t.Context(), apiv1.StartAppParams{ID: "transcoder"})
+	if err != nil {
+		t.Fatalf("StartApp: %v", err)
+	}
+	if started.CreatedAt.Set || started.StartedAt.Set || started.RestartCount.Set {
+		t.Errorf("StartApp carries the life of the container: %+v", started)
+	}
+	for _, m := range started.Mounts {
+		if m.Location.Set {
+			t.Errorf("StartApp places the mount %s", m.Destination)
+		}
+	}
+	before, _ := h.GetApp(t.Context(), apiv1.GetAppParams{ID: "jellyfin"})
+	after, err := h.GetApp(t.Context(), apiv1.GetAppParams{ID: "transcoder"})
+	if err != nil || !after.StartedAt.Set || !after.StartedAt.Value.After(before.StartedAt.Value) {
+		t.Fatalf("GetApp(transcoder) after a start = %+v, %v; want a start time later than jellyfin's", after, err)
+	}
+}
+
+func TestMockAppsMountsCoverEveryStorageLocationKind(t *testing.T) {
+	kinds := map[apiv1.AppMountLocationKind]bool{}
+	for _, a := range mockApps() {
+		for _, m := range a.Mounts {
+			if loc, ok := m.Location.Get(); ok {
+				kinds[loc.Kind] = true
+			}
+		}
+	}
+	for _, k := range []apiv1.AppMountLocationKind{apiv1.AppMountLocationKindPool, apiv1.AppMountLocationKindDisk, apiv1.AppMountLocationKindCache, apiv1.AppMountLocationKindOutside} {
+		if !kinds[k] {
+			t.Errorf("no mock container mounts a %s path", k)
+		}
+	}
+}
