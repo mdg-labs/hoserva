@@ -159,7 +159,7 @@ Arbitrary `docker run` flags as a raw string. Approach:
 | `--workdir` | `working_dir` | |
 | `--hostname` | `hostname` | |
 | `--group-add` | `group_add` | |
-| `--entrypoint` | `entrypoint` | A static override, split into a list of arguments and shown in the side-by-side review like any other field |
+| `--entrypoint` | `entrypoint` | A static override shown in the side-by-side review like any other field. Docker takes the value as one executable, never split on spaces, so it becomes a one-element list (`/opt/my app/start` → `["/opt/my app/start"]`); an empty value, which clears the image's entrypoint, becomes `entrypoint: []`. Arguments stay in `<PostArgs>` → `command` |
 | `--interactive` | `stdin_open` | |
 | `--tty` | `tty` | |
 | `--init` | `init` | |
