@@ -11,11 +11,12 @@ import (
 
 // Runner execs an external command and returns its stdout — the same
 // scriptable-fake shape internal/disk.Runner and internal/parity.Runner
-// already use (doc 06 §2). ComposeVersion is its only caller here: the
-// Compose spec has no stable Go API (doc 04's proposed approach), so it is
-// always invoked as its own argv, never a shell (CLAUDE.md).
+// already use (doc 06 §2). The Compose spec has no stable Go API (doc 04's
+// proposed approach), so Compose is always invoked as its own argv, never a
+// shell (CLAUDE.md). env is the command's whole environment as "NAME=value"
+// entries; nil means the daemon's own, and a non-nil empty slice means none.
 type Runner interface {
-	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
 }
 
 // CommandRunner is the real Runner.
@@ -24,8 +25,9 @@ type CommandRunner struct{}
 // Run execs name with args as its argv and returns its stdout. A non-zero
 // exit is reported with the command's captured stderr, mirroring
 // internal/disk.CommandRunner.Run.
-func (CommandRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (CommandRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -87,7 +89,7 @@ func composePluginMissing(err error) bool {
 // any other failure, so a caller can report doc 04 §3's exact warning
 // rather than treating every failure alike.
 func ComposeVersion(ctx context.Context, run Runner) (string, error) {
-	out, err := run.Run(ctx, "docker", "compose", "version")
+	out, err := run.Run(ctx, nil, "docker", "compose", "version")
 	if err != nil {
 		if composePluginMissing(err) {
 			return "", fmt.Errorf("%w: %v", ErrComposeUnavailable, err)

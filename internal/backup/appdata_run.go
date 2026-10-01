@@ -140,7 +140,7 @@ func (a *AppdataService) Run(ctx context.Context, req AppdataRunRequest, out io.
 		}
 	}
 	failures := map[string]error{}
-	staged, err := a.archiveStopped(ctx, out, selected, staging, now, dests, failures)
+	staged, err := a.archiveStopped(ctx, out, selected, staging, now, dests, ReasonNone, failures)
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func (a *AppdataService) verifyAndUpload(ctx context.Context, out io.Writer, des
 	} else if trailer.Changed > 0 {
 		_, _ = fmt.Fprintf(out, "warning: %s: %d files changed while they were copied\n", s.c.Name, trailer.Changed)
 	}
-	written, failures := a.uploadAppdata(ctx, dests, s.path, s.name, s.c.Name, passphrase, now)
+	written, failures := a.uploadAppdata(ctx, dests, s.path, s.name, s.c.Name, passphrase, "", now)
 	_ = os.Remove(s.path)
 	if len(failures) > 0 {
 		if written > 0 {
@@ -191,8 +191,9 @@ func (a *AppdataService) verifyAndUpload(ctx context.Context, out io.Writer, des
 // every selected container into staging, and starts the ones it stopped
 // again before returning, however it returns. A failure of one container
 // is recorded in failures; only an error that ends the whole run is
-// returned, with whatever was staged before it.
-func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, selected []AppdataContainer, staging string, now time.Time, dests []Destination, failures map[string]error) (staged []stagedAppdata, err error) {
+// returned, with whatever was staged before it. reason marks the archives as
+// taken before a change (ReasonNone for an ordinary backup).
+func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, selected []AppdataContainer, staging string, now time.Time, dests []Destination, reason Reason, failures map[string]error) (staged []stagedAppdata, err error) {
 	var toStop []AppdataContainer
 	for _, c := range selected {
 		if c.Stop && c.Running {
@@ -233,11 +234,11 @@ func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, sele
 		if failures[c.Name] != nil {
 			continue
 		}
-		name := resolveAppdataName(a.Backup.installationID(), c.Name, now, ReasonNone, dests)
+		name := resolveAppdataName(a.Backup.installationID(), c.Name, now, reason, dests)
 		path := filepath.Join(staging, name)
 		hdr := appdataHeader{
 			Container: c.Name, Image: c.Image, CreatedAt: now, Hostname: a.Backup.Hostname,
-			Stopped: c.Stop || !c.Running, DatabaseImage: c.DatabaseImage, Dirs: c.Dirs,
+			Stopped: c.Stop || !c.Running, DatabaseImage: c.DatabaseImage, Reason: string(reason), Dirs: c.Dirs,
 		}
 		_, _ = fmt.Fprintf(out, "archiving %s\n", c.Name)
 		if _, err := packAppdata(ctx, path, hdr); err != nil {

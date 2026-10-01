@@ -417,6 +417,13 @@ type Invoker interface {
 	//
 	// GET /apps/{id}/logs
 	GetAppLogs(ctx context.Context, params GetAppLogsParams) (GetAppLogsOK, error)
+	// GetAppSettings invokes getAppSettings operation.
+	//
+	// How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until
+	// it is set.
+	//
+	// GET /settings/apps
+	GetAppSettings(ctx context.Context) (*AppSettings, error)
 	// GetAppStats invokes getAppStats operation.
 	//
 	// CPU, memory, network and block I/O for a running container (`app_not_running`, 409, for one that is
@@ -683,6 +690,22 @@ type Invoker interface {
 	//
 	// POST /config/import
 	ImportConfig(ctx context.Context, request *ImportConfigReq) (*ConfigImportReport, error)
+	// InstallTemplate invokes installTemplate operation.
+	//
+	// Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no
+	// value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port
+	// and reported in the result's `requestedValue`, never refused. Then it creates the stack as
+	// `createStack` does: the stack's row records the template's source, id and revision, and
+	// `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and
+	// the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and
+	// `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result
+	// carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any
+	// other kind `previewTemplateInstall` lists is reported with its install. The stack errors of
+	// `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those
+	// of `previewTemplateInstall`.
+	//
+	// POST /templates/{id}/install
+	InstallTemplate(ctx context.Context, request *TemplateInstallRequest, params InstallTemplateParams) (*TemplateInstallResult, error)
 	// ListApiTokens invokes listApiTokens operation.
 	//
 	// Every account's tokens, most recently created first (doc 03 §7).
@@ -695,6 +718,19 @@ type Invoker interface {
 	//
 	// GET /apps/images
 	ListAppImages(ctx context.Context) (*ListAppImagesOK, error)
+	// ListAppUpdateHistory invokes listAppUpdateHistory operation.
+	//
+	// Every update Hoserva made that kept the image the container ran before it, newest first: when it was
+	// made, the previous image, the appdata snapshot taken just before it (absent for a container with no
+	// appdata on the cache disk) and until when the previous image is kept (`keepUntil`, set by
+	// `imageKeepDays` in the app settings). `revertible` says whether `revertApp` would go ahead now: only
+	// the newest update of a container can be reverted, once, within the keep period and while the
+	// previous image is still held and the container still runs the image it was updated to. A snapshot
+	// that has gone from its destination only shows when the revert is tried. available is false, with no
+	// error, whenever Docker itself is not reachable.
+	//
+	// GET /apps/updates/history
+	ListAppUpdateHistory(ctx context.Context) (*ListAppUpdateHistoryOK, error)
 	// ListAppUpdates invokes listAppUpdates operation.
 	//
 	// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
@@ -720,9 +756,10 @@ type Invoker interface {
 	ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error)
 	// ListApps invokes listApps operation.
 	//
-	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
-	// stack installs and the managed/unmanaged distinction against an installed stack are a later issue
-	// (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
+	// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
+	// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
+	// 04 §3).
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
@@ -982,6 +1019,31 @@ type Invoker interface {
 	//
 	// POST /config/import/preview
 	PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error)
+	// PreviewTemplateInstall invokes previewTemplateInstall operation.
+	//
+	// Resolves the template's inputs the way an install would, without creating or writing anything: paths
+	// default to the template's own default or, with none, to the existing share of the input's role
+	// (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a running container
+	// publishes or the host listens on resolves to the next free port above it, with the port asked for in
+	// `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists
+	// the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value
+	// here: it is marked `generated` and is generated by the install. The privilege summary is computed
+	// from the Compose content with these values substituted — privileged mode, host networking, the
+	// host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced
+	// confinement, extra groups, the Docker socket and host paths outside the pool and cache (the cache
+	// itself and Docker's data-root on it count as outside) — never from anything the template declares.
+	// `compose` is the file an install would write. An input that is not the template's, a value that does
+	// not fit its kind, a path input with no value, no default and no existing share to default to, or a
+	// `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
+	// input the template marks `optional` may be left empty and is written to `.env` with an empty value);
+	// a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
+	// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
+	// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
+	// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
+	// with 503 `docker_unavailable`.
+	//
+	// POST /templates/{id}/preview
+	PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error)
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -1122,6 +1184,25 @@ type Invoker interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// RevertApp invokes revertApp operation.
+	//
+	// Queues a `container_update` job (service class) that puts the container back on the image it ran
+	// before its latest update and restores the appdata snapshot taken just before it. A running container
+	// is stopped first, so it never runs the updated image against the restored data; the snapshot is
+	// restored, writing a snapshot of the appdata it replaces (`pre-restore`), so anything written since
+	// the update is kept in an archive; the container is recreated from the kept image without pulling;
+	// then it is started, once, on the previous image. A container that was stopped stays stopped. A
+	// revert deletes nothing from the pool. Refused with 409 `nothing_to_revert` when the container has no
+	// update to revert (see `listAppUpdateHistory`), with 409 `revert_unavailable` when the update is on
+	// record but can no longer be undone (the previous image was removed, its keep period ended, or the
+	// snapshot is gone from its destination), and with 409 `array_stopped` / 503 `array_state_unknown`
+	// while the array is stopped or unreadable; no job is queued and nothing is changed. If the job fails
+	// after it has stopped the container, the container is left stopped, because the restore may already
+	// have replaced its data and the updated image must not run against that; reverting again finishes it,
+	// while the snapshot is still on its destination, after which the container is started by hand.
+	//
+	// POST /apps/{id}/revert
+	RevertApp(ctx context.Context, params RevertAppParams) (*Job, error)
 	// RevokeApiToken invokes revokeApiToken operation.
 	//
 	// Ends this token immediately — the request it would have authenticated next is refused the moment
@@ -1185,6 +1266,13 @@ type Invoker interface {
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// SetAppUpdatePolicy invokes setAppUpdatePolicy operation.
+	//
+	// Sets whether `startAppUpdates` with no named containers skips this container. The policy is kept by
+	// container name. It does not stop the container being updated by name.
+	//
+	// PUT /apps/{id}/update-policy
+	SetAppUpdatePolicy(ctx context.Context, request *SetAppUpdatePolicyRequest, params SetAppUpdatePolicyParams) (*AppUpdatePolicy, error)
 	// SetAppdataBackupContainer invokes setAppdataBackupContainer operation.
 	//
 	// Replaces the container's policy. Opting a known database image out of being stopped is allowed, and
@@ -1219,6 +1307,22 @@ type Invoker interface {
 	//
 	// POST /apps/{id}/start
 	StartApp(ctx context.Context, params StartAppParams) (*App, error)
+	// StartAppUpdates invokes startAppUpdates operation.
+	//
+	// Queues one `container_update` job (service class) that updates the named containers one after
+	// another, each as `updateApp` does: an appdata snapshot first when its appdata sits on the cache
+	// disk, then the update, keeping the image it ran before for a revert. One container's failure does
+	// not stop the others; the job fails, naming each, once they have all been tried, and a container that
+	// failed is left on its previous image. With no `containers`, the targets are the containers the last
+	// update check found a newer image for, minus those that opted out of bulk updates
+	// (`setAppUpdatePolicy`); those come back in `skipped`. Naming a container updates it whether or not
+	// it opted out. When there is nothing to update no job is queued and `job` is absent. Refused with 409
+	// `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with
+	// 503 `array_state_unknown` if the array's state cannot be read; no job is queued. An unknown
+	// container is 404 and queues nothing.
+	//
+	// POST /apps/updates
+	StartAppUpdates(ctx context.Context, request OptStartAppUpdatesRequest) (*StartAppUpdatesOK, error)
 	// StartAppdataBackup invokes startAppdataBackup operation.
 	//
 	// Queues an `appdata_backup` job (service class): every container that is running and set to be
@@ -1347,6 +1451,31 @@ type Invoker interface {
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
+	// UpdateApp invokes updateApp operation.
+	//
+	// Queues a `container_update` job (service class) that updates the container. The job pulls the
+	// container's image again first, which changes nothing about the container: a failed pull, or one that
+	// finds nothing newer, ends the job with no snapshot taken and the container left alone. Otherwise,
+	// when its appdata sits on the cache disk, a snapshot of it is written (a `pre-update` archive on the
+	// appdata backup's destinations) and the update does not go ahead if that snapshot cannot be written;
+	// then the container is replaced by one built from the pulled image with the same configuration,
+	// volumes and networks, as `recreateApp` does, and the image it ran before is kept locally for
+	// `imageKeepDays`. If any step after the pull fails, the container is left on its previous image, with
+	// the image tag the pull moved pointed back at it and the update's record removed, so nothing is left
+	// to revert. A container pinned to an image digest cannot be updated. Refused with 409 `array_stopped`
+	// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+	// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+	// when it runs.
+	//
+	// POST /apps/{id}/update
+	UpdateApp(ctx context.Context, params UpdateAppParams) (*Job, error)
+	// UpdateAppSettings invokes updateAppSettings operation.
+	//
+	// Sets how many days the image a container ran before an update is kept for a revert, from 1 to 365.
+	// It applies to updates made afterwards; an update already made keeps the deadline it was made with.
+	//
+	// PUT /settings/apps
+	UpdateAppSettings(ctx context.Context, request *AppSettings) (*AppSettings, error)
 	// UpdateBackupDestination invokes updateBackupDestination operation.
 	//
 	// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
@@ -6833,6 +6962,132 @@ func (c *Client) sendGetAppLogs(ctx context.Context, params GetAppLogsParams) (r
 	return result, nil
 }
 
+// GetAppSettings invokes getAppSettings operation.
+//
+// How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until
+// it is set.
+//
+// GET /settings/apps
+func (c *Client) GetAppSettings(ctx context.Context) (*AppSettings, error) {
+	res, err := c.sendGetAppSettings(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetAppSettings(ctx context.Context) (res *AppSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getAppSettings"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/apps"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetAppSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/apps"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetAppSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetAppSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetAppSettingsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetAppStats invokes getAppStats operation.
 //
 // CPU, memory, network and block I/O for a running container (`app_not_running`, 409, for one that is
@@ -10526,6 +10781,163 @@ func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq)
 	return result, nil
 }
 
+// InstallTemplate invokes installTemplate operation.
+//
+// Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no
+// value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port
+// and reported in the result's `requestedValue`, never refused. Then it creates the stack as
+// `createStack` does: the stack's row records the template's source, id and revision, and
+// `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and
+// the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and
+// `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result
+// carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any
+// other kind `previewTemplateInstall` lists is reported with its install. The stack errors of
+// `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those
+// of `previewTemplateInstall`.
+//
+// POST /templates/{id}/install
+func (c *Client) InstallTemplate(ctx context.Context, request *TemplateInstallRequest, params InstallTemplateParams) (*TemplateInstallResult, error) {
+	res, err := c.sendInstallTemplate(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendInstallTemplate(ctx context.Context, request *TemplateInstallRequest, params InstallTemplateParams) (res *TemplateInstallResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("installTemplate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/templates/{id}/install"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, InstallTemplateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/templates/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/install"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeInstallTemplateRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, InstallTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, InstallTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeInstallTemplateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListApiTokens invokes listApiTokens operation.
 //
 // Every account's tokens, most recently created first (doc 03 §7).
@@ -10769,6 +11181,138 @@ func (c *Client) sendListAppImages(ctx context.Context) (res *ListAppImagesOK, e
 
 	stage = "DecodeResponse"
 	result, err := decodeListAppImagesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListAppUpdateHistory invokes listAppUpdateHistory operation.
+//
+// Every update Hoserva made that kept the image the container ran before it, newest first: when it was
+// made, the previous image, the appdata snapshot taken just before it (absent for a container with no
+// appdata on the cache disk) and until when the previous image is kept (`keepUntil`, set by
+// `imageKeepDays` in the app settings). `revertible` says whether `revertApp` would go ahead now: only
+// the newest update of a container can be reverted, once, within the keep period and while the
+// previous image is still held and the container still runs the image it was updated to. A snapshot
+// that has gone from its destination only shows when the revert is tried. available is false, with no
+// error, whenever Docker itself is not reachable.
+//
+// GET /apps/updates/history
+func (c *Client) ListAppUpdateHistory(ctx context.Context) (*ListAppUpdateHistoryOK, error) {
+	res, err := c.sendListAppUpdateHistory(ctx)
+	return res, err
+}
+
+func (c *Client) sendListAppUpdateHistory(ctx context.Context) (res *ListAppUpdateHistoryOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listAppUpdateHistory"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/apps/updates/history"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListAppUpdateHistoryOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/apps/updates/history"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListAppUpdateHistoryOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListAppUpdateHistoryOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListAppUpdateHistoryResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -11060,9 +11604,10 @@ func (c *Client) sendListAppdataArchives(ctx context.Context, params ListAppdata
 
 // ListApps invokes listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
-// stack installs and the managed/unmanaged distinction against an installed stack are a later issue
-// (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
+// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
+// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
+// 04 §3).
 //
 // GET /apps
 func (c *Client) ListApps(ctx context.Context) (*ListAppsOK, error) {
@@ -14234,6 +14779,172 @@ func (c *Client) sendPreviewConfigImport(ctx context.Context, request *PreviewCo
 	return result, nil
 }
 
+// PreviewTemplateInstall invokes previewTemplateInstall operation.
+//
+// Resolves the template's inputs the way an install would, without creating or writing anything: paths
+// default to the template's own default or, with none, to the existing share of the input's role
+// (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a running container
+// publishes or the host listens on resolves to the next free port above it, with the port asked for in
+// `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists
+// the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value
+// here: it is marked `generated` and is generated by the install. The privilege summary is computed
+// from the Compose content with these values substituted — privileged mode, host networking, the
+// host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced
+// confinement, extra groups, the Docker socket and host paths outside the pool and cache (the cache
+// itself and Docker's data-root on it count as outside) — never from anything the template declares.
+// `compose` is the file an install would write. An input that is not the template's, a value that does
+// not fit its kind, a path input with no value, no default and no existing share to default to, or a
+// `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
+// input the template marks `optional` may be left empty and is written to `.env` with an empty value);
+// a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
+// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
+// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
+// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
+// with 503 `docker_unavailable`.
+//
+// POST /templates/{id}/preview
+func (c *Client) PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error) {
+	res, err := c.sendPreviewTemplateInstall(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendPreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (res *TemplateInstallPlan, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("previewTemplateInstall"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/templates/{id}/preview"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PreviewTemplateInstallOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/templates/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/preview"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePreviewTemplateInstallRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PreviewTemplateInstallOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PreviewTemplateInstallOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePreviewTemplateInstallResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // RebootHost invokes rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -15852,6 +16563,163 @@ func (c *Client) sendResumeJob(ctx context.Context, params ResumeJobParams) (res
 	return result, nil
 }
 
+// RevertApp invokes revertApp operation.
+//
+// Queues a `container_update` job (service class) that puts the container back on the image it ran
+// before its latest update and restores the appdata snapshot taken just before it. A running container
+// is stopped first, so it never runs the updated image against the restored data; the snapshot is
+// restored, writing a snapshot of the appdata it replaces (`pre-restore`), so anything written since
+// the update is kept in an archive; the container is recreated from the kept image without pulling;
+// then it is started, once, on the previous image. A container that was stopped stays stopped. A
+// revert deletes nothing from the pool. Refused with 409 `nothing_to_revert` when the container has no
+// update to revert (see `listAppUpdateHistory`), with 409 `revert_unavailable` when the update is on
+// record but can no longer be undone (the previous image was removed, its keep period ended, or the
+// snapshot is gone from its destination), and with 409 `array_stopped` / 503 `array_state_unknown`
+// while the array is stopped or unreadable; no job is queued and nothing is changed. If the job fails
+// after it has stopped the container, the container is left stopped, because the restore may already
+// have replaced its data and the updated image must not run against that; reverting again finishes it,
+// while the snapshot is still on its destination, after which the container is started by hand.
+//
+// POST /apps/{id}/revert
+func (c *Client) RevertApp(ctx context.Context, params RevertAppParams) (*Job, error) {
+	res, err := c.sendRevertApp(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendRevertApp(ctx context.Context, params RevertAppParams) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("revertApp"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/apps/{id}/revert"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RevertAppOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/apps/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/revert"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RevertAppOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RevertAppOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRevertAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // RevokeApiToken invokes revokeApiToken operation.
 //
 // Ends this token immediately — the request it would have authenticated next is refused the moment
@@ -16806,6 +17674,154 @@ func (c *Client) sendSendTestNotification(ctx context.Context, params SendTestNo
 	return result, nil
 }
 
+// SetAppUpdatePolicy invokes setAppUpdatePolicy operation.
+//
+// Sets whether `startAppUpdates` with no named containers skips this container. The policy is kept by
+// container name. It does not stop the container being updated by name.
+//
+// PUT /apps/{id}/update-policy
+func (c *Client) SetAppUpdatePolicy(ctx context.Context, request *SetAppUpdatePolicyRequest, params SetAppUpdatePolicyParams) (*AppUpdatePolicy, error) {
+	res, err := c.sendSetAppUpdatePolicy(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetAppUpdatePolicy(ctx context.Context, request *SetAppUpdatePolicyRequest, params SetAppUpdatePolicyParams) (res *AppUpdatePolicy, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setAppUpdatePolicy"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/apps/{id}/update-policy"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetAppUpdatePolicyOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/apps/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/update-policy"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetAppUpdatePolicyRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, SetAppUpdatePolicyOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, SetAppUpdatePolicyOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetAppUpdatePolicyResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // SetAppdataBackupContainer invokes setAppdataBackupContainer operation.
 //
 // Replaces the container's policy. Opting a known database image out of being stopped is allowed, and
@@ -17393,6 +18409,144 @@ func (c *Client) sendStartApp(ctx context.Context, params StartAppParams) (res *
 
 	stage = "DecodeResponse"
 	result, err := decodeStartAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartAppUpdates invokes startAppUpdates operation.
+//
+// Queues one `container_update` job (service class) that updates the named containers one after
+// another, each as `updateApp` does: an appdata snapshot first when its appdata sits on the cache
+// disk, then the update, keeping the image it ran before for a revert. One container's failure does
+// not stop the others; the job fails, naming each, once they have all been tried, and a container that
+// failed is left on its previous image. With no `containers`, the targets are the containers the last
+// update check found a newer image for, minus those that opted out of bulk updates
+// (`setAppUpdatePolicy`); those come back in `skipped`. Naming a container updates it whether or not
+// it opted out. When there is nothing to update no job is queued and `job` is absent. Refused with 409
+// `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with
+// 503 `array_state_unknown` if the array's state cannot be read; no job is queued. An unknown
+// container is 404 and queues nothing.
+//
+// POST /apps/updates
+func (c *Client) StartAppUpdates(ctx context.Context, request OptStartAppUpdatesRequest) (*StartAppUpdatesOK, error) {
+	res, err := c.sendStartAppUpdates(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendStartAppUpdates(ctx context.Context, request OptStartAppUpdatesRequest) (res *StartAppUpdatesOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startAppUpdates"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/apps/updates"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartAppUpdatesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/apps/updates"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStartAppUpdatesRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartAppUpdatesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartAppUpdatesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartAppUpdatesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -19168,6 +20322,291 @@ func (c *Client) sendUnlockUser(ctx context.Context, params UnlockUserParams) (r
 
 	stage = "DecodeResponse"
 	result, err := decodeUnlockUserResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateApp invokes updateApp operation.
+//
+// Queues a `container_update` job (service class) that updates the container. The job pulls the
+// container's image again first, which changes nothing about the container: a failed pull, or one that
+// finds nothing newer, ends the job with no snapshot taken and the container left alone. Otherwise,
+// when its appdata sits on the cache disk, a snapshot of it is written (a `pre-update` archive on the
+// appdata backup's destinations) and the update does not go ahead if that snapshot cannot be written;
+// then the container is replaced by one built from the pulled image with the same configuration,
+// volumes and networks, as `recreateApp` does, and the image it ran before is kept locally for
+// `imageKeepDays`. If any step after the pull fails, the container is left on its previous image, with
+// the image tag the pull moved pointed back at it and the update's record removed, so nothing is left
+// to revert. A container pinned to an image digest cannot be updated. Refused with 409 `array_stopped`
+// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+// when it runs.
+//
+// POST /apps/{id}/update
+func (c *Client) UpdateApp(ctx context.Context, params UpdateAppParams) (*Job, error) {
+	res, err := c.sendUpdateApp(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateApp(ctx context.Context, params UpdateAppParams) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateApp"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/apps/{id}/update"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateAppOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/apps/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/update"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateAppOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateAppOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateAppSettings invokes updateAppSettings operation.
+//
+// Sets how many days the image a container ran before an update is kept for a revert, from 1 to 365.
+// It applies to updates made afterwards; an update already made keeps the deadline it was made with.
+//
+// PUT /settings/apps
+func (c *Client) UpdateAppSettings(ctx context.Context, request *AppSettings) (*AppSettings, error) {
+	res, err := c.sendUpdateAppSettings(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpdateAppSettings(ctx context.Context, request *AppSettings) (res *AppSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateAppSettings"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/apps"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateAppSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/apps"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateAppSettingsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateAppSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateAppSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateAppSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

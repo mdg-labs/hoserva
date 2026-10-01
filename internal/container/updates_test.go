@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -415,5 +416,77 @@ func TestImageRef(t *testing.T) {
 		if err != nil || ref.String() != c.want || ref.Registry != c.registry || ref.Repository != c.repo {
 			t.Errorf("ParseImageRef(%q, %q) = %+v (%v), want %s on %s as %s", c.image, c.tag, ref, err, c.want, c.registry, c.repo)
 		}
+	}
+}
+
+// Two containers run jellyfin:10.9.7; one is updated, which moves the tag to
+// the new image, so the Engine lists the other under its image ID.
+func movedTagRig(t *testing.T) *updateRig {
+	t.Helper()
+	r := newUpdateRig()
+	const repo, tag = "lscr.io/linuxserver/jellyfin", "10.9.7"
+	ref, err := ParseImageRef(repo, tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.provider.AddContainer(Container{ID: "id-a", Name: "a", Image: repo, Tag: tag, ImageID: "sha256:img-new"})
+	r.provider.AddContainer(Container{ID: "id-b", Name: "b", Image: repo, Tag: tag, ImageID: "sha256:img-old"})
+	r.provider.AddImage(Image{ID: "sha256:img-new", RepoTags: []string{ref.String()}, RepoDigests: []string{repo + "@" + digestNew}})
+	r.provider.AddImage(Image{ID: "sha256:img-old", RepoDigests: []string{repo + "@" + digestOld}})
+	r.registry.SetDigest(ref, digestNew)
+	r.registry.SetTags(ref, []string{tag})
+	listed, err := r.provider.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed[1].Image != "sha256" {
+		t.Fatalf("the fake did not rewrite the listing of the container left on the old image: %+v", listed[1])
+	}
+	return r
+}
+
+func TestUpdateChecker_AContainerWhoseTagMovedIsCheckedByItsCreationReference(t *testing.T) {
+	r := movedTagRig(t)
+	r.check(t)
+
+	if got := r.result(t, "lscr.io/linuxserver/jellyfin:10.9.7"); got.Status != store.UpdateAvailable || got.Kind != store.UpdateKindNewBuild {
+		t.Fatalf("jellyfin:10.9.7 = %+v, want update_available/new_build for the container left on the old image", got)
+	}
+	for image := range r.results.checks {
+		if strings.Contains(image, "sha256") {
+			t.Errorf("a result is stored for %q, the image ID the listing reports", image)
+		}
+	}
+	for _, c := range r.registry.Calls() {
+		if strings.Contains(c, "sha256") {
+			t.Errorf("registry call %q: the listing's image ID was taken for a repository", c)
+		}
+	}
+	statuses, err := r.checker.Statuses(context.Background())
+	if err != nil || len(statuses) != 2 {
+		t.Fatalf("Statuses = %v, %v", statuses, err)
+	}
+	for _, s := range statuses {
+		if s.Container == "b" && (s.Status != store.UpdateAvailable || s.Image != "lscr.io/linuxserver/jellyfin" || s.Tag != "10.9.7") {
+			t.Errorf("b = %+v, want update_available on lscr.io/linuxserver/jellyfin:10.9.7, never not_checked with a login message", s)
+		}
+	}
+}
+
+func TestUpdateChecker_BulkUpdateIncludesAContainerWhoseTagMoved(t *testing.T) {
+	r := movedTagRig(t)
+	r.check(t)
+	u := &Updater{
+		Lifecycle: &Lifecycle{Provider: r.provider},
+		History:   newMemHistory(),
+		Snapshots: &fakeSnapshots{provider: r.provider},
+		Statuses:  r.checker,
+	}
+	sel, err := u.BulkTargets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(sel.Containers, "b") {
+		t.Fatalf("bulk targets = %v, want b included", sel.Containers)
 	}
 }

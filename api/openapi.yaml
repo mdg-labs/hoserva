@@ -107,15 +107,21 @@ tags:
       stacks directory (`<state dir>/stacks/<name>/`, `/var/lib/hoserva/
       stacks/<name>/` on an installed system) are generated. A stack's
       Compose project is run with `docker compose`, never through a shell.
+  - name: templates
+    description: >-
+      Installing a catalog template (`hoserva app install`, doc 04 §7): the
+      `x-hoserva` inputs are resolved, the privilege summary is computed
+      from the Compose content, and the result is stored as a stack.
   - name: apps
     description: >-
       Docker Engine containers and images (`hoserva app list`, doc 04 §2,
       §3): every container the Engine reports, managed and unmanaged
       alike, with the same lifecycle actions for both (doc 04 §1, §2):
       start, stop, restart, recreate, remove, logs and stats. The Compose
-      stack model is a later issue. `available` is false, with no error,
-      whenever Docker itself is not reachable: a missing prerequisite is
-      Apps' normal state, not a failed request.
+      stack model is served by the `stacks` operations (`listStacks`,
+      `createStack`, `getStack`, `removeStack`). `available` is false, with
+      no error, whenever Docker itself is not reachable: a missing
+      prerequisite is Apps' normal state, not a failed request.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -849,6 +855,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/apps:
+    get:
+      operationId: getAppSettings
+      summary: Get the container update settings
+      description: >-
+        How long the image a container ran before an update is kept for a
+        revert (doc 04 §6): 7 days until it is set.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The current container update settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateAppSettings
+      summary: Set the container update settings
+      description: >-
+        Sets how many days the image a container ran before an update is kept
+        for a revert, from 1 to 365. It applies to updates made afterwards;
+        an update already made keeps the deadline it was made with.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppSettings'
+      responses:
+        "200":
+          description: The updated settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSettings'
         default:
           $ref: '#/components/responses/Error'
 
@@ -3433,9 +3482,9 @@ paths:
       summary: List containers
       description: >-
         Every container the Docker Engine reports, managed and unmanaged
-        alike (doc 04 §2) — Compose stack installs and the
-        managed/unmanaged distinction against an installed stack are a
-        later issue (#278). available is false, with no error, whenever
+        alike (doc 04 §2). Which containers belong to an installed
+        stack, and so the managed/unmanaged distinction against it, is not
+        reported yet (#489). available is false, with no error, whenever
         Docker itself is not reachable (doc 04 §3).
       tags: [apps]
       x-hoserva-role: viewer
@@ -3492,6 +3541,70 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListAppUpdatesOK'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: startAppUpdates
+      summary: Update several containers
+      description: >-
+        Queues one `container_update` job (service class) that updates the
+        named containers one after another, each as `updateApp` does: an
+        appdata snapshot first when its appdata sits on the cache disk, then
+        the update, keeping the image it ran before for a revert. One
+        container's failure does not stop the others; the job fails, naming
+        each, once they have all been tried, and a container that failed is
+        left on its previous image. With no `containers`, the targets are
+        the containers the last update check found a newer image for, minus
+        those that opted out of bulk updates (`setAppUpdatePolicy`); those
+        come back in `skipped`. Naming a container updates it whether or not
+        it opted out. When there is nothing to update no job is queued and
+        `job` is absent. Refused with 409 `array_stopped` while the array is
+        stopped (maintenance mode) or its storage is not ready, and with 503
+        `array_state_unknown` if the array's state cannot be read; no job is
+        queued. An unknown container is 404 and queues nothing.
+      tags: [apps]
+      x-hoserva-role: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAppUpdatesRequest'
+      responses:
+        "200":
+          description: The queued job and what was left out.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartAppUpdatesOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/updates/history:
+    get:
+      operationId: listAppUpdateHistory
+      summary: Container updates that can be reverted
+      description: >-
+        Every update Hoserva made that kept the image the container ran
+        before it, newest first: when it was made, the previous image, the
+        appdata snapshot taken just before it (absent for a container with
+        no appdata on the cache disk) and until when the previous image is
+        kept (`keepUntil`, set by `imageKeepDays` in the app settings).
+        `revertible` says whether `revertApp` would go ahead now: only the
+        newest update of a container can be reverted, once, within the keep
+        period and while the previous image is still held and the container
+        still runs the image it was updated to. A snapshot that has gone
+        from its destination only shows when the revert is tried. available
+        is false, with no error, whenever Docker itself is not reachable.
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The recorded updates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppUpdateHistoryOK'
         default:
           $ref: '#/components/responses/Error'
 
@@ -3685,6 +3798,127 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/update:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    post:
+      operationId: updateApp
+      summary: Update a container
+      description: >-
+        Queues a `container_update` job (service class) that updates the
+        container. The job pulls the container's image again first, which
+        changes nothing about the container: a failed pull, or one that
+        finds nothing newer, ends the job with no snapshot taken and the
+        container left alone. Otherwise, when its appdata sits on the cache
+        disk, a snapshot of it is written (a `pre-update` archive on the
+        appdata backup's destinations) and the update does not go ahead if
+        that snapshot cannot be written; then the container is replaced by
+        one built from the pulled image with the same configuration, volumes
+        and networks, as `recreateApp` does, and the image it ran before is
+        kept locally for `imageKeepDays`. If any step after the pull fails,
+        the container is left on its previous image, with the image tag the
+        pull moved pointed back at it and the update's record removed, so
+        nothing is left to revert. A container pinned to an image digest
+        cannot be updated. Refused with 409 `array_stopped`
+        while the array is stopped (maintenance mode) or its storage is not
+        ready, and with 503 `array_state_unknown` if the array's state
+        cannot be read; no job is queued. The job checks again when it runs.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/revert:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    post:
+      operationId: revertApp
+      summary: Revert a container's last update
+      description: >-
+        Queues a `container_update` job (service class) that puts the
+        container back on the image it ran before its latest update and
+        restores the appdata snapshot taken just before it. A running
+        container is stopped first, so it never runs the updated image
+        against the restored data; the snapshot is restored, writing a
+        snapshot of the appdata it replaces (`pre-restore`), so anything
+        written since the update is kept in an archive; the container is
+        recreated from the kept image without pulling; then it is started,
+        once, on the previous image. A container that was stopped stays
+        stopped. A revert deletes nothing from the pool. Refused with 409
+        `nothing_to_revert` when the container has no update to revert (see
+        `listAppUpdateHistory`), with 409 `revert_unavailable` when the
+        update is on record but can no longer be undone (the previous image
+        was removed, its keep period ended, or the snapshot is gone from its
+        destination), and with 409 `array_stopped` / 503
+        `array_state_unknown` while the array is stopped or unreadable; no
+        job is queued and nothing is changed. If the job fails after it has
+        stopped the container, the container is left stopped, because the
+        restore may already have replaced its data and the updated image must
+        not run against that; reverting again finishes it, while the
+        snapshot is still on its destination, after which the container is
+        started by hand.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/update-policy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    put:
+      operationId: setAppUpdatePolicy
+      summary: Include or exclude a container from bulk updates
+      description: >-
+        Sets whether `startAppUpdates` with no named containers skips this
+        container. The policy is kept by container name. It does not stop
+        the container being updated by name.
+      tags: [apps]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAppUpdatePolicyRequest'
+      responses:
+        "200":
+          description: The container's policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppUpdatePolicy'
         default:
           $ref: '#/components/responses/Error'
 
@@ -3894,6 +4128,111 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RemoveStackResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /templates/{id}/preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The template's id.
+    post:
+      operationId: previewTemplateInstall
+      summary: Preview installing a catalog template
+      description: >-
+        Resolves the template's inputs the way an install would, without
+        creating or writing anything: paths default to the template's own
+        default or, with none, to the existing share of the input's role
+        (`/mnt/user/<role>`) and list the existing shares as suggestions;
+        a port that a running container publishes or the host listens on
+        resolves to the next free port above it, with the port asked for in
+        `requestedValue`; a timezone with no value takes the host's; a
+        `device` input with role `gpu` lists the host's render devices
+        (`/dev/dri/renderD*`) as suggestions. A secret is never given a
+        value here: it is marked `generated` and is generated by the
+        install. The privilege summary is computed from the Compose content
+        with these values substituted — privileged mode, host networking,
+        the host PID or cgroup namespace, device cgroup rules, added
+        capabilities, disabled or replaced confinement, extra groups, the
+        Docker socket and host paths outside the pool and cache (the cache
+        itself and Docker's data-root on it count as outside) — never from
+        anything the template declares. `compose` is the file an install
+        would write. An input that is not the template's, a value that does
+        not fit its kind, a path input with no value, no default and no
+        existing share to default to, or a `string` input with no value and
+        no default is refused with 400 `invalid_template_input` (a `string`
+        input the template marks `optional` may be left empty and is
+        written to `.env` with an empty value); a name that is not a valid
+        stack name with 400 `invalid_stack_name`; an unknown template with
+        404 `template_not_found`; a catalog entry that fails the template
+        rules with 422 `template_invalid`; a GPU the host cannot give to a
+        container (no `render` group) with 409 `gpu_unavailable`; no free
+        port above a conflicting one with 409 `no_free_port`; Docker not
+        reachable, which the port check needs, with 503 `docker_unavailable`.
+      tags: [templates]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateInstallRequest'
+      responses:
+        "200":
+          description: What an install would do.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateInstallPlan'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /templates/{id}/install:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The template's id.
+    post:
+      operationId: installTemplate
+      summary: Install a catalog template as a stack
+      description: >-
+        Resolves the inputs exactly as `previewTemplateInstall` does, and
+        generates each secret that has no value of its own (48 hexadecimal
+        characters). A port that is taken is moved to the next free port
+        and reported in the result's `requestedValue`, never refused. Then
+        it creates the stack as `createStack` does: the stack's row
+        records the template's source, id and revision, and
+        `docker-compose.yml` (the template with its `x-hoserva` block kept,
+        plus the `/dev/dri` device and the host's `render` group for a GPU
+        that was chosen), `.env` (every input; secrets only here) and
+        `meta.json` are generated and checked with `docker compose config`.
+        Nothing is started. The result carries the privilege summary, so a
+        template that asks for privileged mode, the Docker socket or any
+        other kind `previewTemplateInstall` lists is reported with its
+        install. The stack errors of `createStack`
+        apply (409 `stack_exists`, 409 `stack_dir_exists`, 400
+        `invalid_stack`), as do those of `previewTemplateInstall`.
+      tags: [templates]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateInstallRequest'
+      responses:
+        "200":
+          description: The installed stack and what it was installed with.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateInstallResult'
         default:
           $ref: '#/components/responses/Error'
 
@@ -6021,6 +6360,116 @@ components:
             The appdata directories and the stack directory deleted. Empty
             unless `deleteAppdata` was requested.
 
+    TemplateInstallRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: >-
+            The stack's name, under the rules of `createStack`. Absent means
+            the template's id.
+        values:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Input name to value. An input with no entry, or an empty one,
+            takes its default. An entry for a name that is not one of the
+            template's inputs is refused.
+
+    TemplateInput:
+      type: object
+      required: [name, kind, generated]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [path, port, string, secret, timezone, device]
+        role:
+          type: string
+          enum: [appdata, share, media, downloads, gpu]
+        label:
+          type: string
+        description:
+          type: string
+        value:
+          type: string
+          description: >-
+            What the input resolves to. Absent for a secret, whose value is
+            only ever written to the stack's `.env`; empty for a `device`
+            input with no GPU chosen.
+        requestedValue:
+          type: string
+          description: >-
+            Present on a `port` input whose requested port is taken: the port
+            asked for, while `value` is the next free port instead.
+        generated:
+          type: boolean
+          description: A secret that the install generates.
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: >-
+            The existing shares' paths for a `path` input that is not
+            appdata; the host's `/dev/dri` render devices for a `device`
+            input.
+
+    TemplatePrivilege:
+      type: object
+      required: [kind, service, description]
+      properties:
+        kind:
+          type: string
+          enum: [privileged, host_network, host_pid, host_cgroup, device_cgroup_rules, added_capabilities, confinement_disabled, group_add, docker_socket, host_path]
+        service:
+          type: string
+          description: The Compose service that asks for it.
+        detail:
+          type: string
+          description: >-
+            The path, process namespace, rules, capabilities, security
+            options or groups concerned, comma-separated when there are
+            several; absent for `privileged`, `host_network` and
+            `host_cgroup`.
+        description:
+          type: string
+          description: Plain-language explanation of what it grants.
+
+    TemplateInstallPlan:
+      type: object
+      required: [template, title, name, inputs, privileges, compose]
+      properties:
+        template:
+          $ref: '#/components/schemas/StackTemplate'
+        title:
+          type: string
+        name:
+          type: string
+          description: The stack's name.
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateInput'
+        privileges:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplatePrivilege'
+          description: Empty when the template asks for nothing beyond an ordinary container.
+        compose:
+          type: string
+          description: The `docker-compose.yml` text that an install writes.
+
+    TemplateInstallResult:
+      type: object
+      required: [stack, plan]
+      properties:
+        stack:
+          $ref: '#/components/schemas/Stack'
+        plan:
+          $ref: '#/components/schemas/TemplateInstallPlan'
+
     AppPort:
       type: object
       required: [containerPort, protocol]
@@ -6115,6 +6564,12 @@ components:
         container:
           type: string
           description: The container's name.
+        bulkExcluded:
+          type: boolean
+          description: >-
+            True when the container opted out of bulk updates
+            (`setAppUpdatePolicy`); `startAppUpdates` with no named
+            containers skips it. The daemon always sets it.
         image:
           type: string
         tag:
@@ -6139,6 +6594,126 @@ components:
           type: string
           format: date-time
           description: When the image was last checked; absent when no check has reached the image.
+
+    StartAppUpdatesRequest:
+      type: object
+      properties:
+        containers:
+          type: array
+          items:
+            type: string
+          description: >-
+            Container names or Engine IDs to update. Omitted or empty means
+            every container with an update available that has not opted out.
+          uniqueItems: true
+
+    StartAppUpdatesOK:
+      type: object
+      required: [containers, skipped]
+      properties:
+        job:
+          $ref: '#/components/schemas/Job'
+        containers:
+          type: array
+          items:
+            type: string
+          description: The containers the job updates, in the order it does.
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppUpdateSkipped'
+
+    AppUpdateSkipped:
+      type: object
+      required: [container, reason]
+      properties:
+        container:
+          type: string
+        reason:
+          type: string
+          description: Why a bulk update left the container out.
+
+    SetAppUpdatePolicyRequest:
+      type: object
+      required: [bulkExcluded]
+      properties:
+        bulkExcluded:
+          type: boolean
+
+    AppUpdatePolicy:
+      type: object
+      required: [container, bulkExcluded]
+      properties:
+        container:
+          type: string
+          description: The container's name.
+        bulkExcluded:
+          type: boolean
+
+    AppSettings:
+      type: object
+      required: [imageKeepDays]
+      properties:
+        imageKeepDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: >-
+            How many days the image a container ran before an update is kept
+            locally for a revert.
+
+    AppUpdateRecord:
+      type: object
+      required: [id, container, image, previousImageId, updatedAt, keepUntil, revertible]
+      properties:
+        id:
+          type: integer
+          format: int64
+        container:
+          type: string
+          description: The container's name.
+        image:
+          type: string
+          description: The image reference the container runs, "repository:tag".
+        previousImageId:
+          type: string
+          description: The Engine ID of the image the container ran before the update.
+        snapshotArchive:
+          type: string
+          description: >-
+            The appdata archive taken just before the update; absent when the
+            container has no appdata on the cache disk.
+        snapshotDestinationId:
+          type: string
+          description: The backup destination that holds `snapshotArchive`.
+        updatedAt:
+          type: string
+          format: date-time
+        keepUntil:
+          type: string
+          format: date-time
+          description: Until when the previous image is kept.
+        revertedAt:
+          type: string
+          format: date-time
+          description: When the update was reverted; absent until it was.
+        revertible:
+          type: boolean
+
+    ListAppUpdateHistoryOK:
+      type: object
+      required: [available, records]
+      properties:
+        available:
+          type: boolean
+          description: False when the Docker Engine is not reachable (doc 04 §3).
+        message:
+          type: string
+          description: Set alongside available=false with the reason and a remediation.
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppUpdateRecord'
 
     AppImage:
       type: object
@@ -8017,7 +8592,8 @@ components:
             - "null"
           description: >-
             `pre-restore` for the snapshot a restore took of the appdata it
-            replaced; absent for an ordinary backup.
+            replaced, `pre-update` for the snapshot taken before a container
+            update; absent for an ordinary backup.
 
     ListAppdataArchivesOK:
       type: object

@@ -479,6 +479,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the container update settings
+         * @description How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until it is set.
+         */
+        get: operations["getAppSettings"];
+        /**
+         * Set the container update settings
+         * @description Sets how many days the image a container ran before an update is kept for a revert, from 1 to 365. It applies to updates made afterwards; an update already made keeps the deadline it was made with.
+         */
+        put: operations["updateAppSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/ups": {
         parameters: {
             query?: never;
@@ -1957,7 +1981,7 @@ export interface paths {
         };
         /**
          * List containers
-         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose stack installs and the managed/unmanaged distinction against an installed stack are a later issue (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
          */
         get: operations["listApps"];
         put?: never;
@@ -2000,6 +2024,30 @@ export interface paths {
          * @description What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`). The check asks each registry for manifests and tag names only, never a pull. `skipped` means the registry was rate limiting requests and is asked again at the next check, `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or that it could not look: the registry wants a login (registries are checked anonymously only) or the container is pinned to an image digest, so there is no tag to update. The `message` says which. None of them means up to date. available is false, with no error, whenever Docker itself is not reachable.
          */
         get: operations["listAppUpdates"];
+        put?: never;
+        /**
+         * Update several containers
+         * @description Queues one `container_update` job (service class) that updates the named containers one after another, each as `updateApp` does: an appdata snapshot first when its appdata sits on the cache disk, then the update, keeping the image it ran before for a revert. One container's failure does not stop the others; the job fails, naming each, once they have all been tried, and a container that failed is left on its previous image. With no `containers`, the targets are the containers the last update check found a newer image for, minus those that opted out of bulk updates (`setAppUpdatePolicy`); those come back in `skipped`. Naming a container updates it whether or not it opted out. When there is nothing to update no job is queued and `job` is absent. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. An unknown container is 404 and queues nothing.
+         */
+        post: operations["startAppUpdates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/updates/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Container updates that can be reverted
+         * @description Every update Hoserva made that kept the image the container ran before it, newest first: when it was made, the previous image, the appdata snapshot taken just before it (absent for a container with no appdata on the cache disk) and until when the previous image is kept (`keepUntil`, set by `imageKeepDays` in the app settings). `revertible` says whether `revertApp` would go ahead now: only the newest update of a container can be reverted, once, within the keep period and while the previous image is still held and the container still runs the image it was updated to. A snapshot that has gone from its destination only shows when the revert is tried. available is false, with no error, whenever Docker itself is not reachable.
+         */
+        get: operations["listAppUpdateHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2127,6 +2175,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps/{id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update a container
+         * @description Queues a `container_update` job (service class) that updates the container. The job pulls the container's image again first, which changes nothing about the container: a failed pull, or one that finds nothing newer, ends the job with no snapshot taken and the container left alone. Otherwise, when its appdata sits on the cache disk, a snapshot of it is written (a `pre-update` archive on the appdata backup's destinations) and the update does not go ahead if that snapshot cannot be written; then the container is replaced by one built from the pulled image with the same configuration, volumes and networks, as `recreateApp` does, and the image it ran before is kept locally for `imageKeepDays`. If any step after the pull fails, the container is left on its previous image, with the image tag the pull moved pointed back at it and the update's record removed, so nothing is left to revert. A container pinned to an image digest cannot be updated. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs.
+         */
+        post: operations["updateApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert a container's last update
+         * @description Queues a `container_update` job (service class) that puts the container back on the image it ran before its latest update and restores the appdata snapshot taken just before it. A running container is stopped first, so it never runs the updated image against the restored data; the snapshot is restored, writing a snapshot of the appdata it replaces (`pre-restore`), so anything written since the update is kept in an archive; the container is recreated from the kept image without pulling; then it is started, once, on the previous image. A container that was stopped stays stopped. A revert deletes nothing from the pool. Refused with 409 `nothing_to_revert` when the container has no update to revert (see `listAppUpdateHistory`), with 409 `revert_unavailable` when the update is on record but can no longer be undone (the previous image was removed, its keep period ended, or the snapshot is gone from its destination), and with 409 `array_stopped` / 503 `array_state_unknown` while the array is stopped or unreadable; no job is queued and nothing is changed. If the job fails after it has stopped the container, the container is left stopped, because the restore may already have replaced its data and the updated image must not run against that; reverting again finishes it, while the snapshot is still on its destination, after which the container is started by hand.
+         */
+        post: operations["revertApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/update-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Include or exclude a container from bulk updates
+         * @description Sets whether `startAppUpdates` with no named containers skips this container. The policy is kept by container name. It does not stop the container being updated by name.
+         */
+        put: operations["setAppUpdatePolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apps/{id}/logs": {
         parameters: {
             query?: never;
@@ -2219,6 +2336,52 @@ export interface paths {
          * @description Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the stack's directory goes too if nothing else is in it, so the name can be used again and a file the stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down` removes every container and network of the stack's Compose project name, and with `--volumes` its named volumes, whichever file or directory they were started from. So before docker runs, every container of that project must be one Compose started from the stack's own directory: a project of the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the stack's containers that lies strictly inside an appdata location (the cache disk's `appdata` directory) and is used by no other container is deleted, and so is the stack's whole directory, before the row. Nothing is deleted if one of the stack's containers is still there after `docker compose down`. That needs the array running, like a container remove that deletes appdata: refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409 `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a directory is used by another container or another container binds a place inside the stack's directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted, leaves the row in place so the remove can be retried.
          */
         delete: operations["removeStack"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview installing a catalog template
+         * @description Resolves the template's inputs the way an install would, without creating or writing anything: paths default to the template's own default or, with none, to the existing share of the input's role (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a running container publishes or the host listens on resolves to the next free port above it, with the port asked for in `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value here: it is marked `generated` and is generated by the install. The privilege summary is computed from the Compose content with these values substituted — privileged mode, host networking, the host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced confinement, extra groups, the Docker socket and host paths outside the pool and cache (the cache itself and Docker's data-root on it count as outside) — never from anything the template declares. `compose` is the file an install would write. An input that is not the template's, a value that does not fit its kind, a path input with no value, no default and no existing share to default to, or a `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string` input the template marks `optional` may be left empty and is written to `.env` with an empty value); a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404 `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503 `docker_unavailable`.
+         */
+        post: operations["previewTemplateInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a catalog template as a stack
+         * @description Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port and reported in the result's `requestedValue`, never refused. Then it creates the stack as `createStack` does: the stack's row records the template's source, id and revision, and `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
+         */
+        post: operations["installTemplate"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3290,6 +3453,56 @@ export interface components {
             /** @description The appdata directories and the stack directory deleted. Empty unless `deleteAppdata` was requested. */
             deletedPaths: string[];
         };
+        TemplateInstallRequest: {
+            /** @description The stack's name, under the rules of `createStack`. Absent means the template's id. */
+            name?: string;
+            /** @description Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name that is not one of the template's inputs is refused. */
+            values?: {
+                [key: string]: string;
+            };
+        };
+        TemplateInput: {
+            name: string;
+            /** @enum {string} */
+            kind: "path" | "port" | "string" | "secret" | "timezone" | "device";
+            /** @enum {string} */
+            role?: "appdata" | "share" | "media" | "downloads" | "gpu";
+            label?: string;
+            description?: string;
+            /** @description What the input resolves to. Absent for a secret, whose value is only ever written to the stack's `.env`; empty for a `device` input with no GPU chosen. */
+            value?: string;
+            /** @description Present on a `port` input whose requested port is taken: the port asked for, while `value` is the next free port instead. */
+            requestedValue?: string;
+            /** @description A secret that the install generates. */
+            generated: boolean;
+            /** @description The existing shares' paths for a `path` input that is not appdata; the host's `/dev/dri` render devices for a `device` input. */
+            suggestions?: string[];
+        };
+        TemplatePrivilege: {
+            /** @enum {string} */
+            kind: "privileged" | "host_network" | "host_pid" | "host_cgroup" | "device_cgroup_rules" | "added_capabilities" | "confinement_disabled" | "group_add" | "docker_socket" | "host_path";
+            /** @description The Compose service that asks for it. */
+            service: string;
+            /** @description The path, process namespace, rules, capabilities, security options or groups concerned, comma-separated when there are several; absent for `privileged`, `host_network` and `host_cgroup`. */
+            detail?: string;
+            /** @description Plain-language explanation of what it grants. */
+            description: string;
+        };
+        TemplateInstallPlan: {
+            template: components["schemas"]["StackTemplate"];
+            title: string;
+            /** @description The stack's name. */
+            name: string;
+            inputs: components["schemas"]["TemplateInput"][];
+            /** @description Empty when the template asks for nothing beyond an ordinary container. */
+            privileges: components["schemas"]["TemplatePrivilege"][];
+            /** @description The `docker-compose.yml` text that an install writes. */
+            compose: string;
+        };
+        TemplateInstallResult: {
+            stack: components["schemas"]["Stack"];
+            plan: components["schemas"]["TemplateInstallPlan"];
+        };
         AppPort: {
             hostIP?: string;
             /** @description Absent when this container port is not published to the host. */
@@ -3334,6 +3547,8 @@ export interface components {
         AppUpdate: {
             /** @description The container's name. */
             container: string;
+            /** @description True when the container opted out of bulk updates (`setAppUpdatePolicy`); `startAppUpdates` with no named containers skips it. The daemon always sets it. */
+            bulkExcluded?: boolean;
             image: string;
             tag: string;
             /** @enum {string} */
@@ -3352,6 +3567,67 @@ export interface components {
              * @description When the image was last checked; absent when no check has reached the image.
              */
             checkedAt?: string;
+        };
+        StartAppUpdatesRequest: {
+            /** @description Container names or Engine IDs to update. Omitted or empty means every container with an update available that has not opted out. */
+            containers?: string[];
+        };
+        StartAppUpdatesOK: {
+            job?: components["schemas"]["Job"];
+            /** @description The containers the job updates, in the order it does. */
+            containers: string[];
+            skipped: components["schemas"]["AppUpdateSkipped"][];
+        };
+        AppUpdateSkipped: {
+            container: string;
+            /** @description Why a bulk update left the container out. */
+            reason: string;
+        };
+        SetAppUpdatePolicyRequest: {
+            bulkExcluded: boolean;
+        };
+        AppUpdatePolicy: {
+            /** @description The container's name. */
+            container: string;
+            bulkExcluded: boolean;
+        };
+        AppSettings: {
+            /** @description How many days the image a container ran before an update is kept locally for a revert. */
+            imageKeepDays: number;
+        };
+        AppUpdateRecord: {
+            /** Format: int64 */
+            id: number;
+            /** @description The container's name. */
+            container: string;
+            /** @description The image reference the container runs, "repository:tag". */
+            image: string;
+            /** @description The Engine ID of the image the container ran before the update. */
+            previousImageId: string;
+            /** @description The appdata archive taken just before the update; absent when the container has no appdata on the cache disk. */
+            snapshotArchive?: string;
+            /** @description The backup destination that holds `snapshotArchive`. */
+            snapshotDestinationId?: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /**
+             * Format: date-time
+             * @description Until when the previous image is kept.
+             */
+            keepUntil: string;
+            /**
+             * Format: date-time
+             * @description When the update was reverted; absent until it was.
+             */
+            revertedAt?: string;
+            revertible: boolean;
+        };
+        ListAppUpdateHistoryOK: {
+            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            available: boolean;
+            /** @description Set alongside available=false with the reason and a remediation. */
+            message?: string;
+            records: components["schemas"]["AppUpdateRecord"][];
         };
         AppImage: {
             id: string;
@@ -4248,7 +4524,7 @@ export interface components {
             /** Format: int64 */
             size: number;
             encrypted: boolean;
-            /** @description `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary backup. */
+            /** @description `pre-restore` for the snapshot a restore took of the appdata it replaced, `pre-update` for the snapshot taken before a container update; absent for an ordinary backup. */
             reason?: string | null;
         };
         ListAppdataArchivesOK: {
@@ -5111,6 +5387,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GeneralSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current container update settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateAppSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSettings"];
+            };
+        };
+        responses: {
+            /** @description The updated settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSettings"];
                 };
             };
             default: components["responses"]["Error"];
@@ -7175,6 +7497,52 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    startAppUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartAppUpdatesRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued job and what was left out. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartAppUpdatesOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAppUpdateHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The recorded updates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppUpdateHistoryOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getApp: {
         parameters: {
             query?: never;
@@ -7317,6 +7685,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revertApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setAppUpdatePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAppUpdatePolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description The container's policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppUpdatePolicy"];
                 };
             };
             default: components["responses"]["Error"];
@@ -7466,6 +7910,62 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveStackResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    previewTemplateInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description What an install would do. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateInstallPlan"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    installTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description The installed stack and what it was installed with. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateInstallResult"];
                 };
             };
             default: components["responses"]["Error"];

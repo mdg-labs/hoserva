@@ -45,6 +45,8 @@ type engineAPI interface {
 	ContainerStats(ctx context.Context, containerID string, options dockerclient.ContainerStatsOptions) (dockerclient.ContainerStatsResult, error)
 	ImageList(ctx context.Context, options dockerclient.ImageListOptions) (dockerclient.ImageListResult, error)
 	ImagePull(ctx context.Context, refStr string, options dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error)
+	ImageTag(ctx context.Context, options dockerclient.ImageTagOptions) (dockerclient.ImageTagResult, error)
+	ImageRemove(ctx context.Context, imageID string, options dockerclient.ImageRemoveOptions) (dockerclient.ImageRemoveResult, error)
 	Events(ctx context.Context, options dockerclient.EventsListOptions) dockerclient.EventsResult
 }
 
@@ -120,6 +122,26 @@ func (c *EngineClient) Inspect(ctx context.Context, id string) (Container, error
 		}
 	}
 	return Container{}, ErrNotFound
+}
+
+// ConfiguredImage reads the reference from the container's own inspection,
+// where it is always what the container was created with. It inspects id
+// directly, without listing every container, since the update check calls it
+// for each one; a match on an ID prefix, which the Engine accepts, is refused
+// as Inspect refuses it.
+func (c *EngineClient) ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error) {
+	info, err := c.inspectEngine(ctx, id)
+	if err != nil {
+		return ConfiguredImage{}, err
+	}
+	name := strings.TrimPrefix(info.Name, "/")
+	if info.ID != id && name != id {
+		return ConfiguredImage{}, ErrNotFound
+	}
+	if info.Config == nil || info.Config.Image == "" {
+		return ConfiguredImage{}, fmt.Errorf("container: the Engine returned no image reference for %q", name)
+	}
+	return configuredImage(info.Config.Image), nil
 }
 
 func (c *EngineClient) Images(ctx context.Context) ([]Image, error) {

@@ -184,7 +184,7 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 		}
 	}
 
-	if err := a.snapshotAppdata(ctx, out, dests, hdr, passphrase, staging); err != nil {
+	if err := a.snapshotAppdata(ctx, out, dests, hdr, passphrase, staging, req.Archive); err != nil {
 		return err
 	}
 	return a.replaceAppdata(ctx, out, plain, hdr)
@@ -214,8 +214,10 @@ func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRe
 }
 
 // snapshotAppdata writes the appdata the restore is about to replace to
-// the destinations, and fails unless at least one holds it.
-func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, passphrase, staging string) error {
+// the destinations, and fails unless at least one holds it. Retention never
+// prunes the archive being restored, so a restore that fails after its
+// snapshot can be run again from the same archive.
+func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, passphrase, staging, archive string) error {
 	var existing []string
 	for _, d := range restoring.Dirs {
 		if _, err := os.Lstat(d); err == nil {
@@ -241,7 +243,7 @@ func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, des
 	if _, _, err := verifyAppdata(path); err != nil {
 		return fmt.Errorf("%w: verifying it: %w", ErrPreRestoreSnapshot, err)
 	}
-	written, failures := a.uploadAppdata(ctx, dests, path, name, restoring.Container, passphrase, now)
+	written, failures := a.uploadAppdata(ctx, dests, path, name, restoring.Container, passphrase, archive, now)
 	_ = os.Remove(path)
 	if written == 0 {
 		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, errors.Join(failures...))

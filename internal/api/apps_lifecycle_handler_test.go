@@ -25,6 +25,7 @@ type appsFixture struct {
 	fake  *container.FakeProvider
 	hub   *container.Hub
 	sched *job.Scheduler
+	reg   *job.Registry
 	// stopped and storageDown are the array state Lifecycle reads.
 	stopped     atomic.Bool
 	storageDown atomic.Bool
@@ -41,6 +42,7 @@ func newAppsFixture(t *testing.T) *appsFixture {
 		fake:   container.NewFakeProvider(),
 		hub:    container.NewHub(),
 		sched:  sched,
+		reg:    reg,
 		root:   filepath.Join(base, "appdata"),
 		cfgDir: filepath.Join(base, "appdata", "jellyfin"),
 	}

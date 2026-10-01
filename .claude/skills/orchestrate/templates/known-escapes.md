@@ -28,6 +28,7 @@ existing line by adding its PR number.
 ## Partial failure and atomicity
 - **partial-failure** — DB row committed before a later side effect (generated file, mount, Samba account, audit row, notification row) that can fail; error returned over a half-applied change, or retry blocked by the leftover row — PR 174, 206, 213, 216, 218, 228
 - **partial-failure** — a compensating delete, or a live apply that must follow an already-committed row, uses the request context, so a disconnect cancels it and leaves DB and live state disagreeing — PR 344, 382
+- **partial-failure** — a compensating undo run after any failure of a multi-step operation without confirming the failure came before the change took effect (a swap that fails after the replacement took over), so the undo drops the record and kept state the recovery path needs — PR 510
 - **partial-failure** — validation interleaved with writes, so a refused 400 still leaves the fields before the failing one applied — PR 382
 - **partial-failure** — rollback restores the row and files but not the live state (mounts) — PR 218
 - **partial-failure** — rollback restores a snapshot read before an unserialized write window, so a concurrent save that succeeded in between is silently reverted — PR 357
@@ -59,6 +60,7 @@ existing line by adding its PR number.
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
 - **errors** — a catch-all default maps every unclassified error to 502, so a local database or filesystem failure is blamed on an upstream; reserve 502 for errors wrapped as coming from the external process — PR 491
 - **errors** — a per-group result (one row per image) failed by one member that cannot be evaluated, hiding the result its comparable siblings produced — PR 491
+- **efficiency** — a per-item lookup that resolves its item by listing every item, called once per item on a request path, so one request costs N full listings — PR 510
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
 - **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
 - **errors** — a fixed deadline sized for the small case applied to a transfer whose size is unbounded (a multi-gigabyte archive over rclone), so large inputs fail on size alone — PR 453
@@ -105,6 +107,7 @@ existing line by adding its PR number.
 ## Security
 - **security** — host or URL checked by substring instead of parsed host (including allowlist entries left unanchored beside anchored ones); redirects not validated — PR 201, 228, 474
 - **security** — an allowlist exemption decided on a truncated capture (a URL cut short inside a `${…}` interpolation), so a fixed host after the cut passes — PR 491
+- **security** — a "safe location" rule admits a whole root by prefix, including a sensitive subtree it holds (the cache and Docker's data-root on it), so a mount of that subtree is classified as harmless — PR 510
 - **security** — destructive CLI command that sends `confirm: true` itself — PR 193, 201
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
 - **security** — user or state values written into a config format without escaping control characters — PR 254

@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -549,6 +549,8 @@ This replaces the earlier default of `templates/` in the monorepo until the firs
 
 Issue tracking follows the split: Hoserva-side catalog engineering (schema, validator, lint command, fetch and verify, UI) stays on `mdg-labs/hoserva`, and template content work is tracked in the catalog repository. The Unraid corpus in `testdata/unraid-templates/` stays here (doc 06 §2).
 
+**Revised (2026-10-01, #505):** the catalog repository keeps its templates in a `templates/` folder, `templates/<id>/compose.yaml` plus its icon, so the repository's first page stays short as the catalog grows; its tooling and fixtures live under `.ci/`. The published archive is unchanged: `index.json` and `<id>/` at its root. Doc 04 §7.
+
 ---
 
 ### Q64 — Template format
@@ -556,6 +558,10 @@ Issue tracking follows the split: Hoserva-side catalog engineering (schema, vali
 
 **Default: a template is `<id>/compose.yaml` plus an icon in the catalog repository (Q39) — a valid Compose file with an `x-hoserva` extension block holding its inputs (kind, path role, default), metadata and a revision. The privilege summary is computed from the Compose content, never declared by the template.**
 A custom YAML schema would need its own converter to Compose and its own validator. A Compose file with an extension block is checkable with `docker compose config` and runnable as-is, and it is the format contributors already know.
+
+**Revised (2026-10-01, #505):** in the catalog repository a template is `templates/<id>/compose.yaml` plus an icon, inside its `templates/` folder (Q39); the published archive still holds `<id>/` at its root. Doc 04 §7.
+
+**Revised (2026-10-01, #502):** a `string` input may declare `optional: true`, so a template can offer a value the upstream image treats as optional, such as a one-time claim token. An optional input may resolve to the empty string, which is written to `.env` as an empty value, and it has no `default`; `optional` is refused on every other kind. Doc 04 §7.
 
 ### Q65 — How the catalog reaches installations
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.2, §8.4, doc 04 §4, §7, doc 01 §7, Q39, Q49, Q66
@@ -565,12 +571,22 @@ One static, conditional request stays clear of any rate limit, works behind a CD
 
 The interval and the check-on-open switch are stored as additive columns on the `schema_info` settings row next to `update_check_enabled`, not as a `schedule_jobs` row: widening that table's `job_id` `CHECK` would need a table rebuild (D16). The check-on-open trigger lives in `hoservad`, so the CLI and the UI behave the same (D5), and completion is announced on `/api/v1/events` so the UI refreshes.
 
+**Revised (2026-10-01, #495):** the signed archive has two sources, each with one job. Installations refresh from `catalog.hoserva.dev`, which always serves the latest archive. Hoserva's build-time snapshot fetches its pinned serial from the catalog repository's GitHub Release `serial-<serial>`, whose assets are `catalog.tar.zst` and `catalog.tar.zst.sig`, and checks the pin's SHA-256 and the signature exactly as before. The reason is that each Pages deploy replaces the whole site, so Pages only ever serves the latest archive: once the catalog is promoted past the pinned serial, CI and release builds would fail the pin check until the pin is bumped, and old tags could not be rebuilt. A release is immutable and gives the pin a permanent home. The refresh still never uses the GitHub API; a release download happens only at build time. Doc 04 §7.
+
 
 ### Q81 — Checking containers for updates
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 01 §7, doc 04 §6, Q49
 
 **Default: at most once a day, with random jitter, Hoserva compares each managed container's image digest with the registry's by requesting only the manifest — never pulling. Credentials can be added per registry and are stored as secrets (Q28). A registry that answers with a rate limit is skipped until the next day, and the UI says the check was skipped. The check can be disabled, and it counts as an outbound request under Q49.**
 Pulling to compare would count against registries' limits on anonymous pulls and waste bandwidth; one manifest request per image per day is cheap. Docker Hub's current limit policy is re-checked when this is built, since it has changed before.
+
+**Revised (2026-10-01, #487):** telling a new version tag from a new build on the same tag (doc 04 §6) needs more than the manifest. The check requests each image's manifest and, only when the image's tag looks like a version (`16.4`, `v1.2.3-alpine`; never `latest`), the repository's tag list (`GET /v2/<repository>/tags/list`, in pages when the registry paginates). Both are metadata requests: the check never pulls an image or fetches a blob. A registry that answers either request with a rate limit is skipped until the next day, and the UI says the check was skipped. Where the manifest request already showed a new build, a rate limit on the tag list only means newer version tags were not looked for, and the new build is still reported.
+
+### Q88 — How long the previous image is kept for a revert
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §6, doc 10 §2
+
+**Default: an update keeps the image the container ran for 7 days, and the period is a setting of 1 to 365 days (`imageKeepDays`, `GET`/`PUT /settings/apps`). A change applies to updates made afterwards; an update already recorded keeps the deadline it was made with. The image is held under a `hoserva-previous:<id>` tag that the Engine's own cleanup leaves alone, and Hoserva removes the tag when the period ends, unless a container still runs the image.**
+A revert needs both halves of the pairing, the previous image and the appdata snapshot taken just before the update, so the image is kept about as long as an operator is likely to notice a bad update. A week covers a weekend and the next working days; longer holds disk space for images that are unlikely to be wanted again. The snapshot is bounded separately, by the 5 pre-change archives per container a destination keeps (doc 10 §2): a revert whose snapshot has been pruned is refused with `revert_unavailable` and changes nothing.
 
 ### Q82 — GPUs for containers
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 14 §3, Q53

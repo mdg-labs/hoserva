@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FakeProvider is a scriptable Provider (CLAUDE.md, doc 06 §2): a test
@@ -18,12 +19,18 @@ type FakeProvider struct {
 	images     []Image
 	imagesErr  error
 
+	pulls          map[string]string
 	failures       map[string]error
 	reconciliation []Reconciliation
 	calls          []FakeCall
+	starts         []FakeStart
 	logs           map[string]string
 	stats          map[string]Stats
 	watchers       map[chan StateChange]struct{}
+	started        map[string]time.Time
+	created        map[string]time.Time
+	replaced       int
+	clock          func() time.Time
 }
 
 // NewFakeProvider returns a FakeProvider that reports a recent, reachable
@@ -97,7 +104,9 @@ func (f *FakeProvider) List(ctx context.Context) ([]Container, error) {
 		return nil, f.listErr
 	}
 	out := make([]Container, len(f.containers))
-	copy(out, f.containers)
+	for i, c := range f.containers {
+		out[i] = f.listedLocked(c)
+	}
 	return out, nil
 }
 
@@ -109,10 +118,51 @@ func (f *FakeProvider) Inspect(ctx context.Context, id string) (Container, error
 	}
 	for _, c := range f.containers {
 		if c.ID == id || c.Name == id {
-			return c, nil
+			return f.listedLocked(c), nil
 		}
 	}
 	return Container{}, ErrNotFound
+}
+
+// listedLocked is the container as the Engine's listing reports it: a
+// container whose image reference now points at a different image than the
+// one it runs is listed under that image's ID, "sha256:<hex>", which reads as
+// repository "sha256" and tag "<hex>". What the container was created with
+// is what AddContainer was given; ConfiguredImage returns it.
+func (f *FakeProvider) listedLocked(c Container) Container {
+	if c.Pinned {
+		return c
+	}
+	ref := containerRef(c)
+	for _, img := range f.images {
+		if img.ID == c.ImageID {
+			continue
+		}
+		for _, t := range img.RepoTags {
+			if t == ref {
+				c.Image, c.Tag = "sha256", strings.TrimPrefix(c.ImageID, "sha256:")
+				return c
+			}
+		}
+	}
+	return c
+}
+
+func (f *FakeProvider) ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return ConfiguredImage{}, f.listErr
+	}
+	for _, c := range f.containers {
+		if c.ID == id || c.Name == id {
+			if c.Pinned {
+				return ConfiguredImage{Ref: c.Image + "@" + c.ImageID, Pinned: true}, nil
+			}
+			return ConfiguredImage{Ref: containerRef(c)}, nil
+		}
+	}
+	return ConfiguredImage{}, ErrNotFound
 }
 
 func (f *FakeProvider) Images(ctx context.Context) ([]Image, error) {
@@ -132,6 +182,8 @@ var _ Provider = (*FakeProvider)(nil)
 type RunCall struct {
 	Name string
 	Args []string
+	// Env is the environment the call was given: nil for the daemon's own.
+	Env []string
 }
 
 // FakeRunner is a scriptable Runner (CLAUDE.md, doc 06 §2): the same
@@ -165,10 +217,10 @@ func (f *FakeRunner) Script(name string, args []string, output []byte, err error
 
 // Run implements Runner by returning whatever was scripted for this exact
 // argv, recording the call regardless.
-func (f *FakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (f *FakeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, RunCall{Name: name, Args: append([]string(nil), args...)})
+	f.calls = append(f.calls, RunCall{Name: name, Args: append([]string(nil), args...), Env: cloneEnv(env)})
 	key := runnerKey(name, args)
 	return f.outputs[key], f.errs[key]
 }
@@ -183,3 +235,10 @@ func (f *FakeRunner) Calls() []RunCall {
 }
 
 var _ Runner = (*FakeRunner)(nil)
+
+func cloneEnv(env []string) []string {
+	if env == nil {
+		return nil
+	}
+	return append([]string{}, env...)
+}

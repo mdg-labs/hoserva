@@ -794,3 +794,47 @@ CREATE TABLE image_update_checks (
     available_tag TEXT NOT NULL,
     message TEXT NOT NULL
 ) STRICT;
+
+-- One row per container update that kept the image the container ran before
+-- it (#284, doc 04 §6): what a revert needs. container is the name the
+-- container is updated and reverted by, image the "repository:tag" it ran
+-- and previous_image_id the local image that tag pointed at before the
+-- update, held under a Hoserva-owned tag until keep_until. snapshot_archive
+-- and snapshot_destination name the pre-update appdata archive (doc 10 §2),
+-- both empty when the container has no appdata on the cache disk.
+-- reverted_at is empty until a revert has put the previous image back.
+-- snapshot_restored_at is empty until a revert has restored the snapshot
+-- completely, then the time that restore began; a revert that failed
+-- afterwards then finishes without the snapshot only while the container that
+-- was in place during the restore has not run since, which the Engine's creation
+-- and start times of the container tell.
+CREATE TABLE container_image_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    container TEXT NOT NULL,
+    image TEXT NOT NULL,
+    previous_image_id TEXT NOT NULL,
+    snapshot_archive TEXT NOT NULL,
+    snapshot_destination TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    keep_until TEXT NOT NULL,
+    reverted_at TEXT NOT NULL,
+    snapshot_restored_at TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE INDEX container_image_history_container ON container_image_history (container, id);
+
+-- Containers a bulk update skips (#284, doc 04 §6): one row per container
+-- whose bulk_excluded is 1. A container with no row is included. Updating
+-- such a container by name is still allowed.
+CREATE TABLE container_update_policy (
+    container TEXT PRIMARY KEY,
+    bulk_excluded INTEGER NOT NULL CHECK (bulk_excluded IN (0, 1))
+) STRICT;
+
+-- Container update settings (#284): one row, id=1, the same singleton
+-- pattern as ups_config. image_keep_days is how long the image a container
+-- ran before an update is kept for a revert; no row means the default.
+CREATE TABLE container_update_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    image_keep_days INTEGER NOT NULL CHECK (image_keep_days >= 1 AND image_keep_days <= 365)
+) STRICT;

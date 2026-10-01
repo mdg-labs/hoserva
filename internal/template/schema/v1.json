@@ -95,6 +95,10 @@
             "type": "string",
             "minLength": 1,
             "description": "Help text shown in the install form."
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "Only for string inputs: the value may be left empty and is then written to .env as an empty value. An optional input has no default."
           }
         },
         "additionalProperties": false,
@@ -210,6 +214,50 @@
               },
               "required": [
                 "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "default"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "path",
+                    "port",
+                    "secret",
+                    "timezone",
+                    "device"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "optional"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "optional": {
+                  "const": true
+                }
+              },
+              "required": [
+                "optional"
               ]
             },
             "then": {

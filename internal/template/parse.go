@@ -3,7 +3,9 @@ package template
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,8 +53,18 @@ type Template struct {
 // schema problem found. Rules beyond the schema run in Check.
 func Parse(data []byte) (*Template, []Issue) {
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
 		return nil, []Issue{{Message: fmt.Sprintf("not valid YAML: %v", err)}}
+	}
+	// Compose merges every document in a file, so a second one could add
+	// privileges the summary never sees.
+	var next yaml.Node
+	if err := dec.Decode(&next); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return nil, []Issue{{Message: fmt.Sprintf("not valid YAML: %v", err)}}
+		}
+		return nil, []Issue{{Line: next.Line, Message: "compose.yaml must hold a single YAML document; a second document is merged by Compose and could add what the privilege summary does not show"}}
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, []Issue{{Message: "compose.yaml must be a mapping with a services section and an x-hoserva block"}}

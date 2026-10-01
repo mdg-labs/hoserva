@@ -803,6 +803,22 @@ func (s *AppPortProtocol) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/AppSettings
+type AppSettings struct {
+	// How many days the image a container ran before an update is kept locally for a revert.
+	ImageKeepDays int `json:"imageKeepDays"`
+}
+
+// GetImageKeepDays returns the value of ImageKeepDays.
+func (s *AppSettings) GetImageKeepDays() int {
+	return s.ImageKeepDays
+}
+
+// SetImageKeepDays sets the value of ImageKeepDays.
+func (s *AppSettings) SetImageKeepDays(val int) {
+	s.ImageKeepDays = val
+}
+
 // The Docker Engine's own container state vocabulary.
 // Ref: #/components/schemas/AppState
 type AppState string
@@ -979,10 +995,13 @@ func (s *AppStats) SetBlockWriteBytes(val int64) {
 // Ref: #/components/schemas/AppUpdate
 type AppUpdate struct {
 	// The container's name.
-	Container string          `json:"container"`
-	Image     string          `json:"image"`
-	Tag       string          `json:"tag"`
-	Status    AppUpdateStatus `json:"status"`
+	Container string `json:"container"`
+	// True when the container opted out of bulk updates (`setAppUpdatePolicy`); `startAppUpdates` with no
+	// named containers skips it. The daemon always sets it.
+	BulkExcluded OptBool         `json:"bulkExcluded"`
+	Image        string          `json:"image"`
+	Tag          string          `json:"tag"`
+	Status       AppUpdateStatus `json:"status"`
 	// Set with status update_available. new_build: the registry serves a different build under the same
 	// tag (the `latest` case). new_version: a newer version tag exists, named by availableTag.
 	Kind OptAppUpdateKind `json:"kind"`
@@ -997,6 +1016,11 @@ type AppUpdate struct {
 // GetContainer returns the value of Container.
 func (s *AppUpdate) GetContainer() string {
 	return s.Container
+}
+
+// GetBulkExcluded returns the value of BulkExcluded.
+func (s *AppUpdate) GetBulkExcluded() OptBool {
+	return s.BulkExcluded
 }
 
 // GetImage returns the value of Image.
@@ -1037,6 +1061,11 @@ func (s *AppUpdate) GetCheckedAt() OptDateTime {
 // SetContainer sets the value of Container.
 func (s *AppUpdate) SetContainer(val string) {
 	s.Container = val
+}
+
+// SetBulkExcluded sets the value of BulkExcluded.
+func (s *AppUpdate) SetBulkExcluded(val OptBool) {
+	s.BulkExcluded = val
 }
 
 // SetImage sets the value of Image.
@@ -1117,6 +1146,182 @@ func (s *AppUpdateKind) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/AppUpdatePolicy
+type AppUpdatePolicy struct {
+	// The container's name.
+	Container    string `json:"container"`
+	BulkExcluded bool   `json:"bulkExcluded"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdatePolicy) GetContainer() string {
+	return s.Container
+}
+
+// GetBulkExcluded returns the value of BulkExcluded.
+func (s *AppUpdatePolicy) GetBulkExcluded() bool {
+	return s.BulkExcluded
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdatePolicy) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetBulkExcluded sets the value of BulkExcluded.
+func (s *AppUpdatePolicy) SetBulkExcluded(val bool) {
+	s.BulkExcluded = val
+}
+
+// Ref: #/components/schemas/AppUpdateRecord
+type AppUpdateRecord struct {
+	ID int64 `json:"id"`
+	// The container's name.
+	Container string `json:"container"`
+	// The image reference the container runs, "repository:tag".
+	Image string `json:"image"`
+	// The Engine ID of the image the container ran before the update.
+	PreviousImageId string `json:"previousImageId"`
+	// The appdata archive taken just before the update; absent when the container has no appdata on the
+	// cache disk.
+	SnapshotArchive OptString `json:"snapshotArchive"`
+	// The backup destination that holds `snapshotArchive`.
+	SnapshotDestinationId OptString `json:"snapshotDestinationId"`
+	UpdatedAt             time.Time `json:"updatedAt"`
+	// Until when the previous image is kept.
+	KeepUntil time.Time `json:"keepUntil"`
+	// When the update was reverted; absent until it was.
+	RevertedAt OptDateTime `json:"revertedAt"`
+	Revertible bool        `json:"revertible"`
+}
+
+// GetID returns the value of ID.
+func (s *AppUpdateRecord) GetID() int64 {
+	return s.ID
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdateRecord) GetContainer() string {
+	return s.Container
+}
+
+// GetImage returns the value of Image.
+func (s *AppUpdateRecord) GetImage() string {
+	return s.Image
+}
+
+// GetPreviousImageId returns the value of PreviousImageId.
+func (s *AppUpdateRecord) GetPreviousImageId() string {
+	return s.PreviousImageId
+}
+
+// GetSnapshotArchive returns the value of SnapshotArchive.
+func (s *AppUpdateRecord) GetSnapshotArchive() OptString {
+	return s.SnapshotArchive
+}
+
+// GetSnapshotDestinationId returns the value of SnapshotDestinationId.
+func (s *AppUpdateRecord) GetSnapshotDestinationId() OptString {
+	return s.SnapshotDestinationId
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *AppUpdateRecord) GetUpdatedAt() time.Time {
+	return s.UpdatedAt
+}
+
+// GetKeepUntil returns the value of KeepUntil.
+func (s *AppUpdateRecord) GetKeepUntil() time.Time {
+	return s.KeepUntil
+}
+
+// GetRevertedAt returns the value of RevertedAt.
+func (s *AppUpdateRecord) GetRevertedAt() OptDateTime {
+	return s.RevertedAt
+}
+
+// GetRevertible returns the value of Revertible.
+func (s *AppUpdateRecord) GetRevertible() bool {
+	return s.Revertible
+}
+
+// SetID sets the value of ID.
+func (s *AppUpdateRecord) SetID(val int64) {
+	s.ID = val
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdateRecord) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetImage sets the value of Image.
+func (s *AppUpdateRecord) SetImage(val string) {
+	s.Image = val
+}
+
+// SetPreviousImageId sets the value of PreviousImageId.
+func (s *AppUpdateRecord) SetPreviousImageId(val string) {
+	s.PreviousImageId = val
+}
+
+// SetSnapshotArchive sets the value of SnapshotArchive.
+func (s *AppUpdateRecord) SetSnapshotArchive(val OptString) {
+	s.SnapshotArchive = val
+}
+
+// SetSnapshotDestinationId sets the value of SnapshotDestinationId.
+func (s *AppUpdateRecord) SetSnapshotDestinationId(val OptString) {
+	s.SnapshotDestinationId = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *AppUpdateRecord) SetUpdatedAt(val time.Time) {
+	s.UpdatedAt = val
+}
+
+// SetKeepUntil sets the value of KeepUntil.
+func (s *AppUpdateRecord) SetKeepUntil(val time.Time) {
+	s.KeepUntil = val
+}
+
+// SetRevertedAt sets the value of RevertedAt.
+func (s *AppUpdateRecord) SetRevertedAt(val OptDateTime) {
+	s.RevertedAt = val
+}
+
+// SetRevertible sets the value of Revertible.
+func (s *AppUpdateRecord) SetRevertible(val bool) {
+	s.Revertible = val
+}
+
+// Ref: #/components/schemas/AppUpdateSkipped
+type AppUpdateSkipped struct {
+	Container string `json:"container"`
+	// Why a bulk update left the container out.
+	Reason string `json:"reason"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdateSkipped) GetContainer() string {
+	return s.Container
+}
+
+// GetReason returns the value of Reason.
+func (s *AppUpdateSkipped) GetReason() string {
+	return s.Reason
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdateSkipped) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetReason sets the value of Reason.
+func (s *AppUpdateSkipped) SetReason(val string) {
+	s.Reason = val
+}
+
 type AppUpdateStatus string
 
 const (
@@ -1190,8 +1395,8 @@ type AppdataArchive struct {
 	CreatedAt time.Time `json:"createdAt"`
 	Size      int64     `json:"size"`
 	Encrypted bool      `json:"encrypted"`
-	// `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary
-	// backup.
+	// `pre-restore` for the snapshot a restore took of the appdata it replaced, `pre-update` for the
+	// snapshot taken before a container update; absent for an ordinary backup.
 	Reason OptNilString `json:"reason"`
 }
 
@@ -6851,6 +7056,45 @@ func (s *ListAppImagesOK) SetImages(val []AppImage) {
 	s.Images = val
 }
 
+// Ref: #/components/schemas/ListAppUpdateHistoryOK
+type ListAppUpdateHistoryOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message OptString         `json:"message"`
+	Records []AppUpdateRecord `json:"records"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListAppUpdateHistoryOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppUpdateHistoryOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetRecords returns the value of Records.
+func (s *ListAppUpdateHistoryOK) GetRecords() []AppUpdateRecord {
+	return s.Records
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListAppUpdateHistoryOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppUpdateHistoryOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetRecords sets the value of Records.
+func (s *ListAppUpdateHistoryOK) SetRecords(val []AppUpdateRecord) {
+	s.Records = val
+}
+
 // Ref: #/components/schemas/ListAppUpdatesOK
 type ListAppUpdatesOK struct {
 	// False when the Docker Engine is not reachable (doc 04 §3).
@@ -9994,6 +10238,52 @@ func (o OptInt64) Or(d int64) int64 {
 	return d
 }
 
+// NewOptJob returns new OptJob with value set to v.
+func NewOptJob(v Job) OptJob {
+	return OptJob{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJob is optional Job.
+type OptJob struct {
+	Value Job
+	Set   bool
+}
+
+// IsSet returns true if OptJob was set.
+func (o OptJob) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJob) Reset() {
+	var v Job
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJob) SetTo(v Job) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJob) Get() (v Job, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJob) Or(d Job) Job {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJobClass returns new OptJobClass with value set to v.
 func NewOptJobClass(v JobClass) OptJobClass {
 	return OptJobClass{
@@ -11000,6 +11290,52 @@ func (o OptStackTemplate) Or(d StackTemplate) StackTemplate {
 	return d
 }
 
+// NewOptStartAppUpdatesRequest returns new OptStartAppUpdatesRequest with value set to v.
+func NewOptStartAppUpdatesRequest(v StartAppUpdatesRequest) OptStartAppUpdatesRequest {
+	return OptStartAppUpdatesRequest{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStartAppUpdatesRequest is optional StartAppUpdatesRequest.
+type OptStartAppUpdatesRequest struct {
+	Value StartAppUpdatesRequest
+	Set   bool
+}
+
+// IsSet returns true if OptStartAppUpdatesRequest was set.
+func (o OptStartAppUpdatesRequest) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStartAppUpdatesRequest) Reset() {
+	var v StartAppUpdatesRequest
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStartAppUpdatesRequest) SetTo(v StartAppUpdatesRequest) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStartAppUpdatesRequest) Get() (v StartAppUpdatesRequest, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStartAppUpdatesRequest) Or(d StartAppUpdatesRequest) StartAppUpdatesRequest {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptStartAppdataBackupRequest returns new OptStartAppdataBackupRequest with value set to v.
 func NewOptStartAppdataBackupRequest(v StartAppdataBackupRequest) OptStartAppdataBackupRequest {
 	return OptStartAppdataBackupRequest{
@@ -11086,6 +11422,98 @@ func (o OptString) Get() (v string, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptTemplateInputRole returns new OptTemplateInputRole with value set to v.
+func NewOptTemplateInputRole(v TemplateInputRole) OptTemplateInputRole {
+	return OptTemplateInputRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTemplateInputRole is optional TemplateInputRole.
+type OptTemplateInputRole struct {
+	Value TemplateInputRole
+	Set   bool
+}
+
+// IsSet returns true if OptTemplateInputRole was set.
+func (o OptTemplateInputRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTemplateInputRole) Reset() {
+	var v TemplateInputRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTemplateInputRole) SetTo(v TemplateInputRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTemplateInputRole) Get() (v TemplateInputRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTemplateInputRole) Or(d TemplateInputRole) TemplateInputRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptTemplateInstallRequestValues returns new OptTemplateInstallRequestValues with value set to v.
+func NewOptTemplateInstallRequestValues(v TemplateInstallRequestValues) OptTemplateInstallRequestValues {
+	return OptTemplateInstallRequestValues{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTemplateInstallRequestValues is optional TemplateInstallRequestValues.
+type OptTemplateInstallRequestValues struct {
+	Value TemplateInstallRequestValues
+	Set   bool
+}
+
+// IsSet returns true if OptTemplateInstallRequestValues was set.
+func (o OptTemplateInstallRequestValues) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTemplateInstallRequestValues) Reset() {
+	var v TemplateInstallRequestValues
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTemplateInstallRequestValues) SetTo(v TemplateInstallRequestValues) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTemplateInstallRequestValues) Get() (v TemplateInstallRequestValues, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTemplateInstallRequestValues) Or(d TemplateInstallRequestValues) TemplateInstallRequestValues {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -13053,6 +13481,21 @@ func (s *SessionCookie) SetRoles(val []string) {
 	s.Roles = val
 }
 
+// Ref: #/components/schemas/SetAppUpdatePolicyRequest
+type SetAppUpdatePolicyRequest struct {
+	BulkExcluded bool `json:"bulkExcluded"`
+}
+
+// GetBulkExcluded returns the value of BulkExcluded.
+func (s *SetAppUpdatePolicyRequest) GetBulkExcluded() bool {
+	return s.BulkExcluded
+}
+
+// SetBulkExcluded sets the value of BulkExcluded.
+func (s *SetAppUpdatePolicyRequest) SetBulkExcluded(val bool) {
+	s.BulkExcluded = val
+}
+
 // Ref: #/components/schemas/SetAppdataBackupContainerRequest
 type SetAppdataBackupContainerRequest struct {
 	Stop     bool `json:"stop"`
@@ -13955,6 +14398,61 @@ func (s *StackTemplate) SetRevision(val string) {
 	s.Revision = val
 }
 
+// Ref: #/components/schemas/StartAppUpdatesOK
+type StartAppUpdatesOK struct {
+	Job OptJob `json:"job"`
+	// The containers the job updates, in the order it does.
+	Containers []string           `json:"containers"`
+	Skipped    []AppUpdateSkipped `json:"skipped"`
+}
+
+// GetJob returns the value of Job.
+func (s *StartAppUpdatesOK) GetJob() OptJob {
+	return s.Job
+}
+
+// GetContainers returns the value of Containers.
+func (s *StartAppUpdatesOK) GetContainers() []string {
+	return s.Containers
+}
+
+// GetSkipped returns the value of Skipped.
+func (s *StartAppUpdatesOK) GetSkipped() []AppUpdateSkipped {
+	return s.Skipped
+}
+
+// SetJob sets the value of Job.
+func (s *StartAppUpdatesOK) SetJob(val OptJob) {
+	s.Job = val
+}
+
+// SetContainers sets the value of Containers.
+func (s *StartAppUpdatesOK) SetContainers(val []string) {
+	s.Containers = val
+}
+
+// SetSkipped sets the value of Skipped.
+func (s *StartAppUpdatesOK) SetSkipped(val []AppUpdateSkipped) {
+	s.Skipped = val
+}
+
+// Ref: #/components/schemas/StartAppUpdatesRequest
+type StartAppUpdatesRequest struct {
+	// Container names or Engine IDs to update. Omitted or empty means every container with an update
+	// available that has not opted out.
+	Containers []string `json:"containers"`
+}
+
+// GetContainers returns the value of Containers.
+func (s *StartAppUpdatesRequest) GetContainers() []string {
+	return s.Containers
+}
+
+// SetContainers sets the value of Containers.
+func (s *StartAppUpdatesRequest) SetContainers(val []string) {
+	s.Containers = val
+}
+
 // Ref: #/components/schemas/StartAppdataBackupRequest
 type StartAppdataBackupRequest struct {
 	// Limits the run to these containers; omit for every included one.
@@ -14335,6 +14833,537 @@ func (s *TLSCertificateKind) UnmarshalText(data []byte) error {
 		return nil
 	case TLSCertificateKindLetsEncrypt:
 		*s = TLSCertificateKindLetsEncrypt
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/TemplateInput
+type TemplateInput struct {
+	Name        string               `json:"name"`
+	Kind        TemplateInputKind    `json:"kind"`
+	Role        OptTemplateInputRole `json:"role"`
+	Label       OptString            `json:"label"`
+	Description OptString            `json:"description"`
+	// What the input resolves to. Absent for a secret, whose value is only ever written to the stack's
+	// `.env`; empty for a `device` input with no GPU chosen.
+	Value OptString `json:"value"`
+	// Present on a `port` input whose requested port is taken: the port asked for, while `value` is the
+	// next free port instead.
+	RequestedValue OptString `json:"requestedValue"`
+	// A secret that the install generates.
+	Generated bool `json:"generated"`
+	// The existing shares' paths for a `path` input that is not appdata; the host's `/dev/dri` render
+	// devices for a `device` input.
+	Suggestions []string `json:"suggestions"`
+}
+
+// GetName returns the value of Name.
+func (s *TemplateInput) GetName() string {
+	return s.Name
+}
+
+// GetKind returns the value of Kind.
+func (s *TemplateInput) GetKind() TemplateInputKind {
+	return s.Kind
+}
+
+// GetRole returns the value of Role.
+func (s *TemplateInput) GetRole() OptTemplateInputRole {
+	return s.Role
+}
+
+// GetLabel returns the value of Label.
+func (s *TemplateInput) GetLabel() OptString {
+	return s.Label
+}
+
+// GetDescription returns the value of Description.
+func (s *TemplateInput) GetDescription() OptString {
+	return s.Description
+}
+
+// GetValue returns the value of Value.
+func (s *TemplateInput) GetValue() OptString {
+	return s.Value
+}
+
+// GetRequestedValue returns the value of RequestedValue.
+func (s *TemplateInput) GetRequestedValue() OptString {
+	return s.RequestedValue
+}
+
+// GetGenerated returns the value of Generated.
+func (s *TemplateInput) GetGenerated() bool {
+	return s.Generated
+}
+
+// GetSuggestions returns the value of Suggestions.
+func (s *TemplateInput) GetSuggestions() []string {
+	return s.Suggestions
+}
+
+// SetName sets the value of Name.
+func (s *TemplateInput) SetName(val string) {
+	s.Name = val
+}
+
+// SetKind sets the value of Kind.
+func (s *TemplateInput) SetKind(val TemplateInputKind) {
+	s.Kind = val
+}
+
+// SetRole sets the value of Role.
+func (s *TemplateInput) SetRole(val OptTemplateInputRole) {
+	s.Role = val
+}
+
+// SetLabel sets the value of Label.
+func (s *TemplateInput) SetLabel(val OptString) {
+	s.Label = val
+}
+
+// SetDescription sets the value of Description.
+func (s *TemplateInput) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetValue sets the value of Value.
+func (s *TemplateInput) SetValue(val OptString) {
+	s.Value = val
+}
+
+// SetRequestedValue sets the value of RequestedValue.
+func (s *TemplateInput) SetRequestedValue(val OptString) {
+	s.RequestedValue = val
+}
+
+// SetGenerated sets the value of Generated.
+func (s *TemplateInput) SetGenerated(val bool) {
+	s.Generated = val
+}
+
+// SetSuggestions sets the value of Suggestions.
+func (s *TemplateInput) SetSuggestions(val []string) {
+	s.Suggestions = val
+}
+
+type TemplateInputKind string
+
+const (
+	TemplateInputKindPath     TemplateInputKind = "path"
+	TemplateInputKindPort     TemplateInputKind = "port"
+	TemplateInputKindString   TemplateInputKind = "string"
+	TemplateInputKindSecret   TemplateInputKind = "secret"
+	TemplateInputKindTimezone TemplateInputKind = "timezone"
+	TemplateInputKindDevice   TemplateInputKind = "device"
+)
+
+// AllValues returns all TemplateInputKind values.
+func (TemplateInputKind) AllValues() []TemplateInputKind {
+	return []TemplateInputKind{
+		TemplateInputKindPath,
+		TemplateInputKindPort,
+		TemplateInputKindString,
+		TemplateInputKindSecret,
+		TemplateInputKindTimezone,
+		TemplateInputKindDevice,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplateInputKind) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplateInputKindPath:
+		return []byte(s), nil
+	case TemplateInputKindPort:
+		return []byte(s), nil
+	case TemplateInputKindString:
+		return []byte(s), nil
+	case TemplateInputKindSecret:
+		return []byte(s), nil
+	case TemplateInputKindTimezone:
+		return []byte(s), nil
+	case TemplateInputKindDevice:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplateInputKind) UnmarshalText(data []byte) error {
+	switch TemplateInputKind(data) {
+	case TemplateInputKindPath:
+		*s = TemplateInputKindPath
+		return nil
+	case TemplateInputKindPort:
+		*s = TemplateInputKindPort
+		return nil
+	case TemplateInputKindString:
+		*s = TemplateInputKindString
+		return nil
+	case TemplateInputKindSecret:
+		*s = TemplateInputKindSecret
+		return nil
+	case TemplateInputKindTimezone:
+		*s = TemplateInputKindTimezone
+		return nil
+	case TemplateInputKindDevice:
+		*s = TemplateInputKindDevice
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type TemplateInputRole string
+
+const (
+	TemplateInputRoleAppdata   TemplateInputRole = "appdata"
+	TemplateInputRoleShare     TemplateInputRole = "share"
+	TemplateInputRoleMedia     TemplateInputRole = "media"
+	TemplateInputRoleDownloads TemplateInputRole = "downloads"
+	TemplateInputRoleGpu       TemplateInputRole = "gpu"
+)
+
+// AllValues returns all TemplateInputRole values.
+func (TemplateInputRole) AllValues() []TemplateInputRole {
+	return []TemplateInputRole{
+		TemplateInputRoleAppdata,
+		TemplateInputRoleShare,
+		TemplateInputRoleMedia,
+		TemplateInputRoleDownloads,
+		TemplateInputRoleGpu,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplateInputRole) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplateInputRoleAppdata:
+		return []byte(s), nil
+	case TemplateInputRoleShare:
+		return []byte(s), nil
+	case TemplateInputRoleMedia:
+		return []byte(s), nil
+	case TemplateInputRoleDownloads:
+		return []byte(s), nil
+	case TemplateInputRoleGpu:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplateInputRole) UnmarshalText(data []byte) error {
+	switch TemplateInputRole(data) {
+	case TemplateInputRoleAppdata:
+		*s = TemplateInputRoleAppdata
+		return nil
+	case TemplateInputRoleShare:
+		*s = TemplateInputRoleShare
+		return nil
+	case TemplateInputRoleMedia:
+		*s = TemplateInputRoleMedia
+		return nil
+	case TemplateInputRoleDownloads:
+		*s = TemplateInputRoleDownloads
+		return nil
+	case TemplateInputRoleGpu:
+		*s = TemplateInputRoleGpu
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/TemplateInstallPlan
+type TemplateInstallPlan struct {
+	Template StackTemplate `json:"template"`
+	Title    string        `json:"title"`
+	// The stack's name.
+	Name   string          `json:"name"`
+	Inputs []TemplateInput `json:"inputs"`
+	// Empty when the template asks for nothing beyond an ordinary container.
+	Privileges []TemplatePrivilege `json:"privileges"`
+	// The `docker-compose.yml` text that an install writes.
+	Compose string `json:"compose"`
+}
+
+// GetTemplate returns the value of Template.
+func (s *TemplateInstallPlan) GetTemplate() StackTemplate {
+	return s.Template
+}
+
+// GetTitle returns the value of Title.
+func (s *TemplateInstallPlan) GetTitle() string {
+	return s.Title
+}
+
+// GetName returns the value of Name.
+func (s *TemplateInstallPlan) GetName() string {
+	return s.Name
+}
+
+// GetInputs returns the value of Inputs.
+func (s *TemplateInstallPlan) GetInputs() []TemplateInput {
+	return s.Inputs
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *TemplateInstallPlan) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// GetCompose returns the value of Compose.
+func (s *TemplateInstallPlan) GetCompose() string {
+	return s.Compose
+}
+
+// SetTemplate sets the value of Template.
+func (s *TemplateInstallPlan) SetTemplate(val StackTemplate) {
+	s.Template = val
+}
+
+// SetTitle sets the value of Title.
+func (s *TemplateInstallPlan) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetName sets the value of Name.
+func (s *TemplateInstallPlan) SetName(val string) {
+	s.Name = val
+}
+
+// SetInputs sets the value of Inputs.
+func (s *TemplateInstallPlan) SetInputs(val []TemplateInput) {
+	s.Inputs = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *TemplateInstallPlan) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *TemplateInstallPlan) SetCompose(val string) {
+	s.Compose = val
+}
+
+// Ref: #/components/schemas/TemplateInstallRequest
+type TemplateInstallRequest struct {
+	// The stack's name, under the rules of `createStack`. Absent means the template's id.
+	Name OptString `json:"name"`
+	// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
+	// that is not one of the template's inputs is refused.
+	Values OptTemplateInstallRequestValues `json:"values"`
+}
+
+// GetName returns the value of Name.
+func (s *TemplateInstallRequest) GetName() OptString {
+	return s.Name
+}
+
+// GetValues returns the value of Values.
+func (s *TemplateInstallRequest) GetValues() OptTemplateInstallRequestValues {
+	return s.Values
+}
+
+// SetName sets the value of Name.
+func (s *TemplateInstallRequest) SetName(val OptString) {
+	s.Name = val
+}
+
+// SetValues sets the value of Values.
+func (s *TemplateInstallRequest) SetValues(val OptTemplateInstallRequestValues) {
+	s.Values = val
+}
+
+// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
+// that is not one of the template's inputs is refused.
+type TemplateInstallRequestValues map[string]string
+
+func (s *TemplateInstallRequestValues) init() TemplateInstallRequestValues {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
+}
+
+// Ref: #/components/schemas/TemplateInstallResult
+type TemplateInstallResult struct {
+	Stack Stack               `json:"stack"`
+	Plan  TemplateInstallPlan `json:"plan"`
+}
+
+// GetStack returns the value of Stack.
+func (s *TemplateInstallResult) GetStack() Stack {
+	return s.Stack
+}
+
+// GetPlan returns the value of Plan.
+func (s *TemplateInstallResult) GetPlan() TemplateInstallPlan {
+	return s.Plan
+}
+
+// SetStack sets the value of Stack.
+func (s *TemplateInstallResult) SetStack(val Stack) {
+	s.Stack = val
+}
+
+// SetPlan sets the value of Plan.
+func (s *TemplateInstallResult) SetPlan(val TemplateInstallPlan) {
+	s.Plan = val
+}
+
+// Ref: #/components/schemas/TemplatePrivilege
+type TemplatePrivilege struct {
+	Kind TemplatePrivilegeKind `json:"kind"`
+	// The Compose service that asks for it.
+	Service string `json:"service"`
+	// The path, process namespace, rules, capabilities, security options or groups concerned,
+	// comma-separated when there are several; absent for `privileged`, `host_network` and `host_cgroup`.
+	Detail OptString `json:"detail"`
+	// Plain-language explanation of what it grants.
+	Description string `json:"description"`
+}
+
+// GetKind returns the value of Kind.
+func (s *TemplatePrivilege) GetKind() TemplatePrivilegeKind {
+	return s.Kind
+}
+
+// GetService returns the value of Service.
+func (s *TemplatePrivilege) GetService() string {
+	return s.Service
+}
+
+// GetDetail returns the value of Detail.
+func (s *TemplatePrivilege) GetDetail() OptString {
+	return s.Detail
+}
+
+// GetDescription returns the value of Description.
+func (s *TemplatePrivilege) GetDescription() string {
+	return s.Description
+}
+
+// SetKind sets the value of Kind.
+func (s *TemplatePrivilege) SetKind(val TemplatePrivilegeKind) {
+	s.Kind = val
+}
+
+// SetService sets the value of Service.
+func (s *TemplatePrivilege) SetService(val string) {
+	s.Service = val
+}
+
+// SetDetail sets the value of Detail.
+func (s *TemplatePrivilege) SetDetail(val OptString) {
+	s.Detail = val
+}
+
+// SetDescription sets the value of Description.
+func (s *TemplatePrivilege) SetDescription(val string) {
+	s.Description = val
+}
+
+type TemplatePrivilegeKind string
+
+const (
+	TemplatePrivilegeKindPrivileged          TemplatePrivilegeKind = "privileged"
+	TemplatePrivilegeKindHostNetwork         TemplatePrivilegeKind = "host_network"
+	TemplatePrivilegeKindHostPid             TemplatePrivilegeKind = "host_pid"
+	TemplatePrivilegeKindHostCgroup          TemplatePrivilegeKind = "host_cgroup"
+	TemplatePrivilegeKindDeviceCgroupRules   TemplatePrivilegeKind = "device_cgroup_rules"
+	TemplatePrivilegeKindAddedCapabilities   TemplatePrivilegeKind = "added_capabilities"
+	TemplatePrivilegeKindConfinementDisabled TemplatePrivilegeKind = "confinement_disabled"
+	TemplatePrivilegeKindGroupAdd            TemplatePrivilegeKind = "group_add"
+	TemplatePrivilegeKindDockerSocket        TemplatePrivilegeKind = "docker_socket"
+	TemplatePrivilegeKindHostPath            TemplatePrivilegeKind = "host_path"
+)
+
+// AllValues returns all TemplatePrivilegeKind values.
+func (TemplatePrivilegeKind) AllValues() []TemplatePrivilegeKind {
+	return []TemplatePrivilegeKind{
+		TemplatePrivilegeKindPrivileged,
+		TemplatePrivilegeKindHostNetwork,
+		TemplatePrivilegeKindHostPid,
+		TemplatePrivilegeKindHostCgroup,
+		TemplatePrivilegeKindDeviceCgroupRules,
+		TemplatePrivilegeKindAddedCapabilities,
+		TemplatePrivilegeKindConfinementDisabled,
+		TemplatePrivilegeKindGroupAdd,
+		TemplatePrivilegeKindDockerSocket,
+		TemplatePrivilegeKindHostPath,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplatePrivilegeKind) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplatePrivilegeKindPrivileged:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostNetwork:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostPid:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostCgroup:
+		return []byte(s), nil
+	case TemplatePrivilegeKindDeviceCgroupRules:
+		return []byte(s), nil
+	case TemplatePrivilegeKindAddedCapabilities:
+		return []byte(s), nil
+	case TemplatePrivilegeKindConfinementDisabled:
+		return []byte(s), nil
+	case TemplatePrivilegeKindGroupAdd:
+		return []byte(s), nil
+	case TemplatePrivilegeKindDockerSocket:
+		return []byte(s), nil
+	case TemplatePrivilegeKindHostPath:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplatePrivilegeKind) UnmarshalText(data []byte) error {
+	switch TemplatePrivilegeKind(data) {
+	case TemplatePrivilegeKindPrivileged:
+		*s = TemplatePrivilegeKindPrivileged
+		return nil
+	case TemplatePrivilegeKindHostNetwork:
+		*s = TemplatePrivilegeKindHostNetwork
+		return nil
+	case TemplatePrivilegeKindHostPid:
+		*s = TemplatePrivilegeKindHostPid
+		return nil
+	case TemplatePrivilegeKindHostCgroup:
+		*s = TemplatePrivilegeKindHostCgroup
+		return nil
+	case TemplatePrivilegeKindDeviceCgroupRules:
+		*s = TemplatePrivilegeKindDeviceCgroupRules
+		return nil
+	case TemplatePrivilegeKindAddedCapabilities:
+		*s = TemplatePrivilegeKindAddedCapabilities
+		return nil
+	case TemplatePrivilegeKindConfinementDisabled:
+		*s = TemplatePrivilegeKindConfinementDisabled
+		return nil
+	case TemplatePrivilegeKindGroupAdd:
+		*s = TemplatePrivilegeKindGroupAdd
+		return nil
+	case TemplatePrivilegeKindDockerSocket:
+		*s = TemplatePrivilegeKindDockerSocket
+		return nil
+	case TemplatePrivilegeKindHostPath:
+		*s = TemplatePrivilegeKindHostPath
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

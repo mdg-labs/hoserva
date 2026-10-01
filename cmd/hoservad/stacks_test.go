@@ -117,8 +117,8 @@ type downRemovesContainers struct {
 	ids  []string
 }
 
-func (d downRemovesContainers) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := d.Runner.Run(ctx, name, args...)
+func (d downRemovesContainers) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	out, err := d.Runner.Run(ctx, env, name, args...)
 	for _, a := range args {
 		if err == nil && a == "down" {
 			for _, id := range d.ids {

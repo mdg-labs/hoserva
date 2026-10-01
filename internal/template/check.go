@@ -11,18 +11,23 @@ import (
 const (
 	cacheRoot = "/mnt/cache"
 	poolRoot  = "/mnt/user"
+	// dockerDataRoot is where Docker's data-root moves on the cache (Q62),
+	// the same path as config.DockerDataRootCache.
+	dockerDataRoot = cacheRoot + "/docker"
 )
 
 // A Check inspects a schema-valid template for a rule the schema cannot
-// express. Each one is independent, and further checks (the privilege audit)
-// are added to the checks list without changing the others.
+// express. Each one is independent. Together they accept only the Compose
+// keys whose effect on the host the privilege summary classifies (allow.go).
 type Check func(t *Template) []Issue
 
 var checks = []Check{
+	checkAllowedKeys,
 	checkServices,
 	checkReferences,
 	checkPathDefaults,
 	checkBindSources,
+	checkSelfContained,
 	checkUserIDs,
 }
 
@@ -266,6 +271,30 @@ func checkBindSources(t *Template) []Issue {
 			}
 			if in, declared := t.Block.Inputs[refs[0]]; declared && in.Kind != KindPath {
 				out = append(out, Issue{Path: p, Message: fmt.Sprintf("bind mount source starts with ${%s}, which is a %s input, not a path input", refs[0], in.Kind)})
+			}
+		}
+	}
+	return out
+}
+
+// checkSelfContained refuses a template whose services take their content,
+// or their mounts, from outside the template, because the privilege summary
+// is computed from the template's own Compose content: a service extending a
+// service of another file, and a service inheriting the volumes of a
+// container that is not one of the template's services.
+func checkSelfContained(t *Template) []Issue {
+	var out []Issue
+	services := t.services()
+	for _, name := range sortedKeys(services) {
+		svc := services[name]
+		if ext, ok := svc["extends"].(map[string]any); ok && ext["file"] != nil {
+			out = append(out, Issue{Path: []string{"services", name, "extends", "file"}, Message: "extends a service of another file, so its privileges cannot be computed; spell the service out in the template"})
+		}
+		from, _ := svc["volumes_from"].([]any)
+		for i, e := range from {
+			ref, _, _ := strings.Cut(fmt.Sprint(e), ":")
+			if _, own := services[ref]; !own || ref == "container" {
+				out = append(out, Issue{Path: []string{"services", name, "volumes_from", fmt.Sprint(i)}, Message: fmt.Sprintf("inherits the volumes of %v, which is not a service of this template, so its mounts cannot be computed", e)})
 			}
 		}
 	}

@@ -240,6 +240,13 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.StopAppOperation,
 		apiv1.RestartAppOperation,
 		apiv1.RecreateAppOperation,
+		apiv1.UpdateAppOperation,
+		apiv1.RevertAppOperation,
+		apiv1.StartAppUpdatesOperation,
+		apiv1.SetAppUpdatePolicyOperation,
+		apiv1.ListAppUpdateHistoryOperation,
+		apiv1.GetAppSettingsOperation,
+		apiv1.UpdateAppSettingsOperation,
 		apiv1.RemoveAppOperation,
 		apiv1.GetAppLogsOperation,
 		apiv1.GetAppStatsOperation,
@@ -262,6 +269,8 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.RestoreAppdataOperation,
 		apiv1.PreviewAppdataRestoreOperation,
 		apiv1.GetAppdataRestorePreviewOperation,
+		apiv1.PreviewTemplateInstallOperation,
+		apiv1.InstallTemplateOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 

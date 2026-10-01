@@ -809,7 +809,7 @@ func TestPruneAppdata_KeepsSnapshotsApartFromTheTiers(t *testing.T) {
 
 	newest := appdataArchiveName(inst, "alpha", now, ReasonNone, 0)
 	write(newest, 0)
-	if err := pruneAppdata(context.Background(), target, inst, Retention{Daily: 2, Weekly: 1, Monthly: 1}, now, "alpha", newest); err != nil {
+	if err := pruneAppdata(context.Background(), target, inst, Retention{Daily: 2, Weekly: 1, Monthly: 1}, now, "alpha", newest, ""); err != nil {
 		t.Fatal(err)
 	}
 

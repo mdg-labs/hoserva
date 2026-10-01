@@ -536,7 +536,6 @@ func run(cfg config) error {
 	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready, arrayActionAdmit(scheduler))
 	wireStacks(handler, store.NewStackStore(db), machineKey, container.CommandRunner{}, absStateDir, apps, arrayActionAdmit(scheduler))
 	updateChecker := newUpdateChecker(apps, store.NewUpdateStore(db), &container.HTTPRegistry{})
-	wireContainerUpdates(handler, registry, updateChecker)
 	if apps != nil {
 		go apps.Watcher.Run(ctx)
 		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)
@@ -555,6 +554,7 @@ func run(cfg config) error {
 	handler.Network = networkSvc
 	handler.ACME = acmeService
 	handler.Shares = shareService
+	wireTemplateInstall(handler, absStateDir, apps, shareNames(shareService))
 	handler.MoverResults = moverResults
 	wireBackup(handler, backupService)
 	// The strict topology hook, so an import that cannot apply the restored
@@ -562,6 +562,13 @@ func run(cfg config) error {
 	wireConfigImport(handler, parityReg.callArrayReady, regenerateArrayFiles(arrayStore, shareStore, generator))
 	appdataService := newAppdataService(apps, backupService, api.NewAppdataPolicyStore(db), arrayStore, absStateDir)
 	wireAppdata(handler, registry, appdataService, notifyService)
+	// Container updates snapshot appdata through the appdata service above,
+	// so they are wired after it.
+	awaitReconciled := func(context.Context) error { return nil }
+	if apps != nil {
+		awaitReconciled = apps.awaitReconciled
+	}
+	wireContainerUpdates(handler, registry, updateChecker, newUpdater(apps, store.NewImageHistoryStore(db), appdataService, updateChecker), awaitReconciled)
 	wireRestoreDrill(registry, backupService, api.NewDrillStore(db), notifyService)
 	wireConfigBackup(registry, backupService, notifyService)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestFakeProvider_DefaultVersion(t *testing.T) {
@@ -88,5 +89,57 @@ func TestFakeProvider_Images(t *testing.T) {
 	}
 	if len(images) != 1 || images[0].ID != "sha256:abc" {
 		t.Fatalf("Images() = %+v", images)
+	}
+}
+
+// A recreation makes a new container, as the Engine does: a new ID and
+// creation time, and no start unless the container it replaced was running.
+func TestFakeProvider_RecreateMakesANewContainerStartedOnlyIfTheOldOneRan(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeProvider()
+	now := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	f.SetClock(func() time.Time { return now })
+	f.AddContainer(Container{ID: "abc123", Name: "jellyfin", Image: "lscr.io/linuxserver/jellyfin", Tag: "10.9.7", State: "running"})
+	if got, err := f.CreatedAt(ctx, "jellyfin"); err != nil || !got.Equal(time.Unix(0, 0)) {
+		t.Fatalf("CreatedAt of a container nothing recreated = %v, %v, want the epoch", got, err)
+	}
+	if err := f.Start(ctx, "jellyfin"); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Hour)
+	if err := f.Recreate(ctx, "jellyfin"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := f.Inspect(ctx, "jellyfin")
+	if err != nil || c.ID == "abc123" {
+		t.Fatalf("Inspect after a recreation = %+v, %v, want a new ID", c, err)
+	}
+	if _, err := f.Inspect(ctx, "abc123"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Inspect of the replaced ID = %v, want ErrNotFound", err)
+	}
+	if got, _ := f.CreatedAt(ctx, "jellyfin"); !got.Equal(now) {
+		t.Fatalf("CreatedAt = %v, want the recreation time %v", got, now)
+	}
+	if got, _ := f.StartedAt(ctx, "jellyfin"); !got.Equal(now) {
+		t.Fatalf("StartedAt of the replacement of a running container = %v, want %v", got, now)
+	}
+
+	if err := f.Stop(ctx, "jellyfin"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	if err := f.RecreateLocal(ctx, "jellyfin"); err == nil {
+		t.Fatal("RecreateLocal with no image holding the reference succeeded")
+	}
+	f.AddImage(Image{ID: "sha256:a", RepoTags: []string{"lscr.io/linuxserver/jellyfin:10.9.7"}})
+	if err := f.RecreateLocal(ctx, "jellyfin"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.CreatedAt(ctx, "jellyfin"); !got.Equal(now) {
+		t.Fatalf("CreatedAt after RecreateLocal = %v, want %v", got, now)
+	}
+	if got, err := f.StartedAt(ctx, "jellyfin"); err != nil || !got.IsZero() {
+		t.Fatalf("StartedAt of the replacement of a stopped container = %v, %v, want the zero time", got, err)
 	}
 }

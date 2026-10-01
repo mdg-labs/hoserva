@@ -9,21 +9,23 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"filippo.io/age"
 )
 
 // ReasonPreRestore marks the snapshot a restore takes of the appdata it is
-// about to replace. Retention keeps the newest preChangeKeepCount of them
-// per container in addition to the ordinary tiers.
+// about to replace. Retention keeps the newest preChangeKeepCount pre-change
+// (pre-restore and pre-update) archives, together, per container in addition
+// to the ordinary tiers.
 const ReasonPreRestore Reason = "pre-restore"
 
 // appdataNamePattern matches appdata archive names:
-// hoserva-appdata-<installation>-<container>-<timestamp>[-<n>][.pre-restore].tar.zst,
+// hoserva-appdata-<installation>-<container>-<timestamp>[-<n>][.pre-restore|.pre-update].tar.zst,
 // with a trailing .age when it was encrypted. The container is whatever
 // precedes the last timestamp; Docker names never end in one.
-var appdataNamePattern = regexp.MustCompile(`^hoserva-appdata-([0-9a-f]{12})-(.+)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})(?:-\d+)?(?:\.(pre-restore))?\.tar\.zst(\.age)?$`)
+var appdataNamePattern = regexp.MustCompile(`^hoserva-appdata-([0-9a-f]{12})-(.+)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})(?:-\d+)?(?:\.(pre-restore|pre-update))?\.tar\.zst(\.age)?$`)
 
 func appdataArchiveName(installation, container string, now time.Time, reason Reason, suffix int) string {
 	ts := now.UTC().Format("2006-01-02T15-04-05")
@@ -128,8 +130,10 @@ func (a *AppdataService) requireEncryption(ctx context.Context, dests []Destinat
 // and identity sidecar, where a destination encrypts) to every destination
 // and prunes each by its retention. It reports how many destinations hold
 // the archive afterwards, and every destination it could not write. The
-// encrypted copies are removed before it returns.
-func (a *AppdataService) uploadAppdata(ctx context.Context, dests []Destination, archivePath, name, container, passphrase string, now time.Time) (written int, failures []error) {
+// encrypted copies are removed before it returns. restoring names the
+// archive a restore is reading, which no destination's prune removes ("" when
+// nothing is being restored).
+func (a *AppdataService) uploadAppdata(ctx context.Context, dests []Destination, archivePath, name, container, passphrase, restoring string, now time.Time) (written int, failures []error) {
 	var artifacts *encryptedArtifacts
 	defer func() {
 		if artifacts != nil {
@@ -144,7 +148,7 @@ func (a *AppdataService) uploadAppdata(ctx context.Context, dests []Destination,
 			failures = append(failures, fmt.Errorf("destination %q skipped: %s", dest.ID, why))
 			continue
 		}
-		err := a.writeAppdataDestination(ctx, dest, archivePath, name, container, passphrase, now, &artifacts)
+		err := a.writeAppdataDestination(ctx, dest, archivePath, name, container, passphrase, restoring, now, &artifacts)
 		release()
 		if err != nil {
 			failures = append(failures, err)
@@ -166,7 +170,7 @@ type appdataPruneError struct{ err error }
 func (e *appdataPruneError) Error() string { return e.err.Error() }
 func (e *appdataPruneError) Unwrap() error { return e.err }
 
-func (a *AppdataService) writeAppdataDestination(ctx context.Context, dest Destination, archivePath, name, container, passphrase string, now time.Time, artifacts **encryptedArtifacts) error {
+func (a *AppdataService) writeAppdataDestination(ctx context.Context, dest Destination, archivePath, name, container, passphrase, restoring string, now time.Time, artifacts **encryptedArtifacts) error {
 	if dest.isRemote() && !dest.Encrypt {
 		return fmt.Errorf("writing destination %q: a remote destination is never written unencrypted (Q80)", dest.ID)
 	}
@@ -193,7 +197,7 @@ func (a *AppdataService) writeAppdataDestination(ctx context.Context, dest Desti
 	if err := target.write(ctx, writePath); err != nil {
 		return fmt.Errorf("writing destination %q: %w", dest.ID, err)
 	}
-	if err := pruneAppdata(ctx, target, a.Backup.installationID(), dest.Retention, now, container, writeName); err != nil {
+	if err := pruneAppdata(ctx, target, a.Backup.installationID(), dest.Retention, now, container, writeName, restoring); err != nil {
 		return &appdataPruneError{fmt.Errorf("pruning destination %q: %w", dest.ID, err)}
 	}
 	return nil
@@ -229,12 +233,15 @@ func listAppdata(ctx context.Context, t archiveTarget, installation string) ([]a
 }
 
 // pruneAppdata enforces the destination's retention on this installation's
-// archives of one container. The pre-restore snapshots are kept apart from
-// the ordinary tiers: the newest preChangeKeepCount survive, and they never
-// take an ordinary backup's daily, weekly or monthly slot. The archive just
-// written always survives. An encrypted archive's identity sidecar goes
-// with it.
-func pruneAppdata(ctx context.Context, t archiveTarget, installation string, ret Retention, now time.Time, container, justWritten string) error {
+// archives of one container. The pre-change (pre-restore and pre-update)
+// archives are kept apart from the ordinary tiers: the newest
+// preChangeKeepCount of them, together, survive, and they never take an
+// ordinary backup's daily, weekly or monthly slot. The archive just written
+// always survives, and so does the archive in restoring (the one being
+// restored, matched with or without its ".age"), so a restore's own
+// pre-restore snapshot never prunes what it restores from. An encrypted
+// archive's identity sidecar goes with it.
+func pruneAppdata(ctx context.Context, t archiveTarget, installation string, ret Retention, now time.Time, container, justWritten, restoring string) error {
 	listed, err := listAppdata(ctx, t, installation)
 	if err != nil {
 		return err
@@ -257,7 +264,7 @@ func pruneAppdata(ctx context.Context, t archiveTarget, installation string, ret
 		}
 	}
 	for _, e := range append(ordinary, snapshots...) {
-		if keep[e.name] {
+		if keep[e.name] || (restoring != "" && strings.TrimSuffix(e.name, ".age") == strings.TrimSuffix(restoring, ".age")) {
 			continue
 		}
 		if err := t.remove(ctx, e.name+identitySidecarSuffix); err != nil {

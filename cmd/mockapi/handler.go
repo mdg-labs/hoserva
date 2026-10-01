@@ -17,6 +17,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
@@ -88,6 +89,13 @@ type handler struct {
 	// effect of the caller's own start, stop or remove.
 	appsMu sync.Mutex
 	apps   []apiv1.App
+	// bulkExcluded, imageKeepDays and updateRecords are the container update
+	// state (#284), also guarded by appsMu: the bulk-update opt-outs, the
+	// keep period and the updates this mock instance has "made", newest
+	// last. Like production none of it is seeded.
+	bulkExcluded  map[string]bool
+	imageKeepDays int
+	updateRecords []apiv1.AppUpdateRecord
 
 	// stacksMu guards stacks (#278): the Compose stacks this mock instance
 	// lists, starting empty. CreateStack and RemoveStack change them.
@@ -166,6 +174,9 @@ func newHandler(scenario string) (*handler, error) {
 		network:      defaultMockNetwork(),
 		shares:       make(map[string]apiv1.Share),
 		apps:         mockApps(),
+
+		bulkExcluded:  make(map[string]bool),
+		imageKeepDays: store.DefaultImageKeepDays,
 
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),

@@ -77,7 +77,7 @@ func (stackFailingInsert) Insert(context.Context, store.Stack) error {
 
 type stackFailingRunner struct{}
 
-func (stackFailingRunner) Run(context.Context, string, ...string) ([]byte, error) {
+func (stackFailingRunner) Run(context.Context, []string, string, ...string) ([]byte, error) {
 	return nil, errors.New("signal: killed")
 }
 

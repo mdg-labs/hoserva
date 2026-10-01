@@ -360,6 +360,190 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Container update execution (#284) ---
+	{
+		op:   "UpdateApp",
+		name: "valid_queues_a_job",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateApp(ctx, apiv1.UpdateAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateApp(ctx, apiv1.UpdateAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateApp",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.UpdateApp(ctx, apiv1.UpdateAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "RevertApp",
+		name: "nothing_to_revert_for_a_container_never_updated",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RevertApp(ctx, apiv1.RevertAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateApp",
+		name: "a_container_pinned_to_a_digest_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateApp(ctx, apiv1.UpdateAppParams{ID: "transcoder"})
+			return err
+		},
+	},
+	{
+		op:   "StartAppUpdates",
+		name: "a_named_container_pinned_to_a_digest_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppUpdates(ctx, apiv1.NewOptStartAppUpdatesRequest(apiv1.StartAppUpdatesRequest{Containers: []string{"jellyfin", "transcoder"}}))
+			return err
+		},
+	},
+	{
+		op:   "RevertApp",
+		name: "valid_recorded_update_queues_a_job",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := seedJellyfinUpdate(ctx, h, 7*24*time.Hour); err != nil {
+				return err
+			}
+			_, err := h.RevertApp(ctx, apiv1.RevertAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "RevertApp",
+		name: "revert_unavailable_once_the_keep_period_is_over",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := seedJellyfinUpdate(ctx, h, -time.Hour); err != nil {
+				return err
+			}
+			_, err := h.RevertApp(ctx, apiv1.RevertAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "RevertApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RevertApp(ctx, apiv1.RevertAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "RevertApp",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RevertApp(ctx, apiv1.RevertAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "StartAppUpdates",
+		name: "valid_named_container",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppUpdates(ctx, apiv1.NewOptStartAppUpdatesRequest(apiv1.StartAppUpdatesRequest{Containers: []string{"jellyfin"}}))
+			return err
+		},
+	},
+	{
+		op:   "StartAppUpdates",
+		name: "valid_no_names",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppUpdates(ctx, apiv1.OptStartAppUpdatesRequest{})
+			return err
+		},
+	},
+	{
+		op:   "StartAppUpdates",
+		name: "unknown_container_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppUpdates(ctx, apiv1.NewOptStartAppUpdatesRequest(apiv1.StartAppUpdatesRequest{Containers: []string{"jellyfin", "no-such-container"}}))
+			return err
+		},
+	},
+	{
+		op:   "StartAppUpdates",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartAppUpdates(ctx, apiv1.OptStartAppUpdatesRequest{})
+			return err
+		},
+	},
+	{
+		op:   "SetAppUpdatePolicy",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.SetAppUpdatePolicy(ctx, &apiv1.SetAppUpdatePolicyRequest{BulkExcluded: true}, apiv1.SetAppUpdatePolicyParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "SetAppUpdatePolicy",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.SetAppUpdatePolicy(ctx, &apiv1.SetAppUpdatePolicyRequest{BulkExcluded: true}, apiv1.SetAppUpdatePolicyParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "ListAppUpdateHistory",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListAppUpdateHistory(ctx)
+			return err
+		},
+	},
+	{
+		op:   "GetAppSettings",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppSettings(ctx)
+			return err
+		},
+	},
+	{
+		op:   "UpdateAppSettings",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateAppSettings(ctx, &apiv1.AppSettings{ImageKeepDays: 30})
+			return err
+		},
+	},
+	{
+		op:   "UpdateAppSettings",
+		name: "zero_days_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateAppSettings(ctx, &apiv1.AppSettings{ImageKeepDays: 0})
+			return err
+		},
+	},
+	{
+		op:   "UpdateAppSettings",
+		name: "more_than_a_year_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateAppSettings(ctx, &apiv1.AppSettings{ImageKeepDays: 366})
+			return err
+		},
+	},
 	// --- Compose stacks (#278) ---
 	{
 		op:   "ListStacks",
@@ -474,6 +658,122 @@ var contractCases = []contractCase{
 		name: "unknown_name_is_not_found",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.RemoveStack(ctx, apiv1.RemoveStackParams{Name: "nginx"})
+			return err
+		},
+	},
+	// --- Template install (#280) ---
+	{
+		op:   "PreviewTemplateInstall",
+		name: "valid_privileged_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{}, apiv1.PreviewTemplateInstallParams{ID: "risky-agent"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "unknown_template_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{}, apiv1.PreviewTemplateInstallParams{ID: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "value_for_an_input_the_template_lacks",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.TemplateInstallRequest{Values: apiv1.NewOptTemplateInstallRequestValues(apiv1.TemplateInstallRequestValues{"NOPE": "1"})}
+			_, err := h.PreviewTemplateInstall(ctx, req, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "invalid_stack_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("../etc")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "valid_template_with_a_secret",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "valid_template_with_a_gpu",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.TemplateInstallRequest{Values: apiv1.NewOptTemplateInstallRequestValues(apiv1.TemplateInstallRequestValues{"TRANSCODE_GPU": "/dev/dri/renderD128"})}
+			_, err := h.InstallTemplate(ctx, req, apiv1.InstallTemplateParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "gpu_the_host_does_not_offer",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.TemplateInstallRequest{Values: apiv1.NewOptTemplateInstallRequestValues(apiv1.TemplateInstallRequestValues{"TRANSCODE_GPU": "/dev/dri/renderD129"})}
+			_, err := h.InstallTemplate(ctx, req, apiv1.InstallTemplateParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "port_out_of_range",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.TemplateInstallRequest{Values: apiv1.NewOptTemplateInstallRequestValues(apiv1.TemplateInstallRequestValues{"WEBUI_PORT": "70000"})}
+			_, err := h.InstallTemplate(ctx, req, apiv1.InstallTemplateParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "relative_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := &apiv1.TemplateInstallRequest{Values: apiv1.NewOptTemplateInstallRequestValues(apiv1.TemplateInstallRequestValues{"MEDIA": "media"})}
+			_, err := h.InstallTemplate(ctx, req, apiv1.InstallTemplateParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "unknown_template_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "invalid_stack_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("Bad Name")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "name_already_used_by_a_stack",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "jellyfin", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "installing_twice_under_the_same_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"}); err != nil {
+				return err
+			}
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"})
 			return err
 		},
 	},

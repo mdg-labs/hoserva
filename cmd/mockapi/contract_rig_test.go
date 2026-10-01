@@ -33,6 +33,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
+	"github.com/mdg-labs/hoserva/internal/template"
 	"github.com/mdg-labs/hoserva/internal/update"
 
 	_ "modernc.org/sqlite"
@@ -160,6 +161,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeShareRelocation,
 	job.TypeACMEIssue,
 	job.TypeContainerRecreate,
+	job.TypeContainerUpdate,
 	job.TypeRestoreDrill,
 	job.TypeConfigBackup,
 }
@@ -316,19 +318,21 @@ func contractContainerProvider(t *testing.T, appdata string) *container.FakeProv
 	}
 	f := container.NewFakeProvider()
 	f.AddContainer(container.Container{
-		ID:     "3f2a9c1e4b5d",
-		Name:   "jellyfin",
-		Image:  "lscr.io/linuxserver/jellyfin",
-		Tag:    "10.9.7",
-		State:  "running",
-		Status: "Up 3 hours",
-		Mounts: []container.Mount{{Source: jellyfinDir, Destination: "/config", ReadWrite: true}},
+		ID:      "3f2a9c1e4b5d",
+		Name:    "jellyfin",
+		Image:   "lscr.io/linuxserver/jellyfin",
+		Tag:     "10.9.7",
+		ImageID: "sha256:jellyfin",
+		State:   "running",
+		Status:  "Up 3 hours",
+		Mounts:  []container.Mount{{Source: jellyfinDir, Destination: "/config", ReadWrite: true}},
 	})
 	f.AddContainer(container.Container{
 		ID:     "4c8e0d2a7b91",
 		Name:   "transcoder",
 		Image:  "example/transcoder",
 		Tag:    "1.4.0",
+		Pinned: true,
 		State:  "exited",
 		Status: "Exited (0) 5 hours ago",
 		Mounts: []container.Mount{{Source: transcodeDir, Destination: "/transcode", ReadWrite: true}},
@@ -735,12 +739,49 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		JournalPath: filepath.Join(t.TempDir(), "appdata-stopped.json"),
 	}
 	h.Appdata = appdataSvc
+	// Container updates (#284) are the real Updater over this rig's Docker
+	// fake, history in the migrated database and the appdata backup's own
+	// snapshot mechanism, with the update check's stored results as the
+	// source of a bulk update's targets. The job type itself runs no-op like
+	// the rest, so no update is ever recorded here.
+	updateChecker := &container.UpdateChecker{Provider: containers, Results: store.NewUpdateStore(db)}
+	h.AppUpdates = updateChecker
+	h.AppUpdater = &container.Updater{
+		Lifecycle: h.Lifecycle,
+		History:   store.NewImageHistoryStore(db),
+		Snapshots: backup.UpdateSnapshots{Appdata: appdataSvc},
+		Statuses:  updateChecker,
+	}
 	// The stacks take the array check, appdata location and container
 	// listing hoservad's wireStacks gives them: the same Lifecycle's.
 	stacks := h.Stacks
 	stacks.RequireArrayRunning = h.Lifecycle.RequireArrayRunning
 	stacks.Provider = h.Lifecycle.Provider
 	stacks.AppdataRoots = h.Lifecycle.AppdataRoots
+	// Template install resolves the mock's own catalog through the real
+	// installer, against this rig's Docker fake and an empty host socket
+	// table, so the host's own listeners never decide a case.
+	procNet := t.TempDir()
+	for _, f := range []string{"tcp", "tcp6", "udp", "udp6"} {
+		if err := os.WriteFile(filepath.Join(procNet, f), []byte("  sl  local_address rem_address   st\n"), 0o644); err != nil {
+			t.Fatalf("writing the empty %s socket table: %v", f, err)
+		}
+	}
+	h.TemplateInstall = &template.Installer{
+		Catalog: template.MapCatalog{Source: template.SourceCurated, Templates: mockTemplates},
+		Stacks:  stacks,
+		Ports:   template.HostPorts{Containers: containers, ProcNet: procNet},
+		Shares: func(ctx context.Context) ([]string, error) {
+			list, err := h.Shares.List(ctx)
+			names := make([]string, len(list))
+			for i, s := range list {
+				names[i] = s.Name
+			}
+			return names, err
+		},
+		GPU:      mockGPU{},
+		Timezone: func() string { return "UTC" },
+	}
 	registry.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
 		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
 			return appdataSvc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)
@@ -812,6 +853,37 @@ func newContractMockHandler(t *testing.T, scenario string) *handler {
 func newContractRig(t *testing.T, scenario string) (prod apiv1.Handler, mock apiv1.Handler) {
 	t.Helper()
 	return newContractProductionHandler(t, scenario), newContractMockHandler(t, scenario)
+}
+
+// seedJellyfinUpdate gives jellyfin a recorded update on whichever side h is,
+// as a finished container_update job would have left it: this rig runs that
+// job type no-op, so neither side has one otherwise. keep is how long from
+// now the previous image is kept; a negative one is a keep period already
+// over. Production's record also has its kept image on the Docker fake.
+func seedJellyfinUpdate(ctx context.Context, h apiv1.Handler, keep time.Duration) error {
+	const image = "lscr.io/linuxserver/jellyfin:10.9.7"
+	now := time.Now().UTC()
+	switch s := h.(type) {
+	case *api.Handler:
+		rec, err := s.AppUpdater.History.InsertImageHistory(ctx, store.ImageHistory{
+			Container: "jellyfin", Image: image, PreviousImageID: "sha256:jellyfin-previous",
+			UpdatedAt: now.Add(-time.Hour), KeepUntil: now.Add(keep),
+		})
+		if err != nil {
+			return err
+		}
+		s.Lifecycle.Provider.(*container.FakeProvider).AddImage(container.Image{ID: "sha256:jellyfin-previous", RepoTags: []string{container.KeepRef(rec.ID)}})
+		return nil
+	case *handler:
+		s.appsMu.Lock()
+		defer s.appsMu.Unlock()
+		s.updateRecords = append(s.updateRecords, apiv1.AppUpdateRecord{
+			ID: int64(len(s.updateRecords) + 1), Container: "jellyfin", Image: image, PreviousImageId: "sha256:jellyfin-previous",
+			UpdatedAt: now.Add(-time.Hour), KeepUntil: now.Add(keep), Revertible: keep > 0,
+		})
+		return nil
+	}
+	return fmt.Errorf("unexpected handler type %T", h)
 }
 
 // contractStackCipher stands in for the machine key: the contract compares
