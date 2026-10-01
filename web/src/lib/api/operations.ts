@@ -169,6 +169,39 @@ export function getAppLogs(id: string, tail: number, signal?: AbortSignal) {
   });
 }
 
+// The followed log is read as a stream: each flushed line reaches the caller
+// as it is written, until the signal aborts or the daemon ends the response.
+export function streamAppLogs(id: string, tail: number, signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/{id}/logs", {
+    params: { path: { id }, query: { tail, follow: true } },
+    parseAs: "stream",
+    signal,
+  });
+}
+
+export function getAppStats(id: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/{id}/stats", { params: { path: { id } }, signal });
+}
+
+export function getAppUpdateHistory(signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/updates/history", { signal });
+}
+
+export function postAppUpdate(id: string) {
+  return hoservaClient.POST("/apps/{id}/update", { params: { path: { id } } });
+}
+
+export function postAppRevert(id: string) {
+  return hoservaClient.POST("/apps/{id}/revert", { params: { path: { id } } });
+}
+
+export function putAppUpdatePolicy(id: string, bulkExcluded: boolean) {
+  return hoservaClient.PUT("/apps/{id}/update-policy", {
+    params: { path: { id } },
+    body: { bulkExcluded },
+  });
+}
+
 export function getNotifications(signal?: AbortSignal) {
   return hoservaClient.GET("/notifications", { signal });
 }

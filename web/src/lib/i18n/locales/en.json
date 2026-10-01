@@ -75,7 +75,50 @@
       "newBuild": "Rebuilt image available",
       "newVersion": "Newer version available ({{tag}})",
       "notChecked": "Not checked",
-      "loadFailed": "Could not load the update status. Updates may be available."
+      "loadFailed": "Could not load the update status. Updates may be available.",
+      "title": "Version",
+      "current": "Installed version",
+      "available": "Available version",
+      "sameTagRebuilt": "{{tag}}, rebuilt",
+      "status": "Update check",
+      "checkedAt": "Last checked",
+      "neverChecked": "Not checked yet",
+      "upToDate": "Up to date",
+      "skipped": "Check skipped",
+      "failed": "Check failed",
+      "skippedDetail": "The image registry was limiting requests, so this app was not checked. It is asked again at the next daily check. This does not mean the app is up to date.",
+      "failedDetail": "Hoserva could not tell whether a newer image exists. It is asked again at the next daily check. This does not mean the app is up to date.",
+      "notCheckedDetail": "No check has looked at this app yet, or it could not be looked at. This does not mean the app is up to date.",
+      "action": "Update",
+      "historyFailed": "Could not load the update history, so a revert cannot be offered.",
+      "jobFailed": "Could not follow the update's progress.",
+      "updateFailed": "Could not start the update.",
+      "revertFailed": "Could not start the revert.",
+      "policyFailed": "Could not save the bulk update setting.",
+      "bulk": {
+        "label": "Leave this app out of bulk updates",
+        "description": "Updating all apps at once skips this app. You can still update it here."
+      },
+      "job": {
+        "update": "Updating {{name}}",
+        "revert": "Reverting {{name}}",
+        "updateDone": "The update finished.",
+        "revertDone": "The revert finished.",
+        "updateFailed": "The update did not finish.",
+        "revertFailed": "The revert did not finish.",
+        "view": "View job"
+      },
+      "previous": {
+        "title": "Previous version",
+        "none": "Hoserva has not updated this app, so there is no earlier version to go back to.",
+        "kept": "Updated on {{time}}. The version it ran before is kept until {{until}}.",
+        "expired": "The update on {{time}} can no longer be reverted. Its earlier version was removed, its keep period ended, or a newer update replaced it.",
+        "reverted": "This update was reverted on {{time}}.",
+        "action": "Revert",
+        "confirmTitle": "Go back to the previous version of {{name}}?",
+        "confirmDescription": "A running app is stopped, put back on the version it ran before its last update and started again, so it is unavailable while this runs. An app that is stopped stays stopped.",
+        "confirmData": "Its data is restored to how it was just before the update. What the app wrote since is kept in a backup archive."
+      }
     },
     "actions": {
       "start": "Start",
@@ -129,7 +172,44 @@
       "refresh": "Refresh",
       "close": "Close",
       "empty": "This app has not written any output yet.",
-      "loadFailed": "Could not load the logs."
+      "loadFailed": "Could not load the logs.",
+      "lines_one": "{{count}} line",
+      "lines_other": "{{count}} lines",
+      "follow": "Follow new output",
+      "search": "Search the loaded lines",
+      "download": "Download",
+      "filename": "{{name}}-logs.txt",
+      "notFound": "There is no app named {{name}} any more, so there are no logs to show. It may have been removed.",
+      "reconnect": "Reconnect",
+      "ended": "The live output stopped",
+      "endedDescription": "The app may have stopped, or the connection closed. Reconnect to follow it again."
+    },
+    "stats": {
+      "loadFailed": "Could not read this app's resource use.",
+      "stopped": {
+        "title": "Resource use needs a running app",
+        "description": "Start the app to see its processor, memory, network and disk use. A stopped app uses none, so nothing is drawn."
+      },
+      "waiting": {
+        "title": "Collecting samples",
+        "description": "The chart fills in as the app is measured every few seconds. Rates need two samples."
+      },
+      "rate": "{{value}} KiB/s",
+      "cpu": {
+        "title": "Processor use",
+        "description": "100% is one full processor core.",
+        "value": "{{value}}%"
+      },
+      "memory": {
+        "title": "Memory (MiB)",
+        "ofLimit": "{{used}} in use of {{limit}} allowed",
+        "noLimit": "{{used}} in use, no limit set",
+        "value": "{{value}} MiB"
+      },
+      "networkRx": { "title": "Network received (KiB/s)" },
+      "networkTx": { "title": "Network sent (KiB/s)" },
+      "diskRead": { "title": "Disk read (KiB/s)" },
+      "diskWrite": { "title": "Disk written (KiB/s)" }
     },
     "detail": {
       "back": "Installed apps",
