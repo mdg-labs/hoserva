@@ -565,6 +565,8 @@ One static, conditional request stays clear of any rate limit, works behind a CD
 
 The interval and the check-on-open switch are stored as additive columns on the `schema_info` settings row next to `update_check_enabled`, not as a `schedule_jobs` row: widening that table's `job_id` `CHECK` would need a table rebuild (D16). The check-on-open trigger lives in `hoservad`, so the CLI and the UI behave the same (D5), and completion is announced on `/api/v1/events` so the UI refreshes.
 
+**Revised (2026-10-01, #495):** the signed archive has two sources, each with one job. Installations refresh from `catalog.hoserva.dev`, which always serves the latest archive. Hoserva's build-time snapshot fetches its pinned serial from the catalog repository's GitHub Release `serial-<serial>`, whose assets are `catalog.tar.zst` and `catalog.tar.zst.sig`, and checks the pin's SHA-256 and the signature exactly as before. The reason is that each Pages deploy replaces the whole site, so Pages only ever serves the latest archive: once the catalog is promoted past the pinned serial, CI and release builds would fail the pin check until the pin is bumped, and old tags could not be rebuilt. A release is immutable and gives the pin a permanent home. The refresh still never uses the GitHub API; a release download happens only at build time. Doc 04 §7.
+
 
 ### Q81 — Checking containers for updates
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 01 §7, doc 04 §6, Q49
