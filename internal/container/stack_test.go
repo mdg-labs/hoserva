@@ -1487,8 +1487,9 @@ func TestStack_ALegacyEnvThatDefinesAReservedNameKeepsTheDropAndLogsAWarning(t *
 	}
 
 	var logged bytes.Buffer
+	prev := log.Writer()
 	log.SetOutput(&logged)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	t.Cleanup(func() { log.SetOutput(prev) })
 	before := len(r.runner.Calls())
 	if err := r.svc.Up(context.Background(), "nginx"); err != nil {
 		t.Fatal(err)
