@@ -166,6 +166,25 @@ type Invoker interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error
+	// ConvertUnraidTemplate invokes convertUnraidTemplate operation.
+	//
+	// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
+	// created, written or run: the result is the generated `compose` beside the `source` XML as it was
+	// sent, every warning, and the privilege summary computed from the generated Compose content, so the
+	// caller reads all of it before it acts on any of it. Every part of the template that is not
+	// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
+	// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
+	// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
+	// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
+	// warning carrying the `docker network create` command, with placeholders for what the template does
+	// not say; two entries for the same target with different values are a `conflict`; the possibility of
+	// state inside the source container that no template expresses is always a `writable_layer` warning.
+	// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
+	// `note` never count against it). A body that is not an Unraid container template is refused with 400
+	// `invalid_unraid_template`.
+	//
+	// POST /apps/convert
+	ConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (*UnraidConversion, error)
 	// CreateApiToken invokes createApiToken operation.
 	//
 	// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
@@ -3417,6 +3436,147 @@ func (c *Client) sendConfirmTotp(ctx context.Context, request *TotpConfirmReques
 
 	stage = "DecodeResponse"
 	result, err := decodeConfirmTotpResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConvertUnraidTemplate invokes convertUnraidTemplate operation.
+//
+// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
+// created, written or run: the result is the generated `compose` beside the `source` XML as it was
+// sent, every warning, and the privilege summary computed from the generated Compose content, so the
+// caller reads all of it before it acts on any of it. Every part of the template that is not
+// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
+// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
+// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
+// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
+// warning carrying the `docker network create` command, with placeholders for what the template does
+// not say; two entries for the same target with different values are a `conflict`; the possibility of
+// state inside the source container that no template expresses is always a `writable_layer` warning.
+// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
+// `note` never count against it). A body that is not an Unraid container template is refused with 400
+// `invalid_unraid_template`.
+//
+// POST /apps/convert
+func (c *Client) ConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (*UnraidConversion, error) {
+	res, err := c.sendConvertUnraidTemplate(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (res *UnraidConversion, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("convertUnraidTemplate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/apps/convert"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ConvertUnraidTemplateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/apps/convert"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConvertUnraidTemplateRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ConvertUnraidTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ConvertUnraidTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeConvertUnraidTemplateResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

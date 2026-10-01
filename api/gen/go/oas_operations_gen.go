@@ -18,6 +18,7 @@ const (
 	ConfigureLetsEncryptOperation           OperationName = "ConfigureLetsEncrypt"
 	ConfirmNetworkSettingsOperation         OperationName = "ConfirmNetworkSettings"
 	ConfirmTotpOperation                    OperationName = "ConfirmTotp"
+	ConvertUnraidTemplateOperation          OperationName = "ConvertUnraidTemplate"
 	CreateApiTokenOperation                 OperationName = "CreateApiToken"
 	CreateArrayOperation                    OperationName = "CreateArray"
 	CreateBackupDestinationOperation        OperationName = "CreateBackupDestination"

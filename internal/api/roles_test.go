@@ -271,6 +271,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.RestoreAppdataOperation,
 		apiv1.PreviewAppdataRestoreOperation,
 		apiv1.GetAppdataRestorePreviewOperation,
+		apiv1.ConvertUnraidTemplateOperation,
 		apiv1.PreviewTemplateInstallOperation,
 		apiv1.InstallTemplateOperation,
 		apiv1.ListCatalogOperation,

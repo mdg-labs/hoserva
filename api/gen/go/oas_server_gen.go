@@ -145,6 +145,25 @@ type Handler interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, req *TotpConfirmRequest) error
+	// ConvertUnraidTemplate implements convertUnraidTemplate operation.
+	//
+	// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
+	// created, written or run: the result is the generated `compose` beside the `source` XML as it was
+	// sent, every warning, and the privilege summary computed from the generated Compose content, so the
+	// caller reads all of it before it acts on any of it. Every part of the template that is not
+	// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
+	// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
+	// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
+	// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
+	// warning carrying the `docker network create` command, with placeholders for what the template does
+	// not say; two entries for the same target with different values are a `conflict`; the possibility of
+	// state inside the source container that no template expresses is always a `writable_layer` warning.
+	// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
+	// `note` never count against it). A body that is not an Unraid container template is refused with 400
+	// `invalid_unraid_template`.
+	//
+	// POST /apps/convert
+	ConvertUnraidTemplate(ctx context.Context, req *UnraidConvertRequest) (*UnraidConversion, error)
 	// CreateApiToken implements createApiToken operation.
 	//
 	// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.

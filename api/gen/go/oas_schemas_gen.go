@@ -4935,6 +4935,144 @@ func (s *ConfirmUpdateRequest) SetConfirm(val bool) {
 	s.Confirm = val
 }
 
+// Ref: #/components/schemas/ConversionWarning
+type ConversionWarning struct {
+	// `untranslated_flag` is an `ExtraParams` flag or word that has no Compose equivalent here.
+	// `untranslated_field` is a template field or entry that could not be carried over. `flagged_path` is
+	// a host path outside the pool and the cache. `missing_network` is a custom network the template
+	// names. `conflict` is two entries for one target with different values. `writable_layer` is the
+	// warning every conversion carries about state inside the source container. `note` is informational.
+	Class ConversionWarningClass `json:"class"`
+	// Plain-language explanation.
+	Message string `json:"message"`
+	// The flag, path, network name or entry concerned.
+	Detail OptString `json:"detail"`
+	// Only on `missing_network`: the `docker network create` command. It holds `<PLACEHOLDER>` values for
+	// what the template does not say.
+	Command OptString `json:"command"`
+}
+
+// GetClass returns the value of Class.
+func (s *ConversionWarning) GetClass() ConversionWarningClass {
+	return s.Class
+}
+
+// GetMessage returns the value of Message.
+func (s *ConversionWarning) GetMessage() string {
+	return s.Message
+}
+
+// GetDetail returns the value of Detail.
+func (s *ConversionWarning) GetDetail() OptString {
+	return s.Detail
+}
+
+// GetCommand returns the value of Command.
+func (s *ConversionWarning) GetCommand() OptString {
+	return s.Command
+}
+
+// SetClass sets the value of Class.
+func (s *ConversionWarning) SetClass(val ConversionWarningClass) {
+	s.Class = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConversionWarning) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetDetail sets the value of Detail.
+func (s *ConversionWarning) SetDetail(val OptString) {
+	s.Detail = val
+}
+
+// SetCommand sets the value of Command.
+func (s *ConversionWarning) SetCommand(val OptString) {
+	s.Command = val
+}
+
+// `untranslated_flag` is an `ExtraParams` flag or word that has no Compose equivalent here.
+// `untranslated_field` is a template field or entry that could not be carried over. `flagged_path` is
+// a host path outside the pool and the cache. `missing_network` is a custom network the template
+// names. `conflict` is two entries for one target with different values. `writable_layer` is the
+// warning every conversion carries about state inside the source container. `note` is informational.
+type ConversionWarningClass string
+
+const (
+	ConversionWarningClassUntranslatedFlag  ConversionWarningClass = "untranslated_flag"
+	ConversionWarningClassUntranslatedField ConversionWarningClass = "untranslated_field"
+	ConversionWarningClassFlaggedPath       ConversionWarningClass = "flagged_path"
+	ConversionWarningClassMissingNetwork    ConversionWarningClass = "missing_network"
+	ConversionWarningClassConflict          ConversionWarningClass = "conflict"
+	ConversionWarningClassWritableLayer     ConversionWarningClass = "writable_layer"
+	ConversionWarningClassNote              ConversionWarningClass = "note"
+)
+
+// AllValues returns all ConversionWarningClass values.
+func (ConversionWarningClass) AllValues() []ConversionWarningClass {
+	return []ConversionWarningClass{
+		ConversionWarningClassUntranslatedFlag,
+		ConversionWarningClassUntranslatedField,
+		ConversionWarningClassFlaggedPath,
+		ConversionWarningClassMissingNetwork,
+		ConversionWarningClassConflict,
+		ConversionWarningClassWritableLayer,
+		ConversionWarningClassNote,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConversionWarningClass) MarshalText() ([]byte, error) {
+	switch s {
+	case ConversionWarningClassUntranslatedFlag:
+		return []byte(s), nil
+	case ConversionWarningClassUntranslatedField:
+		return []byte(s), nil
+	case ConversionWarningClassFlaggedPath:
+		return []byte(s), nil
+	case ConversionWarningClassMissingNetwork:
+		return []byte(s), nil
+	case ConversionWarningClassConflict:
+		return []byte(s), nil
+	case ConversionWarningClassWritableLayer:
+		return []byte(s), nil
+	case ConversionWarningClassNote:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConversionWarningClass) UnmarshalText(data []byte) error {
+	switch ConversionWarningClass(data) {
+	case ConversionWarningClassUntranslatedFlag:
+		*s = ConversionWarningClassUntranslatedFlag
+		return nil
+	case ConversionWarningClassUntranslatedField:
+		*s = ConversionWarningClassUntranslatedField
+		return nil
+	case ConversionWarningClassFlaggedPath:
+		*s = ConversionWarningClassFlaggedPath
+		return nil
+	case ConversionWarningClassMissingNetwork:
+		*s = ConversionWarningClassMissingNetwork
+		return nil
+	case ConversionWarningClassConflict:
+		*s = ConversionWarningClassConflict
+		return nil
+	case ConversionWarningClassWritableLayer:
+		*s = ConversionWarningClassWritableLayer
+		return nil
+	case ConversionWarningClassNote:
+		*s = ConversionWarningClassNote
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/CreateApiTokenRequest
 type CreateApiTokenRequest struct {
 	// A caller-chosen label distinguishing this token from an account's others.
@@ -16804,6 +16942,266 @@ func (s *UPSSettings) SetRuntimeSeconds(val OptInt32) {
 
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
+
+// Ref: #/components/schemas/UnraidConversion
+type UnraidConversion struct {
+	// The template XML as it was sent, to show beside `compose`.
+	Source string `json:"source"`
+	// The generated Compose file. Not applied anywhere: a service named after the template and, where the
+	// template needs them, the top-level `networks` and `volumes` it refers to.
+	Compose string `json:"compose"`
+	// True when the Compose file needs no manual action (Q36): no warning of class `untranslated_flag`,
+	// `untranslated_field`, `flagged_path`, `missing_network` or `conflict`.
+	Clean    bool                `json:"clean"`
+	Warnings []ConversionWarning `json:"warnings"`
+	// The privilege summary of the generated Compose content. Empty when it asks for nothing beyond an
+	// ordinary container.
+	Privileges []TemplatePrivilege    `json:"privileges"`
+	Metadata   UnraidTemplateMetadata `json:"metadata"`
+}
+
+// GetSource returns the value of Source.
+func (s *UnraidConversion) GetSource() string {
+	return s.Source
+}
+
+// GetCompose returns the value of Compose.
+func (s *UnraidConversion) GetCompose() string {
+	return s.Compose
+}
+
+// GetClean returns the value of Clean.
+func (s *UnraidConversion) GetClean() bool {
+	return s.Clean
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *UnraidConversion) GetWarnings() []ConversionWarning {
+	return s.Warnings
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *UnraidConversion) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// GetMetadata returns the value of Metadata.
+func (s *UnraidConversion) GetMetadata() UnraidTemplateMetadata {
+	return s.Metadata
+}
+
+// SetSource sets the value of Source.
+func (s *UnraidConversion) SetSource(val string) {
+	s.Source = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *UnraidConversion) SetCompose(val string) {
+	s.Compose = val
+}
+
+// SetClean sets the value of Clean.
+func (s *UnraidConversion) SetClean(val bool) {
+	s.Clean = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *UnraidConversion) SetWarnings(val []ConversionWarning) {
+	s.Warnings = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *UnraidConversion) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
+}
+
+// SetMetadata sets the value of Metadata.
+func (s *UnraidConversion) SetMetadata(val UnraidTemplateMetadata) {
+	s.Metadata = val
+}
+
+// Ref: #/components/schemas/UnraidConvertRequest
+type UnraidConvertRequest struct {
+	// The text of one Unraid container template (an XML file).
+	XML string `json:"xml"`
+}
+
+// GetXML returns the value of XML.
+func (s *UnraidConvertRequest) GetXML() string {
+	return s.XML
+}
+
+// SetXML sets the value of XML.
+func (s *UnraidConvertRequest) SetXML(val string) {
+	s.XML = val
+}
+
+// Ref: #/components/schemas/UnraidTemplateMetadata
+type UnraidTemplateMetadata struct {
+	// The template's `<Name>`.
+	Title    string    `json:"title"`
+	Overview OptString `json:"overview"`
+	Category OptString `json:"category"`
+	Support  OptString `json:"support"`
+	Project  OptString `json:"project"`
+	// The template's `<WebUI>` as written, Unraid placeholders included.
+	Webui OptString `json:"webui"`
+	// The template's `<Icon>` address as written. Never fetched here.
+	Icon       OptString `json:"icon"`
+	Requires   OptString `json:"requires"`
+	DonateLink OptString `json:"donateLink"`
+	// The template's environment variables with their descriptions, for an install form.
+	Variables []UnraidVariable `json:"variables"`
+}
+
+// GetTitle returns the value of Title.
+func (s *UnraidTemplateMetadata) GetTitle() string {
+	return s.Title
+}
+
+// GetOverview returns the value of Overview.
+func (s *UnraidTemplateMetadata) GetOverview() OptString {
+	return s.Overview
+}
+
+// GetCategory returns the value of Category.
+func (s *UnraidTemplateMetadata) GetCategory() OptString {
+	return s.Category
+}
+
+// GetSupport returns the value of Support.
+func (s *UnraidTemplateMetadata) GetSupport() OptString {
+	return s.Support
+}
+
+// GetProject returns the value of Project.
+func (s *UnraidTemplateMetadata) GetProject() OptString {
+	return s.Project
+}
+
+// GetWebui returns the value of Webui.
+func (s *UnraidTemplateMetadata) GetWebui() OptString {
+	return s.Webui
+}
+
+// GetIcon returns the value of Icon.
+func (s *UnraidTemplateMetadata) GetIcon() OptString {
+	return s.Icon
+}
+
+// GetRequires returns the value of Requires.
+func (s *UnraidTemplateMetadata) GetRequires() OptString {
+	return s.Requires
+}
+
+// GetDonateLink returns the value of DonateLink.
+func (s *UnraidTemplateMetadata) GetDonateLink() OptString {
+	return s.DonateLink
+}
+
+// GetVariables returns the value of Variables.
+func (s *UnraidTemplateMetadata) GetVariables() []UnraidVariable {
+	return s.Variables
+}
+
+// SetTitle sets the value of Title.
+func (s *UnraidTemplateMetadata) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetOverview sets the value of Overview.
+func (s *UnraidTemplateMetadata) SetOverview(val OptString) {
+	s.Overview = val
+}
+
+// SetCategory sets the value of Category.
+func (s *UnraidTemplateMetadata) SetCategory(val OptString) {
+	s.Category = val
+}
+
+// SetSupport sets the value of Support.
+func (s *UnraidTemplateMetadata) SetSupport(val OptString) {
+	s.Support = val
+}
+
+// SetProject sets the value of Project.
+func (s *UnraidTemplateMetadata) SetProject(val OptString) {
+	s.Project = val
+}
+
+// SetWebui sets the value of Webui.
+func (s *UnraidTemplateMetadata) SetWebui(val OptString) {
+	s.Webui = val
+}
+
+// SetIcon sets the value of Icon.
+func (s *UnraidTemplateMetadata) SetIcon(val OptString) {
+	s.Icon = val
+}
+
+// SetRequires sets the value of Requires.
+func (s *UnraidTemplateMetadata) SetRequires(val OptString) {
+	s.Requires = val
+}
+
+// SetDonateLink sets the value of DonateLink.
+func (s *UnraidTemplateMetadata) SetDonateLink(val OptString) {
+	s.DonateLink = val
+}
+
+// SetVariables sets the value of Variables.
+func (s *UnraidTemplateMetadata) SetVariables(val []UnraidVariable) {
+	s.Variables = val
+}
+
+// Ref: #/components/schemas/UnraidVariable
+type UnraidVariable struct {
+	Name        string    `json:"name"`
+	Value       string    `json:"value"`
+	Description OptString `json:"description"`
+	// The template marks the value as masked.
+	Secret bool `json:"secret"`
+}
+
+// GetName returns the value of Name.
+func (s *UnraidVariable) GetName() string {
+	return s.Name
+}
+
+// GetValue returns the value of Value.
+func (s *UnraidVariable) GetValue() string {
+	return s.Value
+}
+
+// GetDescription returns the value of Description.
+func (s *UnraidVariable) GetDescription() OptString {
+	return s.Description
+}
+
+// GetSecret returns the value of Secret.
+func (s *UnraidVariable) GetSecret() bool {
+	return s.Secret
+}
+
+// SetName sets the value of Name.
+func (s *UnraidVariable) SetName(val string) {
+	s.Name = val
+}
+
+// SetValue sets the value of Value.
+func (s *UnraidVariable) SetValue(val string) {
+	s.Value = val
+}
+
+// SetDescription sets the value of Description.
+func (s *UnraidVariable) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetSecret sets the value of Secret.
+func (s *UnraidVariable) SetSecret(val bool) {
+	s.Secret = val
+}
 
 // Ref: #/components/schemas/UpdateBackupDestinationRequest
 type UpdateBackupDestinationRequest struct {

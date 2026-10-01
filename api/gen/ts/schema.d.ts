@@ -1992,6 +1992,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps/convert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert an Unraid XML template to Compose
+         * @description Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is created, written or run: the result is the generated `compose` beside the `source` XML as it was sent, every warning, and the privilege summary computed from the generated Compose content, so the caller reads all of it before it acts on any of it. Every part of the template that is not translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and listed as a `flagged_path` warning; a custom network the template names is a `missing_network` warning carrying the `docker network create` command, with placeholders for what the template does not say; two entries for the same target with different values are a `conflict`; the possibility of state inside the source container that no template expresses is always a `writable_layer` warning. `clean` is true when no warning is of the classes that need manual action (`writable_layer` and `note` never count against it). A body that is not an Unraid container template is refused with 400 `invalid_unraid_template`.
+         */
+        post: operations["convertUnraidTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apps/images": {
         parameters: {
             query?: never;
@@ -3745,6 +3765,58 @@ export interface components {
         TemplateInstallResult: {
             stack: components["schemas"]["Stack"];
             plan: components["schemas"]["TemplateInstallPlan"];
+        };
+        UnraidConvertRequest: {
+            /** @description The text of one Unraid container template (an XML file). */
+            xml: string;
+        };
+        UnraidConversion: {
+            /** @description The template XML as it was sent, to show beside `compose`. */
+            source: string;
+            /** @description The generated Compose file. Not applied anywhere: a service named after the template and, where the template needs them, the top-level `networks` and `volumes` it refers to. */
+            compose: string;
+            /** @description True when the Compose file needs no manual action (Q36): no warning of class `untranslated_flag`, `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. */
+            clean: boolean;
+            warnings: components["schemas"]["ConversionWarning"][];
+            /** @description The privilege summary of the generated Compose content. Empty when it asks for nothing beyond an ordinary container. */
+            privileges: components["schemas"]["TemplatePrivilege"][];
+            metadata: components["schemas"]["UnraidTemplateMetadata"];
+        };
+        ConversionWarning: {
+            /**
+             * @description `untranslated_flag` is an `ExtraParams` flag or word that has no Compose equivalent here. `untranslated_field` is a template field or entry that could not be carried over. `flagged_path` is a host path outside the pool and the cache. `missing_network` is a custom network the template names. `conflict` is two entries for one target with different values. `writable_layer` is the warning every conversion carries about state inside the source container. `note` is informational.
+             * @enum {string}
+             */
+            class: "untranslated_flag" | "untranslated_field" | "flagged_path" | "missing_network" | "conflict" | "writable_layer" | "note";
+            /** @description Plain-language explanation. */
+            message: string;
+            /** @description The flag, path, network name or entry concerned. */
+            detail?: string;
+            /** @description Only on `missing_network`: the `docker network create` command. It holds `<PLACEHOLDER>` values for what the template does not say. */
+            command?: string;
+        };
+        UnraidTemplateMetadata: {
+            /** @description The template's `<Name>`. */
+            title: string;
+            overview?: string;
+            category?: string;
+            support?: string;
+            project?: string;
+            /** @description The template's `<WebUI>` as written, Unraid placeholders included. */
+            webui?: string;
+            /** @description The template's `<Icon>` address as written. Never fetched here. */
+            icon?: string;
+            requires?: string;
+            donateLink?: string;
+            /** @description The template's environment variables with their descriptions, for an install form. */
+            variables: components["schemas"]["UnraidVariable"][];
+        };
+        UnraidVariable: {
+            name: string;
+            value: string;
+            description?: string;
+            /** @description The template marks the value as masked. */
+            secret: boolean;
         };
         AppPort: {
             hostIP?: string;
@@ -7721,6 +7793,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAppsOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    convertUnraidTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnraidConvertRequest"];
+            };
+        };
+        responses: {
+            /** @description The generated Compose and what needs review. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnraidConversion"];
                 };
             };
             default: components["responses"]["Error"];

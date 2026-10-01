@@ -493,3 +493,50 @@ func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 	}
 	return out
 }
+
+// ConvertUnraidTemplate runs the production converter over the posted
+// template, so the mock refuses and warns exactly as the daemon does.
+func (h *handler) ConvertUnraidTemplate(_ context.Context, req *apiv1.UnraidConvertRequest) (*apiv1.UnraidConversion, error) {
+	conv, err := template.ConvertUnraid([]byte(req.XML), template.ConvertOptions{})
+	if err != nil {
+		if errors.Is(err, template.ErrInvalidUnraidTemplate) {
+			return nil, &mockError{code: "invalid_unraid_template", statusCode: 400, message: err.Error()}
+		}
+		return nil, err
+	}
+	opt := func(s string) apiv1.OptString {
+		if s == "" {
+			return apiv1.OptString{}
+		}
+		return apiv1.NewOptString(s)
+	}
+	out := &apiv1.UnraidConversion{
+		Source:     conv.Source,
+		Compose:    conv.Compose,
+		Clean:      conv.Clean(),
+		Warnings:   make([]apiv1.ConversionWarning, len(conv.Warnings)),
+		Privileges: make([]apiv1.TemplatePrivilege, len(conv.Privileges)),
+		Metadata: apiv1.UnraidTemplateMetadata{
+			Title:      conv.Metadata.Title,
+			Overview:   opt(conv.Metadata.Overview),
+			Category:   opt(conv.Metadata.Category),
+			Support:    opt(conv.Metadata.Support),
+			Project:    opt(conv.Metadata.Project),
+			Webui:      opt(conv.Metadata.WebUI),
+			Icon:       opt(conv.Metadata.Icon),
+			Requires:   opt(conv.Metadata.Requires),
+			DonateLink: opt(conv.Metadata.DonateLink),
+			Variables:  make([]apiv1.UnraidVariable, len(conv.Metadata.Variables)),
+		},
+	}
+	for i, w := range conv.Warnings {
+		out.Warnings[i] = apiv1.ConversionWarning{Class: apiv1.ConversionWarningClass(w.Class), Message: w.Message, Detail: opt(w.Detail), Command: opt(w.Command)}
+	}
+	for i, pr := range conv.Privileges {
+		out.Privileges[i] = apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description, Detail: opt(pr.Detail)}
+	}
+	for i, v := range conv.Metadata.Variables {
+		out.Metadata.Variables[i] = apiv1.UnraidVariable{Name: v.Name, Value: v.Value, Description: opt(v.Description), Secret: v.Secret}
+	}
+	return out, nil
+}

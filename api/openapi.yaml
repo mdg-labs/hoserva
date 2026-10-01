@@ -3504,6 +3504,49 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /apps/convert:
+    post:
+      operationId: convertUnraidTemplate
+      summary: Convert an Unraid XML template to Compose
+      description: >-
+        Converts one Unraid container template (doc 04 §5) to a Compose
+        file for review. Nothing is created, written or run: the result is
+        the generated `compose` beside the `source` XML as it was sent, every
+        warning, and the privilege summary computed from the generated
+        Compose content, so the caller reads all of it before it acts on any
+        of it. Every part of the template that is not translated is
+        reported, never dropped: an `<ExtraParams>` flag outside the
+        translate table is listed in a comment at the top of the service and
+        as an `untranslated_flag` warning; a host path outside the pool and
+        the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept
+        as written and listed as a `flagged_path` warning; a custom network
+        the template names is a `missing_network` warning carrying the
+        `docker network create` command, with placeholders for what the
+        template does not say; two entries for the same target with
+        different values are a `conflict`; the possibility of state inside
+        the source container that no template expresses is always a
+        `writable_layer` warning. `clean` is true when no warning is of the
+        classes that need manual action (`writable_layer` and `note` never
+        count against it). A body that is not an Unraid container template
+        is refused with 400 `invalid_unraid_template`.
+      tags: [apps]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnraidConvertRequest'
+      responses:
+        "200":
+          description: The generated Compose and what needs review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnraidConversion'
+        default:
+          $ref: '#/components/responses/Error'
+
   /apps/images:
     get:
       operationId: listAppImages
@@ -6996,6 +7039,123 @@ components:
           $ref: '#/components/schemas/Stack'
         plan:
           $ref: '#/components/schemas/TemplateInstallPlan'
+
+    UnraidConvertRequest:
+      type: object
+      required: [xml]
+      properties:
+        xml:
+          type: string
+          minLength: 1
+          maxLength: 49152
+          description: The text of one Unraid container template (an XML file).
+
+    UnraidConversion:
+      type: object
+      required: [source, compose, clean, warnings, privileges, metadata]
+      properties:
+        source:
+          type: string
+          description: The template XML as it was sent, to show beside `compose`.
+        compose:
+          type: string
+          description: >-
+            The generated Compose file. Not applied anywhere: a service
+            named after the template and, where the template needs them, the
+            top-level `networks` and `volumes` it refers to.
+        clean:
+          type: boolean
+          description: >-
+            True when the Compose file needs no manual action (Q36): no
+            warning of class `untranslated_flag`, `untranslated_field`,
+            `flagged_path`, `missing_network` or `conflict`.
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversionWarning'
+        privileges:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplatePrivilege'
+          description: >-
+            The privilege summary of the generated Compose content. Empty
+            when it asks for nothing beyond an ordinary container.
+        metadata:
+          $ref: '#/components/schemas/UnraidTemplateMetadata'
+
+    ConversionWarning:
+      type: object
+      required: [class, message]
+      properties:
+        class:
+          type: string
+          enum: [untranslated_flag, untranslated_field, flagged_path, missing_network, conflict, writable_layer, note]
+          description: >-
+            `untranslated_flag` is an `ExtraParams` flag or word that has no
+            Compose equivalent here. `untranslated_field` is a template
+            field or entry that could not be carried over. `flagged_path` is
+            a host path outside the pool and the cache. `missing_network` is
+            a custom network the template names. `conflict` is two entries
+            for one target with different values. `writable_layer` is the
+            warning every conversion carries about state inside the source
+            container. `note` is informational.
+        message:
+          type: string
+          description: Plain-language explanation.
+        detail:
+          type: string
+          description: The flag, path, network name or entry concerned.
+        command:
+          type: string
+          description: >-
+            Only on `missing_network`: the `docker network create` command.
+            It holds `<PLACEHOLDER>` values for what the template does not
+            say.
+
+    UnraidTemplateMetadata:
+      type: object
+      required: [title, variables]
+      properties:
+        title:
+          type: string
+          description: The template's `<Name>`.
+        overview:
+          type: string
+        category:
+          type: string
+        support:
+          type: string
+        project:
+          type: string
+        webui:
+          type: string
+          description: The template's `<WebUI>` as written, Unraid placeholders included.
+        icon:
+          type: string
+          description: The template's `<Icon>` address as written. Never fetched here.
+        requires:
+          type: string
+        donateLink:
+          type: string
+        variables:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnraidVariable'
+          description: The template's environment variables with their descriptions, for an install form.
+
+    UnraidVariable:
+      type: object
+      required: [name, value, secret]
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+        description:
+          type: string
+        secret:
+          type: boolean
+          description: The template marks the value as masked.
 
     AppPort:
       type: object

@@ -778,6 +778,31 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Unraid template converter (#69) ---
+	{
+		op:   "ConvertUnraidTemplate",
+		name: "valid_template_with_untranslated_flag",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConvertUnraidTemplate(ctx, &apiv1.UnraidConvertRequest{XML: `<Container><Name>a</Name><Repository>x/y:1</Repository><ExtraParams>--exotic=1</ExtraParams></Container>`})
+			return err
+		},
+	},
+	{
+		op:   "ConvertUnraidTemplate",
+		name: "not_a_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConvertUnraidTemplate(ctx, &apiv1.UnraidConvertRequest{XML: `<Compose/>`})
+			return err
+		},
+	},
+	{
+		op:   "ConvertUnraidTemplate",
+		name: "template_without_an_image",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConvertUnraidTemplate(ctx, &apiv1.UnraidConvertRequest{XML: `<Container><Name>a</Name></Container>`})
+			return err
+		},
+	},
 	// --- Template install (#280) ---
 	{
 		op:   "PreviewTemplateInstall",

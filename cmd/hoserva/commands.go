@@ -450,6 +450,7 @@ func appCmd() *cobra.Command {
 		appRemoveCmd(),
 		appLogsCmd(),
 		appInstallCmd(),
+		appConvertCmd(),
 	)
 	cmd.AddCommand(appUpdateCmds()...)
 	return cmd
