@@ -30,6 +30,8 @@ type scriptedEngine struct {
 	pullMsg string
 	info    dockercontainer.InspectResponse
 	newID   string
+	// lists counts the container listings.
+	lists int
 
 	// stopCtx is the context the original's stop ran under, and
 	// stopCtxDoneAtStart whether it had already ended when the
@@ -84,6 +86,9 @@ func (e *scriptedEngine) recorded() []string {
 }
 
 func (e *scriptedEngine) ContainerList(ctx context.Context, o dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	e.mu.Lock()
+	e.lists++
+	e.mu.Unlock()
 	return dockerclient.ContainerListResult{Items: []dockercontainer.Summary{{ID: oldContainerID, Names: []string{"/jellyfin"}, State: e.info.State.Status}}}, nil
 }
 

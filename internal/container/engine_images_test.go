@@ -101,6 +101,31 @@ func TestConfiguredImage_ReadsTheCreationReferenceNotTheListing(t *testing.T) {
 	}
 }
 
+// The update check reads the reference of every container on each request,
+// so one read must not list every container.
+func TestConfiguredImage_InspectsOnlyThatContainer(t *testing.T) {
+	e := newScriptedEngine(true)
+	c := &EngineClient{cli: e}
+	for _, id := range []string{oldContainerID, "jellyfin"} {
+		if got, err := c.ConfiguredImage(context.Background(), id); err != nil || got.Ref != jellyfinRef {
+			t.Fatalf("ConfiguredImage(%s) = %+v, %v, want %s", id, got, err, jellyfinRef)
+		}
+	}
+	if e.lists != 0 {
+		t.Fatalf("ConfiguredImage listed the containers %d times, want none", e.lists)
+	}
+}
+
+// The Engine also matches a prefix of an ID; Inspect never does, and neither
+// does ConfiguredImage.
+func TestConfiguredImage_RefusesAnIDPrefix(t *testing.T) {
+	e := newScriptedEngine(true)
+	c := &EngineClient{cli: e}
+	if _, err := c.ConfiguredImage(context.Background(), oldContainerID[:12]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ConfiguredImage of an ID prefix = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTagAndUntagImage(t *testing.T) {
 	e := newScriptedEngine(true)
 	c := &EngineClient{cli: e}

@@ -125,18 +125,21 @@ func (c *EngineClient) Inspect(ctx context.Context, id string) (Container, error
 }
 
 // ConfiguredImage reads the reference from the container's own inspection,
-// where it is always what the container was created with.
+// where it is always what the container was created with. It inspects id
+// directly, without listing every container, since the update check calls it
+// for each one; a match on an ID prefix, which the Engine accepts, is refused
+// as Inspect refuses it.
 func (c *EngineClient) ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error) {
-	ct, err := c.resolve(ctx, id)
+	info, err := c.inspectEngine(ctx, id)
 	if err != nil {
 		return ConfiguredImage{}, err
 	}
-	info, err := c.inspectEngine(ctx, ct.ID)
-	if err != nil {
-		return ConfiguredImage{}, err
+	name := strings.TrimPrefix(info.Name, "/")
+	if info.ID != id && name != id {
+		return ConfiguredImage{}, ErrNotFound
 	}
 	if info.Config == nil || info.Config.Image == "" {
-		return ConfiguredImage{}, fmt.Errorf("container: the Engine returned no image reference for %q", ct.Name)
+		return ConfiguredImage{}, fmt.Errorf("container: the Engine returned no image reference for %q", name)
 	}
 	return configuredImage(info.Config.Image), nil
 }
