@@ -955,9 +955,10 @@ func (UnimplementedHandler) ListAppdataArchives(ctx context.Context, params List
 
 // ListApps implements listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
-// stack installs and the managed/unmanaged distinction against an installed stack are a later issue
-// (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
+// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
+// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
+// 04 §3).
 //
 // GET /apps
 func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ error) {

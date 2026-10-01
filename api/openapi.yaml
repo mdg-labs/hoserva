@@ -118,9 +118,10 @@ tags:
       §3): every container the Engine reports, managed and unmanaged
       alike, with the same lifecycle actions for both (doc 04 §1, §2):
       start, stop, restart, recreate, remove, logs and stats. The Compose
-      stack model is a later issue. `available` is false, with no error,
-      whenever Docker itself is not reachable: a missing prerequisite is
-      Apps' normal state, not a failed request.
+      stack model is served by the `stacks` operations (`listStacks`,
+      `createStack`, `getStack`, `removeStack`). `available` is false, with
+      no error, whenever Docker itself is not reachable: a missing
+      prerequisite is Apps' normal state, not a failed request.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -3481,9 +3482,9 @@ paths:
       summary: List containers
       description: >-
         Every container the Docker Engine reports, managed and unmanaged
-        alike (doc 04 §2) — Compose stack installs and the
-        managed/unmanaged distinction against an installed stack are a
-        later issue (#278). available is false, with no error, whenever
+        alike (doc 04 §2). Which containers belong to an installed
+        stack, and so the managed/unmanaged distinction against it, is not
+        reported yet (#489). available is false, with no error, whenever
         Docker itself is not reachable (doc 04 §3).
       tags: [apps]
       x-hoserva-role: viewer
