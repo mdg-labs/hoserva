@@ -165,6 +165,8 @@ const pinnedMessage = "the container is pinned to an image digest, so there is n
 
 const deniedMessage = "the registry wants a login, and Hoserva checks registries anonymously only"
 
+const noLocalDigestMessage = "the image %s has no registry digest recorded locally (built locally?), so it cannot be compared"
+
 const skippedMessage = "the registry is rate limiting requests; skipped until the next daily check"
 
 func (c *UpdateChecker) checkTarget(ctx context.Context, t checkTarget, images []Image, limited map[string]bool) store.ImageUpdateCheck {
@@ -189,15 +191,22 @@ func (c *UpdateChecker) checkTarget(ctx context.Context, t checkTarget, images [
 		return failed("reading the manifest: %v", err)
 	}
 
+	// A container whose image has no registry digest is left out here, so it
+	// cannot mask its siblings' result; Statuses reports it as failed.
 	res := store.ImageUpdateCheck{Status: store.UpdateUpToDate}
+	compared := false
 	for _, ct := range t.containers {
 		local := localDigests(ct, t.ref, images)
 		if len(local) == 0 {
-			return failed("the image %s has no registry digest recorded locally (built locally?), so it cannot be compared", t.ref)
+			continue
 		}
+		compared = true
 		if !local[remote] {
 			res = store.ImageUpdateCheck{Status: store.UpdateAvailable, Kind: store.UpdateKindNewBuild}
 		}
+	}
+	if !compared {
+		return failed(noLocalDigestMessage, t.ref)
 	}
 
 	parsed, versioned := parseVersionTag(t.ref.Tag)
@@ -276,6 +285,10 @@ func (c *UpdateChecker) Statuses(ctx context.Context) ([]ContainerUpdate, error)
 	if err != nil {
 		return nil, err
 	}
+	images, err := c.Provider.Images(ctx)
+	if err != nil {
+		return nil, err
+	}
 	stored, err := c.Results.ListImageUpdateChecks(ctx)
 	if err != nil {
 		return nil, err
@@ -297,6 +310,10 @@ func (c *UpdateChecker) Statuses(ctx context.Context) ([]ContainerUpdate, error)
 			u.Status, u.Message = store.UpdateFailed, err.Error()
 		} else if s, ok := byImage[ref.String()]; ok {
 			u.Status, u.Kind, u.AvailableTag, u.Message, u.CheckedAt = s.Status, s.Kind, s.AvailableTag, s.Message, s.CheckedAt
+			digestResult := s.Status == store.UpdateUpToDate || s.Kind == store.UpdateKindNewBuild
+			if digestResult && len(localDigests(ct, ref, images)) == 0 {
+				u.Status, u.Kind, u.Message = store.UpdateFailed, "", fmt.Sprintf(noLocalDigestMessage, ref)
+			}
 		}
 		out = append(out, u)
 	}

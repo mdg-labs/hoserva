@@ -341,6 +341,30 @@ func (cancelling) Tags(context.Context, ImageRef) ([]string, error) {
 	return nil, nil
 }
 
+// A locally built container on the same image:tag neither hides its pulled
+// sibling's update nor is reported as up to date itself.
+func TestUpdateChecker_ALocallyBuiltSiblingFailsAloneNeverUpToDate(t *testing.T) {
+	r := newUpdateRig()
+	r.run(t, "pulled", "nginx", "latest", digestOld, digestNew)
+	r.provider.AddContainer(Container{ID: "id-local", Name: "local", Image: "nginx", Tag: "latest", ImageID: "sha256:local"})
+	r.provider.AddImage(Image{ID: "sha256:local"})
+	r.check(t)
+
+	if got := r.result(t, "nginx:latest"); got.Status != store.UpdateAvailable || got.Kind != store.UpdateKindNewBuild {
+		t.Fatalf("nginx:latest = %+v, want update_available/new_build", got)
+	}
+	got, err := r.checker.Statuses(context.Background())
+	if err != nil || len(got) != 2 {
+		t.Fatalf("Statuses = %v, %v", got, err)
+	}
+	if local := got[0]; local.Container != "local" || local.Status != store.UpdateFailed || local.Kind != "" || local.Message == "" {
+		t.Errorf("local = %+v, want failed with a reason", local)
+	}
+	if pulled := got[1]; pulled.Container != "pulled" || pulled.Status != store.UpdateAvailable || pulled.Kind != store.UpdateKindNewBuild {
+		t.Errorf("pulled = %+v, want update_available/new_build", pulled)
+	}
+}
+
 func TestUpdateChecker_StatusesNeverReadUncheckedAsUpToDate(t *testing.T) {
 	r := newUpdateRig()
 	r.run(t, "new", "nginx", "latest", digestOld, digestOld)

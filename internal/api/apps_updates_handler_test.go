@@ -24,7 +24,8 @@ func TestListAppUpdates_ReportsWhatTheCheckFoundAndNeverUpToDateForWhatItDidNot(
 	at := time.Date(2026, 9, 30, 6, 10, 0, 0, time.UTC)
 	fake := container.NewFakeProvider()
 	fake.AddContainer(container.Container{ID: "1", Name: "db", Image: "postgres", Tag: "16.4"})
-	fake.AddContainer(container.Container{ID: "2", Name: "web", Image: "nginx", Tag: "latest"})
+	fake.AddContainer(container.Container{ID: "2", Name: "web", Image: "nginx", Tag: "latest", ImageID: "sha256:web"})
+	fake.AddImage(container.Image{ID: "sha256:web", RepoDigests: []string{"nginx@sha256:1111111111111111111111111111111111111111111111111111111111111111"}})
 	fake.AddContainer(container.Container{ID: "3", Name: "new", Image: "redis", Tag: "7"})
 	h := &Handler{AppUpdates: &container.UpdateChecker{Provider: fake, Results: stubUpdateResults{rows: []store.ImageUpdateCheck{
 		{Image: "postgres:16.4", CheckedAt: at, Status: store.UpdateAvailable, Kind: store.UpdateKindNewVersion, AvailableTag: "16.6"},
