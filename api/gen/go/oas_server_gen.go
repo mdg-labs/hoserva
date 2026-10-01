@@ -674,6 +674,20 @@ type Handler interface {
 	//
 	// GET /apps/images
 	ListAppImages(ctx context.Context) (*ListAppImagesOK, error)
+	// ListAppUpdates implements listAppUpdates operation.
+	//
+	// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
+	// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
+	// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
+	// `skipped` means the registry was rate limiting requests and is asked again at the next check,
+	// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
+	// that it could not look: the registry wants a login (registries are checked anonymously only) or the
+	// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
+	// of them means up to date. available is false, with no error, whenever Docker itself is not
+	// reachable.
+	//
+	// GET /apps/updates
+	ListAppUpdates(ctx context.Context) (*ListAppUpdatesOK, error)
 	// ListAppdataArchives implements listAppdataArchives operation.
 	//
 	// The appdata archives this installation wrote to each enabled backup destination, newest first,

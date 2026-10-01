@@ -1988,6 +1988,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Container update status
+         * @description What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`). The check asks each registry for manifests and tag names only, never a pull. `skipped` means the registry was rate limiting requests and is asked again at the next check, `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or that it could not look: the registry wants a login (registries are checked anonymously only) or the container is pinned to an image digest, so there is no tag to update. The `message` says which. None of them means up to date. available is false, with no error, whenever Docker itself is not reachable.
+         */
+        get: operations["listAppUpdates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apps/{id}": {
         parameters: {
             query?: never;
@@ -3303,6 +3323,35 @@ export interface components {
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
             apps: components["schemas"]["App"][];
+        };
+        ListAppUpdatesOK: {
+            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            available: boolean;
+            /** @description Set alongside available=false with the reason and a remediation. */
+            message?: string;
+            updates: components["schemas"]["AppUpdate"][];
+        };
+        AppUpdate: {
+            /** @description The container's name. */
+            container: string;
+            image: string;
+            tag: string;
+            /** @enum {string} */
+            status: "up_to_date" | "update_available" | "skipped" | "failed" | "not_checked";
+            /**
+             * @description Set with status update_available. new_build: the registry serves a different build under the same tag (the `latest` case). new_version: a newer version tag exists, named by availableTag.
+             * @enum {string}
+             */
+            kind?: "new_build" | "new_version";
+            /** @description Set with kind new_version. */
+            availableTag?: string;
+            /** @description Why the check was skipped or failed, or what it could not look for. */
+            message?: string;
+            /**
+             * Format: date-time
+             * @description When the image was last checked; absent when no check has reached the image.
+             */
+            checkedAt?: string;
         };
         AppImage: {
             id: string;
@@ -7100,6 +7149,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAppImagesOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAppUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One entry per container, sorted by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppUpdatesOK"];
                 };
             };
             default: components["responses"]["Error"];

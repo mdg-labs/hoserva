@@ -73,6 +73,7 @@ const (
 	ImportConfigOperation                   OperationName = "ImportConfig"
 	ListApiTokensOperation                  OperationName = "ListApiTokens"
 	ListAppImagesOperation                  OperationName = "ListAppImages"
+	ListAppUpdatesOperation                 OperationName = "ListAppUpdates"
 	ListAppdataArchivesOperation            OperationName = "ListAppdataArchives"
 	ListAppsOperation                       OperationName = "ListApps"
 	ListBackupDestinationsOperation         OperationName = "ListBackupDestinations"

@@ -535,6 +535,8 @@ func run(cfg config) error {
 	}
 	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready, arrayActionAdmit(scheduler))
 	wireStacks(handler, store.NewStackStore(db), machineKey, container.CommandRunner{}, absStateDir, apps, arrayActionAdmit(scheduler))
+	updateChecker := newUpdateChecker(apps, store.NewUpdateStore(db), &container.HTTPRegistry{})
+	wireContainerUpdates(handler, registry, updateChecker)
 	if apps != nil {
 		go apps.Watcher.Run(ctx)
 		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)
@@ -694,6 +696,7 @@ func run(cfg config) error {
 	}
 	wireAppdataSchedule(schedRunner, appdataService, scheduler, notifyService)
 	wireRestoreDrillSchedule(schedRunner, backupService, scheduler, notifyService)
+	wireContainerUpdateSchedule(schedRunner, updateChecker, scheduler, randomUpdateCheckJitter)
 	go runScheduleLoop(ctx, schedRunner, scheduleTickInterval)
 
 	errCh := make(chan error, 2)

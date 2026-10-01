@@ -417,3 +417,33 @@ func (h *handler) GetAppStats(ctx context.Context, params apiv1.GetAppStatsParam
 func (h *handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, error) {
 	return &apiv1.ListAppImagesOK{Available: true, Images: mockAppImages()}, nil
 }
+
+// ListAppUpdates answers a fixed mix of every status, so each label the UI
+// shows for a check result is reachable without a registry: by container
+// name, and not_checked for any other.
+func (h *handler) ListAppUpdates(ctx context.Context) (*apiv1.ListAppUpdatesOK, error) {
+	h.appsMu.Lock()
+	apps := append([]apiv1.App{}, h.apps...)
+	h.appsMu.Unlock()
+	checkedAt := time.Date(2026, 9, 30, 6, 14, 0, 0, time.UTC)
+	updates := make([]apiv1.AppUpdate, 0, len(apps))
+	for _, a := range apps {
+		u := apiv1.AppUpdate{Container: a.Name, Image: a.Image, Tag: a.Tag, Status: apiv1.AppUpdateStatusNotChecked}
+		switch a.Name {
+		case "jellyfin":
+			u.Status = apiv1.AppUpdateStatusUpdateAvailable
+			u.Kind = apiv1.NewOptAppUpdateKind(apiv1.AppUpdateKindNewVersion)
+			u.AvailableTag = apiv1.NewOptString("10.10.3")
+			u.CheckedAt = apiv1.NewOptDateTime(checkedAt)
+		case "postgres":
+			u.Status = apiv1.AppUpdateStatusUpToDate
+			u.CheckedAt = apiv1.NewOptDateTime(checkedAt)
+		case "portainer":
+			u.Status = apiv1.AppUpdateStatusSkipped
+			u.Message = apiv1.NewOptString("the registry is rate limiting requests; skipped until the next daily check")
+			u.CheckedAt = apiv1.NewOptDateTime(checkedAt)
+		}
+		updates = append(updates, u)
+	}
+	return &apiv1.ListAppUpdatesOK{Available: true, Updates: updates}, nil
+}

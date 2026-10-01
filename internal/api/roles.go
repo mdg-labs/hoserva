@@ -80,6 +80,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.FormatExternalDiskOperation:             RoleAdmin,
 	apiv1.ListApiTokensOperation:                  RoleViewer,
 	apiv1.ListAppImagesOperation:                  RoleViewer,
+	apiv1.ListAppUpdatesOperation:                 RoleViewer,
 	apiv1.ListAppsOperation:                       RoleViewer,
 	apiv1.ListDisksOperation:                      RoleViewer,
 	apiv1.ListExternalDisksOperation:              RoleViewer,

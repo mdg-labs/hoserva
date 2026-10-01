@@ -976,6 +976,209 @@ func (s *AppStats) SetBlockWriteBytes(val int64) {
 	s.BlockWriteBytes = val
 }
 
+// Ref: #/components/schemas/AppUpdate
+type AppUpdate struct {
+	// The container's name.
+	Container string          `json:"container"`
+	Image     string          `json:"image"`
+	Tag       string          `json:"tag"`
+	Status    AppUpdateStatus `json:"status"`
+	// Set with status update_available. new_build: the registry serves a different build under the same
+	// tag (the `latest` case). new_version: a newer version tag exists, named by availableTag.
+	Kind OptAppUpdateKind `json:"kind"`
+	// Set with kind new_version.
+	AvailableTag OptString `json:"availableTag"`
+	// Why the check was skipped or failed, or what it could not look for.
+	Message OptString `json:"message"`
+	// When the image was last checked; absent when no check has reached the image.
+	CheckedAt OptDateTime `json:"checkedAt"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdate) GetContainer() string {
+	return s.Container
+}
+
+// GetImage returns the value of Image.
+func (s *AppUpdate) GetImage() string {
+	return s.Image
+}
+
+// GetTag returns the value of Tag.
+func (s *AppUpdate) GetTag() string {
+	return s.Tag
+}
+
+// GetStatus returns the value of Status.
+func (s *AppUpdate) GetStatus() AppUpdateStatus {
+	return s.Status
+}
+
+// GetKind returns the value of Kind.
+func (s *AppUpdate) GetKind() OptAppUpdateKind {
+	return s.Kind
+}
+
+// GetAvailableTag returns the value of AvailableTag.
+func (s *AppUpdate) GetAvailableTag() OptString {
+	return s.AvailableTag
+}
+
+// GetMessage returns the value of Message.
+func (s *AppUpdate) GetMessage() OptString {
+	return s.Message
+}
+
+// GetCheckedAt returns the value of CheckedAt.
+func (s *AppUpdate) GetCheckedAt() OptDateTime {
+	return s.CheckedAt
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdate) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetImage sets the value of Image.
+func (s *AppUpdate) SetImage(val string) {
+	s.Image = val
+}
+
+// SetTag sets the value of Tag.
+func (s *AppUpdate) SetTag(val string) {
+	s.Tag = val
+}
+
+// SetStatus sets the value of Status.
+func (s *AppUpdate) SetStatus(val AppUpdateStatus) {
+	s.Status = val
+}
+
+// SetKind sets the value of Kind.
+func (s *AppUpdate) SetKind(val OptAppUpdateKind) {
+	s.Kind = val
+}
+
+// SetAvailableTag sets the value of AvailableTag.
+func (s *AppUpdate) SetAvailableTag(val OptString) {
+	s.AvailableTag = val
+}
+
+// SetMessage sets the value of Message.
+func (s *AppUpdate) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetCheckedAt sets the value of CheckedAt.
+func (s *AppUpdate) SetCheckedAt(val OptDateTime) {
+	s.CheckedAt = val
+}
+
+// Set with status update_available. new_build: the registry serves a different build under the same
+// tag (the `latest` case). new_version: a newer version tag exists, named by availableTag.
+type AppUpdateKind string
+
+const (
+	AppUpdateKindNewBuild   AppUpdateKind = "new_build"
+	AppUpdateKindNewVersion AppUpdateKind = "new_version"
+)
+
+// AllValues returns all AppUpdateKind values.
+func (AppUpdateKind) AllValues() []AppUpdateKind {
+	return []AppUpdateKind{
+		AppUpdateKindNewBuild,
+		AppUpdateKindNewVersion,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppUpdateKind) MarshalText() ([]byte, error) {
+	switch s {
+	case AppUpdateKindNewBuild:
+		return []byte(s), nil
+	case AppUpdateKindNewVersion:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppUpdateKind) UnmarshalText(data []byte) error {
+	switch AppUpdateKind(data) {
+	case AppUpdateKindNewBuild:
+		*s = AppUpdateKindNewBuild
+		return nil
+	case AppUpdateKindNewVersion:
+		*s = AppUpdateKindNewVersion
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type AppUpdateStatus string
+
+const (
+	AppUpdateStatusUpToDate        AppUpdateStatus = "up_to_date"
+	AppUpdateStatusUpdateAvailable AppUpdateStatus = "update_available"
+	AppUpdateStatusSkipped         AppUpdateStatus = "skipped"
+	AppUpdateStatusFailed          AppUpdateStatus = "failed"
+	AppUpdateStatusNotChecked      AppUpdateStatus = "not_checked"
+)
+
+// AllValues returns all AppUpdateStatus values.
+func (AppUpdateStatus) AllValues() []AppUpdateStatus {
+	return []AppUpdateStatus{
+		AppUpdateStatusUpToDate,
+		AppUpdateStatusUpdateAvailable,
+		AppUpdateStatusSkipped,
+		AppUpdateStatusFailed,
+		AppUpdateStatusNotChecked,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppUpdateStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case AppUpdateStatusUpToDate:
+		return []byte(s), nil
+	case AppUpdateStatusUpdateAvailable:
+		return []byte(s), nil
+	case AppUpdateStatusSkipped:
+		return []byte(s), nil
+	case AppUpdateStatusFailed:
+		return []byte(s), nil
+	case AppUpdateStatusNotChecked:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppUpdateStatus) UnmarshalText(data []byte) error {
+	switch AppUpdateStatus(data) {
+	case AppUpdateStatusUpToDate:
+		*s = AppUpdateStatusUpToDate
+		return nil
+	case AppUpdateStatusUpdateAvailable:
+		*s = AppUpdateStatusUpdateAvailable
+		return nil
+	case AppUpdateStatusSkipped:
+		*s = AppUpdateStatusSkipped
+		return nil
+	case AppUpdateStatusFailed:
+		*s = AppUpdateStatusFailed
+		return nil
+	case AppUpdateStatusNotChecked:
+		*s = AppUpdateStatusNotChecked
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/AppdataArchive
 type AppdataArchive struct {
 	// The archive's file name on the destination.
@@ -6648,6 +6851,45 @@ func (s *ListAppImagesOK) SetImages(val []AppImage) {
 	s.Images = val
 }
 
+// Ref: #/components/schemas/ListAppUpdatesOK
+type ListAppUpdatesOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message OptString   `json:"message"`
+	Updates []AppUpdate `json:"updates"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListAppUpdatesOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppUpdatesOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetUpdates returns the value of Updates.
+func (s *ListAppUpdatesOK) GetUpdates() []AppUpdate {
+	return s.Updates
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListAppUpdatesOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppUpdatesOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetUpdates sets the value of Updates.
+func (s *ListAppUpdatesOK) SetUpdates(val []AppUpdate) {
+	s.Updates = val
+}
+
 // Ref: #/components/schemas/ListAppdataArchivesOK
 type ListAppdataArchivesOK struct {
 	Archives []AppdataArchive `json:"archives"`
@@ -8876,6 +9118,52 @@ func (s *NotificationWebhookMethod) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// NewOptAppUpdateKind returns new OptAppUpdateKind with value set to v.
+func NewOptAppUpdateKind(v AppUpdateKind) OptAppUpdateKind {
+	return OptAppUpdateKind{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptAppUpdateKind is optional AppUpdateKind.
+type OptAppUpdateKind struct {
+	Value AppUpdateKind
+	Set   bool
+}
+
+// IsSet returns true if OptAppUpdateKind was set.
+func (o OptAppUpdateKind) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptAppUpdateKind) Reset() {
+	var v AppUpdateKind
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptAppUpdateKind) SetTo(v AppUpdateKind) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptAppUpdateKind) Get() (v AppUpdateKind, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptAppUpdateKind) Or(d AppUpdateKind) AppUpdateKind {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptArrayCreatePolicy returns new OptArrayCreatePolicy with value set to v.

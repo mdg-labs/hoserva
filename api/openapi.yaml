@@ -3466,6 +3466,35 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /apps/updates:
+    get:
+      operationId: listAppUpdates
+      summary: Container update status
+      description: >-
+        What the daily registry check (doc 04 §6, Q81) last found for each
+        container's image: a new build of the same tag (`new_build`) is
+        reported apart from a newer version tag (`new_version`, named by
+        `availableTag`). The check asks each registry for manifests and tag
+        names only, never a pull. `skipped` means the registry was rate
+        limiting requests and is asked again at the next check, `failed`
+        that the check could not tell, and `not_checked` that no check has
+        reached the image yet or that it could not look: the registry wants a
+        login (registries are checked anonymously only) or the container is
+        pinned to an image digest, so there is no tag to update. The
+        `message` says which. None of them means up to date. available is
+        false, with no error, whenever Docker itself is not reachable.
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: One entry per container, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppUpdatesOK'
+        default:
+          $ref: '#/components/responses/Error'
+
   /apps/{id}:
     parameters:
       - name: id
@@ -6063,6 +6092,53 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/App'
+
+    ListAppUpdatesOK:
+      type: object
+      required: [available, updates]
+      properties:
+        available:
+          type: boolean
+          description: False when the Docker Engine is not reachable (doc 04 §3).
+        message:
+          type: string
+          description: Set alongside available=false with the reason and a remediation.
+        updates:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppUpdate'
+
+    AppUpdate:
+      type: object
+      required: [container, image, tag, status]
+      properties:
+        container:
+          type: string
+          description: The container's name.
+        image:
+          type: string
+        tag:
+          type: string
+        status:
+          type: string
+          enum: [up_to_date, update_available, skipped, failed, not_checked]
+        kind:
+          type: string
+          enum: [new_build, new_version]
+          description: >-
+            Set with status update_available. new_build: the registry serves
+            a different build under the same tag (the `latest` case).
+            new_version: a newer version tag exists, named by availableTag.
+        availableTag:
+          type: string
+          description: Set with kind new_version.
+        message:
+          type: string
+          description: Why the check was skipped or failed, or what it could not look for.
+        checkedAt:
+          type: string
+          format: date-time
+          description: When the image was last checked; absent when no check has reached the image.
 
     AppImage:
       type: object

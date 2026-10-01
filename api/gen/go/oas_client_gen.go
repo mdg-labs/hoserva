@@ -695,6 +695,20 @@ type Invoker interface {
 	//
 	// GET /apps/images
 	ListAppImages(ctx context.Context) (*ListAppImagesOK, error)
+	// ListAppUpdates invokes listAppUpdates operation.
+	//
+	// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
+	// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
+	// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
+	// `skipped` means the registry was rate limiting requests and is asked again at the next check,
+	// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
+	// that it could not look: the registry wants a login (registries are checked anonymously only) or the
+	// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
+	// of them means up to date. available is false, with no error, whenever Docker itself is not
+	// reachable.
+	//
+	// GET /apps/updates
+	ListAppUpdates(ctx context.Context) (*ListAppUpdatesOK, error)
 	// ListAppdataArchives invokes listAppdataArchives operation.
 	//
 	// The appdata archives this installation wrote to each enabled backup destination, newest first,
@@ -10755,6 +10769,139 @@ func (c *Client) sendListAppImages(ctx context.Context) (res *ListAppImagesOK, e
 
 	stage = "DecodeResponse"
 	result, err := decodeListAppImagesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListAppUpdates invokes listAppUpdates operation.
+//
+// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
+// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
+// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
+// `skipped` means the registry was rate limiting requests and is asked again at the next check,
+// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
+// that it could not look: the registry wants a login (registries are checked anonymously only) or the
+// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
+// of them means up to date. available is false, with no error, whenever Docker itself is not
+// reachable.
+//
+// GET /apps/updates
+func (c *Client) ListAppUpdates(ctx context.Context) (*ListAppUpdatesOK, error) {
+	res, err := c.sendListAppUpdates(ctx)
+	return res, err
+}
+
+func (c *Client) sendListAppUpdates(ctx context.Context) (res *ListAppUpdatesOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listAppUpdates"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/apps/updates"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListAppUpdatesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/apps/updates"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListAppUpdatesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListAppUpdatesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListAppUpdatesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -352,6 +352,14 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	{
+		op:   "ListAppUpdates",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListAppUpdates(ctx)
+			return err
+		},
+	},
 	// --- Compose stacks (#278) ---
 	{
 		op:   "ListStacks",

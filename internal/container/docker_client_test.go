@@ -231,3 +231,23 @@ func TestSplitImageRef_Unparseable(t *testing.T) {
 		t.Fatalf("splitImageRef(unparseable) = (%q, %q), want the original string back with no tag", repo, tag)
 	}
 }
+
+func TestIsDigestPinned(t *testing.T) {
+	const d = "@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	for image, want := range map[string]bool{
+		"nginx" + d:                   true,
+		"nginx:1.27" + d:              true,
+		"ghcr.io/acme/app" + d:        true,
+		"nginx":                       false,
+		"nginx:latest":                false,
+		"registry.example.com:5000/a": false,
+		"Not A Valid Ref!!":           false,
+	} {
+		if got := isDigestPinned(image); got != want {
+			t.Errorf("isDigestPinned(%q) = %v, want %v", image, got, want)
+		}
+		if got := containerFromSummary(dockercontainer.Summary{Image: image}).Pinned; got != want {
+			t.Errorf("containerFromSummary(%q).Pinned = %v, want %v", image, got, want)
+		}
+	}
+}

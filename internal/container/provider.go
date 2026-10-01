@@ -61,10 +61,17 @@ type Mount struct {
 // container this part lists is, today, honestly unmanaged, since nothing
 // in Hoserva has installed one yet.
 type Container struct {
-	ID     string
-	Name   string
-	Image  string // repository, without its tag
-	Tag    string
+	ID    string
+	Name  string
+	Image string // repository, without its tag
+	Tag   string
+	// ImageID is the local image the container runs, matched against
+	// Image.ID to find the registry digest it was pulled as.
+	ImageID string
+	// Pinned is set for a container created from a digest reference
+	// ("nginx@sha256:..."): it runs exactly that image, so there is no tag
+	// to look for an update of.
+	Pinned bool
 	State  string
 	Status string
 	Health string // one of the Health constants
@@ -91,8 +98,11 @@ const (
 type Image struct {
 	ID       string
 	RepoTags []string
-	Size     int64
-	Created  time.Time
+	// RepoDigests are the registry manifest digests the image was pulled
+	// as, each "repository@sha256:...".
+	RepoDigests []string
+	Size        int64
+	Created     time.Time
 }
 
 // ErrRunning is returned by Remove for a container that is not stopped:

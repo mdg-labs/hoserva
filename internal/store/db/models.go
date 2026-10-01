@@ -133,6 +133,15 @@ type HostConfig struct {
 	AppliedAt string `json:"applied_at"`
 }
 
+type ImageUpdateCheck struct {
+	Image        string `json:"image"`
+	CheckedAt    string `json:"checked_at"`
+	Status       string `json:"status"`
+	Kind         string `json:"kind"`
+	AvailableTag string `json:"available_tag"`
+	Message      string `json:"message"`
+}
+
 type Job struct {
 	ID           string         `json:"id"`
 	Type         string         `json:"type"`
