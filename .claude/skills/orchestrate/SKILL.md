@@ -180,8 +180,12 @@ scripts/gh-rest.sh issue-view <n> --jq '.body' | grep -m1 '^Lands in:'
   — the path comes from `HOSERVA_CATALOG_REPO`, never hard-coded. Require
   that it is a git clone whose `origin` URL names `mdg-labs/hoserva-catalog`,
   on `dev`, clean, and in sync with `origin/dev` (`git -C "$CATALOG" fetch
-  origin && git -C "$CATALOG" merge --ff-only origin/dev`); if any of that
-  fails, leave the issue out of T and report why. The catalog repository has
+  origin && git -C "$CATALOG" merge --ff-only origin/dev`, then
+  `git -C "$CATALOG" rev-parse HEAD` must equal `git -C "$CATALOG" rev-parse
+  origin/dev` — a fast-forward also succeeds when local `dev` is *ahead*, and
+  those unpushed commits would be cloned and later pushed with work no
+  verifier reviewed); if any of that fails, leave the issue out of T and
+  report why. The catalog repository has
   the same `dev`/`main` model as this one (Q46): its commits land on `dev`
   and `main` only moves via a `dev → main` pull request. `HOSERVA_ROOT` for its
   executor and verifier is the real `mdg-labs/hoserva` repo, read-only —
