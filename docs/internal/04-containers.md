@@ -215,7 +215,7 @@ Generated Compose is shown side by side with the source XML before anything runs
 
 ## 6. Update handling
 
-- Check registries at most once a day, with jitter, by requesting only each image's manifest — never pulling; optional per-registry credentials stored as secrets; a rate-limited registry is skipped until the next day, and the UI says so (Q81)
+- Check registries at most once a day, with jitter, by requesting each image's manifest and, for an image whose tag looks like a version (`16.4`, `v1.2.3-alpine`, never `latest`), the repository's tag list — never pulling an image or fetching a blob; optional per-registry credentials stored as secrets; a registry that rate-limits either request is skipped until the next day, and the UI says so (Q81)
 - Distinguish **digest changed on the same tag** (the common `:latest` case) from **a genuinely new version tag**
 - Show both, labelled differently — "new build of `latest`" is not the same as "2.1 → 2.2"
 - Bulk update with per-container opt-out

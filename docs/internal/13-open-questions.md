@@ -572,6 +572,8 @@ The interval and the check-on-open switch are stored as additive columns on the 
 **Default: at most once a day, with random jitter, Hoserva compares each managed container's image digest with the registry's by requesting only the manifest — never pulling. Credentials can be added per registry and are stored as secrets (Q28). A registry that answers with a rate limit is skipped until the next day, and the UI says the check was skipped. The check can be disabled, and it counts as an outbound request under Q49.**
 Pulling to compare would count against registries' limits on anonymous pulls and waste bandwidth; one manifest request per image per day is cheap. Docker Hub's current limit policy is re-checked when this is built, since it has changed before.
 
+**Revised (2026-10-01, #487):** telling a new version tag from a new build on the same tag (doc 04 §6) needs more than the manifest. The check requests each image's manifest and, only when the image's tag looks like a version (`16.4`, `v1.2.3-alpine`; never `latest`), the repository's tag list (`GET /v2/<repository>/tags/list`, in pages when the registry paginates). Both are metadata requests: the check never pulls an image or fetches a blob. A registry that answers either request with a rate limit is skipped until the next day, and the UI says the check was skipped. Where the manifest request already showed a new build, a rate limit on the tag list only means newer version tags were not looked for, and the new build is still reported.
+
 ### Q82 — GPUs for containers
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 14 §3, Q53
 
