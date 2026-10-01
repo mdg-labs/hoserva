@@ -12,7 +12,7 @@ import (
 	"fmt"
 )
 
-//go:embed */jobs.json */events.jsonl */parity.json common/job-log.txt
+//go:embed */jobs.json */events.jsonl */parity.json */apps.json common/job-log.txt
 var files embed.FS
 
 // Scenarios are the mock server's scenarios (doc 06 §8).
@@ -62,6 +62,18 @@ func ParityJSON(scenario string) ([]byte, error) {
 		return nil, fmt.Errorf("fixtures: unknown scenario %q", scenario)
 	}
 	return files.ReadFile(scenario + "/parity.json")
+}
+
+// AppsJSON returns scenario's apps.json fixture: a ListAppsOK-shaped
+// document validated against api/openapi.yaml by fixtures_test.go. Only the
+// scenarios whose Docker differs from the mock's default containers have
+// one (fresh-install has none, migration-pending has no Docker); for the
+// others the error satisfies errors.Is(err, fs.ErrNotExist).
+func AppsJSON(scenario string) ([]byte, error) {
+	if !Valid(scenario) {
+		return nil, fmt.Errorf("fixtures: unknown scenario %q", scenario)
+	}
+	return files.ReadFile(scenario + "/apps.json")
 }
 
 // JobLog is the canned job-log fixture served for every job's

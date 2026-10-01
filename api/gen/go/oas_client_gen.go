@@ -408,7 +408,8 @@ type Invoker interface {
 	FormatExternalDisk(ctx context.Context, request *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
 	// GetApp invokes getApp operation.
 	//
-	// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+	// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
+	// manages it, if any.
 	//
 	// GET /apps/{id}
 	GetApp(ctx context.Context, params GetAppParams) (*App, error)
@@ -763,10 +764,11 @@ type Invoker interface {
 	ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error)
 	// ListApps invokes listApps operation.
 	//
-	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
-	// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
-	// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
-	// 04 §3).
+	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
+	// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
+	// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
+	// every container as unmanaged. available is false, with no error, whenever Docker itself is not
+	// reachable (doc 04 §3).
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
@@ -6657,7 +6659,8 @@ func (c *Client) sendFormatExternalDisk(ctx context.Context, request *FormatExte
 
 // GetApp invokes getApp operation.
 //
-// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
+// manages it, if any.
 //
 // GET /apps/{id}
 func (c *Client) GetApp(ctx context.Context, params GetAppParams) (*App, error) {
@@ -11628,10 +11631,11 @@ func (c *Client) sendListAppdataArchives(ctx context.Context, params ListAppdata
 
 // ListApps invokes listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
-// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
-// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
-// 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
+// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
+// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
+// every container as unmanaged. available is false, with no error, whenever Docker itself is not
+// reachable (doc 04 §3).
 //
 // GET /apps
 func (c *Client) ListApps(ctx context.Context) (*ListAppsOK, error) {

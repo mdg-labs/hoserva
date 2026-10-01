@@ -8023,7 +8023,8 @@ func (s *Server) handleFormatExternalDiskRequest(args [1]string, argsEscaped boo
 
 // handleGetAppRequest handles getApp operation.
 //
-// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
+// manages it, if any.
 //
 // GET /apps/{id}
 func (s *Server) handleGetAppRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -15701,10 +15702,11 @@ func (s *Server) handleListAppdataArchivesRequest(args [0]string, argsEscaped bo
 
 // handleListAppsRequest handles listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
-// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
-// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
-// 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
+// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
+// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
+// every container as unmanaged. available is false, with no error, whenever Docker itself is not
+// reachable (doc 04 §3).
 //
 // GET /apps
 func (s *Server) handleListAppsRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

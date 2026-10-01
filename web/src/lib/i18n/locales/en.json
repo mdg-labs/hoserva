@@ -63,6 +63,7 @@
       "unhealthy": "Not responding",
       "starting": "Starting up"
     },
+    "unmanaged": "Not managed by Hoserva",
     "ports": {
       "none": "No ports open to the network",
       "open": "Open {{name}} on port {{port}}"

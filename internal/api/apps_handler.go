@@ -35,11 +35,37 @@ func (h *Handler) ListApps(ctx context.Context) (*apiv1.ListAppsOK, error) {
 		}
 		return nil, fmt.Errorf("listing containers: %w", err)
 	}
+	stacks, err := h.managingStacks(ctx, containers)
+	if err != nil {
+		return nil, err
+	}
 	apps := make([]apiv1.App, 0, len(containers))
 	for _, c := range containers {
-		apps = append(apps, containerToAPI(c))
+		apps = append(apps, withStack(containerToAPI(c), stacks[c.ID]))
 	}
 	return &apiv1.ListAppsOK{Available: true, Apps: apps}, nil
+}
+
+// managingStacks maps container ID to the installed stack that owns it. With
+// no stack service no stack can have started anything, so nothing is
+// managed; a stack service that cannot say fails the request, so an error
+// never reads as "every container is unmanaged".
+func (h *Handler) managingStacks(ctx context.Context, containers []container.Container) (map[string]string, error) {
+	if h.Stacks == nil {
+		return nil, nil
+	}
+	stacks, err := h.Stacks.ManagingStacks(ctx, containers)
+	if err != nil {
+		return nil, fmt.Errorf("finding which containers a stack manages: %w", err)
+	}
+	return stacks, nil
+}
+
+func withStack(app apiv1.App, stack string) apiv1.App {
+	if stack != "" {
+		app.Stack = apiv1.NewOptString(stack)
+	}
+	return app
 }
 
 func (h *Handler) GetApp(ctx context.Context, params apiv1.GetAppParams) (*apiv1.App, error) {
@@ -56,7 +82,11 @@ func (h *Handler) GetApp(ctx context.Context, params apiv1.GetAppParams) (*apiv1
 		}
 		return nil, fmt.Errorf("inspecting container %q: %w", params.ID, err)
 	}
-	app := containerToAPI(c)
+	stacks, err := h.managingStacks(ctx, []container.Container{c})
+	if err != nil {
+		return nil, err
+	}
+	app := withStack(containerToAPI(c), stacks[c.ID])
 	return &app, nil
 }
 

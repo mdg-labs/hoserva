@@ -128,3 +128,72 @@ func TestRemoveAppWithAppdataAvailable(t *testing.T) {
 		}
 	})
 }
+
+func TestListAppsDistinguishesManagedFromUnmanagedContainers(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	list, err := h.ListApps(t.Context())
+	if err != nil || !list.Available {
+		t.Fatalf("ListApps = %+v, %v", list, err)
+	}
+	managed := map[string]string{}
+	for _, a := range list.Apps {
+		if s, ok := a.Stack.Get(); ok {
+			managed[a.Name] = s
+		}
+	}
+	if len(managed) != 1 || managed["jellyfin"] != mockStack {
+		t.Fatalf("managed containers = %v, want only jellyfin in %s", managed, mockStack)
+	}
+	if _, err := h.GetStack(t.Context(), apiv1.GetStackParams{Name: mockStack}); err != nil {
+		t.Fatalf("the stack listApps names is not one getStack knows: %v", err)
+	}
+	app, err := h.GetApp(t.Context(), apiv1.GetAppParams{ID: "jellyfin"})
+	if err != nil || app.Stack.Value != mockStack {
+		t.Fatalf("GetApp(jellyfin) = %+v, %v; want stack %s", app, err, mockStack)
+	}
+}
+
+func TestFreshInstallScenarioHasDockerWithNoContainers(t *testing.T) {
+	h, err := newHandler("fresh-install")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	list, err := h.ListApps(t.Context())
+	if err != nil {
+		t.Fatalf("ListApps: %v", err)
+	}
+	if !list.Available || len(list.Apps) != 0 {
+		t.Fatalf("ListApps = %+v, want Docker available with no containers", list)
+	}
+	stacks, err := h.ListStacks(t.Context())
+	if err != nil || len(stacks.Stacks) != 0 {
+		t.Fatalf("ListStacks = %+v, %v; want none", stacks, err)
+	}
+}
+
+func TestMigrationPendingScenarioHasNoDocker(t *testing.T) {
+	h, err := newHandler("migration-pending")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	list, err := h.ListApps(t.Context())
+	if err != nil {
+		t.Fatalf("ListApps: %v", err)
+	}
+	if list.Available || !list.Message.Set || len(list.Apps) != 0 {
+		t.Fatalf("ListApps = %+v, want available=false with a message", list)
+	}
+	if images, err := h.ListAppImages(t.Context()); err != nil || images.Available {
+		t.Fatalf("ListAppImages = %+v, %v; want available=false", images, err)
+	}
+	if updates, err := h.ListAppUpdates(t.Context()); err != nil || updates.Available {
+		t.Fatalf("ListAppUpdates = %+v, %v; want available=false", updates, err)
+	}
+	_, err = h.GetApp(t.Context(), apiv1.GetAppParams{ID: "jellyfin"})
+	if code := mockErrorCode(t, err); code != "docker_unavailable" {
+		t.Fatalf("GetApp code = %q, want docker_unavailable", code)
+	}
+}

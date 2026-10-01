@@ -803,6 +803,39 @@ func (s *StackService) ownsContainer(name string, c Container) bool {
 	return false
 }
 
+// ManagingStacks returns, by container ID, the name of the installed stack
+// that owns each of cs (ownsContainer); a container no stack owns has no
+// entry. A failed read of the stacks table is an error, never an empty map,
+// so a caller cannot take "could not tell" for "nothing is managed".
+func (s *StackService) ManagingStacks(ctx context.Context, cs []Container) (map[string]string, error) {
+	out := map[string]string{}
+	labelled := false
+	for _, c := range cs {
+		if c.Labels[composeProjectLabel] != "" {
+			labelled = true
+			break
+		}
+	}
+	if !labelled {
+		return out, nil
+	}
+	stacks, err := s.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing stacks to find which containers they manage: %w", err)
+	}
+	installed := make(map[string]bool, len(stacks))
+	for _, st := range stacks {
+		installed[st.Name] = true
+	}
+	for _, c := range cs {
+		name := c.Labels[composeProjectLabel]
+		if installed[name] && s.ownsContainer(name, c) {
+			out[c.ID] = name
+		}
+	}
+	return out, nil
+}
+
 // checkProjectOwned refuses unless every container carrying the stack's
 // Compose project name is the stack's own (ownsContainer). It fails closed: a
 // missing Provider or a failed listing means the project cannot be known to

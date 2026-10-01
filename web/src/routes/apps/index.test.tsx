@@ -52,6 +52,7 @@ function container(name: string, state: string, extra: Record<string, unknown> =
 }
 
 const jellyfin = container("jellyfin", "running", {
+  stack: "media-server",
   ports: [{ hostIP: "0.0.0.0", hostPort: 8096, containerPort: 8096, protocol: "tcp" }],
 });
 const postgres = container("postgres", "running");
@@ -195,12 +196,20 @@ describe("Installed apps", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("renders no unmanaged badge, because the API does not say which containers are managed", async () => {
+  it("badges exactly the containers the API reports no stack for as not managed by Hoserva", async () => {
     installGet(defaultFixture());
     renderPage();
 
     await screen.findByRole("link", { name: "jellyfin" });
-    expect(screen.queryByText(/unmanaged/i)).not.toBeInTheDocument();
+    const badges = screen.getAllByText("Not managed by Hoserva");
+    expect(badges).toHaveLength(2);
+    for (const name of ["postgres", "portainer"]) {
+      const row = screen.getByRole("link", { name }).closest("tr");
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText("Not managed by Hoserva")).toBeInTheDocument();
+    }
+    const jellyfinRow = screen.getByRole("link", { name: "jellyfin" }).closest("tr");
+    expect(within(jellyfinRow as HTMLElement).queryByText("Not managed by Hoserva")).not.toBeInTheDocument();
   });
 
   it("shows the empty state when Docker has no containers", async () => {

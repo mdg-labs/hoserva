@@ -994,6 +994,12 @@ func (s *App) encodeFields(e *jx.Encoder) {
 		e.Str(s.Status)
 	}
 	{
+		if s.Stack.Set {
+			e.FieldStart("stack")
+			s.Stack.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("ports")
 		e.ArrStart()
 		for _, elem := range s.Ports {
@@ -1011,7 +1017,7 @@ func (s *App) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfApp = [9]string{
+var jsonFieldsNameOfApp = [10]string{
 	0: "id",
 	1: "name",
 	2: "health",
@@ -1019,8 +1025,9 @@ var jsonFieldsNameOfApp = [9]string{
 	4: "tag",
 	5: "state",
 	6: "status",
-	7: "ports",
-	8: "mounts",
+	7: "stack",
+	8: "ports",
+	9: "mounts",
 }
 
 // Decode decodes App from json.
@@ -1112,8 +1119,18 @@ func (s *App) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"status\"")
 			}
+		case "stack":
+			if err := func() error {
+				s.Stack.Reset()
+				if err := s.Stack.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"stack\"")
+			}
 		case "ports":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				s.Ports = make([]AppPort, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1131,7 +1148,7 @@ func (s *App) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"ports\"")
 			}
 		case "mounts":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				s.Mounts = make([]AppMount, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -1158,8 +1175,8 @@ func (s *App) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
-		0b11111111,
-		0b00000001,
+		0b01111111,
+		0b00000011,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

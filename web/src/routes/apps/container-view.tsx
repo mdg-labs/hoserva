@@ -50,6 +50,7 @@ function StateBadges({ app }: { app: App }): React.ReactElement {
       {running && app.health === "starting" ? (
         <StatusBadge tone="info">{t("apps.health.starting")}</StatusBadge>
       ) : null}
+      {app.stack === undefined ? <StatusBadge tone="outline">{t("apps.unmanaged")}</StatusBadge> : null}
     </div>
   );
 }

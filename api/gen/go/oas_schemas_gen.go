@@ -457,7 +457,12 @@ type App struct {
 	Tag   string   `json:"tag"`
 	State AppState `json:"state"`
 	// Human-readable Engine status, e.g. "Up 3 hours".
-	Status string     `json:"status"`
+	Status string `json:"status"`
+	// The name of the installed stack that started this container, decided by the daemon from the
+	// container's Compose project and the directory Compose ran it from. Absent for a container no stack
+	// manages (one started by hand or by another tool). Set by `listApps` and `getApp`; the responses of
+	// the start, stop and restart operations do not carry it.
+	Stack  OptString  `json:"stack"`
 	Ports  []AppPort  `json:"ports"`
 	Mounts []AppMount `json:"mounts"`
 }
@@ -495,6 +500,11 @@ func (s *App) GetState() AppState {
 // GetStatus returns the value of Status.
 func (s *App) GetStatus() string {
 	return s.Status
+}
+
+// GetStack returns the value of Stack.
+func (s *App) GetStack() OptString {
+	return s.Stack
 }
 
 // GetPorts returns the value of Ports.
@@ -540,6 +550,11 @@ func (s *App) SetState(val AppState) {
 // SetStatus sets the value of Status.
 func (s *App) SetStatus(val string) {
 	s.Status = val
+}
+
+// SetStack sets the value of Stack.
+func (s *App) SetStack(val OptString) {
+	s.Stack = val
 }
 
 // SetPorts sets the value of Ports.

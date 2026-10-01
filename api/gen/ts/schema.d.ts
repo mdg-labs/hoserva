@@ -1981,7 +1981,7 @@ export interface paths {
         };
         /**
          * List containers
-         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an installed stack started carries that stack's name in `stack`; one no stack manages has none. The daemon decides which, so the request fails when the stacks cannot be read rather than reporting every container as unmanaged. available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
          */
         get: operations["listApps"];
         put?: never;
@@ -2068,7 +2068,7 @@ export interface paths {
         };
         /**
          * Inspect a container
-         * @description One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+         * @description One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that manages it, if any.
          */
         get: operations["getApp"];
         put?: never;
@@ -3527,6 +3527,8 @@ export interface components {
             state: components["schemas"]["AppState"];
             /** @description Human-readable Engine status, e.g. "Up 3 hours". */
             status: string;
+            /** @description The name of the installed stack that started this container, decided by the daemon from the container's Compose project and the directory Compose ran it from. Absent for a container no stack manages (one started by hand or by another tool). Set by `listApps` and `getApp`; the responses of the start, stop and restart operations do not carry it. */
+            stack?: string;
             ports: components["schemas"]["AppPort"][];
             mounts: components["schemas"]["AppMount"][];
         };

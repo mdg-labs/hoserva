@@ -46,6 +46,24 @@ describe("publishedPorts", () => {
     expect(publishedPorts(ports, "nas.local")).toHaveLength(1);
   });
 
+  it("links a LAN binding of a port even when a loopback binding of it is listed first", () => {
+    const ports: AppPort[] = [
+      { hostIP: "127.0.0.1", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+      { hostIP: "0.0.0.0", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+    ];
+    expect(publishedPorts(ports, "nas.local")).toEqual([
+      { key: "8080/tcp", port: 8080, protocol: "tcp", href: "http://nas.local:8080" },
+    ]);
+  });
+
+  it("keeps the first reachable binding when several are", () => {
+    const ports: AppPort[] = [
+      { hostIP: "192.168.1.5", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+      { hostIP: "0.0.0.0", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+    ];
+    expect(publishedPorts(ports, "nas.local").map((port) => port.href)).toEqual(["http://192.168.1.5:8080"]);
+  });
+
   it("skips a container port that is not published to the host", () => {
     expect(publishedPorts([{ containerPort: 5432, protocol: "tcp" }], "nas.local")).toEqual([]);
   });

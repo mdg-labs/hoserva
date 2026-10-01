@@ -72,7 +72,9 @@ function portHref(port: AppPort, pageHostname: string): string | null {
 }
 
 // A container publishes each port once per address family, so IPv4 and IPv6
-// bindings of the same host port are one entry.
+// bindings of the same host port are one entry. When one binding of a port is
+// reachable from the browser and another is loopback-only, the entry links to
+// the reachable one, whichever the Engine listed first.
 export function publishedPorts(ports: AppPort[], pageHostname: string): PublishedPort[] {
   const seen = new Map<string, PublishedPort>();
   for (const port of ports) {
@@ -80,8 +82,12 @@ export function publishedPorts(ports: AppPort[], pageHostname: string): Publishe
       continue;
     }
     const key = `${port.hostPort}/${port.protocol}`;
-    if (!seen.has(key)) {
-      seen.set(key, { key, port: port.hostPort, protocol: port.protocol, href: portHref(port, pageHostname) });
+    const href = portHref(port, pageHostname);
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, { key, port: port.hostPort, protocol: port.protocol, href });
+    } else if (existing.href === null && href !== null) {
+      existing.href = href;
     }
   }
   return [...seen.values()];

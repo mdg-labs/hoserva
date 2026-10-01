@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -12,13 +14,13 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
 // mockApps is deterministic per instance (doc 06 §8): every screen must be
-// reachable with no real Docker daemon behind this mock. Every container
-// here is, honestly, unmanaged — this part builds no stacks table (#278
-// is where "managed" starts meaning something), so nothing in this list
-// claims otherwise.
+// reachable with no real Docker daemon behind this mock. jellyfin is the one
+// container an installed stack manages (mockStack); the rest are started by
+// hand, so they are unmanaged.
 func mockApps() []apiv1.App {
 	return []apiv1.App{
 		{
@@ -29,6 +31,7 @@ func mockApps() []apiv1.App {
 			State:  apiv1.AppStateRunning,
 			Status: "Up 3 hours (healthy)",
 			Health: apiv1.AppHealthHealthy,
+			Stack:  apiv1.NewOptString(mockStack),
 			Ports: []apiv1.AppPort{
 				{
 					HostIP:        apiv1.NewOptString("0.0.0.0"),
@@ -109,6 +112,56 @@ func mockApps() []apiv1.App {
 	}
 }
 
+// mockStack is the installed stack that manages jellyfin. It is not named
+// after a catalog template, so installing that template through the mock is
+// never refused as an existing stack.
+const mockStack = "media-server"
+
+// mockStacksFor is the stacks table that goes with apps: one stack for every
+// stack name an app reports, so GetStack answers for what listApps names.
+func mockStacksFor(apps []apiv1.App) map[string]apiv1.Stack {
+	stacks := map[string]apiv1.Stack{}
+	for _, a := range apps {
+		if name, ok := a.Stack.Get(); ok {
+			stacks[name] = apiv1.Stack{
+				Name:        name,
+				Template:    apiv1.StackTemplate{Source: "hoserva", ID: "jellyfin", Revision: "1"},
+				InstalledAt: time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC),
+			}
+		}
+	}
+	return stacks
+}
+
+// scenarioApps is the Docker a scenario reports: its apps.json fixture when
+// it has one (the empty Docker of fresh-install, the missing Docker of
+// migration-pending), the mock's default containers otherwise. A non-empty
+// down is the reason Docker is unreachable.
+func scenarioApps(scenario string) (apps []apiv1.App, down string, err error) {
+	raw, err := fixtures.AppsJSON(scenario)
+	if errors.Is(err, fs.ErrNotExist) {
+		return mockApps(), "", nil
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("load apps fixture: %w", err)
+	}
+	var list apiv1.ListAppsOK
+	if err := list.UnmarshalJSON(raw); err != nil {
+		return nil, "", fmt.Errorf("decode apps fixture: %w", err)
+	}
+	if err := list.Validate(); err != nil {
+		return nil, "", fmt.Errorf("apps fixture fails validation: %w", err)
+	}
+	if !list.Available {
+		return list.Apps, list.Message.Or("Docker is not installed or not reachable"), nil
+	}
+	return list.Apps, "", nil
+}
+
+func errDockerUnavailable(reason string) error {
+	return &mockError{code: "docker_unavailable", statusCode: 503, message: reason}
+}
+
 func mockAppImages() []apiv1.AppImage {
 	return []apiv1.AppImage{
 		{
@@ -129,6 +182,9 @@ func mockAppImages() []apiv1.AppImage {
 func (h *handler) ListApps(ctx context.Context) (*apiv1.ListAppsOK, error) {
 	h.appsMu.Lock()
 	defer h.appsMu.Unlock()
+	if h.appsDown != "" {
+		return &apiv1.ListAppsOK{Available: false, Apps: []apiv1.App{}, Message: apiv1.NewOptString(h.appsDown)}, nil
+	}
 	return &apiv1.ListAppsOK{Available: true, Apps: append([]apiv1.App{}, h.apps...)}, nil
 }
 
@@ -139,6 +195,9 @@ func errAppNotFound(id string) error {
 // findApp returns the index of the container with this ID or name, with
 // h.appsMu held by the caller.
 func (h *handler) findApp(id string) (int, error) {
+	if h.appsDown != "" {
+		return -1, errDockerUnavailable(h.appsDown)
+	}
 	for i, app := range h.apps {
 		if app.ID == id || app.Name == id {
 			return i, nil
@@ -421,6 +480,12 @@ func (h *handler) GetAppStats(ctx context.Context, params apiv1.GetAppStatsParam
 }
 
 func (h *handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, error) {
+	h.appsMu.Lock()
+	down := h.appsDown
+	h.appsMu.Unlock()
+	if down != "" {
+		return &apiv1.ListAppImagesOK{Available: false, Images: []apiv1.AppImage{}, Message: apiv1.NewOptString(down)}, nil
+	}
 	return &apiv1.ListAppImagesOK{Available: true, Images: mockAppImages()}, nil
 }
 
@@ -430,11 +495,15 @@ func (h *handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, er
 func (h *handler) ListAppUpdates(ctx context.Context) (*apiv1.ListAppUpdatesOK, error) {
 	h.appsMu.Lock()
 	apps := append([]apiv1.App{}, h.apps...)
+	down := h.appsDown
 	excluded := make(map[string]bool, len(h.bulkExcluded))
 	for n, ex := range h.bulkExcluded {
 		excluded[n] = ex
 	}
 	h.appsMu.Unlock()
+	if down != "" {
+		return &apiv1.ListAppUpdatesOK{Available: false, Updates: []apiv1.AppUpdate{}, Message: apiv1.NewOptString(down)}, nil
+	}
 	checkedAt := time.Date(2026, 9, 30, 6, 14, 0, 0, time.UTC)
 	updates := make([]apiv1.AppUpdate, 0, len(apps))
 	for _, a := range apps {

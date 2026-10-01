@@ -1,0 +1,5 @@
+{
+  "available": false,
+  "apps": [],
+  "message": "Docker is not installed or not reachable: dial unix /var/run/docker.sock: connect: no such file or directory"
+}

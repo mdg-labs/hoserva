@@ -89,6 +89,10 @@ type handler struct {
 	// effect of the caller's own start, stop or remove.
 	appsMu sync.Mutex
 	apps   []apiv1.App
+	// appsDown is the reason Docker is unreachable in this scenario, empty
+	// when it is reachable: every container operation then answers as
+	// hoservad does with no Docker (available=false, or 503).
+	appsDown string
 	// bulkExcluded, imageKeepDays and updateRecords are the container update
 	// state (#284), also guarded by appsMu: the bulk-update opt-outs, the
 	// keep period and the updates this mock instance has "made", newest
@@ -98,7 +102,8 @@ type handler struct {
 	updateRecords []apiv1.AppUpdateRecord
 
 	// stacksMu guards stacks (#278): the Compose stacks this mock instance
-	// lists, starting empty. CreateStack and RemoveStack change them.
+	// lists, starting with the stacks the scenario's apps name (mockStacksFor).
+	// CreateStack and RemoveStack change them.
 	stacksMu sync.Mutex
 	stacks   map[string]apiv1.Stack
 	// stackPorts are the host ports each stack's Compose file publishes with
@@ -165,6 +170,11 @@ func newHandler(scenario string) (*handler, error) {
 		jobs[job.ID] = job
 	}
 
+	apps, appsDown, err := scenarioApps(scenario)
+	if err != nil {
+		return nil, err
+	}
+
 	return &handler{
 		scenario:     scenario,
 		jobs:         jobs,
@@ -176,7 +186,9 @@ func newHandler(scenario string) (*handler, error) {
 		updateStatus: defaultMockUpdateStatus(),
 		network:      defaultMockNetwork(),
 		shares:       make(map[string]apiv1.Share),
-		apps:         mockApps(),
+		apps:         apps,
+		appsDown:     appsDown,
+		stacks:       mockStacksFor(apps),
 
 		bulkExcluded:  make(map[string]bool),
 		imageKeepDays: store.DefaultImageKeepDays,
