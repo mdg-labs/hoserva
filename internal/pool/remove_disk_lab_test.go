@@ -71,6 +71,7 @@ func TestLabRemoveDataDisk_RemovingStateBlocksNewPlacement_ThenCleanRemount(t *t
 
 	t.Cleanup(func() {
 		_ = mounter.Unmount(context.Background(), catchAllWhere)
+		_ = os.Remove(catchAllWhere)
 	})
 	if err := mounter.Mount(ctx, full); err != nil {
 		t.Fatalf("mounting catch-all: %v", err)

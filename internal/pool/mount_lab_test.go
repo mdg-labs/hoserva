@@ -202,6 +202,9 @@ func TestLabPoolTopology_MountsInOrderAndSurvivesRemount(t *testing.T) {
 		_ = mounter.Unmount(context.Background(), shareMount.Where)
 		_ = mounter.Unmount(context.Background(), catchAll.Where)
 		_ = mounter.Unmount(context.Background(), moverMount.Where)
+		_ = os.Remove(moverMount.Where)
+		_ = os.Remove(arrayRootWhere)
+		_ = os.Remove(catchAllWhere)
 	})
 
 	// --- Ordering: the share mount only appears once the catch-all is

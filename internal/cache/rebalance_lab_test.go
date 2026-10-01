@@ -151,6 +151,7 @@ func rebalanceCreateAndMountLoopDisk(t *testing.T, lab, name, mountpoint string)
 			return
 		}
 		_, _ = exec.Command("umount", mountpoint).CombinedOutput()
+		_ = os.Remove(mountpoint)
 		_, _ = exec.Command("losetup", "-d", dev).CombinedOutput()
 	})
 	return dev
