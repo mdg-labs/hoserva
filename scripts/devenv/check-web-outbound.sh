@@ -10,8 +10,12 @@
 # .invalid TLDs): they can never resolve, so a placeholder address in UI copy
 # is not a request. Every entry is anchored on the URL's host (and path, where
 # one is named), so `example.com.evil.io`, `notexample.com`,
-# `example.com@evil.io` and `evil.io/?x=localhost` still fail. Anything else
-# found here is a real regression.
+# `example.com@evil.io` and `evil.io/?x=localhost` still fail. A URL whose
+# whole host is a template interpolation (`http://${host}:${port}`, a link to
+# a container on the user's own server) embeds no host, the same as string
+# concatenation the scan never sees; a fixed host part after it
+# (`${h}.evil.io`, `${h}@evil.io`) still fails. Anything else found here is a
+# real regression.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +24,8 @@ dist="${1:-$script_dir/../../web/dist}"
 label='[A-Za-z0-9-]+'
 reserved="^https?://(${label}\\.)*(example\\.(com|net|org)|example|test|invalid)\\.?(:[0-9]+)?([/?#].*)?\$"
 named="^https?://(www\\.w3\\.org|react\\.dev/errors|base-ui\\.com/production-error|react\\.i18next\\.com|reactrouter\\.com|localhost(:[0-9]+)?)([/?#].*)?\$"
-allowed="(${named}|^https?://github\\.com/ungap/url-search-params(\\.|[?#].*)?\$|^https?://fb\\.me/use-check-prop-types([?#].*)?\$|${reserved})"
+interpolated='^https?://\$\{[^}]*(\}(:([0-9]+|\$\{[^}]*\}?))?([/?#].*)?(`.*)?)?$'
+allowed="(${named}|${interpolated}|^https?://github\\.com/ungap/url-search-params(\\.|[?#].*)?\$|^https?://fb\\.me/use-check-prop-types([?#].*)?\$|${reserved})"
 
 if [ ! -d "$dist" ]; then
   echo "check-web-outbound: $dist is not a directory — build the web app first" >&2
