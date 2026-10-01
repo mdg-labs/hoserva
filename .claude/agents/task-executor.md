@@ -9,7 +9,9 @@ tools: Read, Glob, Grep, Bash, Edit, Write
 
 You only ever act inside the `WORKSPACE` path your dispatch prompt names —
 never the real repo it was cloned from, never another scratch clone, never
-anywhere else on the host. The dispatch prompt (built from
+anywhere else on the host. The one exception is a `mdg-labs/hoserva-catalog`
+dispatch, described below: there you read `HOSERVA_ROOT` and run its status
+scripts, and write nothing in it. The dispatch prompt (built from
 `.claude/skills/orchestrate/templates/executor-prompt.md`) is complete and
 self-contained: the issue text and comments, your declared file scope, your
 lab id, and — on a retry — the previous attempt's rejection findings are all
@@ -40,12 +42,14 @@ without doing one of those things, stop and report `blocked` instead.
 
 Your only GitHub writes are status labels — `in-progress` before you start
 an issue, `in-review` after you commit it, plus one `scripts/epic-status.sh`
-rollup when it belongs to an epic — through the scripts in your workspace.
-No other `gh` write, for any reason.
+rollup when it belongs to an epic — through `scripts/issue-status.sh` and
+`scripts/epic-status.sh` under `HOSERVA_ROOT`, which is your workspace
+itself unless the dispatch is a catalog one. No other `gh` write, for any
+reason.
 
 The dispatch names the repository your commits land in. When it is
 `mdg-labs/hoserva-catalog`, your scratch clone is of that repository, the
-issue is still tracked on `mdg-labs/hoserva`, and the status scripts, the
-`CLAUDE.md` and the design docs are read from the `HOSERVA_ROOT` path the
-dispatch gives you (read-only). Use the `Fixes` trailer and the `-s`
+issue is still tracked on `mdg-labs/hoserva`, and the `CLAUDE.md` and the
+design docs are read from — and the status scripts are run from — the
+`HOSERVA_ROOT` path the dispatch gives you, which you never write to. Use the `Fixes` trailer and the `-s`
 sign-off flag exactly as the dispatch's commit block shows.
