@@ -9501,11 +9501,12 @@ components:
       type: string
       enum: [none, opened, no_passphrase, passphrase_incorrect]
       description: >-
-        `none`: the archive has no passphrase-protected section (it was built
-        without a backup passphrase). `opened`: the passphrase available
-        opens it. `no_passphrase`: it has one and no passphrase is
-        available. `passphrase_incorrect`: it has one and the passphrase
-        available does not open it.
+        The state of one of the archive's passphrase-protected files,
+        `secrets.age` or `identity.age`; the field using it says which.
+        `none`: the archive has no such file. `opened`: the file is there and
+        the passphrase available opens it. `no_passphrase`: the file is there
+        and no passphrase is available. `passphrase_incorrect`: the file is
+        there and the passphrase available does not open it.
 
     ConfigImportSecrets:
       type: object
@@ -9513,6 +9514,9 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/ConfigImportSecretsStatus'
+          description: >-
+            The status of the archive's `secrets.age`, which holds its
+            database secrets and stack `.env` files.
         identity:
           $ref: '#/components/schemas/ConfigImportSecretsStatus'
           description: >-
@@ -9765,6 +9769,7 @@ components:
             $ref: '#/components/schemas/ConfigImportNotRestored'
         secrets:
           $ref: '#/components/schemas/ConfigImportSecretsStatus'
+          description: The status of the imported archive's `secrets.age`.
         preImportArchive:
           type: string
           description: >-

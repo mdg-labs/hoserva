@@ -4503,7 +4503,8 @@ type ConfigImportReport struct {
 	// Everything the import did not restore, each with why. Empty when everything in the archive was
 	// restored.
 	NotRestored []ConfigImportNotRestored `json:"notRestored"`
-	Secrets     ConfigImportSecretsStatus `json:"secrets"`
+	// The status of the imported archive's `secrets.age`.
+	Secrets ConfigImportSecretsStatus `json:"secrets"`
 	// The name of the archive of the configuration as it was before the import, which a restore can go
 	// back to. Empty when no backup destination was written to.
 	PreImportArchive string                       `json:"preImportArchive"`
@@ -4714,6 +4715,7 @@ func (s *ConfigImportRestoredCategory) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/ConfigImportSecrets
 type ConfigImportSecrets struct {
+	// The status of the archive's `secrets.age`, which holds its database secrets and stack `.env` files.
 	Status ConfigImportSecretsStatus `json:"status"`
 	// The same status for the archive's `identity.age`, the backup recipient's private identity: `opened`
 	// means a bare-metal restore adopts the archive's recipient; otherwise this box keeps its own. Always
@@ -4753,9 +4755,10 @@ func (s *ConfigImportSecrets) SetStacks(val []string) {
 	s.Stacks = val
 }
 
-// `none`: the archive has no passphrase-protected section (it was built without a backup passphrase).
-// `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is
-// available. `passphrase_incorrect`: it has one and the passphrase available does not open it.
+// The state of one of the archive's passphrase-protected files, `secrets.age` or `identity.age`; the
+// field using it says which. `none`: the archive has no such file. `opened`: the file is there and the
+// passphrase available opens it. `no_passphrase`: the file is there and no passphrase is available.
+// `passphrase_incorrect`: the file is there and the passphrase available does not open it.
 // Ref: #/components/schemas/ConfigImportSecretsStatus
 type ConfigImportSecretsStatus string
 

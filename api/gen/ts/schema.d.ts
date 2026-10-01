@@ -4924,11 +4924,12 @@ export interface components {
             schemaVersion: string;
         };
         /**
-         * @description `none`: the archive has no passphrase-protected section (it was built without a backup passphrase). `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is available. `passphrase_incorrect`: it has one and the passphrase available does not open it.
+         * @description The state of one of the archive's passphrase-protected files, `secrets.age` or `identity.age`; the field using it says which. `none`: the archive has no such file. `opened`: the file is there and the passphrase available opens it. `no_passphrase`: the file is there and no passphrase is available. `passphrase_incorrect`: the file is there and the passphrase available does not open it.
          * @enum {string}
          */
         ConfigImportSecretsStatus: "none" | "opened" | "no_passphrase" | "passphrase_incorrect";
         ConfigImportSecrets: {
+            /** @description The status of the archive's `secrets.age`, which holds its database secrets and stack `.env` files. */
             status: components["schemas"]["ConfigImportSecretsStatus"];
             /** @description The same status for the archive's `identity.age`, the backup recipient's private identity: `opened` means a bare-metal restore adopts the archive's recipient; otherwise this box keeps its own. Always present in a response; an in-place import never replaces the recipient, so it only reports. */
             identity?: components["schemas"]["ConfigImportSecretsStatus"];
@@ -5025,6 +5026,7 @@ export interface components {
             restored: components["schemas"]["ConfigImportRestored"][];
             /** @description Everything the import did not restore, each with why. Empty when everything in the archive was restored. */
             notRestored: components["schemas"]["ConfigImportNotRestored"][];
+            /** @description The status of the imported archive's `secrets.age`. */
             secrets: components["schemas"]["ConfigImportSecretsStatus"];
             /** @description The name of the archive of the configuration as it was before the import, which a restore can go back to. Empty when no backup destination was written to. */
             preImportArchive: string;
