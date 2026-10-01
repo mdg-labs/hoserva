@@ -2326,16 +2326,43 @@ export interface paths {
         };
         /**
          * Get a Compose stack
-         * @description One stack's row, without its `.env`.
+         * @description One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its `.env` is never returned: it holds generated secrets.
          */
         get: operations["getStack"];
-        put?: never;
+        /**
+         * Edit a Compose stack's file
+         * @description Replaces the stack's `docker-compose.yml` text. The text is first checked with `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before anything is stored or written: a file that is empty or that `docker compose config` rejects is refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack` makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found` and a name that is not a valid stack name with 400 `invalid_stack_name`.
+         */
+        put: operations["updateStack"];
         post?: never;
         /**
          * Remove a Compose stack
          * @description Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are kept), deletes its generated `docker-compose.yml`, `.env` and `meta.json`, and then its row; the stack's directory goes too if nothing else is in it, so the name can be used again and a file the stack keeps there stays. Taking the stack down does not need its `.env`. `docker compose down` removes every container and network of the stack's Compose project name, and with `--volumes` its named volumes, whichever file or directory they were started from. So before docker runs, every container of that project must be one Compose started from the stack's own directory: a project of the same name that something else runs (a hand-run `~/immich/compose.yml` is project `immich`) is refused with 409 `stack_project_shared`, whether or not the stack has its `.env` and whether or not appdata is deleted. Since that cannot be checked otherwise, a remove is also refused, as any docker failure is, when the project's containers cannot be listed (503 `docker_unavailable` when Docker is not reachable). Appdata is deleted only when `deleteAppdata` is explicitly true: then the stack's named volumes are removed with `docker compose down --volumes`, each bind-mount directory of the stack's containers that lies strictly inside an appdata location (the cache disk's `appdata` directory) and is used by no other container is deleted, and so is the stack's whole directory, before the row. Nothing is deleted if one of the stack's containers is still there after `docker compose down`. That needs the array running, like a container remove that deletes appdata: refused with 409 `array_stopped` (or 503 `array_state_unknown`) before anything is changed, with 409 `appdata_unavailable` when no appdata location is known, and with 409 `appdata_shared` when a directory is used by another container or another container binds a place inside the stack's directory. A name that is not a valid stack name is refused with 400 `invalid_stack_name` before anything is touched. A `docker compose down` that fails, or a directory that cannot be deleted, leaves the row in place so the remove can be retried.
          */
         delete: operations["removeStack"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start or recreate a Compose stack
+         * @description Queues a `stack_start` job (service class, scoped to the stack) that runs `docker compose up --detach` for the stack: its services are created if they do not exist and recreated only where their definition changed, so an edit saved by `updateStack` takes effect. Missing generated files are written from the stack's row first. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400 `invalid_stack_name`.
+         */
+        post: operations["startStack"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2350,11 +2377,55 @@ export interface paths {
         };
         /**
          * List the catalog's templates
-         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has run since the daemon started, also starts one catalog check in the background, never a second while one is running. The answer is the on-disk copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
          */
         get: operations["listCatalog"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the catalog refresh settings
+         * @description How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+         */
+        get: operations["getCatalogSettings"];
+        /**
+         * Set the catalog refresh settings
+         * @description Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`, `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing reaches the catalog host except `refreshCatalog`. The background check applies a changed interval without a daemon restart.
+         */
+        put: operations["updateCatalogSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/catalog/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check for catalog updates now
+         * @description Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65) and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed catalog only if its signature verifies against the compiled-in catalog key and its serial is strictly higher (`updated`, with the number of new and of updated templates, compared by id and revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure does not. A check that fails is still a completed check, answered 200. Calls made while a check is running share that check's request and result. A signature that does not verify makes the check fetch the archive and its signature once more before it reports `bad_signature`, because the two files are cached separately and can briefly disagree while a catalog is being published. Every finished check, whoever started it, is announced as a `catalog` event on `/api/v1/events`. Nothing is fetched from `api.github.com`.
+         */
+        post: operations["refreshCatalog"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2849,7 +2920,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -2952,13 +3023,22 @@ export interface components {
                 createdAt: string;
             };
         };
+        /** @description A catalog check finished, whether the background interval, check-on-open or `refreshCatalog` started it. `data` is the check's outcome, the same object `refreshCatalog` answers with. */
+        CatalogEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "catalog";
+            data: components["schemas"]["CatalogRefresh"];
+        };
         /** @description The full set of `/api/v1/events` SSE event types (doc 01 §5). */
-        Event: components["schemas"]["JobProgressEvent"] | components["schemas"]["DiskStateEvent"] | components["schemas"]["ContainerStateEvent"] | components["schemas"]["NotificationEvent"];
+        Event: components["schemas"]["JobProgressEvent"] | components["schemas"]["DiskStateEvent"] | components["schemas"]["ContainerStateEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["CatalogEvent"];
         /**
          * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
          * @enum {string}
          */
-        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "certificate_renewal_failed" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
+        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "certificate_renewal_failed" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed" | "catalog_check_failed";
         /** @enum {string} */
         NotificationChannelType: "email" | "gotify" | "ntfy" | "discord" | "webhook";
         /** @enum {string} */
@@ -3502,6 +3582,19 @@ export interface components {
             template: components["schemas"]["StackTemplate"];
             /** Format: date-time */
             installedAt: string;
+            /** @description True once the stack's Compose text was saved by hand (`updateStack`), so the template's form must not silently overwrite it. A template install is not manually edited. */
+            manuallyEdited: boolean;
+            /** @description The stored `docker-compose.yml` text. Returned by `getStack` and `updateStack` only, never by `listStacks`. The `.env` is never returned. */
+            compose?: string;
+        };
+        UpdateStackRequest: {
+            /** @description The new `docker-compose.yml` text. */
+            compose: string;
+        };
+        UpdateStackResult: {
+            /** @description False for a `dryRun`, which changes nothing. */
+            applied: boolean;
+            stack: components["schemas"]["Stack"];
         };
         ListStacksOK: {
             stacks: components["schemas"]["Stack"][];
@@ -3544,6 +3637,51 @@ export interface components {
              */
             generatedAt?: string;
             templates: components["schemas"]["CatalogEntry"][];
+            /**
+             * Format: date-time
+             * @description When the most recent catalog check finished, whatever its outcome. Absent before any check has run since the daemon started.
+             */
+            lastCheckedAt?: string;
+            lastOutcome?: components["schemas"]["CatalogCheckOutcome"];
+        };
+        /**
+         * @description How a catalog check ended.
+         * @enum {string}
+         */
+        CatalogCheckOutcome: "updated" | "unchanged" | "failed";
+        /**
+         * @description How often the daemon checks the catalog host in the background. Each wait is lengthened by a random extra of up to 10% of the interval; `off` sends no automatic request.
+         * @enum {string}
+         */
+        CatalogRefreshInterval: "off" | "1h" | "6h" | "12h" | "24h";
+        CatalogSettings: {
+            refreshInterval: components["schemas"]["CatalogRefreshInterval"];
+            /** @description Whether listing the catalog starts a background check when the last one is older than 15 minutes. */
+            checkOnOpen: boolean;
+        };
+        CatalogSettingsUpdate: {
+            refreshInterval?: components["schemas"]["CatalogRefreshInterval"];
+            /** @description Left out, it stays unchanged. */
+            checkOnOpen?: boolean;
+        };
+        CatalogRefresh: {
+            /**
+             * Format: date-time
+             * @description When the check finished.
+             */
+            checkedAt: string;
+            outcome: components["schemas"]["CatalogCheckOutcome"];
+            /** @description Templates the new catalog lists that the replaced one did not. Present only when `outcome` is `updated`. */
+            newTemplates?: number;
+            /** @description Templates both catalogs list under a different revision. Present only when `outcome` is `updated`. */
+            updatedTemplates?: number;
+            /**
+             * @description Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered something unusable (not notified). `bad_signature`: the signature does not verify against the catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the signed archive is not a catalog. `install_failed`: the verified archive could not be written to disk. The three verification reasons raise a `catalog_check_failed` notification.
+             * @enum {string}
+             */
+            reason?: "fetch_failed" | "bad_signature" | "not_newer" | "bad_archive" | "install_failed";
+            /** @description Present only when `outcome` is `failed`. */
+            message?: string;
         };
         CatalogTemplate: {
             id: string;
@@ -8021,6 +8159,37 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    updateStack: {
+        parameters: {
+            query?: {
+                /** @description Only validate the text and report the result; store and write nothing. Absent means false. */
+                dryRun?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStackRequest"];
+            };
+        };
+        responses: {
+            /** @description The text is valid. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStackResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     removeStack: {
         parameters: {
             query?: {
@@ -8048,6 +8217,30 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    startStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listCatalog: {
         parameters: {
             query?: never;
@@ -8064,6 +8257,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCatalogSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current catalog refresh settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCatalogSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The settings now saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The check's outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRefresh"];
                 };
             };
             default: components["responses"]["Error"];

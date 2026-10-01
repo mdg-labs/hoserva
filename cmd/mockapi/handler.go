@@ -109,6 +109,20 @@ type handler struct {
 	// stackPorts are the host ports each stack's Compose file publishes with
 	// its .env substituted, started or not (guarded by stacksMu).
 	stackPorts map[string]map[int]bool
+	// stackEnvs are the .env texts the stacks were created with, so an edit
+	// of the Compose file can work out its ports again (guarded by stacksMu).
+	// Like production they are never returned.
+	stackEnvs map[string]string
+
+	// catalogMu guards catalogChecks and catalogLast: the scripted catalog
+	// checks this mock instance has run. Nothing is checked before the first
+	// RefreshCatalog, so ListCatalog reports no check until then.
+	catalogMu     sync.Mutex
+	catalogChecks int
+	catalogLast   *apiv1.CatalogRefresh
+	// catalogSettings are the catalog refresh settings (guarded by
+	// catalogMu); the mock never checks by itself, whatever they say.
+	catalogSettings store.CatalogSettings
 
 	// appdataMu guards appdataPolicies (#61): the per-container appdata
 	// backup policy set through SetAppdataBackupContainer. A container
@@ -190,8 +204,9 @@ func newHandler(scenario string) (*handler, error) {
 		appsDown:     appsDown,
 		stacks:       mockStacksFor(apps),
 
-		bulkExcluded:  make(map[string]bool),
-		imageKeepDays: store.DefaultImageKeepDays,
+		bulkExcluded:    make(map[string]bool),
+		imageKeepDays:   store.DefaultImageKeepDays,
+		catalogSettings: store.DefaultCatalogSettings,
 
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),

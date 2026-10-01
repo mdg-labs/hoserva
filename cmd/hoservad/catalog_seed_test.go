@@ -14,6 +14,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 
@@ -24,6 +25,26 @@ import (
 // does (wireStacks, then startTemplates over the same Docker service) over
 // stateDir.
 func startedTemplates(t *testing.T, stateDir string) *api.Handler {
+	t.Helper()
+	return startedTemplatesWith(t, stateDir, nil)
+}
+
+// startedTemplatesWith is startedTemplates with the notifier main.go hands
+// startTemplates.
+func startedTemplatesWith(t *testing.T, stateDir string, notifier catalogPublisher) *api.Handler {
+	t.Helper()
+	return startedTemplatesIn(t, stateDir, notifier, false)
+}
+
+// startedTemplatesWithSettings is startedTemplatesWith with the catalog
+// settings store main.go hands startTemplates, so the automatic checks and
+// /settings/catalog are wired.
+func startedTemplatesWithSettings(t *testing.T, stateDir string, notifier catalogPublisher) *api.Handler {
+	t.Helper()
+	return startedTemplatesIn(t, stateDir, notifier, true)
+}
+
+func startedTemplatesIn(t *testing.T, stateDir string, notifier catalogPublisher, withSettings bool) *api.Handler {
 	t.Helper()
 	ctx := context.Background()
 	migrations, err := store.Load()
@@ -47,8 +68,12 @@ func startedTemplates(t *testing.T, stateDir string) *api.Handler {
 	shares := func(context.Context) ([]string, error) { return []string{"media"}, nil }
 
 	h := &api.Handler{}
-	wireStacks(h, store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
-	startTemplates(h, stateDir, apps, shares)
+	wireStacks(h, job.NewRegistry(), store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
+	var settings api.CatalogSettingsStore
+	if withSettings {
+		settings = store.NewCatalogSettingsStore(db)
+	}
+	startTemplates(h, stateDir, apps, shares, notifier, settings)
 	if h.TemplateInstall == nil {
 		t.Fatal("startTemplates left Handler.TemplateInstall nil, so every /templates operation would 501")
 	}

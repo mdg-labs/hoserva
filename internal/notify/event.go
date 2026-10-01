@@ -46,6 +46,7 @@ const (
 	EventAppdataBackupFailed      EventType = "appdata_backup_failed"
 	EventBackupDestinationStale   EventType = "backup_destination_stale"
 	EventRestoreDrillFailed       EventType = "restore_drill_failed"
+	EventCatalogCheckFailed       EventType = "catalog_check_failed"
 )
 
 // EventTest is not part of EventCatalog and is never routed or shown in
@@ -88,6 +89,7 @@ var EventCatalog = []EventType{
 	EventAppdataBackupFailed,
 	EventBackupDestinationStale,
 	EventRestoreDrillFailed,
+	EventCatalogCheckFailed,
 }
 
 // defaultSeverity is every event type's compiled-in default severity — the
@@ -126,6 +128,7 @@ var defaultSeverity = map[EventType]Severity{
 	EventAppdataBackupFailed:      SeverityError,
 	EventBackupDestinationStale:   SeverityWarning,
 	EventRestoreDrillFailed:       SeverityError,
+	EventCatalogCheckFailed:       SeverityWarning,
 }
 
 // DefaultSeverity returns event's compiled-in default severity. Every

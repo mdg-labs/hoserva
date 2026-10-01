@@ -465,6 +465,13 @@ type Invoker interface {
 	//
 	// GET /cache/usage
 	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
+	// GetCatalogSettings invokes getCatalogSettings operation.
+	//
+	// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
+	// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+	//
+	// GET /settings/catalog
+	GetCatalogSettings(ctx context.Context) (*CatalogSettings, error)
 	// GetCatalogTemplate invokes getCatalogTemplate operation.
 	//
 	// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
@@ -617,7 +624,8 @@ type Invoker interface {
 	GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error)
 	// GetStack invokes getStack operation.
 	//
-	// One stack's row, without its `.env`.
+	// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
+	// `.env` is never returned: it holds generated secrets.
 	//
 	// GET /stacks/{name}
 	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
@@ -803,11 +811,17 @@ type Invoker interface {
 	// ListCatalog invokes listCatalog operation.
 	//
 	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
-	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
-	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-	// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
-	// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+	// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
+	// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
+	// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
+	// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
+	// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
+	// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
+	// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
+	// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
+	// run since the daemon started, also starts one catalog check in the background, never a second while
+	// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
+	// `catalog` event on `/api/v1/events`.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
@@ -1116,6 +1130,25 @@ type Invoker interface {
 	//
 	// POST /apps/{id}/recreate
 	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
+	// RefreshCatalog invokes refreshCatalog operation.
+	//
+	// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
+	// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
+	// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
+	// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
+	// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
+	// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
+	// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
+	// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
+	// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
+	// while a check is running share that check's request and result. A signature that does not verify
+	// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
+	// because the two files are cached separately and can briefly disagree while a catalog is being
+	// published. Every finished check, whoever started it, is announced as a `catalog` event on
+	// `/api/v1/events`. Nothing is fetched from `api.github.com`.
+	//
+	// POST /catalog/refresh
+	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
 	// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 	//
 	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -1460,6 +1493,19 @@ type Invoker interface {
 	//
 	// POST /shares/{name}/relocate
 	StartShareRelocation(ctx context.Context, request *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)
+	// StartStack invokes startStack operation.
+	//
+	// Queues a `stack_start` job (service class, scoped to the stack) that runs
+	// `docker compose up --detach` for the stack: its services are created if they do not exist and
+	// recreated only where their definition changed, so an edit saved by `updateStack` takes effect.
+	// Missing generated files are written from the stack's row first. Refused with 409 `array_stopped`
+	// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+	// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+	// when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400
+	// `invalid_stack_name`.
+	//
+	// POST /stacks/{name}/start
+	StartStack(ctx context.Context, params StartStackParams) (*Job, error)
 	// StartSync invokes startSync operation.
 	//
 	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
@@ -1540,6 +1586,15 @@ type Invoker interface {
 	//
 	// PATCH /backup/destinations/{destinationId}
 	UpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error)
+	// UpdateCatalogSettings invokes updateCatalogSettings operation.
+	//
+	// Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`,
+	// `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing
+	// reaches the catalog host except `refreshCatalog`. The background check applies a changed interval
+	// without a daemon restart.
+	//
+	// PUT /settings/catalog
+	UpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (*CatalogSettings, error)
 	// UpdateExternalDisk invokes updateExternalDisk operation.
 	//
 	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
@@ -1612,6 +1667,22 @@ type Invoker interface {
 	//
 	// PUT /shares/{name}/permissions
 	UpdateSharePermissions(ctx context.Context, request *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error)
+	// UpdateStack invokes updateStack operation.
+	//
+	// Replaces the stack's `docker-compose.yml` text. The text is first checked with
+	// `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before
+	// anything is stored or written: a file that is empty or that `docker compose config` rejects is
+	// refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file
+	// as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and
+	// nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a
+	// template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from
+	// it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack`
+	// makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup
+	// passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found`
+	// and a name that is not a valid stack name with 400 `invalid_stack_name`.
+	//
+	// PUT /stacks/{name}
+	UpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error)
 	// UpdateUPSSettings invokes updateUPSSettings operation.
 	//
 	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
@@ -7693,6 +7764,132 @@ func (c *Client) sendGetCacheUsage(ctx context.Context) (res NilCacheUsageBreakd
 	return result, nil
 }
 
+// GetCatalogSettings invokes getCatalogSettings operation.
+//
+// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
+// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+//
+// GET /settings/catalog
+func (c *Client) GetCatalogSettings(ctx context.Context) (*CatalogSettings, error) {
+	res, err := c.sendGetCatalogSettings(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetCatalogSettings(ctx context.Context) (res *CatalogSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCatalogSettings"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/catalog"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCatalogSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/catalog"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCatalogSettingsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetCatalogTemplate invokes getCatalogTemplate operation.
 //
 // The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
@@ -10280,7 +10477,8 @@ func (c *Client) sendGetSharePermissions(ctx context.Context, params GetSharePer
 
 // GetStack invokes getStack operation.
 //
-// One stack's row, without its `.env`.
+// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
+// `.env` is never returned: it holds generated secrets.
 //
 // GET /stacks/{name}
 func (c *Client) GetStack(ctx context.Context, params GetStackParams) (*Stack, error) {
@@ -12215,11 +12413,17 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 // ListCatalog invokes listCatalog operation.
 //
 // The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
-// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
-// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
-// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
+// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
+// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
+// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
+// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
+// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
+// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
+// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
+// run since the daemon started, also starts one catalog check in the background, never a second while
+// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
+// `catalog` event on `/api/v1/events`.
 //
 // GET /catalog
 func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
@@ -15715,6 +15919,144 @@ func (c *Client) sendRecreateApp(ctx context.Context, params RecreateAppParams) 
 
 	stage = "DecodeResponse"
 	result, err := decodeRecreateAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RefreshCatalog invokes refreshCatalog operation.
+//
+// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
+// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
+// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
+// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
+// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
+// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
+// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
+// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
+// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
+// while a check is running share that check's request and result. A signature that does not verify
+// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
+// because the two files are cached separately and can briefly disagree while a catalog is being
+// published. Every finished check, whoever started it, is announced as a `catalog` event on
+// `/api/v1/events`. Nothing is fetched from `api.github.com`.
+//
+// POST /catalog/refresh
+func (c *Client) RefreshCatalog(ctx context.Context) (*CatalogRefresh, error) {
+	res, err := c.sendRefreshCatalog(ctx)
+	return res, err
+}
+
+func (c *Client) sendRefreshCatalog(ctx context.Context) (res *CatalogRefresh, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("refreshCatalog"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/catalog/refresh"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RefreshCatalogOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/catalog/refresh"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RefreshCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RefreshCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRefreshCatalogResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -20125,6 +20467,157 @@ func (c *Client) sendStartShareRelocation(ctx context.Context, request *StartSha
 	return result, nil
 }
 
+// StartStack invokes startStack operation.
+//
+// Queues a `stack_start` job (service class, scoped to the stack) that runs
+// `docker compose up --detach` for the stack: its services are created if they do not exist and
+// recreated only where their definition changed, so an edit saved by `updateStack` takes effect.
+// Missing generated files are written from the stack's row first. Refused with 409 `array_stopped`
+// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+// when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400
+// `invalid_stack_name`.
+//
+// POST /stacks/{name}/start
+func (c *Client) StartStack(ctx context.Context, params StartStackParams) (*Job, error) {
+	res, err := c.sendStartStack(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendStartStack(ctx context.Context, params StartStackParams) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startStack"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/stacks/{name}/start"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/start"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartStackResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // StartSync invokes startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
@@ -21256,6 +21749,137 @@ func (c *Client) sendUpdateBackupDestination(ctx context.Context, request *Updat
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateBackupDestinationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateCatalogSettings invokes updateCatalogSettings operation.
+//
+// Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`,
+// `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing
+// reaches the catalog host except `refreshCatalog`. The background check applies a changed interval
+// without a daemon restart.
+//
+// PUT /settings/catalog
+func (c *Client) UpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (*CatalogSettings, error) {
+	res, err := c.sendUpdateCatalogSettings(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (res *CatalogSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateCatalogSettings"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/catalog"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateCatalogSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/catalog"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateCatalogSettingsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateCatalogSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateCatalogSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -22544,6 +23168,183 @@ func (c *Client) sendUpdateSharePermissions(ctx context.Context, request *Update
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateSharePermissionsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateStack invokes updateStack operation.
+//
+// Replaces the stack's `docker-compose.yml` text. The text is first checked with
+// `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before
+// anything is stored or written: a file that is empty or that `docker compose config` rejects is
+// refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file
+// as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and
+// nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a
+// template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from
+// it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack`
+// makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup
+// passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found`
+// and a name that is not a valid stack name with 400 `invalid_stack_name`.
+//
+// PUT /stacks/{name}
+func (c *Client) UpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error) {
+	res, err := c.sendUpdateStack(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (res *UpdateStackResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateStack"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/stacks/{name}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateStackOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "dryRun" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "dryRun",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.DryRun.Get(); ok {
+				return e.EncodeValue(conv.BoolToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateStackRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateStackOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateStackResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

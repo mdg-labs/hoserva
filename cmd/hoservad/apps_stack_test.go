@@ -10,6 +10,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -44,7 +45,7 @@ func TestListAppsWiring_NamesTheStackOfAContainerAnInstalledStackStarted(t *test
 	provider := container.NewFakeProvider()
 	apps := &appServices{Lifecycle: &container.Lifecycle{Provider: provider}}
 	h := &api.Handler{Container: provider}
-	wireStacks(h, store.NewStackStore(db), machineKey, &resolvingRunner{}, stateDir, apps, nil)
+	wireStacks(h, job.NewRegistry(), store.NewStackStore(db), machineKey, &resolvingRunner{}, stateDir, apps, nil)
 	if _, err := h.Stacks.Create(ctx, container.NewStack{Name: "nginx", Compose: "services:\n  web:\n    image: nginx:1.27\n"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

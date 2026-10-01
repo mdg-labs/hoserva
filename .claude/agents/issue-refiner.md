@@ -13,6 +13,14 @@ the issues, a fresh read-only clone of `dev` to read, and whether you apply
 your result (`MODE = apply`) or only draft it (`MODE = draft`). Follow it
 exactly.
 
+Alongside the changed-lines size estimate, give an `Expected files:`
+estimate: how many reviewable files the work touches, with the likely paths.
+Leave out files `.coderabbit.yaml`'s `path_filters` exclude (`api/gen/`,
+`internal/store/db/`, `spikes/`), since CodeRabbit's 100-file cap on the
+`dev → main` PR is counted after them. Do not subtract what is already in
+the `main...dev` diff — it moves between now and the run, and `orchestrate`
+nets it then. Put the same line in the scope hint you write in apply mode.
+
 Most of what an old issue describes may already exist on `dev`, partly or
 as a stub. Check the code before you describe anything as still to build,
 and say what you found. The most important thing you add is where the

@@ -49,6 +49,9 @@ import {
   type LifecycleAction,
 } from "@/routes/apps/containers";
 import { DockerBanner } from "@/routes/apps/docker-banner";
+import { LogsTab } from "@/routes/apps/logs-tab";
+import { StatsTab } from "@/routes/apps/stats-tab";
+import { UpdateTab } from "@/routes/apps/update-tab";
 
 type Job = components["schemas"]["Job"];
 type ListAppsOK = components["schemas"]["ListAppsOK"];
@@ -558,10 +561,14 @@ export function AppDetailPage(): React.ReactElement {
     const placeholder = <p className="text-muted-foreground text-sm">{t("apps.detail.placeholder")}</p>;
     const tabs: DetailTab[] = [
       { id: TAB_OVERVIEW, label: t("apps.detail.tabs.overview"), content: <Overview app={current} /> },
-      { id: TAB_LOGS, label: t("apps.detail.tabs.logs"), content: placeholder },
-      { id: TAB_STATS, label: t("apps.detail.tabs.stats"), content: placeholder },
+      { id: TAB_LOGS, label: t("apps.detail.tabs.logs"), content: <LogsTab app={current} /> },
+      { id: TAB_STATS, label: t("apps.detail.tabs.stats"), content: <StatsTab app={current} /> },
       { id: TAB_CONFIG, label: t("apps.detail.tabs.config"), content: placeholder },
-      { id: TAB_UPDATE, label: t("apps.detail.tabs.update"), content: placeholder },
+      {
+        id: TAB_UPDATE,
+        label: t("apps.detail.tabs.update"),
+        content: <UpdateTab app={current} onChanged={() => void query.refresh()} />,
+      },
     ];
 
     return (

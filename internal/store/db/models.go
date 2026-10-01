@@ -299,15 +299,17 @@ type ScheduleJob struct {
 }
 
 type SchemaInfo struct {
-	ID                 int64          `json:"id"`
-	InstallationID     string         `json:"installation_id"`
-	CreatedAt          string         `json:"created_at"`
-	Hostname           sql.NullString `json:"hostname"`
-	Timezone           sql.NullString `json:"timezone"`
-	BackupPassphrase   []byte         `json:"backup_passphrase"`
-	UpdateChannel      string         `json:"update_channel"`
-	UpdateCheckEnabled int64          `json:"update_check_enabled"`
-	PreviousVersion    sql.NullString `json:"previous_version"`
+	ID                     int64          `json:"id"`
+	InstallationID         string         `json:"installation_id"`
+	CreatedAt              string         `json:"created_at"`
+	Hostname               sql.NullString `json:"hostname"`
+	Timezone               sql.NullString `json:"timezone"`
+	BackupPassphrase       []byte         `json:"backup_passphrase"`
+	UpdateChannel          string         `json:"update_channel"`
+	UpdateCheckEnabled     int64          `json:"update_check_enabled"`
+	PreviousVersion        sql.NullString `json:"previous_version"`
+	CatalogRefreshInterval string         `json:"catalog_refresh_interval"`
+	CatalogCheckOnOpen     int64          `json:"catalog_check_on_open"`
 }
 
 type Session struct {
@@ -374,6 +376,7 @@ type Stack struct {
 	Compose          string `json:"compose"`
 	Env              []byte `json:"env"`
 	InstalledAt      string `json:"installed_at"`
+	ManuallyEdited   int64  `json:"manually_edited"`
 }
 
 type UpsConfig struct {

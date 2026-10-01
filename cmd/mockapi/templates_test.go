@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -180,5 +181,105 @@ func TestMockCatalogIconHasTheProductionHeaders(t *testing.T) {
 	got, _ := io.ReadAll(svg.Response)
 	if string(got) != string(mockIcons["jellyfin"]) {
 		t.Errorf("body = %q", got)
+	}
+}
+
+func TestMockRefreshCatalogScriptsEveryOutcomeAndTheListReportsTheLastCheck(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	list, err := h.ListCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.LastCheckedAt.IsSet() || list.LastOutcome.IsSet() {
+		t.Fatalf("the list reports a check before any ran: %+v %+v", list.LastCheckedAt, list.LastOutcome)
+	}
+
+	for i, want := range []apiv1.CatalogCheckOutcome{
+		apiv1.CatalogCheckOutcomeUpdated, apiv1.CatalogCheckOutcomeUnchanged, apiv1.CatalogCheckOutcomeFailed,
+		apiv1.CatalogCheckOutcomeUpdated,
+	} {
+		res, err := h.RefreshCatalog(ctx)
+		if err != nil {
+			t.Fatalf("check %d: %v", i, err)
+		}
+		if res.Outcome != want || res.CheckedAt.IsZero() {
+			t.Fatalf("check %d = %+v, want %s", i, res, want)
+		}
+		list, err := h.ListCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o, ok := list.LastOutcome.Get(); !ok || o != want {
+			t.Fatalf("check %d: lastOutcome = %v, %v", i, o, ok)
+		}
+		if at, ok := list.LastCheckedAt.Get(); !ok || !at.Equal(res.CheckedAt) {
+			t.Fatalf("check %d: lastCheckedAt = %v, %v, want %v", i, at, ok, res.CheckedAt)
+		}
+	}
+}
+
+// TestMockRefreshCatalogAnswersTheBodyTheProductionHandlerBuilds runs each
+// outcome through the production handler and the mock and compares what each
+// puts in the response, so the mock cannot drift on which fields an outcome
+// carries.
+func TestMockRefreshCatalogAnswersTheBodyTheProductionHandlerBuilds(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	outcomes := []template.CheckResult{
+		{CheckedAt: at, Outcome: template.OutcomeUpdated, New: 2, Updated: 1},
+		{CheckedAt: at, Outcome: template.OutcomeUnchanged},
+		{CheckedAt: at, Outcome: template.OutcomeFailed, Reason: template.ReasonFetchFailed, Message: "x"},
+	}
+	for _, want := range outcomes {
+		prod := &api.Handler{CatalogRefresh: fixedRefresher{want}}
+		p, err := prod.RefreshCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := h.RefreshCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Outcome != m.Outcome || p.NewTemplates.IsSet() != m.NewTemplates.IsSet() || p.UpdatedTemplates.IsSet() != m.UpdatedTemplates.IsSet() ||
+			p.Reason.IsSet() != m.Reason.IsSet() || p.Message.IsSet() != m.Message.IsSet() {
+			t.Errorf("%s: production sets %+v, the mock %+v", want.Outcome, p, m)
+		}
+	}
+}
+
+type fixedRefresher struct{ res template.CheckResult }
+
+func (f fixedRefresher) Refresh(context.Context) (template.CheckResult, error) { return f.res, nil }
+func (f fixedRefresher) Last() (template.CheckResult, bool)                    { return f.res, true }
+
+func TestMockCatalogSettingsStartDailyAndOnAndChangeOneFieldAtATime(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if got, err := h.GetCatalogSettings(ctx); err != nil || got.RefreshInterval != apiv1.CatalogRefreshInterval24h || !got.CheckOnOpen {
+		t.Fatalf("GetCatalogSettings = %+v, %v, want 24h and on", got, err)
+	}
+	if got, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{CheckOnOpen: apiv1.NewOptBool(false)}); err != nil || got.RefreshInterval != apiv1.CatalogRefreshInterval24h || got.CheckOnOpen {
+		t.Fatalf("check-on-open only = %+v, %v", got, err)
+	}
+	if got, err := h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{RefreshInterval: apiv1.NewOptCatalogRefreshInterval(apiv1.CatalogRefreshInterval12h)}); err != nil || got.RefreshInterval != apiv1.CatalogRefreshInterval12h || got.CheckOnOpen {
+		t.Fatalf("interval only = %+v, %v", got, err)
+	}
+	_, err = h.UpdateCatalogSettings(ctx, &apiv1.CatalogSettingsUpdate{RefreshInterval: apiv1.NewOptCatalogRefreshInterval("2h"), CheckOnOpen: apiv1.NewOptBool(true)})
+	if err == nil || mockErrorCode(t, err) != "invalid_catalog_interval" {
+		t.Fatalf("an unknown interval = %v, want invalid_catalog_interval", err)
+	}
+	if got, _ := h.GetCatalogSettings(ctx); got.RefreshInterval != apiv1.CatalogRefreshInterval12h || got.CheckOnOpen {
+		t.Fatalf("a refused update changed the settings: %+v", got)
 	}
 }

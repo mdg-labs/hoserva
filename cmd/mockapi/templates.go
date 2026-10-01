@@ -14,6 +14,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
@@ -236,10 +237,12 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 		m.h.stacks = map[string]apiv1.Stack{}
 	}
 	m.h.setStackPorts(n.Name, composePorts(n.Compose, n.Env))
+	m.h.setStackEnv(n.Name, n.Env)
 	m.h.stacks[n.Name] = apiv1.Stack{
 		Name:        n.Name,
 		Template:    apiv1.StackTemplate{Source: n.TemplateSource, ID: n.TemplateID, Revision: n.TemplateRevision},
 		InstalledAt: now,
+		Compose:     apiv1.NewOptString(n.Compose),
 	}
 	return container.Stack{Name: n.Name, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision, InstalledAt: now}, nil
 }
@@ -317,7 +320,69 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 			Source: catalog.Name(), Installed: installed[t.ID],
 		}
 	}
+	h.catalogMu.Lock()
+	if last := h.catalogLast; last != nil {
+		out.LastCheckedAt = apiv1.NewOptDateTime(last.CheckedAt)
+		out.LastOutcome = apiv1.NewOptCatalogCheckOutcome(last.Outcome)
+	}
+	h.catalogMu.Unlock()
 	return out, nil
+}
+
+// RefreshCatalog answers a scripted sequence of checks, so a page built on
+// the mock meets every outcome: the first check updates the catalog (two
+// new templates and one updated), the second finds it unchanged, the third
+// fails to reach the host, and the sequence then repeats. The mock's catalog
+// itself never changes.
+func (h *handler) RefreshCatalog(context.Context) (*apiv1.CatalogRefresh, error) {
+	h.catalogMu.Lock()
+	defer h.catalogMu.Unlock()
+	out := &apiv1.CatalogRefresh{CheckedAt: time.Now().UTC().Truncate(time.Second)}
+	switch h.catalogChecks % 3 {
+	case 0:
+		out.Outcome = apiv1.CatalogCheckOutcomeUpdated
+		out.NewTemplates = apiv1.NewOptInt(2)
+		out.UpdatedTemplates = apiv1.NewOptInt(1)
+	case 1:
+		out.Outcome = apiv1.CatalogCheckOutcomeUnchanged
+	default:
+		out.Outcome = apiv1.CatalogCheckOutcomeFailed
+		out.Reason = apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReasonFetchFailed)
+		out.Message = apiv1.NewOptString("fetching https://catalog.hoserva.dev/catalog.tar.zst: the mock's scripted network failure")
+	}
+	h.catalogChecks++
+	last := *out
+	h.catalogLast = &last
+	return out, nil
+}
+
+func (h *handler) GetCatalogSettings(context.Context) (*apiv1.CatalogSettings, error) {
+	h.catalogMu.Lock()
+	defer h.catalogMu.Unlock()
+	return mockCatalogSettings(h.catalogSettings), nil
+}
+
+func mockCatalogSettings(s store.CatalogSettings) *apiv1.CatalogSettings {
+	return &apiv1.CatalogSettings{RefreshInterval: apiv1.CatalogRefreshInterval(s.RefreshInterval), CheckOnOpen: s.CheckOnOpen}
+}
+
+func (h *handler) UpdateCatalogSettings(_ context.Context, req *apiv1.CatalogSettingsUpdate) (*apiv1.CatalogSettings, error) {
+	h.catalogMu.Lock()
+	defer h.catalogMu.Unlock()
+	next := h.catalogSettings
+	if v, ok := req.RefreshInterval.Get(); ok {
+		switch string(v) {
+		case store.CatalogIntervalOff, store.CatalogInterval1h, store.CatalogInterval6h, store.CatalogInterval12h, store.CatalogInterval24h:
+			next.RefreshInterval = string(v)
+		default:
+			return nil, &mockError{code: "invalid_catalog_interval", statusCode: 400, message: fmt.Sprintf("%s: %q", store.ErrCatalogInterval, string(v))}
+		}
+	}
+	if v, ok := req.CheckOnOpen.Get(); ok {
+		next.CheckOnOpen = v
+	}
+	h.catalogSettings = next
+	return mockCatalogSettings(next), nil
 }
 
 func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalogTemplateParams) (*apiv1.CatalogTemplate, error) {

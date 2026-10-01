@@ -15,19 +15,19 @@
 .claude/skills/orchestrate/templates/executor-prompt.md::Never `gh issue edit`, `gh issue close`, or
 .claude/skills/orchestrate/templates/executor-prompt.md::`gh issue comment`.
 .claude/skills/open-pr/SKILL.md::Never merge.** No `gh pr merge`
-.claude/skills/coderabbit-review/SKILL.md::Never `gh pr merge`, never close the PR
+.claude/skills/cr-review/SKILL.md::Never `gh pr merge`, never close the PR
 
 # gh-rest.sh's own commands (issue-comment, pr-comment) are named after the
 # GraphQL-backed subcommand they replace, so a doc sentence explaining the
 # replacement names it too.
 .claude/skills/orchestrate/templates/verifier-prompt.md::never a GraphQL-backed `gh issue comment`
 .claude/agents/task-verifier.md::never a GraphQL-backed `gh issue comment`
-.claude/skills/coderabbit-review/SKILL.md::never a GraphQL-backed `gh pr view`
+.claude/skills/cr-review/SKILL.md::never a GraphQL-backed `gh pr view`
 
 # --paginate: the cloud-proxy explanation, in the helper and its callers,
 # necessarily says the word to explain why nothing here uses it.
-.claude/skills/coderabbit-review/SKILL.md::`?per_page=100&page=N`, never `--paginate`
-.claude/skills/coderabbit-review/SKILL.md::numeric-id `repositories/{id}/...` links `--paginate` would follow
+.claude/skills/cr-review/SKILL.md::`?per_page=100&page=N`, never `--paginate`
+.claude/skills/cr-review/SKILL.md::numeric-id `repositories/{id}/...` links `--paginate` would follow
 scripts/gh-rest.sh::# `gh issue`/`gh pr`/`gh repo view`/`gh label list`/`gh release list`
 scripts/gh-rest.sh::refuses `search/issues` and any `--paginate`-followed
 scripts/gh-rest.sh::pages itself with `?per_page=100&page=N` instead, and never `--paginate`.

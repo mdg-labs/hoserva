@@ -30,6 +30,9 @@ type Stack struct {
 	Compose          string
 	SealedEnv        []byte
 	InstalledAt      time.Time
+	// ManuallyEdited is true once the Compose text was saved by hand, so a
+	// template form must not overwrite it.
+	ManuallyEdited bool
 }
 
 // StackStore persists stacks in the central SQLite database (D4).
@@ -55,6 +58,7 @@ func (s *StackStore) Insert(ctx context.Context, st Stack) error {
 		Compose:          st.Compose,
 		Env:              st.SealedEnv,
 		InstalledAt:      st.InstalledAt.UTC().Format(TimeFormat),
+		ManuallyEdited:   boolToInt(st.ManuallyEdited),
 	})
 	if isUniqueConstraint(err) {
 		return fmt.Errorf("%w: %s", ErrStackExists, st.Name)
@@ -94,6 +98,24 @@ func (s *StackStore) List(ctx context.Context) ([]Stack, error) {
 	return out, nil
 }
 
+// UpdateCompose sets the stack's Compose text and its manually-edited flag
+// in one statement, leaving every other column as it is. It refuses
+// (ErrStackNotFound) a missing name.
+func (s *StackStore) UpdateCompose(ctx context.Context, name, compose string, manuallyEdited bool) error {
+	n, err := s.q.UpdateStackCompose(ctx, storedb.UpdateStackComposeParams{
+		Compose:        compose,
+		ManuallyEdited: boolToInt(manuallyEdited),
+		Name:           name,
+	})
+	if err != nil {
+		return fmt.Errorf("store: updating the compose file of stack %s: %w", name, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrStackNotFound, name)
+	}
+	return nil
+}
+
 // Delete removes the stack's row, never anything on disk. It refuses
 // (ErrStackNotFound) a missing name.
 func (s *StackStore) Delete(ctx context.Context, name string) error {
@@ -120,5 +142,6 @@ func stackFromRow(row *storedb.Stack) (Stack, error) {
 		Compose:          row.Compose,
 		SealedEnv:        row.Env,
 		InstalledAt:      installed,
+		ManuallyEdited:   row.ManuallyEdited != 0,
 	}, nil
 }

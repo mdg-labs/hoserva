@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
@@ -16,6 +17,26 @@ const (
 	iconCSP           = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 	iconContentOption = "nosniff"
 )
+
+// CatalogRefresher runs one catalog check and reports the latest one;
+// *template.Refresher is the production implementation.
+type CatalogRefresher interface {
+	Refresh(ctx context.Context) (template.CheckResult, error)
+	Last() (template.CheckResult, bool)
+}
+
+// CatalogSettingsStore reads and writes the catalog refresh settings;
+// *store.CatalogSettingsStore is the production implementation.
+type CatalogSettingsStore interface {
+	CatalogSettings(ctx context.Context) (store.CatalogSettings, error)
+	UpdateCatalogSettings(ctx context.Context, u store.CatalogSettingsUpdate) (store.CatalogSettings, error)
+}
+
+// CatalogOpener is the check-on-open trigger; *template.AutoRefresher is the
+// production implementation.
+type CatalogOpener interface {
+	CheckOnOpen(ctx context.Context)
+}
 
 func errCatalogNotConfigured() error {
 	return &apiError{code: "not_configured", statusCode: 501, message: "The template catalog is not configured on this daemon"}
@@ -41,6 +62,9 @@ func (h *Handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 	}
 	if h.Stacks == nil {
 		return nil, errStacksNotConfigured()
+	}
+	if h.CatalogOpen != nil {
+		h.CatalogOpen.CheckOnOpen(ctx)
 	}
 	index, err := h.Catalog.Index(ctx)
 	if err != nil {
@@ -71,7 +95,70 @@ func (h *Handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 			Installed:  installed[t.ID],
 		}
 	}
+	if h.CatalogRefresh != nil {
+		if last, ok := h.CatalogRefresh.Last(); ok {
+			out.LastCheckedAt = apiv1.NewOptDateTime(last.CheckedAt)
+			out.LastOutcome = apiv1.NewOptCatalogCheckOutcome(apiv1.CatalogCheckOutcome(last.Outcome))
+		}
+	}
 	return out, nil
+}
+
+func (h *Handler) RefreshCatalog(ctx context.Context) (*apiv1.CatalogRefresh, error) {
+	if h.CatalogRefresh == nil {
+		return nil, errCatalogNotConfigured()
+	}
+	res, err := h.CatalogRefresh.Refresh(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("waiting for the catalog check: %w", err)
+	}
+	out := &apiv1.CatalogRefresh{CheckedAt: res.CheckedAt, Outcome: apiv1.CatalogCheckOutcome(res.Outcome)}
+	switch res.Outcome {
+	case template.OutcomeUpdated:
+		out.NewTemplates = apiv1.NewOptInt(res.New)
+		out.UpdatedTemplates = apiv1.NewOptInt(res.Updated)
+	case template.OutcomeFailed:
+		out.Reason = apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReason(res.Reason))
+		out.Message = apiv1.NewOptString(res.Message)
+	}
+	return out, nil
+}
+
+func catalogSettingsToAPI(s store.CatalogSettings) *apiv1.CatalogSettings {
+	return &apiv1.CatalogSettings{RefreshInterval: apiv1.CatalogRefreshInterval(s.RefreshInterval), CheckOnOpen: s.CheckOnOpen}
+}
+
+func (h *Handler) GetCatalogSettings(ctx context.Context) (*apiv1.CatalogSettings, error) {
+	if h.CatalogSettings == nil {
+		return nil, errCatalogNotConfigured()
+	}
+	s, err := h.CatalogSettings.CatalogSettings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading the catalog settings: %w", err)
+	}
+	return catalogSettingsToAPI(s), nil
+}
+
+func (h *Handler) UpdateCatalogSettings(ctx context.Context, req *apiv1.CatalogSettingsUpdate) (*apiv1.CatalogSettings, error) {
+	if h.CatalogSettings == nil {
+		return nil, errCatalogNotConfigured()
+	}
+	var u store.CatalogSettingsUpdate
+	if v, ok := req.RefreshInterval.Get(); ok {
+		interval := string(v)
+		u.RefreshInterval = &interval
+	}
+	if v, ok := req.CheckOnOpen.Get(); ok {
+		u.CheckOnOpen = &v
+	}
+	s, err := h.CatalogSettings.UpdateCatalogSettings(ctx, u)
+	if err != nil {
+		if errors.Is(err, store.ErrCatalogInterval) {
+			return nil, &apiError{code: "invalid_catalog_interval", statusCode: 400, message: err.Error()}
+		}
+		return nil, fmt.Errorf("saving the catalog settings: %w", err)
+	}
+	return catalogSettingsToAPI(s), nil
 }
 
 func (h *Handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalogTemplateParams) (*apiv1.CatalogTemplate, error) {

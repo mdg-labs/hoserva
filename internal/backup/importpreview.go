@@ -154,10 +154,12 @@ var uncomparedTables = map[string]string{
 // uncomparedColumns are the schema_info columns no configTables entry
 // compares, each with why; table.column is the key.
 var uncomparedColumns = map[string]string{
-	"schema_info.id":               "the singleton row's key",
-	"schema_info.installation_id":  "identifies the installation, which CheckImport requires to match",
-	"schema_info.created_at":       "runtime: when the installation was first started",
-	"schema_info.previous_version": "runtime: the version before the last upgrade",
+	"schema_info.id":                       "the singleton row's key",
+	"schema_info.installation_id":          "identifies the installation, which CheckImport requires to match",
+	"schema_info.created_at":               "runtime: when the installation was first started",
+	"schema_info.previous_version":         "runtime: the version before the last upgrade",
+	"schema_info.catalog_refresh_interval": "not previewed: how often the catalog checks for updates by itself; it needs a preview change kind of its own, like container_update_settings",
+	"schema_info.catalog_check_on_open":    "not previewed: whether opening the catalog starts a check; it needs a preview change kind of its own, like container_update_settings",
 }
 
 var importCategories = []string{CategoryShares, CategoryAccounts, CategorySchedules, CategoryNotifications, CategoryBackup, CategorySystem}

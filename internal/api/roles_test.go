@@ -253,6 +253,8 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ListStacksOperation,
 		apiv1.GetStackOperation,
 		apiv1.CreateStackOperation,
+		apiv1.UpdateStackOperation,
+		apiv1.StartStackOperation,
 		apiv1.RemoveStackOperation,
 		apiv1.RunConfigBackupOperation,
 		apiv1.ListBackupDestinationsOperation,
@@ -272,6 +274,9 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.PreviewTemplateInstallOperation,
 		apiv1.InstallTemplateOperation,
 		apiv1.ListCatalogOperation,
+		apiv1.RefreshCatalogOperation,
+		apiv1.GetCatalogSettingsOperation,
+		apiv1.UpdateCatalogSettingsOperation,
 		apiv1.GetCatalogTemplateOperation,
 		apiv1.GetCatalogTemplateIconOperation,
 	}

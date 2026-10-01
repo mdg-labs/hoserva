@@ -16,11 +16,23 @@ SELECT id, installation_id, created_at, hostname, timezone, backup_passphrase, u
 FROM schema_info WHERE id = 1
 `
 
+type GetSchemaMetaRow struct {
+	ID                 int64          `json:"id"`
+	InstallationID     string         `json:"installation_id"`
+	CreatedAt          string         `json:"created_at"`
+	Hostname           sql.NullString `json:"hostname"`
+	Timezone           sql.NullString `json:"timezone"`
+	BackupPassphrase   []byte         `json:"backup_passphrase"`
+	UpdateChannel      string         `json:"update_channel"`
+	UpdateCheckEnabled int64          `json:"update_check_enabled"`
+	PreviousVersion    sql.NullString `json:"previous_version"`
+}
+
 // sqlc input (Q60): typed Go query code for schema.sql's tables, generated
 // into internal/store/db/ by `make gen`. Nothing hand-writes that package.
-func (q *Queries) GetSchemaMeta(ctx context.Context) (*SchemaInfo, error) {
+func (q *Queries) GetSchemaMeta(ctx context.Context) (*GetSchemaMetaRow, error) {
 	row := q.db.QueryRowContext(ctx, getSchemaMeta)
-	var i SchemaInfo
+	var i GetSchemaMetaRow
 	err := row.Scan(
 		&i.ID,
 		&i.InstallationID,

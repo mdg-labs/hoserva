@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,6 +163,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeShareRelocation,
 	job.TypeACMEIssue,
 	job.TypeContainerRecreate,
+	job.TypeStackStart,
 	job.TypeContainerUpdate,
 	job.TypeRestoreDrill,
 	job.TypeConfigBackup,
@@ -768,6 +771,8 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		}
 	}
 	h.Catalog = mockCatalog()
+	h.CatalogRefresh = &scriptedCatalogRefresher{}
+	h.CatalogSettings = store.NewCatalogSettingsStore(db)
 	h.TemplateInstall = &template.Installer{
 		Catalog: mockCatalog(),
 		Stacks:  stacks,
@@ -893,6 +898,20 @@ func seedJellyfinUpdate(ctx context.Context, h apiv1.Handler, keep time.Duration
 type contractComposeRunner struct{ *container.FakeRunner }
 
 func (r contractComposeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	for _, a := range args {
+		if a == "config" {
+			// Stands in for `docker compose config` rejecting the file:
+			// the mock's own check (validateMockCompose) decides, so the
+			// two handlers refuse the same texts.
+			for j, f := range args {
+				if f == "--file" && j+1 < len(args) {
+					if b, rerr := os.ReadFile(args[j+1]); rerr == nil && validateMockCompose(string(b)) != nil {
+						return nil, &exec.ExitError{}
+					}
+				}
+			}
+		}
+	}
 	out, err := r.FakeRunner.Run(ctx, env, name, args...)
 	if err == nil && len(out) == 0 && strings.Contains(strings.Join(args, " "), "config --format json") {
 		return []byte(`{"services":{}}`), nil
@@ -906,3 +925,27 @@ type contractStackCipher struct{}
 
 func (contractStackCipher) Encrypt(p []byte) ([]byte, error) { return append([]byte(nil), p...), nil }
 func (contractStackCipher) Decrypt(c []byte) ([]byte, error) { return append([]byte(nil), c...), nil }
+
+// scriptedCatalogRefresher is the production handler's catalog check in the
+// contract rig: it never touches the network, and answers an update.
+type scriptedCatalogRefresher struct {
+	mu   sync.Mutex
+	last *template.CheckResult
+}
+
+func (s *scriptedCatalogRefresher) Refresh(context.Context) (template.CheckResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := template.CheckResult{CheckedAt: time.Now().UTC(), Outcome: template.OutcomeUpdated, New: 1}
+	s.last = &res
+	return res, nil
+}
+
+func (s *scriptedCatalogRefresher) Last() (template.CheckResult, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil {
+		return template.CheckResult{}, false
+	}
+	return *s.last, true
+}

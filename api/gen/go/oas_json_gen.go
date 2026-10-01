@@ -5823,6 +5823,48 @@ func (s *CancelDiskRemovalRequest) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes CatalogCheckOutcome as json.
+func (s CatalogCheckOutcome) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CatalogCheckOutcome from json.
+func (s *CatalogCheckOutcome) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogCheckOutcome to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CatalogCheckOutcome(v) {
+	case CatalogCheckOutcomeUpdated:
+		*s = CatalogCheckOutcomeUpdated
+	case CatalogCheckOutcomeUnchanged:
+		*s = CatalogCheckOutcomeUnchanged
+	case CatalogCheckOutcomeFailed:
+		*s = CatalogCheckOutcomeFailed
+	default:
+		*s = CatalogCheckOutcome(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CatalogCheckOutcome) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogCheckOutcome) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode implements json.Marshaler.
 func (s *CatalogEntry) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -6060,12 +6102,26 @@ func (s *CatalogList) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		if s.LastCheckedAt.Set {
+			e.FieldStart("lastCheckedAt")
+			s.LastCheckedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		if s.LastOutcome.Set {
+			e.FieldStart("lastOutcome")
+			s.LastOutcome.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfCatalogList = [3]string{
+var jsonFieldsNameOfCatalogList = [5]string{
 	0: "serial",
 	1: "generatedAt",
 	2: "templates",
+	3: "lastCheckedAt",
+	4: "lastOutcome",
 }
 
 // Decode decodes CatalogList from json.
@@ -6116,6 +6172,26 @@ func (s *CatalogList) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"templates\"")
+			}
+		case "lastCheckedAt":
+			if err := func() error {
+				s.LastCheckedAt.Reset()
+				if err := s.LastCheckedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"lastCheckedAt\"")
+			}
+		case "lastOutcome":
+			if err := func() error {
+				s.LastOutcome.Reset()
+				if err := s.LastOutcome.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"lastOutcome\"")
 			}
 		default:
 			return d.Skip()
@@ -6169,6 +6245,468 @@ func (s *CatalogList) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *CatalogList) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogRefresh) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogRefresh) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("checkedAt")
+		json.EncodeDateTime(e, s.CheckedAt)
+	}
+	{
+		e.FieldStart("outcome")
+		s.Outcome.Encode(e)
+	}
+	{
+		if s.NewTemplates.Set {
+			e.FieldStart("newTemplates")
+			s.NewTemplates.Encode(e)
+		}
+	}
+	{
+		if s.UpdatedTemplates.Set {
+			e.FieldStart("updatedTemplates")
+			s.UpdatedTemplates.Encode(e)
+		}
+	}
+	{
+		if s.Reason.Set {
+			e.FieldStart("reason")
+			s.Reason.Encode(e)
+		}
+	}
+	{
+		if s.Message.Set {
+			e.FieldStart("message")
+			s.Message.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfCatalogRefresh = [6]string{
+	0: "checkedAt",
+	1: "outcome",
+	2: "newTemplates",
+	3: "updatedTemplates",
+	4: "reason",
+	5: "message",
+}
+
+// Decode decodes CatalogRefresh from json.
+func (s *CatalogRefresh) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogRefresh to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "checkedAt":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.CheckedAt = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checkedAt\"")
+			}
+		case "outcome":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Outcome.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"outcome\"")
+			}
+		case "newTemplates":
+			if err := func() error {
+				s.NewTemplates.Reset()
+				if err := s.NewTemplates.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"newTemplates\"")
+			}
+		case "updatedTemplates":
+			if err := func() error {
+				s.UpdatedTemplates.Reset()
+				if err := s.UpdatedTemplates.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"updatedTemplates\"")
+			}
+		case "reason":
+			if err := func() error {
+				s.Reason.Reset()
+				if err := s.Reason.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reason\"")
+			}
+		case "message":
+			if err := func() error {
+				s.Message.Reset()
+				if err := s.Message.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"message\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogRefresh")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCatalogRefresh) {
+					name = jsonFieldsNameOfCatalogRefresh[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogRefresh) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogRefresh) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogRefreshInterval as json.
+func (s CatalogRefreshInterval) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CatalogRefreshInterval from json.
+func (s *CatalogRefreshInterval) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogRefreshInterval to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CatalogRefreshInterval(v) {
+	case CatalogRefreshIntervalOff:
+		*s = CatalogRefreshIntervalOff
+	case CatalogRefreshInterval1h:
+		*s = CatalogRefreshInterval1h
+	case CatalogRefreshInterval6h:
+		*s = CatalogRefreshInterval6h
+	case CatalogRefreshInterval12h:
+		*s = CatalogRefreshInterval12h
+	case CatalogRefreshInterval24h:
+		*s = CatalogRefreshInterval24h
+	default:
+		*s = CatalogRefreshInterval(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CatalogRefreshInterval) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogRefreshInterval) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogRefreshReason as json.
+func (s CatalogRefreshReason) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CatalogRefreshReason from json.
+func (s *CatalogRefreshReason) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogRefreshReason to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CatalogRefreshReason(v) {
+	case CatalogRefreshReasonFetchFailed:
+		*s = CatalogRefreshReasonFetchFailed
+	case CatalogRefreshReasonBadSignature:
+		*s = CatalogRefreshReasonBadSignature
+	case CatalogRefreshReasonNotNewer:
+		*s = CatalogRefreshReasonNotNewer
+	case CatalogRefreshReasonBadArchive:
+		*s = CatalogRefreshReasonBadArchive
+	case CatalogRefreshReasonInstallFailed:
+		*s = CatalogRefreshReasonInstallFailed
+	default:
+		*s = CatalogRefreshReason(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CatalogRefreshReason) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogRefreshReason) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogSettings) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogSettings) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("refreshInterval")
+		s.RefreshInterval.Encode(e)
+	}
+	{
+		e.FieldStart("checkOnOpen")
+		e.Bool(s.CheckOnOpen)
+	}
+}
+
+var jsonFieldsNameOfCatalogSettings = [2]string{
+	0: "refreshInterval",
+	1: "checkOnOpen",
+}
+
+// Decode decodes CatalogSettings from json.
+func (s *CatalogSettings) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogSettings to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "refreshInterval":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.RefreshInterval.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"refreshInterval\"")
+			}
+		case "checkOnOpen":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.CheckOnOpen = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checkOnOpen\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogSettings")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCatalogSettings) {
+					name = jsonFieldsNameOfCatalogSettings[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogSettings) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogSettings) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogSettingsUpdate) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogSettingsUpdate) encodeFields(e *jx.Encoder) {
+	{
+		if s.RefreshInterval.Set {
+			e.FieldStart("refreshInterval")
+			s.RefreshInterval.Encode(e)
+		}
+	}
+	{
+		if s.CheckOnOpen.Set {
+			e.FieldStart("checkOnOpen")
+			s.CheckOnOpen.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfCatalogSettingsUpdate = [2]string{
+	0: "refreshInterval",
+	1: "checkOnOpen",
+}
+
+// Decode decodes CatalogSettingsUpdate from json.
+func (s *CatalogSettingsUpdate) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogSettingsUpdate to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "refreshInterval":
+			if err := func() error {
+				s.RefreshInterval.Reset()
+				if err := s.RefreshInterval.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"refreshInterval\"")
+			}
+		case "checkOnOpen":
+			if err := func() error {
+				s.CheckOnOpen.Reset()
+				if err := s.CheckOnOpen.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checkOnOpen\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogSettingsUpdate")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogSettingsUpdate) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogSettingsUpdate) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -14916,6 +15454,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeContainerUpdate
 	case JobTypeContainerRecreate:
 		*s = JobTypeContainerRecreate
+	case JobTypeStackStart:
+		*s = JobTypeStackStart
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
 	case JobTypeVMStart:
@@ -20246,6 +20786,8 @@ func (s *NotificationEventType) Decode(d *jx.Decoder) error {
 		*s = NotificationEventTypeBackupDestinationStale
 	case NotificationEventTypeRestoreDrillFailed:
 		*s = NotificationEventTypeRestoreDrillFailed
+	case NotificationEventTypeCatalogCheckFailed:
+		*s = NotificationEventTypeCatalogCheckFailed
 	default:
 		*s = NotificationEventType(v)
 	}
@@ -21188,6 +21730,105 @@ func (s OptBool) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptBool) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogCheckOutcome as json.
+func (o OptCatalogCheckOutcome) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes CatalogCheckOutcome from json.
+func (o *OptCatalogCheckOutcome) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCatalogCheckOutcome to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCatalogCheckOutcome) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCatalogCheckOutcome) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogRefreshInterval as json.
+func (o OptCatalogRefreshInterval) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes CatalogRefreshInterval from json.
+func (o *OptCatalogRefreshInterval) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCatalogRefreshInterval to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCatalogRefreshInterval) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCatalogRefreshInterval) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogRefreshReason as json.
+func (o OptCatalogRefreshReason) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes CatalogRefreshReason from json.
+func (o *OptCatalogRefreshReason) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCatalogRefreshReason to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCatalogRefreshReason) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCatalogRefreshReason) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -29217,12 +29858,24 @@ func (s *Stack) encodeFields(e *jx.Encoder) {
 		e.FieldStart("installedAt")
 		json.EncodeDateTime(e, s.InstalledAt)
 	}
+	{
+		e.FieldStart("manuallyEdited")
+		e.Bool(s.ManuallyEdited)
+	}
+	{
+		if s.Compose.Set {
+			e.FieldStart("compose")
+			s.Compose.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfStack = [3]string{
+var jsonFieldsNameOfStack = [5]string{
 	0: "name",
 	1: "template",
 	2: "installedAt",
+	3: "manuallyEdited",
+	4: "compose",
 }
 
 // Decode decodes Stack from json.
@@ -29268,6 +29921,28 @@ func (s *Stack) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"installedAt\"")
 			}
+		case "manuallyEdited":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Bool()
+				s.ManuallyEdited = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"manuallyEdited\"")
+			}
+		case "compose":
+			if err := func() error {
+				s.Compose.Reset()
+				if err := s.Compose.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"compose\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -29278,7 +29953,7 @@ func (s *Stack) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00000111,
+		0b00001111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -33921,6 +34596,213 @@ func (s *UpdateShareRequest) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *UpdateShareRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateStackRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateStackRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("compose")
+		e.Str(s.Compose)
+	}
+}
+
+var jsonFieldsNameOfUpdateStackRequest = [1]string{
+	0: "compose",
+}
+
+// Decode decodes UpdateStackRequest from json.
+func (s *UpdateStackRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateStackRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "compose":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Compose = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"compose\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateStackRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpdateStackRequest) {
+					name = jsonFieldsNameOfUpdateStackRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateStackRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateStackRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateStackResult) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateStackResult) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("applied")
+		e.Bool(s.Applied)
+	}
+	{
+		e.FieldStart("stack")
+		s.Stack.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfUpdateStackResult = [2]string{
+	0: "applied",
+	1: "stack",
+}
+
+// Decode decodes UpdateStackResult from json.
+func (s *UpdateStackResult) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateStackResult to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "applied":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Applied = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"applied\"")
+			}
+		case "stack":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Stack.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"stack\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateStackResult")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpdateStackResult) {
+					name = jsonFieldsNameOfUpdateStackResult[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateStackResult) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateStackResult) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

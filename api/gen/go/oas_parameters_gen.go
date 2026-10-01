@@ -4184,6 +4184,72 @@ func decodeStartShareRelocationParams(args [1]string, argsEscaped bool, r *http.
 	return params, nil
 }
 
+// StartStackParams is parameters of startStack operation.
+type StartStackParams struct {
+	// The stack's name.
+	Name string
+}
+
+func unpackStartStackParams(packed middleware.Parameters) (params StartStackParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeStartStackParams(args [1]string, argsEscaped bool, r *http.Request) (params StartStackParams, _ error) {
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // StopAppParams is parameters of stopApp operation.
 type StopAppParams struct {
 	// The container's Engine ID or name.
@@ -5004,6 +5070,130 @@ func decodeUpdateSharePermissionsParams(args [1]string, argsEscaped bool, r *htt
 				if err := params.Name.Validate(); err != nil {
 					return err
 				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// UpdateStackParams is parameters of updateStack operation.
+type UpdateStackParams struct {
+	// Only validate the text and report the result; store and write nothing. Absent means false.
+	DryRun OptBool `json:",omitempty,omitzero"`
+	// The stack's name.
+	Name string
+}
+
+func unpackUpdateStackParams(packed middleware.Parameters) (params UpdateStackParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "dryRun",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.DryRun = v.(OptBool)
+		}
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeUpdateStackParams(args [1]string, argsEscaped bool, r *http.Request) (params UpdateStackParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Set default value for query: dryRun.
+	{
+		val := bool(false)
+		params.DryRun.SetTo(val)
+	}
+	// Decode query: dryRun.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "dryRun",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotDryRunVal bool
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToBool(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotDryRunVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.DryRun.SetTo(paramsDotDryRunVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "dryRun",
+			In:   "query",
+			Err:  err,
+		}
+	}
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
 				return nil
 			}(); err != nil {
 				return err

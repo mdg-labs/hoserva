@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -39,9 +40,23 @@ const (
 	maxIndexBytes = 1 << 20
 
 	indexFile     = "index.json"
+	validatorFile = "fetch.json"
 	stagingSuffix = ".new"
 	backupSuffix  = ".old"
 )
+
+// storeLocks holds one mutex per catalog directory, so every CatalogStore
+// over the same directory, however many copies of the value exist, runs one
+// write at a time: the startup seed, a manual check and a background check
+// never overlap (doc 04 §7).
+var storeLocks sync.Map
+
+func (s CatalogStore) lock() func() {
+	m, _ := storeLocks.LoadOrStore(filepath.Clean(s.Dir), &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 
 // CatalogStore is the on-disk copy of the curated catalog, a directory of
 // <id>/ per template plus index.json (the archive's own layout, read by
@@ -73,21 +88,33 @@ func (s CatalogStore) mv(oldpath, newpath string) error {
 // that the archive is a well-formed catalog, and returns its serial. It
 // touches no file.
 func VerifyArchive(key ed25519.PublicKey, archive, sig []byte) (int64, error) {
+	serial, _, err := verifyArchive(key, archive, sig)
+	return serial, err
+}
+
+// verifyArchive is VerifyArchive that also returns the archive's index.json,
+// which must parse as a catalog index so a signed archive DirCatalog could
+// not list is never installed.
+func verifyArchive(key ed25519.PublicKey, archive, sig []byte) (int64, []byte, error) {
 	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, archive, sig) {
-		return 0, ErrBadSignature
+		return 0, nil, ErrBadSignature
 	}
-	return readArchive(archive, nil)
+	serial, index, err := readArchive(archive, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, err := parseIndex(index); err != nil {
+		return 0, nil, fmt.Errorf("%w: %s %v", ErrBadArchive, indexFile, err)
+	}
+	return serial, index, nil
 }
 
 // Serial is the installed catalog's serial, and false when no catalog with a
 // readable index.json is installed.
 func (s CatalogStore) Serial() (int64, bool, error) {
-	data, err := os.ReadFile(filepath.Join(s.Dir, indexFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, fmt.Errorf("reading the installed catalog's index: %w", err)
+	data, err := s.readIndex()
+	if err != nil || data == nil {
+		return 0, false, err
 	}
 	serial, err := parseSerial(data)
 	if err != nil {
@@ -96,12 +123,26 @@ func (s CatalogStore) Serial() (int64, bool, error) {
 	return serial, true, nil
 }
 
+// readIndex is the installed catalog's index.json, or nil when none is
+// installed.
+func (s CatalogStore) readIndex() ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(s.Dir, indexFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the installed catalog's index: %w", err)
+	}
+	return data, nil
+}
+
 // Install replaces the installed catalog with archive. It refuses an
 // archive whose signature does not verify, that is malformed, or whose serial
 // is not higher than the installed one (ErrNotNewer), and every refusal
 // leaves the installed catalog untouched.
 func (s CatalogStore) Install(archive, sig []byte) error {
-	_, err := s.install(archive, sig, true)
+	defer s.lock()()
+	_, err := s.install(archive, sig, installOptions{strict: true})
 	return err
 }
 
@@ -109,34 +150,106 @@ func (s CatalogStore) Install(archive, sig []byte) error {
 // older, and leaves an equal or newer one alone. The signature is verified
 // either way.
 func (s CatalogStore) Seed(archive, sig []byte) (bool, error) {
-	return s.install(archive, sig, false)
+	defer s.lock()()
+	r, err := s.install(archive, sig, installOptions{})
+	return r.installed, err
 }
 
-func (s CatalogStore) install(archive, sig []byte, strict bool) (installed bool, err error) {
-	serial, err := VerifyArchive(s.key(), archive, sig)
+// Validators are the HTTP validators of the archive a fetched catalog came
+// from. They are stored inside the catalog directory, so they are replaced by
+// the same rename as the catalog they describe and never outlive it.
+type Validators struct {
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"lastModified,omitempty"`
+}
+
+func (v Validators) empty() bool { return v.ETag == "" && v.LastModified == "" }
+
+// Validators returns the validators stored with the installed catalog. None
+// are stored for a catalog that was not fetched, and an unreadable file counts
+// as none, which only makes the next request unconditional.
+func (s CatalogStore) Validators() Validators {
+	data, err := os.ReadFile(filepath.Join(s.Dir, validatorFile))
 	if err != nil {
-		return false, err
+		return Validators{}
 	}
-	if err := s.Recover(); err != nil {
-		return false, err
+	var v Validators
+	if json.Unmarshal(data, &v) != nil {
+		return Validators{}
 	}
+	return v
+}
+
+// Fetched is what InstallFetched did: whether it replaced the installed
+// catalog, and the index.json of the catalog before and after (nil when there
+// was none).
+type Fetched struct {
+	Installed bool
+	Previous  []byte
+	Current   []byte
+}
+
+// InstallFetched installs an archive fetched from the network, recording v
+// with it. Like Install it refuses an archive that does not verify or is
+// older than the installed catalog. An archive with the installed serial and
+// the installed index.json is the same catalog again: it replaces nothing,
+// refreshes the stored validators, and reports Installed false. An archive
+// with the installed serial and a different index.json is refused
+// (ErrNotNewer).
+func (s CatalogStore) InstallFetched(archive, sig []byte, v Validators) (Fetched, error) {
+	defer s.lock()()
+	r, err := s.install(archive, sig, installOptions{strict: true, fetched: &v})
+	return Fetched{Installed: r.installed, Previous: r.previous, Current: r.current}, err
+}
+
+type installOptions struct {
+	strict  bool
+	fetched *Validators
+}
+
+type installResult struct {
+	installed bool
+	previous  []byte
+	current   []byte
+}
+
+func (s CatalogStore) install(archive, sig []byte, opts installOptions) (res installResult, err error) {
+	serial, index, err := verifyArchive(s.key(), archive, sig)
+	if err != nil {
+		return res, err
+	}
+	if err := s.recoverLocked(); err != nil {
+		return res, err
+	}
+	previous, err := s.readIndex()
+	if err != nil {
+		return res, err
+	}
+	res.previous, res.current = previous, index
 	current, have, err := s.Serial()
 	if err != nil {
-		return false, err
+		return res, err
 	}
 	if have && serial <= current {
-		if strict {
-			return false, fmt.Errorf("%w: serial %d, installed %d", ErrNotNewer, serial, current)
+		if opts.fetched != nil && serial == current && bytes.Equal(index, previous) {
+			res.current = previous
+			if opts.fetched.empty() {
+				return res, nil
+			}
+			return res, writeValidators(s.Dir, *opts.fetched)
 		}
-		return false, nil
+		if opts.strict {
+			return res, fmt.Errorf("%w: serial %d, installed %d", ErrNotNewer, serial, current)
+		}
+		return res, nil
 	}
 
 	staging := s.Dir + stagingSuffix
 	if err := os.MkdirAll(filepath.Dir(s.Dir), 0o755); err != nil {
-		return false, fmt.Errorf("creating the catalog's parent directory: %w", err)
+		return res, fmt.Errorf("creating the catalog's parent directory: %w", err)
 	}
 	if err := os.Mkdir(staging, 0o755); err != nil {
-		return false, fmt.Errorf("creating the catalog staging directory: %w", err)
+		return res, fmt.Errorf("creating the catalog staging directory: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -144,12 +257,54 @@ func (s CatalogStore) install(archive, sig []byte, strict bool) (installed bool,
 		}
 	}()
 	if err := extractArchive(archive, staging); err != nil {
-		return false, err
+		return res, err
+	}
+	if opts.fetched != nil && !opts.fetched.empty() {
+		if err := writeValidators(staging, *opts.fetched); err != nil {
+			return res, err
+		}
 	}
 	if err := s.swap(staging); err != nil {
-		return false, err
+		return res, err
 	}
-	return true, nil
+	res.installed = true
+	return res, nil
+}
+
+// writeValidators stores v in dir through a temporary file and a rename, so
+// a reader and an interrupted write never see a half-written file.
+func writeValidators(dir string, v Validators) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encoding the catalog validators: %w", err)
+	}
+	tmp := filepath.Join(dir, validatorFile+".tmp")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("writing the catalog validators: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writing the catalog validators: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("syncing the catalog validators: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writing the catalog validators: %w", err)
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, validatorFile)); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("storing the catalog validators: %w", err)
+	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("syncing the catalog validators: %w", err)
+	}
+	return nil
 }
 
 // swap moves the previous copy aside, moves staging in and removes the
@@ -192,6 +347,11 @@ func (s CatalogStore) swap(staging string) error {
 // directory has outlived, and drops a half-written staging directory. It
 // never touches a live catalog.
 func (s CatalogStore) Recover() error {
+	defer s.lock()()
+	return s.recoverLocked()
+}
+
+func (s CatalogStore) recoverLocked() error {
 	backup := s.Dir + backupSuffix
 	_, dirErr := os.Lstat(s.Dir)
 	_, backupErr := os.Lstat(backup)
@@ -220,11 +380,11 @@ func (s CatalogStore) Recover() error {
 
 // readArchive walks the archive, refusing anything that is not a plain file
 // or directory directly under index.json or an <id>/ directory, calls visit
-// with every entry, and returns the serial index.json carries.
-func readArchive(archive []byte, visit func(name string, dir bool, size int64, r io.Reader) error) (int64, error) {
+// with every entry, and returns the serial index.json carries and its bytes.
+func readArchive(archive []byte, visit func(name string, dir bool, size int64, r io.Reader) error) (int64, []byte, error) {
 	zr, err := zstd.NewReader(bytes.NewReader(archive), zstd.WithDecoderConcurrency(1))
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrBadArchive, err)
+		return 0, nil, fmt.Errorf("%w: %v", ErrBadArchive, err)
 	}
 	defer zr.Close()
 	tr := tar.NewReader(zr)
@@ -238,42 +398,42 @@ func readArchive(archive []byte, visit func(name string, dir bool, size int64, r
 			break
 		}
 		if err != nil {
-			return 0, fmt.Errorf("%w: %v", ErrBadArchive, err)
+			return 0, nil, fmt.Errorf("%w: %v", ErrBadArchive, err)
 		}
 		name, dir, err := entryName(hdr, seen)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		if !dir {
 			if hdr.Size > remaining {
-				return 0, fmt.Errorf("%w: more than %d bytes of files", ErrBadArchive, maxCatalogBytes)
+				return 0, nil, fmt.Errorf("%w: more than %d bytes of files", ErrBadArchive, maxCatalogBytes)
 			}
 			remaining -= hdr.Size
 		}
 		var body io.Reader = tr
 		if name == indexFile {
 			if hdr.Size > maxIndexBytes {
-				return 0, fmt.Errorf("%w: %s is larger than %d bytes", ErrBadArchive, indexFile, maxIndexBytes)
+				return 0, nil, fmt.Errorf("%w: %s is larger than %d bytes", ErrBadArchive, indexFile, maxIndexBytes)
 			}
 			if index, err = io.ReadAll(tr); err != nil {
-				return 0, fmt.Errorf("%w: reading %s: %v", ErrBadArchive, indexFile, err)
+				return 0, nil, fmt.Errorf("%w: reading %s: %v", ErrBadArchive, indexFile, err)
 			}
 			body = bytes.NewReader(index)
 		}
 		if visit != nil {
 			if err := visit(name, dir, hdr.Size, body); err != nil {
-				return 0, err
+				return 0, nil, err
 			}
 		}
 	}
 	if index == nil {
-		return 0, fmt.Errorf("%w: no %s", ErrBadArchive, indexFile)
+		return 0, nil, fmt.Errorf("%w: no %s", ErrBadArchive, indexFile)
 	}
 	serial, err := parseSerial(index)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrBadArchive, err)
+		return 0, nil, fmt.Errorf("%w: %v", ErrBadArchive, err)
 	}
-	return serial, nil
+	return serial, index, nil
 }
 
 // entryName validates one tar entry and records it in seen (name to
@@ -347,7 +507,7 @@ func parseSerial(index []byte) (int64, error) {
 // plain files and directories is ever created, so no entry can resolve
 // outside root.
 func extractArchive(archive []byte, root string) error {
-	_, err := readArchive(archive, func(name string, dir bool, size int64, r io.Reader) error {
+	_, _, err := readArchive(archive, func(name string, dir bool, size int64, r io.Reader) error {
 		target := filepath.Join(root, filepath.FromSlash(name))
 		if dir {
 			return os.MkdirAll(target, 0o755)

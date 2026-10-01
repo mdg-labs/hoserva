@@ -122,7 +122,8 @@ tags:
       alike, with the same lifecycle actions for both (doc 04 §1, §2):
       start, stop, restart, recreate, remove, logs and stats. The Compose
       stack model is served by the `stacks` operations (`listStacks`,
-      `createStack`, `getStack`, `removeStack`). `available` is false, with
+      `createStack`, `getStack`, `updateStack`, `startStack`, `removeStack`).
+      `available` is false, with
       no error, whenever Docker itself is not reachable: a missing
       prerequisite is Apps' normal state, not a failed request.
 
@@ -4069,7 +4070,10 @@ paths:
     get:
       operationId: getStack
       summary: Get a Compose stack
-      description: One stack's row, without its `.env`.
+      description: >-
+        One stack's row with its stored `docker-compose.yml` text in
+        `compose`, and `manuallyEdited`. Its `.env` is never returned: it
+        holds generated secrets.
       tags: [stacks]
       x-hoserva-role: viewer
       responses:
@@ -4079,6 +4083,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Stack'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateStack
+      summary: Edit a Compose stack's file
+      description: >-
+        Replaces the stack's `docker-compose.yml` text. The text is first
+        checked with `docker compose config` against a copy of the stack's
+        own `.env`, in a temporary directory, before anything is stored or
+        written: a file that is empty or that `docker compose config`
+        rejects is refused with 400 `invalid_stack`, carrying the compiler's
+        message, and leaves the row and every file as they were. With
+        `dryRun` a valid file is answered with `applied` false and the
+        stored stack, and nothing is changed. Otherwise the row is updated
+        (the new text, and `manuallyEdited` set so a template form never
+        silently overwrites it) and the stack's `docker-compose.yml` is
+        regenerated from it; if writing the file fails the row is put back
+        as it was. Nothing is restarted: `startStack` makes the edit take
+        effect. A stack whose `.env` cannot be opened (a restore without the
+        backup passphrase) cannot be checked and is refused. An unknown
+        stack is refused with 404 `stack_not_found` and a name that is not
+        a valid stack name with 400 `invalid_stack_name`.
+      tags: [stacks]
+      x-hoserva-role: admin
+      parameters:
+        - name: dryRun
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: >-
+            Only validate the text and report the result; store and write
+            nothing. Absent means false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStackRequest'
+      responses:
+        "200":
+          description: The text is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStackResult'
         default:
           $ref: '#/components/responses/Error'
     delete:
@@ -4142,20 +4192,63 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /stacks/{name}/start:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The stack's name.
+    post:
+      operationId: startStack
+      summary: Start or recreate a Compose stack
+      description: >-
+        Queues a `stack_start` job (service class, scoped to the stack) that
+        runs `docker compose up --detach` for the stack: its services are
+        created if they do not exist and recreated only where their
+        definition changed, so an edit saved by `updateStack` takes effect.
+        Missing generated files are written from the stack's row first.
+        Refused with 409 `array_stopped` while the array is stopped
+        (maintenance mode) or its storage is not ready, and with 503
+        `array_state_unknown` if the array's state cannot be read; no job is
+        queued. The job checks again when it runs. An unknown stack is
+        refused with 404 `stack_not_found` and an invalid name with 400
+        `invalid_stack_name`.
+      tags: [stacks]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
   /catalog:
     get:
       operationId: listCatalog
       summary: List the catalog's templates
       description: >-
         The templates of the catalog installed on disk (doc 04 §7), read from
-        its `index.json` and never from the network, with the catalog's
+        its `index.json` and never waiting on the network, with the catalog's
         `serial` and `generatedAt`. Every entry names the `source` it came
         from (`hoserva`, the curated catalog, is the only source) and says
         whether a stack of that template id already exists (`installed`,
         from the `stacks` table). Entries are in the index's order. Search,
-        filters and paging are the caller's. A catalog that is not installed
-        or whose `index.json` cannot be read is refused with 503
-        `catalog_unavailable`, never answered with an empty list.
+        filters and paging are the caller's. `lastCheckedAt` and `lastOutcome`
+        report the most recent catalog check (`refreshCatalog`) since the
+        daemon started, and are absent before any check has run. A catalog
+        that is not installed or whose `index.json` cannot be read is refused
+        with 503 `catalog_unavailable`, never answered with an empty list.
+        With `checkOnOpen` on (`getCatalogSettings`), a call made when the last
+        check is older than 15 minutes, or when none has run since the daemon
+        started, also starts one catalog check in the background, never a
+        second while one is running. The answer is the on-disk copy as it is
+        now; the finished check is announced as a `catalog` event on
+        `/api/v1/events`.
       tags: [templates]
       x-hoserva-role: viewer
       responses:
@@ -4165,6 +4258,90 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogList'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/catalog:
+    get:
+      operationId: getCatalogSettings
+      summary: Get the catalog refresh settings
+      description: >-
+        How the catalog checks for updates by itself (doc 04 §7, Q65): the
+        background `refreshInterval` and whether opening the catalog starts a
+        check (`checkOnOpen`). Every install starts at `24h` and on.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The current catalog refresh settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateCatalogSettings
+      summary: Set the catalog refresh settings
+      description: >-
+        Sets either or both settings; a field left out stays as it is. An
+        interval other than `off`, `1h`, `6h`, `12h` or `24h` is refused with
+        400. With the interval `off` and
+        `checkOnOpen` off, nothing reaches the catalog host except
+        `refreshCatalog`. The background check applies a changed interval
+        without a daemon restart.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogSettingsUpdate'
+      responses:
+        "200":
+          description: The settings now saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /catalog/refresh:
+    post:
+      operationId: refreshCatalog
+      summary: Check for catalog updates now
+      description: >-
+        Runs one conditional request for the latest signed catalog from the
+        catalog host (doc 04 §7, Q65) and returns how it ended. It is an
+        explicit user action, so it runs even when automatic refresh is off.
+        An unchanged catalog answers `304` and downloads nothing
+        (`unchanged`). A newer archive replaces the installed catalog only if
+        its signature verifies against the compiled-in catalog key and its
+        serial is strictly higher (`updated`, with the number of new and of
+        updated templates, compared by id and revision against the catalog it
+        replaced). Any other outcome keeps the installed catalog untouched and
+        is `failed`, with a `reason` code and a `message`; a failed
+        verification (`bad_signature`, `not_newer`, `bad_archive`) also raises
+        a `catalog_check_failed` notification, and a network failure does not.
+        A check that fails is still a completed check, answered 200. Calls
+        made while a check is running share that check's request and result.
+        A signature that does not verify makes the check fetch the archive
+        and its signature once more before it reports `bad_signature`, because
+        the two files are cached separately and can briefly disagree while a
+        catalog is being published. Every finished check, whoever started it,
+        is announced as a `catalog` event on `/api/v1/events`. Nothing is
+        fetched from `api.github.com`.
+      tags: [templates]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The check's outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRefresh'
         default:
           $ref: '#/components/responses/Error'
 
@@ -5107,6 +5284,7 @@ components:
         - config_backup
         - container_update
         - container_recreate
+        - stack_start
         - acme_issue
         # VM
         - vm_start
@@ -5334,6 +5512,20 @@ components:
               type: string
               format: date-time
 
+    CatalogEvent:
+      type: object
+      description: >-
+        A catalog check finished, whether the background interval,
+        check-on-open or `refreshCatalog` started it. `data` is the check's
+        outcome, the same object `refreshCatalog` answers with.
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: catalog
+        data:
+          $ref: '#/components/schemas/CatalogRefresh'
+
     Event:
       description: The full set of `/api/v1/events` SSE event types (doc 01 §5).
       oneOf:
@@ -5341,6 +5533,7 @@ components:
         - $ref: '#/components/schemas/DiskStateEvent'
         - $ref: '#/components/schemas/ContainerStateEvent'
         - $ref: '#/components/schemas/NotificationEvent'
+        - $ref: '#/components/schemas/CatalogEvent'
       discriminator:
         propertyName: event
         mapping:
@@ -5348,6 +5541,7 @@ components:
           disk_state: '#/components/schemas/DiskStateEvent'
           container_state: '#/components/schemas/ContainerStateEvent'
           notification: '#/components/schemas/NotificationEvent'
+          catalog: '#/components/schemas/CatalogEvent'
 
     NotificationEventType:
       type: string
@@ -5385,6 +5579,7 @@ components:
         - appdata_backup_failed
         - backup_destination_stale
         - restore_drill_failed
+        - catalog_check_failed
 
     NotificationChannelType:
       type: string
@@ -6452,7 +6647,7 @@ components:
 
     Stack:
       type: object
-      required: [name, template, installedAt]
+      required: [name, template, installedAt, manuallyEdited]
       properties:
         name:
           type: string
@@ -6461,6 +6656,36 @@ components:
         installedAt:
           type: string
           format: date-time
+        manuallyEdited:
+          type: boolean
+          description: >-
+            True once the stack's Compose text was saved by hand
+            (`updateStack`), so the template's form must not silently
+            overwrite it. A template install is not manually edited.
+        compose:
+          type: string
+          description: >-
+            The stored `docker-compose.yml` text. Returned by `getStack` and
+            `updateStack` only, never by `listStacks`. The `.env` is never
+            returned.
+
+    UpdateStackRequest:
+      type: object
+      required: [compose]
+      properties:
+        compose:
+          type: string
+          description: The new `docker-compose.yml` text.
+
+    UpdateStackResult:
+      type: object
+      required: [applied, stack]
+      properties:
+        applied:
+          type: boolean
+          description: False for a `dryRun`, which changes nothing.
+        stack:
+          $ref: '#/components/schemas/Stack'
 
     ListStacksOK:
       type: object
@@ -6551,6 +6776,86 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CatalogEntry'
+        lastCheckedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the most recent catalog check finished, whatever its outcome.
+            Absent before any check has run since the daemon started.
+        lastOutcome:
+          $ref: '#/components/schemas/CatalogCheckOutcome'
+
+    CatalogCheckOutcome:
+      type: string
+      enum: [updated, unchanged, failed]
+      description: How a catalog check ended.
+
+    CatalogRefreshInterval:
+      type: string
+      enum: ['off', '1h', '6h', '12h', '24h']
+      description: >-
+        How often the daemon checks the catalog host in the background. Each
+        wait is lengthened by a random extra of up to 10% of the interval;
+        `off` sends no automatic request.
+
+    CatalogSettings:
+      type: object
+      required: [refreshInterval, checkOnOpen]
+      properties:
+        refreshInterval:
+          $ref: '#/components/schemas/CatalogRefreshInterval'
+        checkOnOpen:
+          type: boolean
+          description: >-
+            Whether listing the catalog starts a background check when the
+            last one is older than 15 minutes.
+
+    CatalogSettingsUpdate:
+      type: object
+      properties:
+        refreshInterval:
+          $ref: '#/components/schemas/CatalogRefreshInterval'
+        checkOnOpen:
+          type: boolean
+          description: Left out, it stays unchanged.
+
+    CatalogRefresh:
+      type: object
+      required: [checkedAt, outcome]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+          description: When the check finished.
+        outcome:
+          $ref: '#/components/schemas/CatalogCheckOutcome'
+        newTemplates:
+          type: integer
+          minimum: 0
+          description: >-
+            Templates the new catalog lists that the replaced one did not.
+            Present only when `outcome` is `updated`.
+        updatedTemplates:
+          type: integer
+          minimum: 0
+          description: >-
+            Templates both catalogs list under a different revision. Present
+            only when `outcome` is `updated`.
+        reason:
+          type: string
+          enum: [fetch_failed, bad_signature, not_newer, bad_archive, install_failed]
+          description: >-
+            Present only when `outcome` is `failed`. `fetch_failed`: the host
+            could not be reached or answered something unusable (not
+            notified). `bad_signature`: the signature does not verify against
+            the catalog key. `not_newer`: the serial is not higher than the
+            installed catalog's. `bad_archive`: the signed archive is not a
+            catalog. `install_failed`: the verified archive could not be
+            written to disk. The three verification reasons raise a
+            `catalog_check_failed` notification.
+        message:
+          type: string
+          description: Present only when `outcome` is `failed`.
 
     CatalogTemplate:
       type: object

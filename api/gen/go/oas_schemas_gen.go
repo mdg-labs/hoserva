@@ -2659,6 +2659,56 @@ func (s *CancelDiskRemovalRequest) SetMountpoint(val string) {
 	s.Mountpoint = val
 }
 
+// How a catalog check ended.
+// Ref: #/components/schemas/CatalogCheckOutcome
+type CatalogCheckOutcome string
+
+const (
+	CatalogCheckOutcomeUpdated   CatalogCheckOutcome = "updated"
+	CatalogCheckOutcomeUnchanged CatalogCheckOutcome = "unchanged"
+	CatalogCheckOutcomeFailed    CatalogCheckOutcome = "failed"
+)
+
+// AllValues returns all CatalogCheckOutcome values.
+func (CatalogCheckOutcome) AllValues() []CatalogCheckOutcome {
+	return []CatalogCheckOutcome{
+		CatalogCheckOutcomeUpdated,
+		CatalogCheckOutcomeUnchanged,
+		CatalogCheckOutcomeFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogCheckOutcome) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogCheckOutcomeUpdated:
+		return []byte(s), nil
+	case CatalogCheckOutcomeUnchanged:
+		return []byte(s), nil
+	case CatalogCheckOutcomeFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogCheckOutcome) UnmarshalText(data []byte) error {
+	switch CatalogCheckOutcome(data) {
+	case CatalogCheckOutcomeUpdated:
+		*s = CatalogCheckOutcomeUpdated
+		return nil
+	case CatalogCheckOutcomeUnchanged:
+		*s = CatalogCheckOutcomeUnchanged
+		return nil
+	case CatalogCheckOutcomeFailed:
+		*s = CatalogCheckOutcomeFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/CatalogEntry
 type CatalogEntry struct {
 	ID string `json:"id"`
@@ -2751,6 +2801,10 @@ type CatalogList struct {
 	// When the catalog archive was built; absent when its index carries no time.
 	GeneratedAt OptDateTime    `json:"generatedAt"`
 	Templates   []CatalogEntry `json:"templates"`
+	// When the most recent catalog check finished, whatever its outcome. Absent before any check has run
+	// since the daemon started.
+	LastCheckedAt OptDateTime            `json:"lastCheckedAt"`
+	LastOutcome   OptCatalogCheckOutcome `json:"lastOutcome"`
 }
 
 // GetSerial returns the value of Serial.
@@ -2768,6 +2822,16 @@ func (s *CatalogList) GetTemplates() []CatalogEntry {
 	return s.Templates
 }
 
+// GetLastCheckedAt returns the value of LastCheckedAt.
+func (s *CatalogList) GetLastCheckedAt() OptDateTime {
+	return s.LastCheckedAt
+}
+
+// GetLastOutcome returns the value of LastOutcome.
+func (s *CatalogList) GetLastOutcome() OptCatalogCheckOutcome {
+	return s.LastOutcome
+}
+
 // SetSerial sets the value of Serial.
 func (s *CatalogList) SetSerial(val int64) {
 	s.Serial = val
@@ -2781,6 +2845,282 @@ func (s *CatalogList) SetGeneratedAt(val OptDateTime) {
 // SetTemplates sets the value of Templates.
 func (s *CatalogList) SetTemplates(val []CatalogEntry) {
 	s.Templates = val
+}
+
+// SetLastCheckedAt sets the value of LastCheckedAt.
+func (s *CatalogList) SetLastCheckedAt(val OptDateTime) {
+	s.LastCheckedAt = val
+}
+
+// SetLastOutcome sets the value of LastOutcome.
+func (s *CatalogList) SetLastOutcome(val OptCatalogCheckOutcome) {
+	s.LastOutcome = val
+}
+
+// Ref: #/components/schemas/CatalogRefresh
+type CatalogRefresh struct {
+	// When the check finished.
+	CheckedAt time.Time           `json:"checkedAt"`
+	Outcome   CatalogCheckOutcome `json:"outcome"`
+	// Templates the new catalog lists that the replaced one did not. Present only when `outcome` is
+	// `updated`.
+	NewTemplates OptInt `json:"newTemplates"`
+	// Templates both catalogs list under a different revision. Present only when `outcome` is `updated`.
+	UpdatedTemplates OptInt `json:"updatedTemplates"`
+	// Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered
+	// something unusable (not notified). `bad_signature`: the signature does not verify against the
+	// catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the
+	// signed archive is not a catalog. `install_failed`: the verified archive could not be written to
+	// disk. The three verification reasons raise a `catalog_check_failed` notification.
+	Reason OptCatalogRefreshReason `json:"reason"`
+	// Present only when `outcome` is `failed`.
+	Message OptString `json:"message"`
+}
+
+// GetCheckedAt returns the value of CheckedAt.
+func (s *CatalogRefresh) GetCheckedAt() time.Time {
+	return s.CheckedAt
+}
+
+// GetOutcome returns the value of Outcome.
+func (s *CatalogRefresh) GetOutcome() CatalogCheckOutcome {
+	return s.Outcome
+}
+
+// GetNewTemplates returns the value of NewTemplates.
+func (s *CatalogRefresh) GetNewTemplates() OptInt {
+	return s.NewTemplates
+}
+
+// GetUpdatedTemplates returns the value of UpdatedTemplates.
+func (s *CatalogRefresh) GetUpdatedTemplates() OptInt {
+	return s.UpdatedTemplates
+}
+
+// GetReason returns the value of Reason.
+func (s *CatalogRefresh) GetReason() OptCatalogRefreshReason {
+	return s.Reason
+}
+
+// GetMessage returns the value of Message.
+func (s *CatalogRefresh) GetMessage() OptString {
+	return s.Message
+}
+
+// SetCheckedAt sets the value of CheckedAt.
+func (s *CatalogRefresh) SetCheckedAt(val time.Time) {
+	s.CheckedAt = val
+}
+
+// SetOutcome sets the value of Outcome.
+func (s *CatalogRefresh) SetOutcome(val CatalogCheckOutcome) {
+	s.Outcome = val
+}
+
+// SetNewTemplates sets the value of NewTemplates.
+func (s *CatalogRefresh) SetNewTemplates(val OptInt) {
+	s.NewTemplates = val
+}
+
+// SetUpdatedTemplates sets the value of UpdatedTemplates.
+func (s *CatalogRefresh) SetUpdatedTemplates(val OptInt) {
+	s.UpdatedTemplates = val
+}
+
+// SetReason sets the value of Reason.
+func (s *CatalogRefresh) SetReason(val OptCatalogRefreshReason) {
+	s.Reason = val
+}
+
+// SetMessage sets the value of Message.
+func (s *CatalogRefresh) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// How often the daemon checks the catalog host in the background. Each wait is lengthened by a random
+// extra of up to 10% of the interval; `off` sends no automatic request.
+// Ref: #/components/schemas/CatalogRefreshInterval
+type CatalogRefreshInterval string
+
+const (
+	CatalogRefreshIntervalOff CatalogRefreshInterval = "off"
+	CatalogRefreshInterval1h  CatalogRefreshInterval = "1h"
+	CatalogRefreshInterval6h  CatalogRefreshInterval = "6h"
+	CatalogRefreshInterval12h CatalogRefreshInterval = "12h"
+	CatalogRefreshInterval24h CatalogRefreshInterval = "24h"
+)
+
+// AllValues returns all CatalogRefreshInterval values.
+func (CatalogRefreshInterval) AllValues() []CatalogRefreshInterval {
+	return []CatalogRefreshInterval{
+		CatalogRefreshIntervalOff,
+		CatalogRefreshInterval1h,
+		CatalogRefreshInterval6h,
+		CatalogRefreshInterval12h,
+		CatalogRefreshInterval24h,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogRefreshInterval) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogRefreshIntervalOff:
+		return []byte(s), nil
+	case CatalogRefreshInterval1h:
+		return []byte(s), nil
+	case CatalogRefreshInterval6h:
+		return []byte(s), nil
+	case CatalogRefreshInterval12h:
+		return []byte(s), nil
+	case CatalogRefreshInterval24h:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogRefreshInterval) UnmarshalText(data []byte) error {
+	switch CatalogRefreshInterval(data) {
+	case CatalogRefreshIntervalOff:
+		*s = CatalogRefreshIntervalOff
+		return nil
+	case CatalogRefreshInterval1h:
+		*s = CatalogRefreshInterval1h
+		return nil
+	case CatalogRefreshInterval6h:
+		*s = CatalogRefreshInterval6h
+		return nil
+	case CatalogRefreshInterval12h:
+		*s = CatalogRefreshInterval12h
+		return nil
+	case CatalogRefreshInterval24h:
+		*s = CatalogRefreshInterval24h
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered
+// something unusable (not notified). `bad_signature`: the signature does not verify against the
+// catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the
+// signed archive is not a catalog. `install_failed`: the verified archive could not be written to
+// disk. The three verification reasons raise a `catalog_check_failed` notification.
+type CatalogRefreshReason string
+
+const (
+	CatalogRefreshReasonFetchFailed   CatalogRefreshReason = "fetch_failed"
+	CatalogRefreshReasonBadSignature  CatalogRefreshReason = "bad_signature"
+	CatalogRefreshReasonNotNewer      CatalogRefreshReason = "not_newer"
+	CatalogRefreshReasonBadArchive    CatalogRefreshReason = "bad_archive"
+	CatalogRefreshReasonInstallFailed CatalogRefreshReason = "install_failed"
+)
+
+// AllValues returns all CatalogRefreshReason values.
+func (CatalogRefreshReason) AllValues() []CatalogRefreshReason {
+	return []CatalogRefreshReason{
+		CatalogRefreshReasonFetchFailed,
+		CatalogRefreshReasonBadSignature,
+		CatalogRefreshReasonNotNewer,
+		CatalogRefreshReasonBadArchive,
+		CatalogRefreshReasonInstallFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogRefreshReason) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogRefreshReasonFetchFailed:
+		return []byte(s), nil
+	case CatalogRefreshReasonBadSignature:
+		return []byte(s), nil
+	case CatalogRefreshReasonNotNewer:
+		return []byte(s), nil
+	case CatalogRefreshReasonBadArchive:
+		return []byte(s), nil
+	case CatalogRefreshReasonInstallFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogRefreshReason) UnmarshalText(data []byte) error {
+	switch CatalogRefreshReason(data) {
+	case CatalogRefreshReasonFetchFailed:
+		*s = CatalogRefreshReasonFetchFailed
+		return nil
+	case CatalogRefreshReasonBadSignature:
+		*s = CatalogRefreshReasonBadSignature
+		return nil
+	case CatalogRefreshReasonNotNewer:
+		*s = CatalogRefreshReasonNotNewer
+		return nil
+	case CatalogRefreshReasonBadArchive:
+		*s = CatalogRefreshReasonBadArchive
+		return nil
+	case CatalogRefreshReasonInstallFailed:
+		*s = CatalogRefreshReasonInstallFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/CatalogSettings
+type CatalogSettings struct {
+	RefreshInterval CatalogRefreshInterval `json:"refreshInterval"`
+	// Whether listing the catalog starts a background check when the last one is older than 15 minutes.
+	CheckOnOpen bool `json:"checkOnOpen"`
+}
+
+// GetRefreshInterval returns the value of RefreshInterval.
+func (s *CatalogSettings) GetRefreshInterval() CatalogRefreshInterval {
+	return s.RefreshInterval
+}
+
+// GetCheckOnOpen returns the value of CheckOnOpen.
+func (s *CatalogSettings) GetCheckOnOpen() bool {
+	return s.CheckOnOpen
+}
+
+// SetRefreshInterval sets the value of RefreshInterval.
+func (s *CatalogSettings) SetRefreshInterval(val CatalogRefreshInterval) {
+	s.RefreshInterval = val
+}
+
+// SetCheckOnOpen sets the value of CheckOnOpen.
+func (s *CatalogSettings) SetCheckOnOpen(val bool) {
+	s.CheckOnOpen = val
+}
+
+// Ref: #/components/schemas/CatalogSettingsUpdate
+type CatalogSettingsUpdate struct {
+	RefreshInterval OptCatalogRefreshInterval `json:"refreshInterval"`
+	// Left out, it stays unchanged.
+	CheckOnOpen OptBool `json:"checkOnOpen"`
+}
+
+// GetRefreshInterval returns the value of RefreshInterval.
+func (s *CatalogSettingsUpdate) GetRefreshInterval() OptCatalogRefreshInterval {
+	return s.RefreshInterval
+}
+
+// GetCheckOnOpen returns the value of CheckOnOpen.
+func (s *CatalogSettingsUpdate) GetCheckOnOpen() OptBool {
+	return s.CheckOnOpen
+}
+
+// SetRefreshInterval sets the value of RefreshInterval.
+func (s *CatalogSettingsUpdate) SetRefreshInterval(val OptCatalogRefreshInterval) {
+	s.RefreshInterval = val
+}
+
+// SetCheckOnOpen sets the value of CheckOnOpen.
+func (s *CatalogSettingsUpdate) SetCheckOnOpen(val OptBool) {
+	s.CheckOnOpen = val
 }
 
 // Ref: #/components/schemas/CatalogTemplate
@@ -7312,6 +7652,7 @@ const (
 	JobTypeConfigBackup          JobType = "config_backup"
 	JobTypeContainerUpdate       JobType = "container_update"
 	JobTypeContainerRecreate     JobType = "container_recreate"
+	JobTypeStackStart            JobType = "stack_start"
 	JobTypeAcmeIssue             JobType = "acme_issue"
 	JobTypeVMStart               JobType = "vm_start"
 	JobTypeVMStop                JobType = "vm_stop"
@@ -7348,6 +7689,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeConfigBackup,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
+		JobTypeStackStart,
 		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
@@ -7407,6 +7749,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
 	case JobTypeContainerRecreate:
+		return []byte(s), nil
+	case JobTypeStackStart:
 		return []byte(s), nil
 	case JobTypeAcmeIssue:
 		return []byte(s), nil
@@ -7500,6 +7844,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeContainerRecreate:
 		*s = JobTypeContainerRecreate
+		return nil
+	case JobTypeStackStart:
+		*s = JobTypeStackStart
 		return nil
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
@@ -9523,6 +9870,7 @@ const (
 	NotificationEventTypeAppdataBackupFailed      NotificationEventType = "appdata_backup_failed"
 	NotificationEventTypeBackupDestinationStale   NotificationEventType = "backup_destination_stale"
 	NotificationEventTypeRestoreDrillFailed       NotificationEventType = "restore_drill_failed"
+	NotificationEventTypeCatalogCheckFailed       NotificationEventType = "catalog_check_failed"
 )
 
 // AllValues returns all NotificationEventType values.
@@ -9556,6 +9904,7 @@ func (NotificationEventType) AllValues() []NotificationEventType {
 		NotificationEventTypeAppdataBackupFailed,
 		NotificationEventTypeBackupDestinationStale,
 		NotificationEventTypeRestoreDrillFailed,
+		NotificationEventTypeCatalogCheckFailed,
 	}
 }
 
@@ -9617,6 +9966,8 @@ func (s NotificationEventType) MarshalText() ([]byte, error) {
 	case NotificationEventTypeBackupDestinationStale:
 		return []byte(s), nil
 	case NotificationEventTypeRestoreDrillFailed:
+		return []byte(s), nil
+	case NotificationEventTypeCatalogCheckFailed:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -9709,6 +10060,9 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 		return nil
 	case NotificationEventTypeRestoreDrillFailed:
 		*s = NotificationEventTypeRestoreDrillFailed
+		return nil
+	case NotificationEventTypeCatalogCheckFailed:
+		*s = NotificationEventTypeCatalogCheckFailed
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -10328,6 +10682,144 @@ func (o OptBool) Get() (v bool, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCatalogCheckOutcome returns new OptCatalogCheckOutcome with value set to v.
+func NewOptCatalogCheckOutcome(v CatalogCheckOutcome) OptCatalogCheckOutcome {
+	return OptCatalogCheckOutcome{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogCheckOutcome is optional CatalogCheckOutcome.
+type OptCatalogCheckOutcome struct {
+	Value CatalogCheckOutcome
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogCheckOutcome was set.
+func (o OptCatalogCheckOutcome) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogCheckOutcome) Reset() {
+	var v CatalogCheckOutcome
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogCheckOutcome) SetTo(v CatalogCheckOutcome) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogCheckOutcome) Get() (v CatalogCheckOutcome, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogCheckOutcome) Or(d CatalogCheckOutcome) CatalogCheckOutcome {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCatalogRefreshInterval returns new OptCatalogRefreshInterval with value set to v.
+func NewOptCatalogRefreshInterval(v CatalogRefreshInterval) OptCatalogRefreshInterval {
+	return OptCatalogRefreshInterval{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogRefreshInterval is optional CatalogRefreshInterval.
+type OptCatalogRefreshInterval struct {
+	Value CatalogRefreshInterval
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogRefreshInterval was set.
+func (o OptCatalogRefreshInterval) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogRefreshInterval) Reset() {
+	var v CatalogRefreshInterval
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogRefreshInterval) SetTo(v CatalogRefreshInterval) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogRefreshInterval) Get() (v CatalogRefreshInterval, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogRefreshInterval) Or(d CatalogRefreshInterval) CatalogRefreshInterval {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCatalogRefreshReason returns new OptCatalogRefreshReason with value set to v.
+func NewOptCatalogRefreshReason(v CatalogRefreshReason) OptCatalogRefreshReason {
+	return OptCatalogRefreshReason{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogRefreshReason is optional CatalogRefreshReason.
+type OptCatalogRefreshReason struct {
+	Value CatalogRefreshReason
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogRefreshReason was set.
+func (o OptCatalogRefreshReason) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogRefreshReason) Reset() {
+	var v CatalogRefreshReason
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogRefreshReason) SetTo(v CatalogRefreshReason) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogRefreshReason) Get() (v CatalogRefreshReason, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogRefreshReason) Or(d CatalogRefreshReason) CatalogRefreshReason {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -14976,6 +15468,12 @@ type Stack struct {
 	Name        string        `json:"name"`
 	Template    StackTemplate `json:"template"`
 	InstalledAt time.Time     `json:"installedAt"`
+	// True once the stack's Compose text was saved by hand (`updateStack`), so the template's form must
+	// not silently overwrite it. A template install is not manually edited.
+	ManuallyEdited bool `json:"manuallyEdited"`
+	// The stored `docker-compose.yml` text. Returned by `getStack` and `updateStack` only, never by
+	// `listStacks`. The `.env` is never returned.
+	Compose OptString `json:"compose"`
 }
 
 // GetName returns the value of Name.
@@ -14993,6 +15491,16 @@ func (s *Stack) GetInstalledAt() time.Time {
 	return s.InstalledAt
 }
 
+// GetManuallyEdited returns the value of ManuallyEdited.
+func (s *Stack) GetManuallyEdited() bool {
+	return s.ManuallyEdited
+}
+
+// GetCompose returns the value of Compose.
+func (s *Stack) GetCompose() OptString {
+	return s.Compose
+}
+
 // SetName sets the value of Name.
 func (s *Stack) SetName(val string) {
 	s.Name = val
@@ -15006,6 +15514,16 @@ func (s *Stack) SetTemplate(val StackTemplate) {
 // SetInstalledAt sets the value of InstalledAt.
 func (s *Stack) SetInstalledAt(val time.Time) {
 	s.InstalledAt = val
+}
+
+// SetManuallyEdited sets the value of ManuallyEdited.
+func (s *Stack) SetManuallyEdited(val bool) {
+	s.ManuallyEdited = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *Stack) SetCompose(val OptString) {
+	s.Compose = val
 }
 
 // Ref: #/components/schemas/StackTemplate
@@ -16866,6 +17384,49 @@ func (s *UpdateShareRequest) SetSmb(val OptShareSMB) {
 // SetNfs sets the value of Nfs.
 func (s *UpdateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
+}
+
+// Ref: #/components/schemas/UpdateStackRequest
+type UpdateStackRequest struct {
+	// The new `docker-compose.yml` text.
+	Compose string `json:"compose"`
+}
+
+// GetCompose returns the value of Compose.
+func (s *UpdateStackRequest) GetCompose() string {
+	return s.Compose
+}
+
+// SetCompose sets the value of Compose.
+func (s *UpdateStackRequest) SetCompose(val string) {
+	s.Compose = val
+}
+
+// Ref: #/components/schemas/UpdateStackResult
+type UpdateStackResult struct {
+	// False for a `dryRun`, which changes nothing.
+	Applied bool  `json:"applied"`
+	Stack   Stack `json:"stack"`
+}
+
+// GetApplied returns the value of Applied.
+func (s *UpdateStackResult) GetApplied() bool {
+	return s.Applied
+}
+
+// GetStack returns the value of Stack.
+func (s *UpdateStackResult) GetStack() Stack {
+	return s.Stack
+}
+
+// SetApplied sets the value of Applied.
+func (s *UpdateStackResult) SetApplied(val bool) {
+	s.Applied = val
+}
+
+// SetStack sets the value of Stack.
+func (s *UpdateStackResult) SetStack(val Stack) {
+	s.Stack = val
 }
 
 // Ref: #/components/schemas/UpdateStatus

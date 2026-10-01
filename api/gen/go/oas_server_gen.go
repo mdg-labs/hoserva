@@ -444,6 +444,13 @@ type Handler interface {
 	//
 	// GET /cache/usage
 	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
+	// GetCatalogSettings implements getCatalogSettings operation.
+	//
+	// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
+	// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+	//
+	// GET /settings/catalog
+	GetCatalogSettings(ctx context.Context) (*CatalogSettings, error)
 	// GetCatalogTemplate implements getCatalogTemplate operation.
 	//
 	// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
@@ -596,7 +603,8 @@ type Handler interface {
 	GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error)
 	// GetStack implements getStack operation.
 	//
-	// One stack's row, without its `.env`.
+	// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
+	// `.env` is never returned: it holds generated secrets.
 	//
 	// GET /stacks/{name}
 	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
@@ -782,11 +790,17 @@ type Handler interface {
 	// ListCatalog implements listCatalog operation.
 	//
 	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
-	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
-	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-	// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
-	// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+	// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
+	// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
+	// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
+	// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
+	// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
+	// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
+	// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
+	// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
+	// run since the daemon started, also starts one catalog check in the background, never a second while
+	// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
+	// `catalog` event on `/api/v1/events`.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
@@ -1095,6 +1109,25 @@ type Handler interface {
 	//
 	// POST /apps/{id}/recreate
 	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
+	// RefreshCatalog implements refreshCatalog operation.
+	//
+	// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
+	// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
+	// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
+	// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
+	// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
+	// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
+	// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
+	// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
+	// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
+	// while a check is running share that check's request and result. A signature that does not verify
+	// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
+	// because the two files are cached separately and can briefly disagree while a catalog is being
+	// published. Every finished check, whoever started it, is announced as a `catalog` event on
+	// `/api/v1/events`. Nothing is fetched from `api.github.com`.
+	//
+	// POST /catalog/refresh
+	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
 	// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 	//
 	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -1439,6 +1472,19 @@ type Handler interface {
 	//
 	// POST /shares/{name}/relocate
 	StartShareRelocation(ctx context.Context, req *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)
+	// StartStack implements startStack operation.
+	//
+	// Queues a `stack_start` job (service class, scoped to the stack) that runs
+	// `docker compose up --detach` for the stack: its services are created if they do not exist and
+	// recreated only where their definition changed, so an edit saved by `updateStack` takes effect.
+	// Missing generated files are written from the stack's row first. Refused with 409 `array_stopped`
+	// while the array is stopped (maintenance mode) or its storage is not ready, and with 503
+	// `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again
+	// when it runs. An unknown stack is refused with 404 `stack_not_found` and an invalid name with 400
+	// `invalid_stack_name`.
+	//
+	// POST /stacks/{name}/start
+	StartStack(ctx context.Context, params StartStackParams) (*Job, error)
 	// StartSync implements startSync operation.
 	//
 	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
@@ -1519,6 +1565,15 @@ type Handler interface {
 	//
 	// PATCH /backup/destinations/{destinationId}
 	UpdateBackupDestination(ctx context.Context, req *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error)
+	// UpdateCatalogSettings implements updateCatalogSettings operation.
+	//
+	// Sets either or both settings; a field left out stays as it is. An interval other than `off`, `1h`,
+	// `6h`, `12h` or `24h` is refused with 400. With the interval `off` and `checkOnOpen` off, nothing
+	// reaches the catalog host except `refreshCatalog`. The background check applies a changed interval
+	// without a daemon restart.
+	//
+	// PUT /settings/catalog
+	UpdateCatalogSettings(ctx context.Context, req *CatalogSettingsUpdate) (*CatalogSettings, error)
 	// UpdateExternalDisk implements updateExternalDisk operation.
 	//
 	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
@@ -1591,6 +1646,22 @@ type Handler interface {
 	//
 	// PUT /shares/{name}/permissions
 	UpdateSharePermissions(ctx context.Context, req *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error)
+	// UpdateStack implements updateStack operation.
+	//
+	// Replaces the stack's `docker-compose.yml` text. The text is first checked with
+	// `docker compose config` against a copy of the stack's own `.env`, in a temporary directory, before
+	// anything is stored or written: a file that is empty or that `docker compose config` rejects is
+	// refused with 400 `invalid_stack`, carrying the compiler's message, and leaves the row and every file
+	// as they were. With `dryRun` a valid file is answered with `applied` false and the stored stack, and
+	// nothing is changed. Otherwise the row is updated (the new text, and `manuallyEdited` set so a
+	// template form never silently overwrites it) and the stack's `docker-compose.yml` is regenerated from
+	// it; if writing the file fails the row is put back as it was. Nothing is restarted: `startStack`
+	// makes the edit take effect. A stack whose `.env` cannot be opened (a restore without the backup
+	// passphrase) cannot be checked and is refused. An unknown stack is refused with 404 `stack_not_found`
+	// and a name that is not a valid stack name with 400 `invalid_stack_name`.
+	//
+	// PUT /stacks/{name}
+	UpdateStack(ctx context.Context, req *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error)
 	// UpdateUPSSettings implements updateUPSSettings operation.
 	//
 	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the

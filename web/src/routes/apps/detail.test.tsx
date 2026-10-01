@@ -18,6 +18,12 @@ vi.mock("@/lib/api/client", () => ({
   },
 }));
 
+// jsdom has no ResizeObserver, which the chart's responsive container needs
+// once it has points to draw.
+vi.mock("@/components/patterns/chart", () => ({
+  TimeSeriesChart: ({ title }: { title: string }) => <section aria-label={title}>{title}</section>,
+}));
+
 vi.mock("@/lib/api/auth-context", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/api/auth-context")>();
   return {
@@ -256,15 +262,65 @@ describe("Overview", () => {
     expect(await screen.findByText("Not running")).toBeInTheDocument();
   });
 
-  it("offers the five tabs, and the Logs, Stats, Config and Update ones say they are not available yet", async () => {
+  it("offers the five tabs, and the Config one says it is not available yet", async () => {
     installGet({ apps: [postgres] });
     renderPage("postgres");
 
     for (const label of ["Overview", "Logs", "Stats", "Config", "Update"]) {
       expect(await screen.findByRole("tab", { name: label })).toBeInTheDocument();
     }
-    fireEvent.click(screen.getByRole("tab", { name: "Stats" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Config" }));
     expect(await screen.findByText("This tab is not available yet.")).toBeInTheDocument();
+  });
+
+  it("fills the Logs, Stats and Update tabs from the application's route tree", async () => {
+    installGet(
+      { apps: [postgres] },
+      {
+        "/apps/{id}/logs": () => ok("database system is ready\n"),
+        "/apps/{id}/stats": () =>
+          ok({
+            at: NOW.toISOString(),
+            cpuPercent: 4,
+            memoryBytes: 1048576,
+            memoryLimitBytes: 2097152,
+            networkRxBytes: 0,
+            networkTxBytes: 0,
+            blockReadBytes: 0,
+            blockWriteBytes: 0,
+          }),
+        "/apps/updates": () =>
+          ok({
+            available: true,
+            updates: [
+              {
+                container: "postgres",
+                image: "example/postgres",
+                tag: "1.0",
+                status: "update_available",
+                kind: "new_version",
+                availableTag: "1.1",
+                bulkExcluded: false,
+              },
+            ],
+          }),
+        "/apps/updates/history": () => ok({ available: true, records: [] }),
+      },
+    );
+    window.history.pushState({}, "", "/apps/postgres");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Logs" }));
+    expect(await screen.findByText(/database system is ready/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Follow new output" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Stats" }));
+    expect(await screen.findByText("Processor use")).toBeInTheDocument();
+    expect(screen.queryByText(/database system is ready/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Update" }));
+    expect(await screen.findByText("Newer version available (1.1)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update" })).toBeEnabled();
   });
 });
 

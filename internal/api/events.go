@@ -11,6 +11,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/template"
 )
 
 // jobToEvent translates a *job.Job into the generated events.JobProgressEvent
@@ -82,6 +83,22 @@ func stateChangeToEvent(sc container.StateChange) (events.Event, error) {
 	}), nil
 }
 
+func catalogCheckToEvent(res template.CheckResult) (events.Event, error) {
+	data := events.CatalogRefresh{CheckedAt: res.CheckedAt, Outcome: events.CatalogCheckOutcome(res.Outcome)}
+	switch res.Outcome {
+	case template.OutcomeUpdated:
+		data.NewTemplates = events.NewOptInt(res.New)
+		data.UpdatedTemplates = events.NewOptInt(res.Updated)
+	case template.OutcomeFailed:
+		data.Reason = events.NewOptCatalogRefreshReason(events.CatalogRefreshReason(res.Reason))
+		data.Message = events.NewOptString(res.Message)
+	}
+	return events.NewCatalogEventEvent(events.CatalogEvent{
+		Event: string(events.CatalogEventEvent),
+		Data:  data,
+	}), nil
+}
+
 // defaultKeepAlive paces the SSE comment lines EventsHandler sends while
 // idle, so a client (and any reverse proxy in front of hoservad) sees the
 // connection is still alive rather than timing it out.
@@ -104,6 +121,7 @@ type EventsHandler struct {
 	Hub          *job.Hub
 	NotifyHub    *notify.Hub
 	ContainerHub *container.Hub
+	CatalogHub   *template.CheckHub
 	Authenticate func(r *http.Request) error
 	KeepAlive    time.Duration
 }
@@ -137,6 +155,13 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var unsubscribeContainers func()
 		containerCh, unsubscribeContainers = h.ContainerHub.Subscribe()
 		defer unsubscribeContainers()
+	}
+
+	var catalogCh <-chan template.CheckResult
+	if h.CatalogHub != nil {
+		var unsubscribeCatalog func()
+		catalogCh, unsubscribeCatalog = h.CatalogHub.Subscribe()
+		defer unsubscribeCatalog()
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -178,6 +203,13 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := writeEvent(w, flusher, func() (events.Event, error) { return stateChangeToEvent(sc) }); err != nil {
+				return
+			}
+		case res, ok := <-catalogCh:
+			if !ok {
+				return
+			}
+			if err := writeEvent(w, flusher, func() (events.Event, error) { return catalogCheckToEvent(res) }); err != nil {
 				return
 			}
 		case <-ticker.C:
