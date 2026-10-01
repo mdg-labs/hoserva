@@ -14404,9 +14404,10 @@ func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w h
 // `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and
 // the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and
 // `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result
-// carries the privilege summary, so a template that asks for privileged mode or the Docker socket is
-// reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409
-// `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
+// carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any
+// other kind `previewTemplateInstall` lists is reported with its install. The stack errors of
+// `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those
+// of `previewTemplateInstall`.
 //
 // POST /templates/{id}/install
 func (s *Server) handleInstallTemplateRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -20814,8 +20815,10 @@ func (s *Server) handlePreviewConfigImportRequest(args [0]string, argsEscaped bo
 // host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced
 // confinement, extra groups, the Docker socket and host paths outside the pool and cache — never
 // from anything the template declares. `compose` is the file an install would write. An input that is
-// not the template's, a value that does not fit its kind, or a path input with no value and no default
-// is refused with 400 `invalid_template_input`; a name that is not a valid stack name with 400
+// not the template's, a value that does not fit its kind, a path input with no value, no default and
+// no existing share to default to, or a `string` input with no value and no default is refused with
+// 400 `invalid_template_input` (a `string` input the template marks `optional` may be left empty and
+// is written to `.env` with an empty value); a name that is not a valid stack name with 400
 // `invalid_stack_name`; an unknown template with 404 `template_not_found`; a catalog entry that fails
 // the template rules with 422 `template_invalid`; a GPU the host cannot give to a container (no
 // `render` group) with 409 `gpu_unavailable`; no free port above a conflicting one with 409
