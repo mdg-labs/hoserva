@@ -60,7 +60,6 @@ const TAB_STATS = "stats";
 const TAB_CONFIG = "config";
 const TAB_UPDATE = "update";
 const RECREATE = "recreate" as const;
-const NOT_KNOWN = "—";
 const APPS_PATH = "/apps";
 const CLOCK_MS = 30_000;
 
@@ -164,19 +163,19 @@ function Overview({ app }: { app: App }): React.ReactElement {
             <Fact label={t("apps.detail.overview.image")}>
               <span className="break-all">{app.image}</span>
             </Fact>
-            <Fact label={t("apps.detail.overview.tag")}>{app.tag || NOT_KNOWN}</Fact>
+            <Fact label={t("apps.detail.overview.tag")}>{app.tag || t("apps.detail.notKnown")}</Fact>
             <Fact label={t("apps.detail.overview.created")}>
-              {app.createdAt ? new Date(app.createdAt).toLocaleString() : NOT_KNOWN}
+              {app.createdAt ? new Date(app.createdAt).toLocaleString() : t("apps.detail.notKnown")}
             </Fact>
             <Fact label={t("apps.detail.overview.uptime")}>
               {!running
                 ? t("apps.detail.overview.notRunning")
                 : startedAt === null
-                  ? NOT_KNOWN
+                  ? t("apps.detail.notKnown")
                   : formatDuration(Math.max(0, now - startedAt), t)}
             </Fact>
             <Fact label={t("apps.detail.overview.restarts")}>
-              {app.restartCount === undefined ? NOT_KNOWN : app.restartCount}
+              {app.restartCount === undefined ? t("apps.detail.notKnown") : app.restartCount}
             </Fact>
             <Fact label={t("apps.detail.overview.ports")}>
               <PortLinks app={app} />
@@ -203,7 +202,7 @@ function Overview({ app }: { app: App }): React.ReactElement {
                     })}
                   </span>
                   <span className="text-muted-foreground">
-                    {mount.source === undefined ? NOT_KNOWN : locationLabel(mount.location, t)}
+                    {mount.source === undefined ? t("apps.detail.notKnown") : locationLabel(mount.location, t)}
                     {" · "}
                     {mount.readWrite ? t("apps.detail.mounts.readWrite") : t("apps.detail.mounts.readOnly")}
                   </span>

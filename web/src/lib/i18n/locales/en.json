@@ -135,6 +135,7 @@
       "back": "Installed apps",
       "loadFailed": "Could not load this app.",
       "placeholder": "This tab is not available yet.",
+      "notKnown": "—",
       "tabs": {
         "overview": "Overview",
         "logs": "Logs",
