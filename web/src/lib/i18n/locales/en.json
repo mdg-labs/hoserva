@@ -211,6 +211,56 @@
       "diskRead": { "title": "Disk read (KiB/s)" },
       "diskWrite": { "title": "Disk written (KiB/s)" }
     },
+    "compose": {
+      "title": "Compose file of {{name}}",
+      "description": "The Docker Compose file this app stack runs from. Check it first, then apply it to store it and start the stack with it.",
+      "back": "Back to {{name}}",
+      "loadFailed": "Could not load the Compose file.",
+      "manuallyEdited": "Manually edited",
+      "manuallyEditedHelp": "This file was changed by hand, so the app's settings form will not overwrite it.",
+      "toolbar": "Compose file actions",
+      "editor": "Compose file (YAML)",
+      "validate": "Validate",
+      "apply": "Apply",
+      "unapplied": "You have changes that are not applied yet.",
+      "checked": "The Compose file is valid",
+      "checkedDescription": "Nothing was stored or restarted. Apply the file to use it.",
+      "invalid": "The Compose file is not valid",
+      "checkFailed": "Could not check the Compose file.",
+      "notAppliedInvalid": "Nothing was applied: the Compose file is not valid",
+      "saveFailed": "Could not store the Compose file. Nothing was changed.",
+      "startFailed": "Could not start the stack.",
+      "notStarted": "The file was stored, but the stack was not started",
+      "notStartedDescription": "The stack keeps running from its previous definition until it is started again. Your text is kept in the editor.",
+      "retryStart": "Try starting again",
+      "confirm": {
+        "title": "Apply the Compose file to {{name}}?",
+        "description": "Hoserva stores this file and starts the stack with it. Every container in the stack whose definition changed is recreated, so it restarts and is briefly unavailable."
+      },
+      "job": {
+        "title": "Starting {{name}}",
+        "done": "The stack was started with the new Compose file.",
+        "failed": "The stack did not start.",
+        "followFailed": "Could not follow the progress of the start.",
+        "view": "View job"
+      },
+      "import": {
+        "action": "Import",
+        "title": "Import a Compose file",
+        "description": "Replaces the text in the editor with a docker-compose.yml. Nothing is stored until you apply it.",
+        "file": "Compose file",
+        "fileHelp": "A .yml or .yaml file of up to {{size}} KiB.",
+        "paste": "Or paste the file's text",
+        "tooLarge": "The Compose file is larger than {{size}} KiB.",
+        "readFailed": "Could not read the file.",
+        "confirm": "Replace editor text"
+      },
+      "notStack": {
+        "title": "No Compose file for this app",
+        "description": "{{name}} was not started from a Hoserva app stack, so there is no Compose file here to edit. Only apps Hoserva manages as a stack have one.",
+        "action": "Back to {{name}}"
+      }
+    },
     "detail": {
       "back": "Installed apps",
       "loadFailed": "Could not load this app.",

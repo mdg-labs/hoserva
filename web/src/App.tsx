@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Route, BrowserRouter, Routes } from "react-router-dom";
+import { createBrowserRouter, Route, RouterProvider, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/patterns/app-shell";
 import { AuthGate, AuthProvider, MinimalAuthLayout } from "@/lib/api/auth-guard";
@@ -9,6 +9,7 @@ import { DashboardPage } from "@/routes/dashboard";
 import { JobDetailPage } from "@/routes/jobs/detail";
 import { JobsPage } from "@/routes/jobs/index";
 import { AppsPage } from "@/routes/apps/index";
+import { ComposePage } from "@/routes/apps/compose";
 import { AppDetailPage } from "@/routes/apps/detail";
 import { LoginPage } from "@/routes/login";
 import { PlaceholderPage } from "@/routes/placeholder-page";
@@ -95,7 +96,7 @@ function AuthenticatedRoutes(): React.ReactElement {
         <Route path="apps/catalog/:appId" element={<PlaceholderPage titleKey="appsNav.catalog" />} />
         <Route path="apps/install/:appId" element={<PlaceholderPage titleKey="appsNav.installed" />} />
         <Route path="apps/:name" element={<AppDetailPage />} />
-        <Route path="apps/:name/compose" element={<PlaceholderPage titleKey="appsNav.installed" />} />
+        <Route path="apps/:name/compose" element={<ComposePage />} />
 
         <Route element={<SectionLayout items={VMS_NAV(t)} />}>
           <Route path="vms" element={<PlaceholderPage titleKey="vmsNav.list" />} />
@@ -130,34 +131,39 @@ function AuthenticatedRoutes(): React.ReactElement {
   );
 }
 
+function AppRoutes(): React.ReactElement {
+  return (
+    <AuthProvider>
+      <AuthGate>
+        <Routes>
+          <Route
+            path="/welcome"
+            element={
+              <MinimalAuthLayout>
+                <WelcomePage />
+              </MinimalAuthLayout>
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              <MinimalAuthLayout>
+                <LoginPage />
+              </MinimalAuthLayout>
+            }
+          />
+          <Route path="/*" element={<AuthenticatedRoutes />} />
+        </Routes>
+      </AuthGate>
+    </AuthProvider>
+  );
+}
+
+// A data router, because useBlocker (the unsaved-changes guard on in-app
+// navigation) needs one. The route tree stays in AppRoutes' own <Routes>.
 export function App(): React.ReactElement {
   useEffect(() => watchSystemTheme(), []);
+  const [router] = useState(() => createBrowserRouter([{ path: "*", element: <AppRoutes /> }]));
 
-  return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AuthGate>
-          <Routes>
-            <Route
-              path="/welcome"
-              element={
-                <MinimalAuthLayout>
-                  <WelcomePage />
-                </MinimalAuthLayout>
-              }
-            />
-            <Route
-              path="/login"
-              element={
-                <MinimalAuthLayout>
-                  <LoginPage />
-                </MinimalAuthLayout>
-              }
-            />
-            <Route path="/*" element={<AuthenticatedRoutes />} />
-          </Routes>
-        </AuthGate>
-      </AuthProvider>
-    </BrowserRouter>
-  );
+  return <RouterProvider router={router} />;
 }

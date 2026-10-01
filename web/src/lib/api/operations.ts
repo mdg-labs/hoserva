@@ -147,6 +147,23 @@ export function deleteStack(name: string, deleteAppdata: boolean) {
   });
 }
 
+export function getStack(name: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/stacks/{name}", { params: { path: { name } }, signal });
+}
+
+// dryRun is sent only when it is true: an absent parameter means the daemon
+// stores the text.
+export function updateStack(name: string, compose: string, dryRun: boolean) {
+  return hoservaClient.PUT("/stacks/{name}", {
+    params: { path: { name }, query: dryRun ? { dryRun: true } : {} },
+    body: { compose },
+  });
+}
+
+export function startStack(name: string) {
+  return hoservaClient.POST("/stacks/{name}/start", { params: { path: { name } } });
+}
+
 export function postAppStart(id: string) {
   return hoservaClient.POST("/apps/{id}/start", { params: { path: { id } } });
 }
