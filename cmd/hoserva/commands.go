@@ -451,6 +451,7 @@ func appCmd() *cobra.Command {
 		appLogsCmd(),
 		appInstallCmd(),
 	)
+	cmd.AddCommand(appUpdateCmds()...)
 	return cmd
 }
 

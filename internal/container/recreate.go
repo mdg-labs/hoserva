@@ -37,6 +37,18 @@ const (
 // deleted last,
 // without its volumes, which the replacement now uses.
 func (c *EngineClient) Recreate(ctx context.Context, id string) error {
+	return c.recreate(ctx, id, true)
+}
+
+// RecreateLocal is Recreate without the pull: the replacement is built from
+// whatever image the container's reference names locally, so a revert that
+// has pointed the reference back at a kept image gets that image and never
+// a newer one.
+func (c *EngineClient) RecreateLocal(ctx context.Context, id string) error {
+	return c.recreate(ctx, id, false)
+}
+
+func (c *EngineClient) recreate(ctx context.Context, id string, pull bool) error {
 	ct, err := c.resolve(ctx, id)
 	if err != nil {
 		return err
@@ -54,8 +66,10 @@ func (c *EngineClient) Recreate(ctx context.Context, id string) error {
 	name := strings.TrimPrefix(old.Name, "/")
 	wasRunning := old.State != nil && old.State.Running
 
-	if err := c.pull(ctx, old.Config.Image); err != nil {
-		return fmt.Errorf("pulling %s (the existing container is untouched): %w", old.Config.Image, err)
+	if pull {
+		if err := c.pull(ctx, old.Config.Image); err != nil {
+			return fmt.Errorf("pulling %s (the existing container is untouched): %w", old.Config.Image, err)
+		}
 	}
 
 	cfg, host, nets := recreateSpec(old)

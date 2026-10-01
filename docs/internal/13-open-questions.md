@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -575,6 +575,12 @@ The interval and the check-on-open switch are stored as additive columns on the 
 Pulling to compare would count against registries' limits on anonymous pulls and waste bandwidth; one manifest request per image per day is cheap. Docker Hub's current limit policy is re-checked when this is built, since it has changed before.
 
 **Revised (2026-10-01, #487):** telling a new version tag from a new build on the same tag (doc 04 §6) needs more than the manifest. The check requests each image's manifest and, only when the image's tag looks like a version (`16.4`, `v1.2.3-alpine`; never `latest`), the repository's tag list (`GET /v2/<repository>/tags/list`, in pages when the registry paginates). Both are metadata requests: the check never pulls an image or fetches a blob. A registry that answers either request with a rate limit is skipped until the next day, and the UI says the check was skipped. Where the manifest request already showed a new build, a rate limit on the tag list only means newer version tags were not looked for, and the new build is still reported.
+
+### Q88 — How long the previous image is kept for a revert
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §6, doc 10 §2
+
+**Default: an update keeps the image the container ran for 7 days, and the period is a setting of 1 to 365 days (`imageKeepDays`, `GET`/`PUT /settings/apps`). A change applies to updates made afterwards; an update already recorded keeps the deadline it was made with. The image is held under a `hoserva-previous:<id>` tag that the Engine's own cleanup leaves alone, and Hoserva removes the tag when the period ends, unless a container still runs the image.**
+A revert needs both halves of the pairing, the previous image and the appdata snapshot taken just before the update, so the image is kept about as long as an operator is likely to notice a bad update. A week covers a weekend and the next working days; longer holds disk space for images that are unlikely to be wanted again. The snapshot is bounded separately, by the 5 pre-change archives per container a destination keeps (doc 10 §2): a revert whose snapshot has been pruned is refused with `revert_unavailable` and changes nothing.
 
 ### Q82 — GPUs for containers
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 14 §3, Q53

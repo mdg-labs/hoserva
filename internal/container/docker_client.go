@@ -45,6 +45,8 @@ type engineAPI interface {
 	ContainerStats(ctx context.Context, containerID string, options dockerclient.ContainerStatsOptions) (dockerclient.ContainerStatsResult, error)
 	ImageList(ctx context.Context, options dockerclient.ImageListOptions) (dockerclient.ImageListResult, error)
 	ImagePull(ctx context.Context, refStr string, options dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error)
+	ImageTag(ctx context.Context, options dockerclient.ImageTagOptions) (dockerclient.ImageTagResult, error)
+	ImageRemove(ctx context.Context, imageID string, options dockerclient.ImageRemoveOptions) (dockerclient.ImageRemoveResult, error)
 	Events(ctx context.Context, options dockerclient.EventsListOptions) dockerclient.EventsResult
 }
 
@@ -120,6 +122,23 @@ func (c *EngineClient) Inspect(ctx context.Context, id string) (Container, error
 		}
 	}
 	return Container{}, ErrNotFound
+}
+
+// ConfiguredImage reads the reference from the container's own inspection,
+// where it is always what the container was created with.
+func (c *EngineClient) ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error) {
+	ct, err := c.resolve(ctx, id)
+	if err != nil {
+		return ConfiguredImage{}, err
+	}
+	info, err := c.inspectEngine(ctx, ct.ID)
+	if err != nil {
+		return ConfiguredImage{}, err
+	}
+	if info.Config == nil || info.Config.Image == "" {
+		return ConfiguredImage{}, fmt.Errorf("container: the Engine returned no image reference for %q", ct.Name)
+	}
+	return configuredImage(info.Config.Image), nil
 }
 
 func (c *EngineClient) Images(ctx context.Context) ([]Image, error) {

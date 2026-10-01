@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -14,9 +15,11 @@ type FakeCall struct {
 }
 
 // FailOn scripts op ("start", "stop", "restart", "remove", "recreate",
-// "logs", "stats", "reconcile") to return err for the container whose ID or name is
-// id, or for every container when id is "". The container is left
-// exactly as it was. A nil err clears the script.
+// "recreate-swap", "recreate-local", "logs", "stats", "reconcile") to return
+// err for the container whose ID or name is id, or for every container when
+// id is "". The container is left exactly as it was. "pull-image",
+// "tag-image" and "untag-image" are scripted per image reference instead. A
+// nil err clears the script.
 func (f *FakeProvider) FailOn(op, id string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -39,6 +42,20 @@ func (f *FakeProvider) Calls() []FakeCall {
 	out := make([]FakeCall, len(f.calls))
 	copy(out, f.calls)
 	return out
+}
+
+// FakeStart is one start or restart of a container, with the image it ran
+// when it started.
+type FakeStart struct {
+	Name    string
+	ImageID string
+}
+
+// Starts returns every start and restart made so far, in order.
+func (f *FakeProvider) Starts() []FakeStart {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FakeStart(nil), f.starts...)
 }
 
 // SetLogs scripts the text Logs returns for the container id.
@@ -147,6 +164,9 @@ func (f *FakeProvider) setState(op, id, state, status string) error {
 	}
 	f.containers[i].State = state
 	f.containers[i].Status = status
+	if state == "running" {
+		f.starts = append(f.starts, FakeStart{Name: f.containers[i].Name, ImageID: f.containers[i].ImageID})
+	}
 	change := changeOf(f.containers[i], "")
 	f.mu.Unlock()
 	f.emit(change)
@@ -183,13 +203,184 @@ func (f *FakeProvider) Remove(ctx context.Context, id string, opts RemoveOptions
 	return nil
 }
 
-// Recreate leaves the container as it is: a scripted failure models a
-// pull or create that failed before anything was replaced.
+// SetPull scripts the image a pull of ref (a container's "repository:tag")
+// brings in: the next Recreate of a container with that reference moves the
+// tag to the image with this ID, which must have been added with AddImage,
+// and the container then runs it. Without it a Recreate pulls nothing new.
+func (f *FakeProvider) SetPull(ref, imageID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.pulls == nil {
+		f.pulls = make(map[string]string)
+	}
+	f.pulls[ref] = imageID
+}
+
+// containerRef is the reference a container's image is pulled by.
+func containerRef(c Container) string {
+	ref, err := ParseImageRef(c.Image, c.Tag)
+	if err != nil {
+		return c.Image + ":" + c.Tag
+	}
+	return ref.String()
+}
+
+// Recreate leaves the container as it is, with a scripted failure of op
+// "recreate" modelling a pull or create that failed before anything was
+// replaced. A scripted pull (SetPull) moves the tag before the swap, and a
+// failure of op "recreate-swap" models a swap that fails after it: the
+// container is unchanged and the tag has moved.
 func (f *FakeProvider) Recreate(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	_, err := f.actLocked("recreate", id)
-	return err
+	i, err := f.actLocked("recreate", id)
+	if err != nil {
+		return err
+	}
+	ref := containerRef(f.containers[i])
+	pulled, ok := f.pulls[ref]
+	if ok {
+		if err := f.moveTagLocked(pulled, ref); err != nil {
+			return err
+		}
+	}
+	if err := f.failureLocked("recreate-swap", f.containers[i]); err != nil {
+		return err
+	}
+	if ok {
+		f.containers[i].ImageID = pulled
+		if f.containers[i].State == "running" {
+			f.starts = append(f.starts, FakeStart{Name: f.containers[i].Name, ImageID: pulled})
+		}
+	}
+	return nil
+}
+
+// PullImage records a "pull-image" call (ID is the reference) and, for a
+// scripted pull (SetPull), moves the tag to the new image. FailOn can script
+// it per reference.
+func (f *FakeProvider) PullImage(ctx context.Context, ref string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, FakeCall{Op: "pull-image", ID: ref})
+	if f.listErr != nil {
+		return f.listErr
+	}
+	if err := f.imageFailureLocked("pull-image", ref); err != nil {
+		return err
+	}
+	if pulled, ok := f.pulls[ref]; ok {
+		return f.moveTagLocked(pulled, ref)
+	}
+	return nil
+}
+
+// RecreateLocal replaces the container's image with whatever image holds the
+// container's reference locally, pulling nothing.
+func (f *FakeProvider) RecreateLocal(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, err := f.actLocked("recreate-local", id)
+	if err != nil {
+		return err
+	}
+	ref := containerRef(f.containers[i])
+	for _, img := range f.images {
+		for _, t := range img.RepoTags {
+			if t == ref {
+				f.containers[i].ImageID = img.ID
+				if f.containers[i].State == "running" {
+					f.starts = append(f.starts, FakeStart{Name: f.containers[i].Name, ImageID: img.ID})
+				}
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrImageNotFound, ref)
+}
+
+func (f *FakeProvider) failureLocked(op string, c Container) error {
+	for _, key := range []string{c.ID, c.Name, ""} {
+		if err, ok := f.failures[op+"\x00"+key]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
+// moveTagLocked tags the image with this ID as ref, taking the tag off any
+// other image.
+func (f *FakeProvider) moveTagLocked(imageID, ref string) error {
+	target := -1
+	for i, img := range f.images {
+		if img.ID == imageID {
+			target = i
+		}
+	}
+	if target < 0 {
+		return fmt.Errorf("%w: %s", ErrImageNotFound, imageID)
+	}
+	for i := range f.images {
+		kept := f.images[i].RepoTags[:0:0]
+		for _, t := range f.images[i].RepoTags {
+			if t != ref {
+				kept = append(kept, t)
+			}
+		}
+		f.images[i].RepoTags = kept
+	}
+	f.images[target].RepoTags = append(f.images[target].RepoTags, ref)
+	return nil
+}
+
+// TagImage records a "tag-image" call (ID is the reference); FailOn can
+// script it per reference.
+func (f *FakeProvider) TagImage(ctx context.Context, imageID, ref string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, FakeCall{Op: "tag-image", ID: ref})
+	if err := f.imageFailureLocked("tag-image", ref); err != nil {
+		return err
+	}
+	return f.moveTagLocked(imageID, ref)
+}
+
+// UntagImage records an "untag-image" call (ID is the reference). Like the
+// Engine, it refuses with ErrImageInUse to remove the last reference of an
+// image a container runs.
+func (f *FakeProvider) UntagImage(ctx context.Context, ref string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, FakeCall{Op: "untag-image", ID: ref})
+	if err := f.imageFailureLocked("untag-image", ref); err != nil {
+		return err
+	}
+	for i, img := range f.images {
+		for j, t := range img.RepoTags {
+			if t != ref {
+				continue
+			}
+			if len(img.RepoTags) == 1 {
+				for _, c := range f.containers {
+					if c.ImageID == img.ID {
+						return fmt.Errorf("%w: %s", ErrImageInUse, c.Name)
+					}
+				}
+			}
+			f.images[i].RepoTags = append(append([]string(nil), img.RepoTags[:j]...), img.RepoTags[j+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrImageNotFound, ref)
+}
+
+func (f *FakeProvider) imageFailureLocked(op, ref string) error {
+	for _, key := range []string{ref, ""} {
+		if err, ok := f.failures[op+"\x00"+key]; ok {
+			return err
+		}
+	}
+	return nil
 }
 
 // SetReconciliation scripts what Reconcile reports.

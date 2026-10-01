@@ -219,8 +219,8 @@ Generated Compose is shown side by side with the source XML before anything runs
 - Distinguish **digest changed on the same tag** (the common `:latest` case) from **a genuinely new version tag**
 - Show both, labelled differently — "new build of `latest`" is not the same as "2.1 → 2.2"
 - Bulk update with per-container opt-out
-- **Pre-update appdata snapshot** for containers whose appdata sits on the cache, so a bad update is recoverable. A bad container update is one of the most common ways a working homelab service breaks.
-- Rollback: keep the previous image locally for a configurable period and offer a one-click revert
+- **Pre-update appdata snapshot** for containers whose appdata sits on the cache, so a bad update is recoverable. A bad container update is one of the most common ways a working homelab service breaks. The image is pulled first, which changes nothing about the container, so a failed pull or a pull that finds nothing newer costs no snapshot and no downtime; the snapshot (doc 10 §2) is taken after it and before the container is replaced.
+- Rollback: keep the previous image locally for a configurable period and offer a one-click revert. The period is the `imageKeepDays` app setting, 1 to 365 days and 7 by default (Q88). A revert stops the container if it runs, restores the snapshot, recreates the container from the kept image without pulling, and starts it once on that image, so the updated image never runs against the restored data. A revert that fails after it stopped the container leaves it stopped, and reverting again finishes it for as long as the snapshot is still on its destination (the restore never prunes the snapshot it reads, but a later archive can push it out of the 5 newest), after which the container is started by hand.
 
 ---
 

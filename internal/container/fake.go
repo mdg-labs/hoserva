@@ -18,9 +18,11 @@ type FakeProvider struct {
 	images     []Image
 	imagesErr  error
 
+	pulls          map[string]string
 	failures       map[string]error
 	reconciliation []Reconciliation
 	calls          []FakeCall
+	starts         []FakeStart
 	logs           map[string]string
 	stats          map[string]Stats
 	watchers       map[chan StateChange]struct{}
@@ -97,7 +99,9 @@ func (f *FakeProvider) List(ctx context.Context) ([]Container, error) {
 		return nil, f.listErr
 	}
 	out := make([]Container, len(f.containers))
-	copy(out, f.containers)
+	for i, c := range f.containers {
+		out[i] = f.listedLocked(c)
+	}
 	return out, nil
 }
 
@@ -109,10 +113,51 @@ func (f *FakeProvider) Inspect(ctx context.Context, id string) (Container, error
 	}
 	for _, c := range f.containers {
 		if c.ID == id || c.Name == id {
-			return c, nil
+			return f.listedLocked(c), nil
 		}
 	}
 	return Container{}, ErrNotFound
+}
+
+// listedLocked is the container as the Engine's listing reports it: a
+// container whose image reference now points at a different image than the
+// one it runs is listed under that image's ID, "sha256:<hex>", which reads as
+// repository "sha256" and tag "<hex>". What the container was created with
+// is what AddContainer was given; ConfiguredImage returns it.
+func (f *FakeProvider) listedLocked(c Container) Container {
+	if c.Pinned {
+		return c
+	}
+	ref := containerRef(c)
+	for _, img := range f.images {
+		if img.ID == c.ImageID {
+			continue
+		}
+		for _, t := range img.RepoTags {
+			if t == ref {
+				c.Image, c.Tag = "sha256", strings.TrimPrefix(c.ImageID, "sha256:")
+				return c
+			}
+		}
+	}
+	return c
+}
+
+func (f *FakeProvider) ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return ConfiguredImage{}, f.listErr
+	}
+	for _, c := range f.containers {
+		if c.ID == id || c.Name == id {
+			if c.Pinned {
+				return ConfiguredImage{Ref: c.Image + "@" + c.ImageID, Pinned: true}, nil
+			}
+			return ConfiguredImage{Ref: containerRef(c)}, nil
+		}
+	}
+	return ConfiguredImage{}, ErrNotFound
 }
 
 func (f *FakeProvider) Images(ctx context.Context) ([]Image, error) {

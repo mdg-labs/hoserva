@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -36,21 +37,64 @@ func newUpdateChecker(apps *appServices, updates *store.UpdateStore, registry co
 	}
 }
 
-// wireContainerUpdates is what main.go calls to make update detection
-// reachable: GET /apps/updates (Handler.AppUpdates) and the container_update
-// job, which only checks. An update-mode run fails with
-// job.ErrContainerUpdateNotImplemented rather than report success for an
-// update it did not perform. A test calls it too, rather than repeating the
-// assignments. The job is registered even with no checker, so a submission
-// is refused with a reason instead of as an unknown type.
-func wireContainerUpdates(handler *api.Handler, registry *job.Registry, checker *container.UpdateChecker) {
+// newUpdater builds the update execution over the daemon's container
+// services, the appdata backup's snapshot mechanism and the update history,
+// or, without a Docker client (apps and the appdata service are nil then),
+// one that serves only the settings kept in history.
+func newUpdater(apps *appServices, history *store.ImageHistoryStore, appdata *backup.AppdataService, checker *container.UpdateChecker) *container.Updater {
+	u := &container.Updater{History: history}
+	if apps == nil || appdata == nil {
+		return u
+	}
+	u.Lifecycle = apps.Lifecycle
+	u.Snapshots = backup.UpdateSnapshots{Appdata: appdata}
+	u.Statuses = checker
+	return u
+}
+
+// wireContainerUpdates is what main.go calls to make container updates
+// reachable: GET /apps/updates and the bulk, single, revert, opt-out,
+// history and settings operations (Handler.AppUpdates, Handler.AppUpdater),
+// and the container_update job in all three modes: the daily check, which
+// also removes the kept images whose keep period has ended, updating, and
+// reverting. Updating and reverting wait for the start-up reconciliation of
+// interrupted recreates, as the recreate job does, so they never start while
+// its leftovers are still being sorted out. A test calls it too, rather than
+// repeating the assignments. The job is registered even with no Docker
+// client, so a submission is refused with a reason instead of as an unknown
+// type.
+func wireContainerUpdates(handler *api.Handler, registry *job.Registry, checker *container.UpdateChecker, updater *container.Updater, awaitReconciled func(context.Context) error) {
 	handler.AppUpdates = checker
+	handler.AppUpdater = updater
+	errNoDocker := errors.New("docker is not configured on this daemon")
 	registry.Register(job.TypeContainerUpdate, true, job.RunContainerUpdate(job.ContainerUpdateDeps{
 		Check: func(ctx context.Context, out io.Writer) error {
 			if checker == nil {
-				return errors.New("docker is not configured on this daemon")
+				return errNoDocker
 			}
-			return checker.Run(ctx, out)
+			checkErr := checker.Run(ctx, out)
+			if updater == nil || updater.Lifecycle == nil {
+				return checkErr
+			}
+			return errors.Join(checkErr, updater.Prune(ctx, out))
+		},
+		Update: func(ctx context.Context, name string, out io.Writer) error {
+			if updater == nil || updater.Lifecycle == nil {
+				return errNoDocker
+			}
+			if err := awaitReconciled(ctx); err != nil {
+				return err
+			}
+			return updater.Update(ctx, name, out)
+		},
+		Revert: func(ctx context.Context, name string, sharers []string, out io.Writer) error {
+			if updater == nil || updater.Lifecycle == nil {
+				return errNoDocker
+			}
+			if err := awaitReconciled(ctx); err != nil {
+				return err
+			}
+			return updater.Revert(ctx, name, sharers, out)
 		},
 	}))
 }

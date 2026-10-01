@@ -224,6 +224,12 @@ func (h *handler) RecreateApp(ctx context.Context, params apiv1.RecreateAppParam
 	if err != nil {
 		return nil, err
 	}
+	return h.queueServiceJob(apiv1.JobTypeContainerRecreate)
+}
+
+// queueServiceJob records a queued service-class job, refused during
+// maintenance mode like production's Scheduler.Submit.
+func (h *handler) queueServiceJob(t apiv1.JobType) (*apiv1.Job, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.maintenance {
@@ -231,7 +237,7 @@ func (h *handler) RecreateApp(ctx context.Context, params apiv1.RecreateAppParam
 	}
 	job := apiv1.Job{
 		ID:        uuid.New(),
-		Type:      apiv1.JobTypeContainerRecreate,
+		Type:      t,
 		Class:     apiv1.JobClassService,
 		Status:    apiv1.JobStatusQueued,
 		CreatedAt: time.Now().UTC(),
@@ -424,11 +430,15 @@ func (h *handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, er
 func (h *handler) ListAppUpdates(ctx context.Context) (*apiv1.ListAppUpdatesOK, error) {
 	h.appsMu.Lock()
 	apps := append([]apiv1.App{}, h.apps...)
+	excluded := make(map[string]bool, len(h.bulkExcluded))
+	for n, ex := range h.bulkExcluded {
+		excluded[n] = ex
+	}
 	h.appsMu.Unlock()
 	checkedAt := time.Date(2026, 9, 30, 6, 14, 0, 0, time.UTC)
 	updates := make([]apiv1.AppUpdate, 0, len(apps))
 	for _, a := range apps {
-		u := apiv1.AppUpdate{Container: a.Name, Image: a.Image, Tag: a.Tag, Status: apiv1.AppUpdateStatusNotChecked}
+		u := apiv1.AppUpdate{Container: a.Name, Image: a.Image, Tag: a.Tag, Status: apiv1.AppUpdateStatusNotChecked, BulkExcluded: apiv1.NewOptBool(excluded[a.Name])}
 		switch a.Name {
 		case "jellyfin":
 			u.Status = apiv1.AppUpdateStatusUpdateAvailable
@@ -438,6 +448,9 @@ func (h *handler) ListAppUpdates(ctx context.Context) (*apiv1.ListAppUpdatesOK, 
 		case "postgres":
 			u.Status = apiv1.AppUpdateStatusUpToDate
 			u.CheckedAt = apiv1.NewOptDateTime(checkedAt)
+		case "transcoder":
+			u.Status = apiv1.AppUpdateStatusNotChecked
+			u.Message = apiv1.NewOptString("the container is pinned to an image digest, so there is no tag to look for an update of")
 		case "portainer":
 			u.Status = apiv1.AppUpdateStatusSkipped
 			u.Message = apiv1.NewOptString("the registry is rate limiting requests; skipped until the next daily check")

@@ -122,6 +122,16 @@ func (l *Lifecycle) Restart(ctx context.Context, id string) (Container, error) {
 // It checks the array again itself, not only when the job was queued: the
 // job runs later, and a replacement of a running container is started.
 func (l *Lifecycle) Recreate(ctx context.Context, id string) (Container, error) {
+	return l.recreate(ctx, id, l.Provider.Recreate)
+}
+
+// RecreateLocal is Recreate without the pull (Provider.RecreateLocal): a
+// revert uses it to put a kept image back.
+func (l *Lifecycle) RecreateLocal(ctx context.Context, id string) (Container, error) {
+	return l.recreate(ctx, id, l.Provider.RecreateLocal)
+}
+
+func (l *Lifecycle) recreate(ctx context.Context, id string, do func(context.Context, string) error) (Container, error) {
 	if err := l.RequireArrayRunning(); err != nil {
 		return Container{}, err
 	}
@@ -129,7 +139,7 @@ func (l *Lifecycle) Recreate(ctx context.Context, id string) (Container, error) 
 	if err != nil {
 		return Container{}, err
 	}
-	if err := l.Provider.Recreate(ctx, c.ID); err != nil {
+	if err := do(ctx, c.ID); err != nil {
 		return Container{}, fmt.Errorf("recreating container %q: %w", c.Name, err)
 	}
 	return l.settle(ctx, c.Name)

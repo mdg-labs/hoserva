@@ -112,6 +112,28 @@ type CacheUsageBreakdown struct {
 	ComputedAt        string `json:"computed_at"`
 }
 
+type ContainerImageHistory struct {
+	ID                  int64  `json:"id"`
+	Container           string `json:"container"`
+	Image               string `json:"image"`
+	PreviousImageID     string `json:"previous_image_id"`
+	SnapshotArchive     string `json:"snapshot_archive"`
+	SnapshotDestination string `json:"snapshot_destination"`
+	UpdatedAt           string `json:"updated_at"`
+	KeepUntil           string `json:"keep_until"`
+	RevertedAt          string `json:"reverted_at"`
+}
+
+type ContainerUpdatePolicy struct {
+	Container    string `json:"container"`
+	BulkExcluded int64  `json:"bulk_excluded"`
+}
+
+type ContainerUpdateSetting struct {
+	ID            int64 `json:"id"`
+	ImageKeepDays int64 `json:"image_keep_days"`
+}
+
 type ExternalDisk struct {
 	ID                int64          `json:"id"`
 	Label             string         `json:"label"`

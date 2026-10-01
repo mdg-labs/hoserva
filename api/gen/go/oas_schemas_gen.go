@@ -803,6 +803,22 @@ func (s *AppPortProtocol) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/AppSettings
+type AppSettings struct {
+	// How many days the image a container ran before an update is kept locally for a revert.
+	ImageKeepDays int `json:"imageKeepDays"`
+}
+
+// GetImageKeepDays returns the value of ImageKeepDays.
+func (s *AppSettings) GetImageKeepDays() int {
+	return s.ImageKeepDays
+}
+
+// SetImageKeepDays sets the value of ImageKeepDays.
+func (s *AppSettings) SetImageKeepDays(val int) {
+	s.ImageKeepDays = val
+}
+
 // The Docker Engine's own container state vocabulary.
 // Ref: #/components/schemas/AppState
 type AppState string
@@ -979,10 +995,13 @@ func (s *AppStats) SetBlockWriteBytes(val int64) {
 // Ref: #/components/schemas/AppUpdate
 type AppUpdate struct {
 	// The container's name.
-	Container string          `json:"container"`
-	Image     string          `json:"image"`
-	Tag       string          `json:"tag"`
-	Status    AppUpdateStatus `json:"status"`
+	Container string `json:"container"`
+	// True when the container opted out of bulk updates (`setAppUpdatePolicy`); `startAppUpdates` with no
+	// named containers skips it. The daemon always sets it.
+	BulkExcluded OptBool         `json:"bulkExcluded"`
+	Image        string          `json:"image"`
+	Tag          string          `json:"tag"`
+	Status       AppUpdateStatus `json:"status"`
 	// Set with status update_available. new_build: the registry serves a different build under the same
 	// tag (the `latest` case). new_version: a newer version tag exists, named by availableTag.
 	Kind OptAppUpdateKind `json:"kind"`
@@ -997,6 +1016,11 @@ type AppUpdate struct {
 // GetContainer returns the value of Container.
 func (s *AppUpdate) GetContainer() string {
 	return s.Container
+}
+
+// GetBulkExcluded returns the value of BulkExcluded.
+func (s *AppUpdate) GetBulkExcluded() OptBool {
+	return s.BulkExcluded
 }
 
 // GetImage returns the value of Image.
@@ -1037,6 +1061,11 @@ func (s *AppUpdate) GetCheckedAt() OptDateTime {
 // SetContainer sets the value of Container.
 func (s *AppUpdate) SetContainer(val string) {
 	s.Container = val
+}
+
+// SetBulkExcluded sets the value of BulkExcluded.
+func (s *AppUpdate) SetBulkExcluded(val OptBool) {
+	s.BulkExcluded = val
 }
 
 // SetImage sets the value of Image.
@@ -1117,6 +1146,182 @@ func (s *AppUpdateKind) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/AppUpdatePolicy
+type AppUpdatePolicy struct {
+	// The container's name.
+	Container    string `json:"container"`
+	BulkExcluded bool   `json:"bulkExcluded"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdatePolicy) GetContainer() string {
+	return s.Container
+}
+
+// GetBulkExcluded returns the value of BulkExcluded.
+func (s *AppUpdatePolicy) GetBulkExcluded() bool {
+	return s.BulkExcluded
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdatePolicy) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetBulkExcluded sets the value of BulkExcluded.
+func (s *AppUpdatePolicy) SetBulkExcluded(val bool) {
+	s.BulkExcluded = val
+}
+
+// Ref: #/components/schemas/AppUpdateRecord
+type AppUpdateRecord struct {
+	ID int64 `json:"id"`
+	// The container's name.
+	Container string `json:"container"`
+	// The image reference the container runs, "repository:tag".
+	Image string `json:"image"`
+	// The Engine ID of the image the container ran before the update.
+	PreviousImageId string `json:"previousImageId"`
+	// The appdata archive taken just before the update; absent when the container has no appdata on the
+	// cache disk.
+	SnapshotArchive OptString `json:"snapshotArchive"`
+	// The backup destination that holds `snapshotArchive`.
+	SnapshotDestinationId OptString `json:"snapshotDestinationId"`
+	UpdatedAt             time.Time `json:"updatedAt"`
+	// Until when the previous image is kept.
+	KeepUntil time.Time `json:"keepUntil"`
+	// When the update was reverted; absent until it was.
+	RevertedAt OptDateTime `json:"revertedAt"`
+	Revertible bool        `json:"revertible"`
+}
+
+// GetID returns the value of ID.
+func (s *AppUpdateRecord) GetID() int64 {
+	return s.ID
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdateRecord) GetContainer() string {
+	return s.Container
+}
+
+// GetImage returns the value of Image.
+func (s *AppUpdateRecord) GetImage() string {
+	return s.Image
+}
+
+// GetPreviousImageId returns the value of PreviousImageId.
+func (s *AppUpdateRecord) GetPreviousImageId() string {
+	return s.PreviousImageId
+}
+
+// GetSnapshotArchive returns the value of SnapshotArchive.
+func (s *AppUpdateRecord) GetSnapshotArchive() OptString {
+	return s.SnapshotArchive
+}
+
+// GetSnapshotDestinationId returns the value of SnapshotDestinationId.
+func (s *AppUpdateRecord) GetSnapshotDestinationId() OptString {
+	return s.SnapshotDestinationId
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *AppUpdateRecord) GetUpdatedAt() time.Time {
+	return s.UpdatedAt
+}
+
+// GetKeepUntil returns the value of KeepUntil.
+func (s *AppUpdateRecord) GetKeepUntil() time.Time {
+	return s.KeepUntil
+}
+
+// GetRevertedAt returns the value of RevertedAt.
+func (s *AppUpdateRecord) GetRevertedAt() OptDateTime {
+	return s.RevertedAt
+}
+
+// GetRevertible returns the value of Revertible.
+func (s *AppUpdateRecord) GetRevertible() bool {
+	return s.Revertible
+}
+
+// SetID sets the value of ID.
+func (s *AppUpdateRecord) SetID(val int64) {
+	s.ID = val
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdateRecord) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetImage sets the value of Image.
+func (s *AppUpdateRecord) SetImage(val string) {
+	s.Image = val
+}
+
+// SetPreviousImageId sets the value of PreviousImageId.
+func (s *AppUpdateRecord) SetPreviousImageId(val string) {
+	s.PreviousImageId = val
+}
+
+// SetSnapshotArchive sets the value of SnapshotArchive.
+func (s *AppUpdateRecord) SetSnapshotArchive(val OptString) {
+	s.SnapshotArchive = val
+}
+
+// SetSnapshotDestinationId sets the value of SnapshotDestinationId.
+func (s *AppUpdateRecord) SetSnapshotDestinationId(val OptString) {
+	s.SnapshotDestinationId = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *AppUpdateRecord) SetUpdatedAt(val time.Time) {
+	s.UpdatedAt = val
+}
+
+// SetKeepUntil sets the value of KeepUntil.
+func (s *AppUpdateRecord) SetKeepUntil(val time.Time) {
+	s.KeepUntil = val
+}
+
+// SetRevertedAt sets the value of RevertedAt.
+func (s *AppUpdateRecord) SetRevertedAt(val OptDateTime) {
+	s.RevertedAt = val
+}
+
+// SetRevertible sets the value of Revertible.
+func (s *AppUpdateRecord) SetRevertible(val bool) {
+	s.Revertible = val
+}
+
+// Ref: #/components/schemas/AppUpdateSkipped
+type AppUpdateSkipped struct {
+	Container string `json:"container"`
+	// Why a bulk update left the container out.
+	Reason string `json:"reason"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppUpdateSkipped) GetContainer() string {
+	return s.Container
+}
+
+// GetReason returns the value of Reason.
+func (s *AppUpdateSkipped) GetReason() string {
+	return s.Reason
+}
+
+// SetContainer sets the value of Container.
+func (s *AppUpdateSkipped) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetReason sets the value of Reason.
+func (s *AppUpdateSkipped) SetReason(val string) {
+	s.Reason = val
+}
+
 type AppUpdateStatus string
 
 const (
@@ -1190,8 +1395,8 @@ type AppdataArchive struct {
 	CreatedAt time.Time `json:"createdAt"`
 	Size      int64     `json:"size"`
 	Encrypted bool      `json:"encrypted"`
-	// `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary
-	// backup.
+	// `pre-restore` for the snapshot a restore took of the appdata it replaced, `pre-update` for the
+	// snapshot taken before a container update; absent for an ordinary backup.
 	Reason OptNilString `json:"reason"`
 }
 
@@ -6851,6 +7056,45 @@ func (s *ListAppImagesOK) SetImages(val []AppImage) {
 	s.Images = val
 }
 
+// Ref: #/components/schemas/ListAppUpdateHistoryOK
+type ListAppUpdateHistoryOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message OptString         `json:"message"`
+	Records []AppUpdateRecord `json:"records"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListAppUpdateHistoryOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppUpdateHistoryOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetRecords returns the value of Records.
+func (s *ListAppUpdateHistoryOK) GetRecords() []AppUpdateRecord {
+	return s.Records
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListAppUpdateHistoryOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppUpdateHistoryOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetRecords sets the value of Records.
+func (s *ListAppUpdateHistoryOK) SetRecords(val []AppUpdateRecord) {
+	s.Records = val
+}
+
 // Ref: #/components/schemas/ListAppUpdatesOK
 type ListAppUpdatesOK struct {
 	// False when the Docker Engine is not reachable (doc 04 §3).
@@ -9994,6 +10238,52 @@ func (o OptInt64) Or(d int64) int64 {
 	return d
 }
 
+// NewOptJob returns new OptJob with value set to v.
+func NewOptJob(v Job) OptJob {
+	return OptJob{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptJob is optional Job.
+type OptJob struct {
+	Value Job
+	Set   bool
+}
+
+// IsSet returns true if OptJob was set.
+func (o OptJob) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptJob) Reset() {
+	var v Job
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptJob) SetTo(v Job) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptJob) Get() (v Job, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptJob) Or(d Job) Job {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJobClass returns new OptJobClass with value set to v.
 func NewOptJobClass(v JobClass) OptJobClass {
 	return OptJobClass{
@@ -10994,6 +11284,52 @@ func (o OptStackTemplate) Get() (v StackTemplate, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptStackTemplate) Or(d StackTemplate) StackTemplate {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptStartAppUpdatesRequest returns new OptStartAppUpdatesRequest with value set to v.
+func NewOptStartAppUpdatesRequest(v StartAppUpdatesRequest) OptStartAppUpdatesRequest {
+	return OptStartAppUpdatesRequest{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStartAppUpdatesRequest is optional StartAppUpdatesRequest.
+type OptStartAppUpdatesRequest struct {
+	Value StartAppUpdatesRequest
+	Set   bool
+}
+
+// IsSet returns true if OptStartAppUpdatesRequest was set.
+func (o OptStartAppUpdatesRequest) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStartAppUpdatesRequest) Reset() {
+	var v StartAppUpdatesRequest
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStartAppUpdatesRequest) SetTo(v StartAppUpdatesRequest) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStartAppUpdatesRequest) Get() (v StartAppUpdatesRequest, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStartAppUpdatesRequest) Or(d StartAppUpdatesRequest) StartAppUpdatesRequest {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -13145,6 +13481,21 @@ func (s *SessionCookie) SetRoles(val []string) {
 	s.Roles = val
 }
 
+// Ref: #/components/schemas/SetAppUpdatePolicyRequest
+type SetAppUpdatePolicyRequest struct {
+	BulkExcluded bool `json:"bulkExcluded"`
+}
+
+// GetBulkExcluded returns the value of BulkExcluded.
+func (s *SetAppUpdatePolicyRequest) GetBulkExcluded() bool {
+	return s.BulkExcluded
+}
+
+// SetBulkExcluded sets the value of BulkExcluded.
+func (s *SetAppUpdatePolicyRequest) SetBulkExcluded(val bool) {
+	s.BulkExcluded = val
+}
+
 // Ref: #/components/schemas/SetAppdataBackupContainerRequest
 type SetAppdataBackupContainerRequest struct {
 	Stop     bool `json:"stop"`
@@ -14045,6 +14396,61 @@ func (s *StackTemplate) SetID(val string) {
 // SetRevision sets the value of Revision.
 func (s *StackTemplate) SetRevision(val string) {
 	s.Revision = val
+}
+
+// Ref: #/components/schemas/StartAppUpdatesOK
+type StartAppUpdatesOK struct {
+	Job OptJob `json:"job"`
+	// The containers the job updates, in the order it does.
+	Containers []string           `json:"containers"`
+	Skipped    []AppUpdateSkipped `json:"skipped"`
+}
+
+// GetJob returns the value of Job.
+func (s *StartAppUpdatesOK) GetJob() OptJob {
+	return s.Job
+}
+
+// GetContainers returns the value of Containers.
+func (s *StartAppUpdatesOK) GetContainers() []string {
+	return s.Containers
+}
+
+// GetSkipped returns the value of Skipped.
+func (s *StartAppUpdatesOK) GetSkipped() []AppUpdateSkipped {
+	return s.Skipped
+}
+
+// SetJob sets the value of Job.
+func (s *StartAppUpdatesOK) SetJob(val OptJob) {
+	s.Job = val
+}
+
+// SetContainers sets the value of Containers.
+func (s *StartAppUpdatesOK) SetContainers(val []string) {
+	s.Containers = val
+}
+
+// SetSkipped sets the value of Skipped.
+func (s *StartAppUpdatesOK) SetSkipped(val []AppUpdateSkipped) {
+	s.Skipped = val
+}
+
+// Ref: #/components/schemas/StartAppUpdatesRequest
+type StartAppUpdatesRequest struct {
+	// Container names or Engine IDs to update. Omitted or empty means every container with an update
+	// available that has not opted out.
+	Containers []string `json:"containers"`
+}
+
+// GetContainers returns the value of Containers.
+func (s *StartAppUpdatesRequest) GetContainers() []string {
+	return s.Containers
+}
+
+// SetContainers sets the value of Containers.
+func (s *StartAppUpdatesRequest) SetContainers(val []string) {
+	s.Containers = val
 }
 
 // Ref: #/components/schemas/StartAppdataBackupRequest

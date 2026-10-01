@@ -20,9 +20,19 @@ func (h *Handler) ListAppUpdates(ctx context.Context) (*apiv1.ListAppUpdatesOK, 
 		}
 		return nil, fmt.Errorf("reading container update status: %w", err)
 	}
+	excluded := map[string]bool{}
+	if h.AppUpdater != nil {
+		names, err := h.AppUpdater.BulkExcluded(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("reading the bulk update opt-outs: %w", err)
+		}
+		for _, n := range names {
+			excluded[n] = true
+		}
+	}
 	updates := make([]apiv1.AppUpdate, 0, len(statuses))
 	for _, s := range statuses {
-		u := apiv1.AppUpdate{Container: s.Container, Image: s.Image, Tag: s.Tag, Status: apiv1.AppUpdateStatus(s.Status)}
+		u := apiv1.AppUpdate{Container: s.Container, Image: s.Image, Tag: s.Tag, Status: apiv1.AppUpdateStatus(s.Status), BulkExcluded: apiv1.NewOptBool(excluded[s.Container])}
 		if s.Kind != "" {
 			u.Kind = apiv1.NewOptAppUpdateKind(apiv1.AppUpdateKind(s.Kind))
 		}

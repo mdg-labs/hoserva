@@ -191,6 +191,11 @@ type Handler struct {
 	// (doc 04 §6) behind GET /apps/updates. Nil reports Docker as not
 	// configured.
 	AppUpdates *container.UpdateChecker
+	// AppUpdater is update execution (doc 04 §6) behind the /apps update,
+	// revert, update-policy and history operations and /settings/apps. Nil
+	// returns 501 from them; one with no Lifecycle (no Docker client) still
+	// serves the settings.
+	AppUpdater *container.Updater
 	// Stacks is the Compose stack model (doc 04 §2, D4) behind /stacks.
 	// Nil returns 501 from those operations.
 	Stacks *container.StackService

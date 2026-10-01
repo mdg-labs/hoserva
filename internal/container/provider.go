@@ -23,6 +23,15 @@ var ErrUnavailable = errors.New("container: docker engine is not reachable")
 // Engine knows about.
 var ErrNotFound = errors.New("container: not found")
 
+// ErrImageNotFound is returned by TagImage and UntagImage when the Engine
+// has no such image or reference.
+var ErrImageNotFound = errors.New("container: image not found")
+
+// ErrImageInUse is returned by UntagImage when the reference is the image's
+// last and a container still uses the image, so the Engine refuses to
+// remove it.
+var ErrImageInUse = errors.New("container: the image is in use by a container")
+
 // ErrComposeUnavailable is returned by ComposeVersion when the Compose v2
 // plugin is missing (doc 04 §3).
 var ErrComposeUnavailable = errors.New("container: compose v2 plugin is not installed")
@@ -105,6 +114,30 @@ type Image struct {
 	Created     time.Time
 }
 
+// ConfiguredImage is a container's image reference as its configuration names
+// it.
+type ConfiguredImage struct {
+	// Ref is "repository:tag" in the familiar form the update check keys
+	// images by ("nginx:latest", "ghcr.io/owner/app:1.2"); for a Pinned
+	// container it is the reference as configured.
+	Ref string
+	// Pinned is set for a reference that names a digest.
+	Pinned bool
+}
+
+// configuredImage parses the reference a container was created with.
+func configuredImage(raw string) ConfiguredImage {
+	repo, tag := splitImageRef(raw)
+	if isDigestPinned(raw) {
+		return ConfiguredImage{Ref: raw, Pinned: true}
+	}
+	ref, err := ParseImageRef(repo, tag)
+	if err != nil {
+		return ConfiguredImage{Ref: raw}
+	}
+	return ConfiguredImage{Ref: ref.String()}
+}
+
 // ErrRunning is returned by Remove for a container that is not stopped:
 // removing a live container would kill it mid-write.
 var ErrRunning = errors.New("container: the container is running")
@@ -175,6 +208,12 @@ type Provider interface {
 	Version(ctx context.Context) (EngineVersion, error)
 	List(ctx context.Context) ([]Container, error)
 	Inspect(ctx context.Context, id string) (Container, error)
+	// ConfiguredImage is the image reference the container was created
+	// with. Inspect and List report the local image's ID in its place once
+	// the reference points at a different image than the container runs
+	// (the Engine's own container listing does), so an update, which moves
+	// that reference, reads it here.
+	ConfiguredImage(ctx context.Context, id string) (ConfiguredImage, error)
 	Images(ctx context.Context) ([]Image, error)
 
 	Start(ctx context.Context, id string) error
@@ -187,6 +226,24 @@ type Provider interface {
 	// networks. A failure at any step leaves the original container as it
 	// was: same name, configuration and volumes, running if it was running.
 	Recreate(ctx context.Context, id string) error
+	// PullImage downloads the image ref names ("repository:tag") and points
+	// the tag at what the registry serves now, which leaves the image it
+	// pointed at before in place and untagged. Nothing else changes: no
+	// container is touched.
+	PullImage(ctx context.Context, ref string) error
+	// RecreateLocal is Recreate without the pull: the replacement uses the
+	// image the container's reference names locally, with the same
+	// guarantee that a failure leaves the original as it was.
+	RecreateLocal(ctx context.Context, id string) error
+	// TagImage gives the local image with this ID the reference ref, moving
+	// the tag off any other image that holds it. It returns
+	// ErrImageNotFound for an unknown image.
+	TagImage(ctx context.Context, imageID, ref string) error
+	// UntagImage removes the reference ref and returns ErrImageNotFound when
+	// no image has it. The Engine deletes the image only when ref was its
+	// last reference and no container uses it; for one that is used it
+	// returns ErrImageInUse and keeps the reference.
+	UntagImage(ctx context.Context, ref string) error
 	// Reconcile finishes or undoes a Recreate that was cut short by the
 	// daemon dying, and reports what it found (see EngineClient.Reconcile).
 	// It may start a container, so it runs only while the array is up.

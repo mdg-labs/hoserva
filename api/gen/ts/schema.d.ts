@@ -479,6 +479,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the container update settings
+         * @description How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until it is set.
+         */
+        get: operations["getAppSettings"];
+        /**
+         * Set the container update settings
+         * @description Sets how many days the image a container ran before an update is kept for a revert, from 1 to 365. It applies to updates made afterwards; an update already made keeps the deadline it was made with.
+         */
+        put: operations["updateAppSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/ups": {
         parameters: {
             query?: never;
@@ -2001,6 +2025,30 @@ export interface paths {
          */
         get: operations["listAppUpdates"];
         put?: never;
+        /**
+         * Update several containers
+         * @description Queues one `container_update` job (service class) that updates the named containers one after another, each as `updateApp` does: an appdata snapshot first when its appdata sits on the cache disk, then the update, keeping the image it ran before for a revert. One container's failure does not stop the others; the job fails, naming each, once they have all been tried, and a container that failed is left on its previous image. With no `containers`, the targets are the containers the last update check found a newer image for, minus those that opted out of bulk updates (`setAppUpdatePolicy`); those come back in `skipped`. Naming a container updates it whether or not it opted out. When there is nothing to update no job is queued and `job` is absent. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. An unknown container is 404 and queues nothing.
+         */
+        post: operations["startAppUpdates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/updates/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Container updates that can be reverted
+         * @description Every update Hoserva made that kept the image the container ran before it, newest first: when it was made, the previous image, the appdata snapshot taken just before it (absent for a container with no appdata on the cache disk) and until when the previous image is kept (`keepUntil`, set by `imageKeepDays` in the app settings). `revertible` says whether `revertApp` would go ahead now: only the newest update of a container can be reverted, once, within the keep period and while the previous image is still held and the container still runs the image it was updated to. A snapshot that has gone from its destination only shows when the revert is tried. available is false, with no error, whenever Docker itself is not reachable.
+         */
+        get: operations["listAppUpdateHistory"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2121,6 +2169,75 @@ export interface paths {
          * @description Queues a `container_recreate` job (service class): it pulls the container's image again and replaces the container with one built from the same configuration, volumes and networks. If the pull or the creation of the replacement fails, or the replacement does not start, the original container is left as it was — same name and volumes, running again if it was running. A container started with `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before changing anything. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs and fails, changing nothing, if the array has stopped since.
          */
         post: operations["recreateApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update a container
+         * @description Queues a `container_update` job (service class) that updates the container. The job pulls the container's image again first, which changes nothing about the container: a failed pull, or one that finds nothing newer, ends the job with no snapshot taken and the container left alone. Otherwise, when its appdata sits on the cache disk, a snapshot of it is written (a `pre-update` archive on the appdata backup's destinations) and the update does not go ahead if that snapshot cannot be written; then the container is replaced by one built from the pulled image with the same configuration, volumes and networks, as `recreateApp` does, and the image it ran before is kept locally for `imageKeepDays`. If any step after the pull fails, the container is left on its previous image, with the image tag the pull moved pointed back at it and the update's record removed, so nothing is left to revert. A container pinned to an image digest cannot be updated. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs.
+         */
+        post: operations["updateApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert a container's last update
+         * @description Queues a `container_update` job (service class) that puts the container back on the image it ran before its latest update and restores the appdata snapshot taken just before it. A running container is stopped first, so it never runs the updated image against the restored data; the snapshot is restored, writing a snapshot of the appdata it replaces (`pre-restore`), so anything written since the update is kept in an archive; the container is recreated from the kept image without pulling; then it is started, once, on the previous image. A container that was stopped stays stopped. A revert deletes nothing from the pool. Refused with 409 `nothing_to_revert` when the container has no update to revert (see `listAppUpdateHistory`), with 409 `revert_unavailable` when the update is on record but can no longer be undone (the previous image was removed, its keep period ended, or the snapshot is gone from its destination), and with 409 `array_stopped` / 503 `array_state_unknown` while the array is stopped or unreadable; no job is queued and nothing is changed. If the job fails after it has stopped the container, the container is left stopped, because the restore may already have replaced its data and the updated image must not run against that; reverting again finishes it, while the snapshot is still on its destination, after which the container is started by hand.
+         */
+        post: operations["revertApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/update-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Include or exclude a container from bulk updates
+         * @description Sets whether `startAppUpdates` with no named containers skips this container. The policy is kept by container name. It does not stop the container being updated by name.
+         */
+        put: operations["setAppUpdatePolicy"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3430,6 +3547,8 @@ export interface components {
         AppUpdate: {
             /** @description The container's name. */
             container: string;
+            /** @description True when the container opted out of bulk updates (`setAppUpdatePolicy`); `startAppUpdates` with no named containers skips it. The daemon always sets it. */
+            bulkExcluded?: boolean;
             image: string;
             tag: string;
             /** @enum {string} */
@@ -3448,6 +3567,67 @@ export interface components {
              * @description When the image was last checked; absent when no check has reached the image.
              */
             checkedAt?: string;
+        };
+        StartAppUpdatesRequest: {
+            /** @description Container names or Engine IDs to update. Omitted or empty means every container with an update available that has not opted out. */
+            containers?: string[];
+        };
+        StartAppUpdatesOK: {
+            job?: components["schemas"]["Job"];
+            /** @description The containers the job updates, in the order it does. */
+            containers: string[];
+            skipped: components["schemas"]["AppUpdateSkipped"][];
+        };
+        AppUpdateSkipped: {
+            container: string;
+            /** @description Why a bulk update left the container out. */
+            reason: string;
+        };
+        SetAppUpdatePolicyRequest: {
+            bulkExcluded: boolean;
+        };
+        AppUpdatePolicy: {
+            /** @description The container's name. */
+            container: string;
+            bulkExcluded: boolean;
+        };
+        AppSettings: {
+            /** @description How many days the image a container ran before an update is kept locally for a revert. */
+            imageKeepDays: number;
+        };
+        AppUpdateRecord: {
+            /** Format: int64 */
+            id: number;
+            /** @description The container's name. */
+            container: string;
+            /** @description The image reference the container runs, "repository:tag". */
+            image: string;
+            /** @description The Engine ID of the image the container ran before the update. */
+            previousImageId: string;
+            /** @description The appdata archive taken just before the update; absent when the container has no appdata on the cache disk. */
+            snapshotArchive?: string;
+            /** @description The backup destination that holds `snapshotArchive`. */
+            snapshotDestinationId?: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /**
+             * Format: date-time
+             * @description Until when the previous image is kept.
+             */
+            keepUntil: string;
+            /**
+             * Format: date-time
+             * @description When the update was reverted; absent until it was.
+             */
+            revertedAt?: string;
+            revertible: boolean;
+        };
+        ListAppUpdateHistoryOK: {
+            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            available: boolean;
+            /** @description Set alongside available=false with the reason and a remediation. */
+            message?: string;
+            records: components["schemas"]["AppUpdateRecord"][];
         };
         AppImage: {
             id: string;
@@ -4344,7 +4524,7 @@ export interface components {
             /** Format: int64 */
             size: number;
             encrypted: boolean;
-            /** @description `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary backup. */
+            /** @description `pre-restore` for the snapshot a restore took of the appdata it replaced, `pre-update` for the snapshot taken before a container update; absent for an ordinary backup. */
             reason?: string | null;
         };
         ListAppdataArchivesOK: {
@@ -5207,6 +5387,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GeneralSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current container update settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateAppSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSettings"];
+            };
+        };
+        responses: {
+            /** @description The updated settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSettings"];
                 };
             };
             default: components["responses"]["Error"];
@@ -7271,6 +7497,52 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    startAppUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartAppUpdatesRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued job and what was left out. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartAppUpdatesOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAppUpdateHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The recorded updates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppUpdateHistoryOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getApp: {
         parameters: {
             query?: never;
@@ -7413,6 +7685,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revertApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setAppUpdatePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAppUpdatePolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description The container's policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppUpdatePolicy"];
                 };
             };
             default: components["responses"]["Error"];
