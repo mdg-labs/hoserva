@@ -14,7 +14,7 @@ export const CHANNEL_ICONS: Record<NotificationChannelType, LucideIcon> = {
   webhook: Webhook,
 };
 
-export const NOTIFICATION_EVENT_TYPES: NotificationEventType[] = [
+export const NOTIFICATION_EVENT_TYPES = [
   "smart_warning",
   "smart_failure",
   "disk_offline",
@@ -43,7 +43,15 @@ export const NOTIFICATION_EVENT_TYPES: NotificationEventType[] = [
   "appdata_backup_failed",
   "backup_destination_stale",
   "restore_drill_failed",
-];
+  "catalog_check_failed",
+] as const satisfies readonly NotificationEventType[];
+
+// Fails to compile when the API gains an event type this list omits, which
+// would otherwise leave that event without a routing row in settings.
+const allEventTypesListed: [Exclude<NotificationEventType, (typeof NOTIFICATION_EVENT_TYPES)[number]>] extends [never]
+  ? true
+  : never = true;
+void allEventTypesListed;
 
 export const NOTIFICATION_LEVELS: NotificationLevel[] = [
   "info",
