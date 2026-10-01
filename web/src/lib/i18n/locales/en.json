@@ -1823,10 +1823,26 @@
             "passphrase_incorrect": "Passphrase does not open it"
           },
           "hints": {
-            "none": "This archive was made without a backup passphrase, so it holds no secrets. Everything else is restored.",
+            "none": "This archive holds no sealed secrets, so there are no .env files to restore. Everything else is restored.",
             "opened": "The passphrase opens the archive's secrets, so the .env files of your apps are restored too.",
             "no_passphrase": "The archive holds secrets, and no passphrase is available to open them. Enter the passphrase above, or everything else is restored without them.",
             "passphrase_incorrect": "This server's backup passphrase does not open the archive's secrets. Enter the passphrase the archive was made with, or everything else is restored without them."
+          },
+          "identity": {
+            "title": "Backup recipient",
+            "statuses": {
+              "none": "No backup recipient",
+              "opened": "Backup recipient opens",
+              "no_passphrase": "No passphrase available",
+              "passphrase_incorrect": "Passphrase does not open it"
+            },
+            "hints": {
+              "none": "The archive holds no backup recipient, so this server keeps its own.",
+              "openedAdopted": "The passphrase opens the archive's backup recipient, so this server adopts it when the restore finishes.",
+              "openedKept": "The passphrase opens the archive's backup recipient. A restore on a server that is already set up keeps that server's own recipient.",
+              "no_passphrase": "The archive holds a backup recipient, and no passphrase is available to open it, so this server keeps its own.",
+              "passphrase_incorrect": "This passphrase does not open the archive's backup recipient, so this server keeps its own."
+            }
           }
         },
         "disks": {

@@ -1220,6 +1220,8 @@ const LABELS = {
   notes: "notes",
   secretStatuses: "secrets.statuses",
   secretHints: "secrets.hints",
+  identityStatuses: "secrets.identity.statuses",
+  identityHints: "secrets.identity.hints",
   diskStates: "disks.states",
   reasons: "reasons",
   notRestoredKinds: "notRestoredKinds",
@@ -1322,7 +1324,38 @@ function RestoreChanges({ preview }: { preview: ConfigImportPreview }): React.Re
   );
 }
 
-function RestoreSecrets({ secrets }: { secrets: ConfigImportPreview["secrets"] }): React.ReactElement {
+function RestoreIdentity({
+  identity,
+  bareMetal,
+}: {
+  identity: NonNullable<ConfigImportPreview["secrets"]["identity"]>;
+  bareMetal: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const hint =
+    identity === "opened"
+      ? t(`settings.backup.restore.secrets.identity.hints.${bareMetal ? "openedAdopted" : "openedKept"}`)
+      : enumLabel(LABELS.identityHints, identity, t);
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="font-medium text-sm">{t("settings.backup.restore.secrets.identity.title")}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge tone={identity === "opened" || identity === "none" ? "success" : "warning"}>
+          {enumLabel(LABELS.identityStatuses, identity, t)}
+        </StatusBadge>
+      </div>
+      <p className="text-muted-foreground text-sm">{hint}</p>
+    </div>
+  );
+}
+
+function RestoreSecrets({
+  secrets,
+  bareMetal,
+}: {
+  secrets: ConfigImportPreview["secrets"];
+  bareMetal: boolean;
+}): React.ReactElement {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-2">
@@ -1343,6 +1376,7 @@ function RestoreSecrets({ secrets }: { secrets: ConfigImportPreview["secrets"] }
           </ul>
         </div>
       ) : null}
+      {secrets.identity === undefined ? null : <RestoreIdentity identity={secrets.identity} bareMetal={bareMetal} />}
     </div>
   );
 }
@@ -1453,7 +1487,7 @@ function RestorePreview({
         />
       ))}
       <RestoreChanges preview={preview} />
-      <RestoreSecrets secrets={preview.secrets} />
+      <RestoreSecrets secrets={preview.secrets} bareMetal={preview.bareMetal !== undefined} />
       {preview.bareMetal ? (
         <RestoreDiskMapping
           bareMetal={preview.bareMetal}
