@@ -4,7 +4,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 **Positioning and tone** (doc 00 §6): describe Hoserva by what it does, never as "an X alternative". Mention Unraid and other projects only factually — migration, compatibility, a design comparison. No disparaging remarks about other projects or their users. This applies to docs, issues, commit messages, UI copy and the docs site.
 
-**Current state: Phases 0 and 1 are done and Phase 2 is in progress.** The design lives in `docs/internal/`; the live record of what's built, in progress or planned is the GitHub epics and sub-issues on `mdg-labs/hoserva`, one epic per phase (doc 07 §1, doc 12 §5). Code conventions below are enforced, not aspirational.
+**Current state: Phases 0, 1 and 2 are done (their epics are closed). Phase 3 (#66, #73, #81), Phase 3.5 (#86) and Phase 4 (#100) are open.** The design lives in `docs/internal/`; the live record of what's built, in progress or planned is the GitHub epics and sub-issues on `mdg-labs/hoserva`, one epic per phase (doc 07 §1, doc 12 §5). Code conventions below are enforced, not aspirational.
 
 # Documentation map
 
@@ -71,7 +71,7 @@ Storage behaviour is exercised **only inside the lab**:
 
 # Root access is the maintainer's
 
-No agent runs `sudo`, a package manager install, or edits anything under `/etc`, under any circumstance. Work that needs root is labelled `needs-sudo`: the agent prepares everything and prints the exact commands for the maintainer, prefixed `! ` so they run in-session. The maintainer's shell is **zsh** — print commands that work there (bash-compatible heredocs and `export` are fine).
+No agent runs `sudo`, a package manager install, or edits anything under `/etc`, under any circumstance. Work that needs root is labelled `needs-sudo`: the agent prepares everything and prints the exact commands for the maintainer, prefixed `! ` so they run in-session. The maintainer's shell is **bash** (the login shell of the WSL2 development host) — print commands that work there.
 
 **Never trigger an authentication prompt on the host, and never retry one.** This is absolute, and it outranks finishing the task.
 
