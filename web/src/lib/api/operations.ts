@@ -65,6 +65,36 @@ export function getJobLog(jobId: string, signal?: AbortSignal) {
   return hoservaClient.GET("/jobs/{jobId}/log", { params: { path: { jobId } }, signal });
 }
 
+export function getApps(signal?: AbortSignal) {
+  return hoservaClient.GET("/apps", { signal });
+}
+
+export function getAppUpdates(signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/updates", { signal });
+}
+
+export function postAppStart(id: string) {
+  return hoservaClient.POST("/apps/{id}/start", { params: { path: { id } } });
+}
+
+export function postAppStop(id: string) {
+  return hoservaClient.POST("/apps/{id}/stop", { params: { path: { id } } });
+}
+
+export function postAppRestart(id: string) {
+  return hoservaClient.POST("/apps/{id}/restart", { params: { path: { id } } });
+}
+
+// The log body is plain text, so it is read as text rather than parsed as
+// the client's default JSON.
+export function getAppLogs(id: string, tail: number, signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/{id}/logs", {
+    params: { path: { id }, query: { tail } },
+    parseAs: "text",
+    signal,
+  });
+}
+
 export function getNotifications(signal?: AbortSignal) {
   return hoservaClient.GET("/notifications", { signal });
 }

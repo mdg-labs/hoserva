@@ -22,6 +22,110 @@
     "installed": "Installed",
     "catalog": "Catalog"
   },
+  "apps": {
+    "installed": {
+      "title": "Installed apps",
+      "description": "Every container on this server, whether Hoserva started it or not.",
+      "loadFailed": "Could not load the list of apps.",
+      "retry": "Try again",
+      "empty": {
+        "title": "No apps yet",
+        "description": "Containers you install or start on this server show up here, with their state, their web addresses and quick controls.",
+        "action": "Browse the catalog"
+      }
+    },
+    "docker": {
+      "title": "Docker is not available",
+      "description": "Apps run in Docker, and Hoserva could not reach it, so no apps can be listed or started."
+    },
+    "view": {
+      "cards": "Cards",
+      "table": "Table"
+    },
+    "columns": {
+      "name": "Name",
+      "image": "Image",
+      "state": "State",
+      "ports": "Web addresses",
+      "update": "Updates",
+      "actions": "Actions"
+    },
+    "state": {
+      "created": "Not started yet",
+      "running": "Running",
+      "paused": "Paused",
+      "restarting": "Restarting",
+      "removing": "Being removed",
+      "exited": "Stopped",
+      "dead": "Failed"
+    },
+    "health": {
+      "unhealthy": "Not responding",
+      "starting": "Starting up"
+    },
+    "ports": {
+      "none": "No ports open to the network",
+      "open": "Open {{name}} on port {{port}}"
+    },
+    "update": {
+      "available": "Update available",
+      "newBuild": "Rebuilt image available",
+      "newVersion": "Newer version available ({{tag}})",
+      "notChecked": "Not checked",
+      "loadFailed": "Could not load the update status. Updates may be available."
+    },
+    "actions": {
+      "start": "Start",
+      "stop": "Stop",
+      "logs": "Logs",
+      "restart": "Restart",
+      "details": "Details",
+      "menu": "More actions for {{name}}",
+      "startNamed": "Start {{name}}",
+      "stopNamed": "Stop {{name}}",
+      "logsNamed": "Show logs of {{name}}"
+    },
+    "toast": {
+      "startDone": "{{name}} started",
+      "stopDone": "{{name}} stopped",
+      "restartDone": "{{name}} restarted",
+      "startFailed": "Could not start {{name}}",
+      "stopFailed": "Could not stop {{name}}",
+      "restartFailed": "Could not restart {{name}}"
+    },
+    "errors": {
+      "actionFailed": "The action failed.",
+      "actionsFailed_one": "{{count}} app could not be changed",
+      "actionsFailed_other": "{{count}} apps could not be changed"
+    },
+    "bulk": {
+      "label": "Actions for all apps",
+      "start": "Start all",
+      "stop": "Stop all",
+      "startTitle_one": "Start {{count}} app?",
+      "startTitle_other": "Start all {{count}} stopped apps?",
+      "startDescription": "These apps are stopped right now. Some may have been stopped on purpose.",
+      "startConfirm": "Start all",
+      "stopTitle_one": "Stop {{count}} app?",
+      "stopTitle_other": "Stop all {{count}} running apps?",
+      "stopDescription": "These apps stop being available until you start them again.",
+      "stopConfirm": "Stop all",
+      "startDone_one": "{{count}} app started",
+      "startDone_other": "{{count}} apps started",
+      "stopDone_one": "{{count}} app stopped",
+      "stopDone_other": "{{count}} apps stopped",
+      "startPartial": "Started {{done}} of {{total}} apps",
+      "stopPartial": "Stopped {{done}} of {{total}} apps"
+    },
+    "logs": {
+      "title": "Logs of {{name}}",
+      "description": "The last {{count}} lines of output.",
+      "refresh": "Refresh",
+      "close": "Close",
+      "empty": "This app has not written any output yet.",
+      "loadFailed": "Could not load the logs."
+    }
+  },
   "vmsNav": {
     "list": "VM list",
     "create": "Create VM",

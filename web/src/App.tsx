@@ -8,6 +8,7 @@ import { watchSystemTheme } from "@/lib/theme";
 import { DashboardPage } from "@/routes/dashboard";
 import { JobDetailPage } from "@/routes/jobs/detail";
 import { JobsPage } from "@/routes/jobs/index";
+import { AppsPage } from "@/routes/apps/index";
 import { LoginPage } from "@/routes/login";
 import { PlaceholderPage } from "@/routes/placeholder-page";
 import { SectionLayout } from "@/routes/section-layout";
@@ -87,7 +88,7 @@ function AuthenticatedRoutes(): React.ReactElement {
         <Route path="shares/:name" element={<ShareDetailPage />} />
 
         <Route element={<SectionLayout items={APPS_NAV(t)} />}>
-          <Route path="apps" element={<PlaceholderPage titleKey="appsNav.installed" />} />
+          <Route path="apps" element={<AppsPage />} />
           <Route path="apps/catalog" element={<PlaceholderPage titleKey="appsNav.catalog" />} />
         </Route>
         <Route path="apps/catalog/:appId" element={<PlaceholderPage titleKey="appsNav.catalog" />} />
