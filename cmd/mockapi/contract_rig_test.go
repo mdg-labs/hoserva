@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -768,6 +769,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		}
 	}
 	h.Catalog = mockCatalog()
+	h.CatalogRefresh = &scriptedCatalogRefresher{}
 	h.TemplateInstall = &template.Installer{
 		Catalog: mockCatalog(),
 		Stacks:  stacks,
@@ -906,3 +908,27 @@ type contractStackCipher struct{}
 
 func (contractStackCipher) Encrypt(p []byte) ([]byte, error) { return append([]byte(nil), p...), nil }
 func (contractStackCipher) Decrypt(c []byte) ([]byte, error) { return append([]byte(nil), c...), nil }
+
+// scriptedCatalogRefresher is the production handler's catalog check in the
+// contract rig: it never touches the network, and answers an update.
+type scriptedCatalogRefresher struct {
+	mu   sync.Mutex
+	last *template.CheckResult
+}
+
+func (s *scriptedCatalogRefresher) Refresh(context.Context) (template.CheckResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := template.CheckResult{CheckedAt: time.Now().UTC(), Outcome: template.OutcomeUpdated, New: 1}
+	s.last = &res
+	return res, nil
+}
+
+func (s *scriptedCatalogRefresher) Last() (template.CheckResult, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil {
+		return template.CheckResult{}, false
+	}
+	return *s.last, true
+}

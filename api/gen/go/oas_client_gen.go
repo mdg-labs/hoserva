@@ -806,8 +806,10 @@ type Invoker interface {
 	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
 	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
 	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-	// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
-	// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+	// Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most
+	// recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check
+	// has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503
+	// `catalog_unavailable`, never answered with an empty list.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
@@ -1116,6 +1118,22 @@ type Invoker interface {
 	//
 	// POST /apps/{id}/recreate
 	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
+	// RefreshCatalog invokes refreshCatalog operation.
+	//
+	// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
+	// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
+	// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
+	// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
+	// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
+	// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
+	// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
+	// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
+	// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
+	// while a check is running share that check's request and result. Nothing is fetched from
+	// `api.github.com`.
+	//
+	// POST /catalog/refresh
+	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
 	// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 	//
 	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -12218,8 +12236,10 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 // from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
 // came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
 // template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
-// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+// Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most
+// recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check
+// has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503
+// `catalog_unavailable`, never answered with an empty list.
 //
 // GET /catalog
 func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
@@ -15715,6 +15735,141 @@ func (c *Client) sendRecreateApp(ctx context.Context, params RecreateAppParams) 
 
 	stage = "DecodeResponse"
 	result, err := decodeRecreateAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RefreshCatalog invokes refreshCatalog operation.
+//
+// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
+// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
+// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
+// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
+// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
+// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
+// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
+// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
+// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
+// while a check is running share that check's request and result. Nothing is fetched from
+// `api.github.com`.
+//
+// POST /catalog/refresh
+func (c *Client) RefreshCatalog(ctx context.Context) (*CatalogRefresh, error) {
+	res, err := c.sendRefreshCatalog(ctx)
+	return res, err
+}
+
+func (c *Client) sendRefreshCatalog(ctx context.Context) (res *CatalogRefresh, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("refreshCatalog"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/catalog/refresh"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RefreshCatalogOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/catalog/refresh"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RefreshCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RefreshCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRefreshCatalogResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

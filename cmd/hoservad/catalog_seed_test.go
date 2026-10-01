@@ -25,6 +25,13 @@ import (
 // stateDir.
 func startedTemplates(t *testing.T, stateDir string) *api.Handler {
 	t.Helper()
+	return startedTemplatesWith(t, stateDir, nil)
+}
+
+// startedTemplatesWith is startedTemplates with the notifier main.go hands
+// startTemplates.
+func startedTemplatesWith(t *testing.T, stateDir string, notifier catalogPublisher) *api.Handler {
+	t.Helper()
 	ctx := context.Background()
 	migrations, err := store.Load()
 	if err != nil {
@@ -48,7 +55,7 @@ func startedTemplates(t *testing.T, stateDir string) *api.Handler {
 
 	h := &api.Handler{}
 	wireStacks(h, store.NewStackStore(db), machineKey, container.NewFakeRunner(), stateDir, apps, nil)
-	startTemplates(h, stateDir, apps, shares)
+	startTemplates(h, stateDir, apps, shares, notifier)
 	if h.TemplateInstall == nil {
 		t.Fatal("startTemplates left Handler.TemplateInstall nil, so every /templates operation would 501")
 	}

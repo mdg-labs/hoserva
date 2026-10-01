@@ -108,6 +108,7 @@ const (
 	PreviewTemplateInstallOperation         OperationName = "PreviewTemplateInstall"
 	RebootHostOperation                     OperationName = "RebootHost"
 	RecreateAppOperation                    OperationName = "RecreateApp"
+	RefreshCatalogOperation                 OperationName = "RefreshCatalog"
 	RegenerateTLSCertificateOperation       OperationName = "RegenerateTLSCertificate"
 	RegisterExternalDiskOperation           OperationName = "RegisterExternalDisk"
 	RemoveAppOperation                      OperationName = "RemoveApp"

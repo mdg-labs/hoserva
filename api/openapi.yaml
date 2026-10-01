@@ -4153,9 +4153,11 @@ paths:
         from (`hoserva`, the curated catalog, is the only source) and says
         whether a stack of that template id already exists (`installed`,
         from the `stacks` table). Entries are in the index's order. Search,
-        filters and paging are the caller's. A catalog that is not installed
-        or whose `index.json` cannot be read is refused with 503
-        `catalog_unavailable`, never answered with an empty list.
+        filters and paging are the caller's. `lastCheckedAt` and `lastOutcome`
+        report the most recent catalog check (`refreshCatalog`) since the
+        daemon started, and are absent before any check has run. A catalog
+        that is not installed or whose `index.json` cannot be read is refused
+        with 503 `catalog_unavailable`, never answered with an empty list.
       tags: [templates]
       x-hoserva-role: viewer
       responses:
@@ -4165,6 +4167,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogList'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /catalog/refresh:
+    post:
+      operationId: refreshCatalog
+      summary: Check for catalog updates now
+      description: >-
+        Runs one conditional request for the latest signed catalog from the
+        catalog host (doc 04 §7, Q65) and returns how it ended. It is an
+        explicit user action, so it runs even when automatic refresh is off.
+        An unchanged catalog answers `304` and downloads nothing
+        (`unchanged`). A newer archive replaces the installed catalog only if
+        its signature verifies against the compiled-in catalog key and its
+        serial is strictly higher (`updated`, with the number of new and of
+        updated templates, compared by id and revision against the catalog it
+        replaced). Any other outcome keeps the installed catalog untouched and
+        is `failed`, with a `reason` code and a `message`; a failed
+        verification (`bad_signature`, `not_newer`, `bad_archive`) also raises
+        a `catalog_check_failed` notification, and a network failure does not.
+        A check that fails is still a completed check, answered 200. Calls
+        made while a check is running share that check's request and result.
+        Nothing is fetched from `api.github.com`.
+      tags: [templates]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The check's outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRefresh'
         default:
           $ref: '#/components/responses/Error'
 
@@ -5385,6 +5419,7 @@ components:
         - appdata_backup_failed
         - backup_destination_stale
         - restore_drill_failed
+        - catalog_check_failed
 
     NotificationChannelType:
       type: string
@@ -6551,6 +6586,57 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CatalogEntry'
+        lastCheckedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the most recent catalog check finished, whatever its outcome.
+            Absent before any check has run since the daemon started.
+        lastOutcome:
+          $ref: '#/components/schemas/CatalogCheckOutcome'
+
+    CatalogCheckOutcome:
+      type: string
+      enum: [updated, unchanged, failed]
+      description: How a catalog check ended.
+
+    CatalogRefresh:
+      type: object
+      required: [checkedAt, outcome]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+          description: When the check finished.
+        outcome:
+          $ref: '#/components/schemas/CatalogCheckOutcome'
+        newTemplates:
+          type: integer
+          minimum: 0
+          description: >-
+            Templates the new catalog lists that the replaced one did not.
+            Present only when `outcome` is `updated`.
+        updatedTemplates:
+          type: integer
+          minimum: 0
+          description: >-
+            Templates both catalogs list under a different revision. Present
+            only when `outcome` is `updated`.
+        reason:
+          type: string
+          enum: [fetch_failed, bad_signature, not_newer, bad_archive, install_failed]
+          description: >-
+            Present only when `outcome` is `failed`. `fetch_failed`: the host
+            could not be reached or answered something unusable (not
+            notified). `bad_signature`: the signature does not verify against
+            the catalog key. `not_newer`: the serial is not higher than the
+            installed catalog's. `bad_archive`: the signed archive is not a
+            catalog. `install_failed`: the verified archive could not be
+            written to disk. The three verification reasons raise a
+            `catalog_check_failed` notification.
+        message:
+          type: string
+          description: Present only when `outcome` is `failed`.
 
     CatalogTemplate:
       type: object

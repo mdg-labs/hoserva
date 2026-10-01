@@ -36,6 +36,33 @@ func catalogCmd() *cobra.Command {
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
+		Use:   "refresh",
+		Short: "Check now for a newer signed catalog and install it",
+		Long: "Runs one conditional request for the latest signed catalog (doc 04 §7), even when automatic refresh is off. " +
+			"An unchanged catalog downloads nothing. A catalog whose signature or serial does not check out is refused and the installed one is kept. " +
+			"Exits non-zero when the check failed.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.RefreshCatalog(apiCtx())
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			if jsonOutput {
+				emit(res)
+			} else if res.Outcome != apiv1.CatalogCheckOutcomeFailed {
+				fmt.Print(catalogRefreshSummary(res))
+			}
+			if res.Outcome == apiv1.CatalogCheckOutcomeFailed {
+				return fmt.Errorf("the catalog check failed (%s): %s", res.Reason.Or(""), res.Message.Or(""))
+			}
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "show TEMPLATE-ID",
 		Short: "Show a template's details, the privileges it asks for and its Compose file",
 		Args:  cobra.ExactArgs(1),
@@ -59,6 +86,14 @@ func catalogCmd() *cobra.Command {
 	return cmd
 }
 
+func catalogRefreshSummary(res *apiv1.CatalogRefresh) string {
+	at := res.CheckedAt.UTC().Format("2006-01-02 15:04 UTC")
+	if res.Outcome == apiv1.CatalogCheckOutcomeUpdated {
+		return fmt.Sprintf("Checked %s: the catalog was updated, %d new and %d updated templates.\n", at, res.NewTemplates.Or(0), res.UpdatedTemplates.Or(0))
+	}
+	return fmt.Sprintf("Checked %s: the catalog is already up to date.\n", at)
+}
+
 func catalogListSummary(list *apiv1.CatalogList) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Catalog serial %d", list.Serial)
@@ -66,6 +101,9 @@ func catalogListSummary(list *apiv1.CatalogList) string {
 		fmt.Fprintf(&sb, ", built %s", at.UTC().Format("2006-01-02 15:04 UTC"))
 	}
 	fmt.Fprintf(&sb, ", %d templates.\n", len(list.Templates))
+	if at, ok := list.LastCheckedAt.Get(); ok {
+		fmt.Fprintf(&sb, "Last checked %s: %s.\n", at.UTC().Format("2006-01-02 15:04 UTC"), list.LastOutcome.Or(""))
+	}
 	tw := tabwriter.NewWriter(&sb, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "ID\tTITLE\tREVISION\tCATEGORIES\tSOURCE\tINSTALLED")
 	for _, e := range list.Templates {

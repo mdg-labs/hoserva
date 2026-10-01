@@ -317,6 +317,39 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 			Source: catalog.Name(), Installed: installed[t.ID],
 		}
 	}
+	h.catalogMu.Lock()
+	if last := h.catalogLast; last != nil {
+		out.LastCheckedAt = apiv1.NewOptDateTime(last.CheckedAt)
+		out.LastOutcome = apiv1.NewOptCatalogCheckOutcome(last.Outcome)
+	}
+	h.catalogMu.Unlock()
+	return out, nil
+}
+
+// RefreshCatalog answers a scripted sequence of checks, so a page built on
+// the mock meets every outcome: the first check updates the catalog (two
+// new templates and one updated), the second finds it unchanged, the third
+// fails to reach the host, and the sequence then repeats. The mock's catalog
+// itself never changes.
+func (h *handler) RefreshCatalog(context.Context) (*apiv1.CatalogRefresh, error) {
+	h.catalogMu.Lock()
+	defer h.catalogMu.Unlock()
+	out := &apiv1.CatalogRefresh{CheckedAt: time.Now().UTC().Truncate(time.Second)}
+	switch h.catalogChecks % 3 {
+	case 0:
+		out.Outcome = apiv1.CatalogCheckOutcomeUpdated
+		out.NewTemplates = apiv1.NewOptInt(2)
+		out.UpdatedTemplates = apiv1.NewOptInt(1)
+	case 1:
+		out.Outcome = apiv1.CatalogCheckOutcomeUnchanged
+	default:
+		out.Outcome = apiv1.CatalogCheckOutcomeFailed
+		out.Reason = apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReasonFetchFailed)
+		out.Message = apiv1.NewOptString("fetching https://catalog.hoserva.dev/catalog.tar.zst: the mock's scripted network failure")
+	}
+	h.catalogChecks++
+	last := *out
+	h.catalogLast = &last
 	return out, nil
 }
 

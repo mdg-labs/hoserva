@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -182,3 +183,79 @@ func TestMockCatalogIconHasTheProductionHeaders(t *testing.T) {
 		t.Errorf("body = %q", got)
 	}
 }
+
+func TestMockRefreshCatalogScriptsEveryOutcomeAndTheListReportsTheLastCheck(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	list, err := h.ListCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.LastCheckedAt.IsSet() || list.LastOutcome.IsSet() {
+		t.Fatalf("the list reports a check before any ran: %+v %+v", list.LastCheckedAt, list.LastOutcome)
+	}
+
+	for i, want := range []apiv1.CatalogCheckOutcome{
+		apiv1.CatalogCheckOutcomeUpdated, apiv1.CatalogCheckOutcomeUnchanged, apiv1.CatalogCheckOutcomeFailed,
+		apiv1.CatalogCheckOutcomeUpdated,
+	} {
+		res, err := h.RefreshCatalog(ctx)
+		if err != nil {
+			t.Fatalf("check %d: %v", i, err)
+		}
+		if res.Outcome != want || res.CheckedAt.IsZero() {
+			t.Fatalf("check %d = %+v, want %s", i, res, want)
+		}
+		list, err := h.ListCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o, ok := list.LastOutcome.Get(); !ok || o != want {
+			t.Fatalf("check %d: lastOutcome = %v, %v", i, o, ok)
+		}
+		if at, ok := list.LastCheckedAt.Get(); !ok || !at.Equal(res.CheckedAt) {
+			t.Fatalf("check %d: lastCheckedAt = %v, %v, want %v", i, at, ok, res.CheckedAt)
+		}
+	}
+}
+
+// TestMockRefreshCatalogAnswersTheBodyTheProductionHandlerBuilds runs each
+// outcome through the production handler and the mock and compares what each
+// puts in the response, so the mock cannot drift on which fields an outcome
+// carries.
+func TestMockRefreshCatalogAnswersTheBodyTheProductionHandlerBuilds(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	outcomes := []template.CheckResult{
+		{CheckedAt: at, Outcome: template.OutcomeUpdated, New: 2, Updated: 1},
+		{CheckedAt: at, Outcome: template.OutcomeUnchanged},
+		{CheckedAt: at, Outcome: template.OutcomeFailed, Reason: template.ReasonFetchFailed, Message: "x"},
+	}
+	for _, want := range outcomes {
+		prod := &api.Handler{CatalogRefresh: fixedRefresher{want}}
+		p, err := prod.RefreshCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := h.RefreshCatalog(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Outcome != m.Outcome || p.NewTemplates.IsSet() != m.NewTemplates.IsSet() || p.UpdatedTemplates.IsSet() != m.UpdatedTemplates.IsSet() ||
+			p.Reason.IsSet() != m.Reason.IsSet() || p.Message.IsSet() != m.Message.IsSet() {
+			t.Errorf("%s: production sets %+v, the mock %+v", want.Outcome, p, m)
+		}
+	}
+}
+
+type fixedRefresher struct{ res template.CheckResult }
+
+func (f fixedRefresher) Refresh(context.Context) (template.CheckResult, error) { return f.res, nil }
+func (f fixedRefresher) Last() (template.CheckResult, bool)                    { return f.res, true }

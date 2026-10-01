@@ -1270,6 +1270,7 @@ const (
 	NotificationEventTypeAppdataBackupFailed      NotificationEventType = "appdata_backup_failed"
 	NotificationEventTypeBackupDestinationStale   NotificationEventType = "backup_destination_stale"
 	NotificationEventTypeRestoreDrillFailed       NotificationEventType = "restore_drill_failed"
+	NotificationEventTypeCatalogCheckFailed       NotificationEventType = "catalog_check_failed"
 )
 
 // AllValues returns all NotificationEventType values.
@@ -1303,6 +1304,7 @@ func (NotificationEventType) AllValues() []NotificationEventType {
 		NotificationEventTypeAppdataBackupFailed,
 		NotificationEventTypeBackupDestinationStale,
 		NotificationEventTypeRestoreDrillFailed,
+		NotificationEventTypeCatalogCheckFailed,
 	}
 }
 
@@ -1364,6 +1366,8 @@ func (s NotificationEventType) MarshalText() ([]byte, error) {
 	case NotificationEventTypeBackupDestinationStale:
 		return []byte(s), nil
 	case NotificationEventTypeRestoreDrillFailed:
+		return []byte(s), nil
+	case NotificationEventTypeCatalogCheckFailed:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -1456,6 +1460,9 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 		return nil
 	case NotificationEventTypeRestoreDrillFailed:
 		*s = NotificationEventTypeRestoreDrillFailed
+		return nil
+	case NotificationEventTypeCatalogCheckFailed:
+		*s = NotificationEventTypeCatalogCheckFailed
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -3735,6 +3742,8 @@ func (s *NotificationEventType) Decode(d *jx.Decoder) error {
 		*s = NotificationEventTypeBackupDestinationStale
 	case NotificationEventTypeRestoreDrillFailed:
 		*s = NotificationEventTypeRestoreDrillFailed
+	case NotificationEventTypeCatalogCheckFailed:
+		*s = NotificationEventTypeCatalogCheckFailed
 	default:
 		*s = NotificationEventType(v)
 	}
@@ -4526,6 +4535,8 @@ func (s NotificationEventType) Validate() error {
 	case "backup_destination_stale":
 		return nil
 	case "restore_drill_failed":
+		return nil
+	case "catalog_check_failed":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

@@ -177,18 +177,28 @@ func (d DirCatalog) Index(_ context.Context) (Index, error) {
 	if len(data) > maxIndexBytes {
 		return Index{}, fmt.Errorf("%w: %s is larger than %d bytes", ErrCatalogUnavailable, file, maxIndexBytes)
 	}
+	out, err := parseIndex(data)
+	if err != nil {
+		return Index{}, fmt.Errorf("%w: %s %v", ErrCatalogUnavailable, file, err)
+	}
+	return out, nil
+}
+
+// parseIndex reads an index.json: the serial, the build time and each
+// template, refusing a missing serial and an invalid or repeated id.
+func parseIndex(data []byte) (Index, error) {
 	var doc indexDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return Index{}, fmt.Errorf("%w: %s is not valid: %v", ErrCatalogUnavailable, file, err)
+		return Index{}, fmt.Errorf("is not valid: %v", err)
 	}
 	if doc.Serial <= 0 {
-		return Index{}, fmt.Errorf("%w: %s carries no serial", ErrCatalogUnavailable, file)
+		return Index{}, errors.New("carries no serial")
 	}
 	out := Index{Serial: doc.Serial, GeneratedAt: doc.GeneratedAt, Templates: make([]IndexEntry, len(doc.Templates))}
 	seen := make(map[string]bool, len(doc.Templates))
 	for i, t := range doc.Templates {
 		if !idPattern.MatchString(t.ID) || seen[t.ID] {
-			return Index{}, fmt.Errorf("%w: %s lists the template id %q twice or invalidly", ErrCatalogUnavailable, file, t.ID)
+			return Index{}, fmt.Errorf("lists the template id %q twice or invalidly", t.ID)
 		}
 		seen[t.ID] = true
 		cats := t.Categories

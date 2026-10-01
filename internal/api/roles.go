@@ -66,6 +66,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.RemoveStackOperation:                    RoleAdmin,
 	apiv1.PreviewTemplateInstallOperation:         RoleAdmin,
 	apiv1.ListCatalogOperation:                    RoleViewer,
+	apiv1.RefreshCatalogOperation:                 RoleAdmin,
 	apiv1.GetCatalogTemplateOperation:             RoleViewer,
 	apiv1.GetCatalogTemplateIconOperation:         RoleViewer,
 	apiv1.InstallTemplateOperation:                RoleAdmin,

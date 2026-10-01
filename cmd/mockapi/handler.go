@@ -110,6 +110,13 @@ type handler struct {
 	// its .env substituted, started or not (guarded by stacksMu).
 	stackPorts map[string]map[int]bool
 
+	// catalogMu guards catalogChecks and catalogLast: the scripted catalog
+	// checks this mock instance has run. Nothing is checked before the first
+	// RefreshCatalog, so ListCatalog reports no check until then.
+	catalogMu     sync.Mutex
+	catalogChecks int
+	catalogLast   *apiv1.CatalogRefresh
+
 	// appdataMu guards appdataPolicies (#61): the per-container appdata
 	// backup policy set through SetAppdataBackupContainer. A container
 	// with no entry is stopped and included, like production.

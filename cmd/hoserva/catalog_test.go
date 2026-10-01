@@ -122,3 +122,77 @@ func TestCatalogListReportsTheCatalogBeingUnavailable(t *testing.T) {
 		t.Fatalf("printed %q, err %v, want an error and no table", printed, err)
 	}
 }
+
+func TestCatalogRefreshPostsOneCheckAndSummarisesEachOutcome(t *testing.T) {
+	at := time.Date(2026, 10, 1, 12, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		res  apiv1.CatalogRefresh
+		want []string
+		fail string
+	}{
+		{"updated", apiv1.CatalogRefresh{CheckedAt: at, Outcome: apiv1.CatalogCheckOutcomeUpdated, NewTemplates: apiv1.NewOptInt(3), UpdatedTemplates: apiv1.NewOptInt(1)},
+			[]string{"Checked 2026-10-01 12:30 UTC", "updated, 3 new and 1 updated templates"}, ""},
+		{"unchanged", apiv1.CatalogRefresh{CheckedAt: at, Outcome: apiv1.CatalogCheckOutcomeUnchanged},
+			[]string{"already up to date"}, ""},
+		{"failed", apiv1.CatalogRefresh{CheckedAt: at, Outcome: apiv1.CatalogCheckOutcomeFailed, Reason: apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReasonNotNewer), Message: apiv1.NewOptString("serial 9, installed 9")},
+			nil, "the catalog check failed (not_newer): serial 9, installed 9"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var requests []string
+			sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method+" "+r.URL.Path)
+				writeJSON(t, w, http.StatusOK, &c.res)
+			})
+			printed, err := runAppCLI(t, sock, "catalog", "refresh")
+			if len(requests) != 1 || requests[0] != "POST /api/v1/catalog/refresh" {
+				t.Fatalf("requests = %v", requests)
+			}
+			if c.fail != "" {
+				if err == nil || err.Error() != c.fail {
+					t.Fatalf("error = %v, want %q (a failed check must exit non-zero)", err, c.fail)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(printed, want) {
+					t.Errorf("output lacks %q:\n%s", want, printed)
+				}
+			}
+		})
+	}
+}
+
+func TestCatalogRefreshJSONEmitsTheResultAndAFailedCheckStillFails(t *testing.T) {
+	res := apiv1.CatalogRefresh{CheckedAt: time.Date(2026, 10, 1, 12, 30, 0, 0, time.UTC), Outcome: apiv1.CatalogCheckOutcomeFailed,
+		Reason: apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReasonFetchFailed), Message: apiv1.NewOptString("no route")}
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) { writeJSON(t, w, http.StatusOK, &res) })
+	printed, err := runAppCLI(t, sock, "--json", "catalog", "refresh")
+	if err == nil {
+		t.Fatal("a failed check returned no error")
+	}
+	var out struct {
+		Outcome string `json:"outcome"`
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	}
+	if jerr := json.Unmarshal([]byte(printed), &out); jerr != nil || out.Outcome != "failed" || out.Reason != "fetch_failed" || out.Message != "no route" {
+		t.Errorf("output %q: %v", printed, jerr)
+	}
+}
+
+func TestCatalogListShowsTheLastCheckWhenThereWasOne(t *testing.T) {
+	list := testCatalogList()
+	list.LastCheckedAt = apiv1.NewOptDateTime(time.Date(2026, 10, 1, 12, 30, 0, 0, time.UTC))
+	list.LastOutcome = apiv1.NewOptCatalogCheckOutcome(apiv1.CatalogCheckOutcomeUnchanged)
+	if got := catalogListSummary(list); !strings.Contains(got, "Last checked 2026-10-01 12:30 UTC: unchanged.") {
+		t.Errorf("summary lacks the last check:\n%s", got)
+	}
+	if got := catalogListSummary(testCatalogList()); strings.Contains(got, "Last checked") {
+		t.Errorf("summary names a check that never ran:\n%s", got)
+	}
+}

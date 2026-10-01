@@ -202,6 +202,10 @@ type Handler struct {
 	// Catalog is the template source behind /catalog, /catalog/{id} and
 	// /catalog/{id}/icon (doc 04 §4). Nil returns 501 from those operations.
 	Catalog template.Catalog
+	// CatalogRefresh runs the catalog check behind /catalog/refresh and
+	// reports the last one on /catalog (doc 04 §7). Nil returns 501 from
+	// refreshCatalog and leaves the list without check fields.
+	CatalogRefresh CatalogRefresher
 	// TemplateInstall resolves and installs catalog templates (doc 04 §7)
 	// behind /templates/{id}/preview and /install. Nil returns 501 from
 	// those operations.

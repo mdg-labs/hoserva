@@ -1237,6 +1237,19 @@ func (s *CacheUsageBreakdown) Validate() error {
 	return nil
 }
 
+func (s CatalogCheckOutcome) Validate() error {
+	switch s {
+	case "updated":
+		return nil
+	case "unchanged":
+		return nil
+	case "failed":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s *CatalogEntry) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1315,10 +1328,142 @@ func (s *CatalogList) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if value, ok := s.LastOutcome.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "lastOutcome",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s *CatalogRefresh) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Outcome.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "outcome",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.NewTemplates.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           0,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "newTemplates",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.UpdatedTemplates.Get(); ok {
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           0,
+					MaxSet:        false,
+					Max:           0,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(value)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "updatedTemplates",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Reason.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "reason",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s CatalogRefreshReason) Validate() error {
+	switch s {
+	case "fetch_failed":
+		return nil
+	case "bad_signature":
+		return nil
+	case "not_newer":
+		return nil
+	case "bad_archive":
+		return nil
+	case "install_failed":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *CatalogTemplate) Validate() error {
@@ -5216,6 +5361,8 @@ func (s NotificationEventType) Validate() error {
 	case "backup_destination_stale":
 		return nil
 	case "restore_drill_failed":
+		return nil
+	case "catalog_check_failed":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

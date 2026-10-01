@@ -17,6 +17,13 @@ const (
 	iconContentOption = "nosniff"
 )
 
+// CatalogRefresher runs one catalog check and reports the latest one;
+// *template.Refresher is the production implementation.
+type CatalogRefresher interface {
+	Refresh(ctx context.Context) (template.CheckResult, error)
+	Last() (template.CheckResult, bool)
+}
+
 func errCatalogNotConfigured() error {
 	return &apiError{code: "not_configured", statusCode: 501, message: "The template catalog is not configured on this daemon"}
 }
@@ -70,6 +77,32 @@ func (h *Handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 			Source:     h.Catalog.Name(),
 			Installed:  installed[t.ID],
 		}
+	}
+	if h.CatalogRefresh != nil {
+		if last, ok := h.CatalogRefresh.Last(); ok {
+			out.LastCheckedAt = apiv1.NewOptDateTime(last.CheckedAt)
+			out.LastOutcome = apiv1.NewOptCatalogCheckOutcome(apiv1.CatalogCheckOutcome(last.Outcome))
+		}
+	}
+	return out, nil
+}
+
+func (h *Handler) RefreshCatalog(ctx context.Context) (*apiv1.CatalogRefresh, error) {
+	if h.CatalogRefresh == nil {
+		return nil, errCatalogNotConfigured()
+	}
+	res, err := h.CatalogRefresh.Refresh(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("waiting for the catalog check: %w", err)
+	}
+	out := &apiv1.CatalogRefresh{CheckedAt: res.CheckedAt, Outcome: apiv1.CatalogCheckOutcome(res.Outcome)}
+	switch res.Outcome {
+	case template.OutcomeUpdated:
+		out.NewTemplates = apiv1.NewOptInt(res.New)
+		out.UpdatedTemplates = apiv1.NewOptInt(res.Updated)
+	case template.OutcomeFailed:
+		out.Reason = apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReason(res.Reason))
+		out.Message = apiv1.NewOptString(res.Message)
 	}
 	return out, nil
 }

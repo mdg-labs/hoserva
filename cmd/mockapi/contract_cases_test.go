@@ -806,6 +806,14 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "RefreshCatalog",
+		name: "valid_check",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RefreshCatalog(ctx)
+			return err
+		},
+	},
+	{
 		op:   "GetCatalogTemplate",
 		name: "valid_privileged_template",
 		run: func(ctx context.Context, h apiv1.Handler) error {

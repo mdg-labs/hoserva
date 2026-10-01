@@ -785,8 +785,10 @@ type Handler interface {
 	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
 	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
 	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
-	// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
-	// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+	// Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most
+	// recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check
+	// has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503
+	// `catalog_unavailable`, never answered with an empty list.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
@@ -1095,6 +1097,22 @@ type Handler interface {
 	//
 	// POST /apps/{id}/recreate
 	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
+	// RefreshCatalog implements refreshCatalog operation.
+	//
+	// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
+	// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
+	// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
+	// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
+	// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
+	// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
+	// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
+	// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
+	// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
+	// while a check is running share that check's request and result. Nothing is fetched from
+	// `api.github.com`.
+	//
+	// POST /catalog/refresh
+	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
 	// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 	//
 	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and

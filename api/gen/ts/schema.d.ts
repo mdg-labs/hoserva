@@ -2350,11 +2350,31 @@ export interface paths {
         };
         /**
          * List the catalog's templates
-         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
          */
         get: operations["listCatalog"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/catalog/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check for catalog updates now
+         * @description Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65) and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed catalog only if its signature verifies against the compiled-in catalog key and its serial is strictly higher (`updated`, with the number of new and of updated templates, compared by id and revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure does not. A check that fails is still a completed check, answered 200. Calls made while a check is running share that check's request and result. Nothing is fetched from `api.github.com`.
+         */
+        post: operations["refreshCatalog"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2958,7 +2978,7 @@ export interface components {
          * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
          * @enum {string}
          */
-        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "certificate_renewal_failed" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
+        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "certificate_renewal_failed" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed" | "catalog_check_failed";
         /** @enum {string} */
         NotificationChannelType: "email" | "gotify" | "ntfy" | "discord" | "webhook";
         /** @enum {string} */
@@ -3544,6 +3564,36 @@ export interface components {
              */
             generatedAt?: string;
             templates: components["schemas"]["CatalogEntry"][];
+            /**
+             * Format: date-time
+             * @description When the most recent catalog check finished, whatever its outcome. Absent before any check has run since the daemon started.
+             */
+            lastCheckedAt?: string;
+            lastOutcome?: components["schemas"]["CatalogCheckOutcome"];
+        };
+        /**
+         * @description How a catalog check ended.
+         * @enum {string}
+         */
+        CatalogCheckOutcome: "updated" | "unchanged" | "failed";
+        CatalogRefresh: {
+            /**
+             * Format: date-time
+             * @description When the check finished.
+             */
+            checkedAt: string;
+            outcome: components["schemas"]["CatalogCheckOutcome"];
+            /** @description Templates the new catalog lists that the replaced one did not. Present only when `outcome` is `updated`. */
+            newTemplates?: number;
+            /** @description Templates both catalogs list under a different revision. Present only when `outcome` is `updated`. */
+            updatedTemplates?: number;
+            /**
+             * @description Present only when `outcome` is `failed`. `fetch_failed`: the host could not be reached or answered something unusable (not notified). `bad_signature`: the signature does not verify against the catalog key. `not_newer`: the serial is not higher than the installed catalog's. `bad_archive`: the signed archive is not a catalog. `install_failed`: the verified archive could not be written to disk. The three verification reasons raise a `catalog_check_failed` notification.
+             * @enum {string}
+             */
+            reason?: "fetch_failed" | "bad_signature" | "not_newer" | "bad_archive" | "install_failed";
+            /** @description Present only when `outcome` is `failed`. */
+            message?: string;
         };
         CatalogTemplate: {
             id: string;
@@ -8064,6 +8114,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The check's outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRefresh"];
                 };
             };
             default: components["responses"]["Error"];
