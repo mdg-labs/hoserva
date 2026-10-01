@@ -369,6 +369,7 @@ packaging-test:
 	scripts/release/test-lib.sh
 	scripts/release/test-postinst.sh
 	scripts/release/test-postrm-purge.sh
+	scripts/release/test-build-deb.sh
 	packaging/test-control-depends.sh
 	packaging/test-unattended-upgrades.sh
 	packaging/test-preinst-smartd-dropin.sh

@@ -3,6 +3,21 @@
 /dist/
 *.deb
 
+# What a local .deb build (scripts/release/build-deb.sh, debian/rules)
+# leaves in the tree: the two binaries at the repo root and debhelper's own
+# state under packaging/debian/. build-deb.sh removes them itself; this is
+# the second line of defence. /hoserva and /hoservad are anchored so
+# cmd/hoserva/ and cmd/hoservad/ stay tracked.
+/hoserva
+/hoservad
+/packaging/debian/.debhelper/
+/packaging/debian/debhelper-build-stamp
+/packaging/debian/files
+/packaging/debian/*.debhelper
+/packaging/debian/*.debhelper.log
+/packaging/debian/*.substvars
+/packaging/debian/hoserva/
+
 # The loop-device lab's per-lab image and mount roots (doc 06 §9, doc 12 §2) —
 # owned by root once the lab container touches them, so they are never
 # committed and must be destroyed with `make lab-destroy`, never `rm -rf`.

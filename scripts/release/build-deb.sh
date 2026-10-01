@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Builds one architecture's .deb from a release tag (Q66, Q7, D8, D9).
-# Needs dpkg-buildpackage, debhelper and fakeroot — CI installs them; the
-# dev host and lab deliberately do not have them (CLAUDE.md: no
-# packaging tool here ever touches a real disk, and this one doesn't
-# need to — dpkg-buildpackage only ever writes to its own build tree and
-# the output directory given below).
+# Runs in CI (release.yml, ci.yml) and on the dev host for L3, where
+# scripts/vm/deploy.sh builds the .deb under test (doc 06 §4, D20). Needs
+# dpkg-dev (dpkg-buildpackage), debhelper and fakeroot wherever it runs.
+# It never touches a real disk. dpkg-buildpackage writes the .deb,
+# .buildinfo and .changes to this repository's parent directory; the
+# script moves the .deb to the output directory given below, and the
+# .buildinfo and .changes stay in the parent. It leaves this tree as it
+# found it, on success and on failure (the EXIT trap below).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,15 +41,36 @@ cd "$repo_root"
 # debian/rules and friends assume a top-level debian/ (dpkg-buildpackage
 # convention); this repo keeps it under packaging/ instead (area:packaging,
 # CLAUDE.md). The symlink exists only for the duration of this build.
-ln -sfn packaging/debian debian
-cleanup() { rm -f debian; }
+#
+# The build also rewrites the tracked packaging/debian/changelog and
+# writes hoservad, hoserva and debhelper's own state into the tree; the
+# trap restores the changelog and removes exactly those named paths, so a
+# local build (a dev-host L3 run, an orchestrate scratch clone) never
+# leaves anything for `git status` or a later commit to sweep up.
+changelog=packaging/debian/changelog
+saved_changelog="$(mktemp)"
+cp -- "$changelog" "$saved_changelog"
+cleanup() {
+  rm -f debian
+  cp -- "$saved_changelog" "$changelog"
+  rm -f "$saved_changelog"
+  rm -rf -- hoserva hoservad \
+    packaging/debian/.debhelper \
+    packaging/debian/debhelper-build-stamp \
+    packaging/debian/files \
+    packaging/debian/hoserva.debhelper.log \
+    packaging/debian/hoserva.postrm.debhelper \
+    packaging/debian/hoserva.substvars \
+    packaging/debian/hoserva
+}
 trap cleanup EXIT
+ln -sfn packaging/debian debian
 
 # dpkg parses only debian/changelog's topmost entry for the version it
 # builds — the git tag is this project's one source of truth for that
 # version (doc 12 §6), so it is written here immediately before the
 # build, never hand-maintained.
-cat >packaging/debian/changelog <<CHANGELOG
+cat >"$changelog" <<CHANGELOG
 hoserva (${version}) unstable; urgency=medium
 
   * ${channel} release ${tag}: https://github.com/mdg-labs/hoserva/releases/tag/${tag}
