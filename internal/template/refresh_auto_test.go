@@ -165,13 +165,15 @@ func TestRefresh_AutomaticChecksDoNotDownloadAnArchiveThatAlreadyFailedVerificat
 		}
 	}
 	reqs, bytes := g.host.log()
-	want := " inm=\"bad-one\""
-	if len(reqs) != 3 || bytes != 0 {
-		t.Fatalf("requests = %v, bytes = %d, want three conditional archive requests and no body", reqs, bytes)
+	if len(reqs) != 6 || bytes != 0 {
+		t.Fatalf("requests = %v, bytes = %d, want a conditional archive and signature request per check and no body", reqs, bytes)
 	}
-	for _, req := range reqs {
-		if req != "/catalog.tar.zst"+want {
+	for i, req := range reqs {
+		if i%2 == 0 && req != "/catalog.tar.zst inm=\"bad-one\"" {
 			t.Fatalf("request %q, want the archive asked with the bad archive's ETag", req)
+		}
+		if i%2 == 1 && !strings.HasPrefix(req, "/catalog.tar.zst.sig inm=\"sig-") {
+			t.Fatalf("request %q, want the signature asked with the ETag it failed with", req)
 		}
 	}
 	if n := len(*g.notified); n != 1 {
@@ -189,8 +191,8 @@ func TestRefresh_AutomaticChecksDoNotDownloadAnArchiveThatAlreadyFailedVerificat
 	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
 		t.Fatalf("result = %+v, want bad_signature", res)
 	}
-	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
-		t.Fatalf("after a network failure: requests = %v, bytes = %d, want one request and no body", reqs, bytes)
+	if reqs, bytes := g.host.log(); len(reqs) != 2 || bytes != 0 {
+		t.Fatalf("after a network failure: requests = %v, bytes = %d, want a conditional archive and signature request and no body", reqs, bytes)
 	}
 }
 
@@ -217,13 +219,126 @@ func TestRefresh_AnAutomaticCheckFetchesAndVerifiesADifferentArchiveAfterAFailur
 
 	g.host.reset()
 	_, _ = g.refresher.Check(ctx, TriggerInterval)
-	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
+	if reqs, bytes := g.host.log(); len(reqs) != 2 || bytes != 0 {
 		t.Fatalf("requests = %v, bytes = %d, want the new bad archive remembered in place of the first", reqs, bytes)
 	}
 
 	g.publish(t, `"good"`, catalogEntries(60, "good", map[string]int{"a": 1}))
 	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Outcome != OutcomeUpdated {
 		t.Fatalf("result = %+v, want the fixed archive installed", res)
+	}
+}
+
+// pair is an archive, its signature, and a signature over another archive.
+func (g *autoRig) pair(t *testing.T, serial int64, marker string) (archive, sig, wrongSig []byte) {
+	t.Helper()
+	archive, sig = signed(t, g.priv, catalogEntries(serial, marker, map[string]int{"a": 1}))
+	_, wrongSig = signed(t, g.priv, catalogEntries(serial, marker+"-other", map[string]int{"a": 1}))
+	return archive, sig, wrongSig
+}
+
+func TestRefresh_AFixedSignatureOverAnUnchangedArchiveIsFetchedAndInstalledByTheNextAutomaticCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		noValidators bool
+	}{
+		{"signature with an ETag", false},
+		{"signature without validators", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newAutoRig(t)
+			ctx := context.Background()
+			g.host.noSigValidators = tc.noValidators
+			archive, sig, wrongSig := g.pair(t, 50, "one")
+			g.host.serve(archive, wrongSig, `"v50"`)
+			if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+				t.Fatalf("result = %+v, want bad_signature", res)
+			}
+
+			g.host.reset()
+			if res, _ := g.refresher.Check(ctx, TriggerOpen); res.Reason != ReasonBadSignature {
+				t.Fatalf("unchanged archive and signature: result = %+v, want the remembered bad_signature", res)
+			}
+			reqs, bytes := g.host.log()
+			if tc.noValidators {
+				if len(reqs) != 2 || bytes == 0 || bytes > int64(len(wrongSig)) {
+					t.Fatalf("requests = %v, bytes = %d, want the archive refused by 304 and only the signature body fetched", reqs, bytes)
+				}
+			} else if len(reqs) != 2 || bytes != 0 {
+				t.Fatalf("requests = %v, bytes = %d, want two conditional requests and no body", reqs, bytes)
+			}
+
+			g.host.serve(archive, sig, `"v50"`)
+			g.host.reset()
+			res, err := g.refresher.Check(ctx, TriggerInterval)
+			if err != nil || res.Outcome != OutcomeUpdated {
+				t.Fatalf("result = %+v, %v, want the archive installed once its signature verifies", res, err)
+			}
+			reqs, bytes = g.host.log()
+			if len(reqs) != 4 || bytes < int64(len(archive)) {
+				t.Fatalf("requests = %v, bytes = %d, want the archive refused by 304, then the pair fetched in full", reqs, bytes)
+			}
+			if reqs[0] != "/catalog.tar.zst inm=\"v50\"" || reqs[2] != "/catalog.tar.zst inm=" {
+				t.Fatalf("requests = %v, want the archive fetched unconditionally after the signature changed", reqs)
+			}
+			if serial, _, _ := g.store.Serial(); serial != 50 {
+				t.Fatalf("installed serial = %d, want 50", serial)
+			}
+
+			g.host.reset()
+			if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Outcome != OutcomeUnchanged {
+				t.Fatalf("result = %+v, want unchanged", res)
+			}
+		})
+	}
+}
+
+func TestRefresh_AChangedSignatureThatStillFailsIsFetchedWithItsArchiveOnceMoreAndRemembered(t *testing.T) {
+	g := newAutoRig(t)
+	ctx := context.Background()
+	archive, _, wrongSig := g.pair(t, 50, "one")
+	_, _, otherWrongSig := g.pair(t, 50, "two")
+	g.host.serve(archive, wrongSig, `"v50"`)
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v", res)
+	}
+
+	g.host.serve(archive, otherWrongSig, `"v50"`)
+	g.host.reset()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v, want bad_signature", res)
+	}
+	if reqs, _ := g.host.log(); len(reqs) != 6 {
+		t.Fatalf("requests = %v, want the 304 pair, then the pair fetched twice", reqs)
+	}
+
+	g.host.reset()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonBadSignature {
+		t.Fatalf("result = %+v", res)
+	}
+	if reqs, bytes := g.host.log(); len(reqs) != 2 || bytes != 0 {
+		t.Fatalf("requests = %v, bytes = %d, want the new signature remembered in place of the first", reqs, bytes)
+	}
+}
+
+func TestRefresh_ARejectionThatIsAPropertyOfTheArchiveDoesNotAskForTheSignature(t *testing.T) {
+	g := newAutoRig(t)
+	ctx := context.Background()
+	seed, seedSig := signed(t, g.priv, catalogEntries(10, "seed", map[string]int{"a": 1}))
+	if _, err := g.store.Seed(seed, seedSig); err != nil {
+		t.Fatal(err)
+	}
+	g.publish(t, `"old"`, catalogEntries(9, "older", map[string]int{"a": 1}))
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonNotNewer {
+		t.Fatalf("result = %+v, want not_newer", res)
+	}
+
+	g.host.reset()
+	if res, _ := g.refresher.Check(ctx, TriggerInterval); res.Reason != ReasonNotNewer {
+		t.Fatalf("result = %+v, want the remembered not_newer", res)
+	}
+	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
+		t.Fatalf("requests = %v, bytes = %d, want one conditional archive request", reqs, bytes)
 	}
 }
 
@@ -255,8 +370,8 @@ func TestRefresh_AManualCheckAfterAFailureFetchesTheArchiveInFullAndReportsItAga
 
 	g.host.reset()
 	_, _ = g.refresher.Check(ctx, TriggerInterval)
-	if reqs, bytes := g.host.log(); len(reqs) != 1 || bytes != 0 {
-		t.Fatalf("automatic check after the manual one: requests = %v, bytes = %d, want a conditional request and no body", reqs, bytes)
+	if reqs, bytes := g.host.log(); len(reqs) != 2 || bytes != 0 {
+		t.Fatalf("automatic check after the manual one: requests = %v, bytes = %d, want conditional requests and no body", reqs, bytes)
 	}
 }
 

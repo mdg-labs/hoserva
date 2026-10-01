@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -54,6 +56,9 @@ type fakeCatalogHost struct {
 	// sigQueue holds signatures served, one per signature request, before
 	// sig is: a signature cached from an earlier publish.
 	sigQueue [][]byte
+	// noSigValidators makes the signature carry no ETag, as a host that does
+	// not validate it would.
+	noSigValidators bool
 }
 
 func (f *fakeCatalogHost) serve(archive, sig []byte, etag string) {
@@ -103,6 +108,15 @@ func (f *fakeCatalogHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		body = f.sig
 		if len(f.sigQueue) > 0 {
 			body, f.sigQueue = f.sigQueue[0], f.sigQueue[1:]
+		}
+		if !f.noSigValidators {
+			sum := sha256.Sum256(body)
+			sigEtag := `"sig-` + hex.EncodeToString(sum[:8]) + `"`
+			if r.Header.Get("If-None-Match") == sigEtag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", sigEtag)
 		}
 	default:
 		http.NotFound(w, r)
