@@ -272,7 +272,10 @@ func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareReq
 // overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
 // letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
 // that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
-// generated file behind.
+// generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's
+// environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+// `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is
+// stored or written, so Docker always runs with the daemon's own values for them.
 //
 // POST /stacks
 func (UnimplementedHandler) CreateStack(ctx context.Context, req *CreateStackRequest) (r *Stack, _ error) {
@@ -497,7 +500,8 @@ func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatE
 
 // GetApp implements getApp operation.
 //
-// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
+// manages it, if any.
 //
 // GET /apps/{id}
 func (UnimplementedHandler) GetApp(ctx context.Context, params GetAppParams) (r *App, _ error) {
@@ -571,6 +575,33 @@ func (UnimplementedHandler) GetAppdataRestorePreview(ctx context.Context, params
 //
 // GET /cache/usage
 func (UnimplementedHandler) GetCacheUsage(ctx context.Context) (r NilCacheUsageBreakdown, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetCatalogTemplate implements getCatalogTemplate operation.
+//
+// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
+// what its Compose content asks for beyond an ordinary container, computed with each input's default
+// (a secret, which has none, with a generated-shaped value) and never from anything the template
+// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
+// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+//
+// GET /catalog/{id}
+func (UnimplementedHandler) GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (r *CatalogTemplate, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetCatalogTemplateIcon implements getCatalogTemplateIcon operation.
+//
+// The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG)
+// chosen by the file's extension, never by its content. A file that is not a plain file inside the
+// template's own directory (a symlink, however it points), has another extension, or is larger than 1
+// MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`.
+// The response forbids content sniffing and scripts, styles and subresources beyond the image itself,
+// so an SVG cannot run code when it is opened directly.
+//
+// GET /catalog/{id}/icon
+func (UnimplementedHandler) GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (r GetCatalogTemplateIconRes, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -876,15 +907,19 @@ func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigR
 //
 // Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no
 // value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port
-// and reported in the result's `requestedValue`, never refused. Then it creates the stack as
-// `createStack` does: the stack's row records the template's source, id and revision, and
-// `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and
-// the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and
-// `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result
-// carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any
-// other kind `previewTemplateInstall` lists is reported with its install. The stack errors of
-// `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those
-// of `previewTemplateInstall`.
+// and reported in the result's `requestedValue`, never refused. Taken means what
+// `previewTemplateInstall` lists, including the ports of stacks installed earlier that were never
+// started, so two installs in a row are given different ports; installs run one at a time. Reading the
+// ports of existing stacks regenerates their missing generated files from their rows, as
+// `previewTemplateInstall` describes. A port that something other than Hoserva takes after the install
+// is not checked. Then it creates the stack as `createStack` does: the stack's row records the
+// template's source, id and revision, and `docker-compose.yml` (the template with its `x-hoserva`
+// block kept, plus the `/dev/dri` device and the host's `render` group for a GPU that was chosen),
+// `.env` (every input; secrets only here) and `meta.json` are generated and checked with
+// `docker compose config`. Nothing is started. The result carries the privilege summary, so a template
+// that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is
+// reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409
+// `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
 //
 // POST /templates/{id}/install
 func (UnimplementedHandler) InstallTemplate(ctx context.Context, req *TemplateInstallRequest, params InstallTemplateParams) (r *TemplateInstallResult, _ error) {
@@ -956,10 +991,11 @@ func (UnimplementedHandler) ListAppdataArchives(ctx context.Context, params List
 
 // ListApps implements listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
-// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
-// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
-// 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
+// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
+// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
+// every container as unmanaged. available is false, with no error, whenever Docker itself is not
+// reachable (doc 04 §3).
 //
 // GET /apps
 func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ error) {
@@ -973,6 +1009,20 @@ func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ erro
 //
 // GET /backup/destinations
 func (UnimplementedHandler) ListBackupDestinations(ctx context.Context) (r *ListBackupDestinationsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListCatalog implements listCatalog operation.
+//
+// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
+// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
+// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
+// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
+// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
+// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+//
+// GET /catalog
+func (UnimplementedHandler) ListCatalog(ctx context.Context) (r *CatalogList, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1293,10 +1343,12 @@ func (UnimplementedHandler) PreviewConfigImport(ctx context.Context, req *Previe
 
 // PreviewTemplateInstall implements previewTemplateInstall operation.
 //
-// Resolves the template's inputs the way an install would, without creating or writing anything: paths
-// default to the template's own default or, with none, to the existing share of the input's role
-// (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a running container
-// publishes or the host listens on resolves to the next free port above it, with the port asked for in
+// Resolves the template's inputs the way an install would, without creating a stack or writing any
+// file of the template: paths default to the template's own default or, with none, to the existing
+// share of the input's role (`/mnt/user/<role>`) and list the existing shares as suggestions; a port
+// that a container publishes or is configured to publish, running or stopped, that an existing stack's
+// Compose file publishes (resolved with its `.env`, whether or not the stack was started), or that the
+// host listens on resolves to the next free port above it, with the port asked for in
 // `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists
 // the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value
 // here: it is marked `generated` and is generated by the install. The privilege summary is computed
@@ -1309,10 +1361,18 @@ func (UnimplementedHandler) PreviewConfigImport(ctx context.Context, req *Previe
 // `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
 // input the template marks `optional` may be left empty and is written to `.env` with an empty value);
 // a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
-// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
-// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
-// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
-// with 503 `docker_unavailable`.
+// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an
+// input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`,
+// `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
+// `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host
+// cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a
+// conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503
+// `docker_unavailable`. The check also reads the ports of every existing stack with
+// `docker compose config`; a stack whose ports cannot be read refuses the request
+// (`stack_action_failed`) instead of the port being assumed free. Reading a stack's ports also
+// regenerates, from the stack's row, any of its `docker-compose.yml`, `.env` or `meta.json` that is
+// missing from its directory; a file that exists is never changed, and a stack removed meanwhile is
+// skipped. `installTemplate` does the same.
 //
 // POST /templates/{id}/preview
 func (UnimplementedHandler) PreviewTemplateInstall(ctx context.Context, req *TemplateInstallRequest, params PreviewTemplateInstallParams) (r *TemplateInstallPlan, _ error) {

@@ -632,7 +632,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		Stacks: &container.StackService{
 			Store:  store.NewStackStore(db),
 			Cipher: contractStackCipher{},
-			Runner: container.NewFakeRunner(),
+			Runner: contractComposeRunner{container.NewFakeRunner()},
 			Root:   filepath.Join(t.TempDir(), "stacks"),
 		},
 		ArrayStore: arrayStore,
@@ -767,8 +767,9 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 			t.Fatalf("writing the empty %s socket table: %v", f, err)
 		}
 	}
+	h.Catalog = mockCatalog()
 	h.TemplateInstall = &template.Installer{
-		Catalog: template.MapCatalog{Source: template.SourceCurated, Templates: mockTemplates},
+		Catalog: mockCatalog(),
 		Stacks:  stacks,
 		Ports:   template.HostPorts{Containers: containers, ProcNet: procNet},
 		Shares: func(ctx context.Context) ([]string, error) {
@@ -884,6 +885,19 @@ func seedJellyfinUpdate(ctx context.Context, h apiv1.Handler, keep time.Duration
 		return nil
 	}
 	return fmt.Errorf("unexpected handler type %T", h)
+}
+
+// contractComposeRunner is a scripted docker compose that also answers
+// `config --format json`, which the install's port check runs for every
+// stack, with a stack that publishes nothing.
+type contractComposeRunner struct{ *container.FakeRunner }
+
+func (r contractComposeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	out, err := r.FakeRunner.Run(ctx, env, name, args...)
+	if err == nil && len(out) == 0 && strings.Contains(strings.Join(args, " "), "config --format json") {
+		return []byte(`{"services":{}}`), nil
+	}
+	return out, err
 }
 
 // contractStackCipher stands in for the machine key: the contract compares

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,10 @@ var (
 	// ErrInvalidStack is returned by CreateStack when the Compose file is
 	// empty or `docker compose config` rejects it.
 	ErrInvalidStack = errors.New("container: invalid compose stack")
+	// ErrReservedEnvName is returned by Create when the stack's .env defines
+	// a variable Docker needs from the daemon's environment (PATH, HOME,
+	// DOCKER_HOST, ...). Nothing is written.
+	ErrReservedEnvName = errors.New("container: the .env defines a variable Docker reserves")
 	// ErrStackNotFound is returned when no stack has the name.
 	ErrStackNotFound = store.ErrStackNotFound
 	// ErrStackExists is returned by CreateStack when a stack has the name.
@@ -339,20 +344,43 @@ func (s *StackService) compose(ctx context.Context, timeout time.Duration, name 
 
 // composeEnvNames are the only variables of the daemon's environment a
 // Compose run gets: what the Docker CLI needs to find its plugins, its
-// credential helpers and the Engine.
+// credential helpers and the Engine. They are reserved: a stack's .env may
+// not define them (ErrReservedEnvName), so the daemon's values always reach
+// Docker.
 var composeEnvNames = []string{
 	"PATH", "HOME", "XDG_RUNTIME_DIR",
 	"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
+}
+
+// ReservedEnvNames returns the variable names a stack's .env, and so a
+// template input, may not use.
+func ReservedEnvNames() []string {
+	return append([]string(nil), composeEnvNames...)
+}
+
+// ReservedEnvDefined returns the reserved names the .env text defines, in
+// ReservedEnvNames order.
+func ReservedEnvDefined(env string) []string {
+	var out []string
+	for _, name := range composeEnvNames {
+		if envFileDefines([]byte(env), name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // composeEnv is the environment of a Compose run. Compose lets a variable of
 // its own environment override the same name in --env-file, and reads its own
 // settings (COMPOSE_PROJECT_NAME, COMPOSE_FILE, ...) from there, so the
 // daemon's environment is never passed on whole: the stack's .env, whose
-// values are recorded in the database, is what Compose interpolates. Of the
-// variables Docker needs, one the .env file also defines is left out, so the
-// stack's value wins and Docker falls back to its default for it. envFile is
-// the file --env-file names, or empty for a run without one.
+// values are recorded in the database, is what Compose interpolates. The
+// variables Docker needs are the daemon's own, and a .env cannot define them
+// since a stack is created. A stack stored before that rule whose .env still
+// defines one has the daemon's value left out of the run, so the stack's
+// value wins and Docker falls back to its default for it, and a warning is
+// logged. envFile is the file --env-file names, or empty for a run without
+// one.
 func composeEnv(envFile string) ([]string, error) {
 	var defined []byte
 	if envFile != "" {
@@ -365,7 +393,11 @@ func composeEnv(envFile string) ([]string, error) {
 	env := make([]string, 0, len(composeEnvNames))
 	for _, name := range composeEnvNames {
 		v, ok := os.LookupEnv(name)
-		if !ok || envFileDefines(defined, name) {
+		if envFileDefines(defined, name) {
+			log.Printf("container: %s defines %s, which Docker needs from the daemon's environment; the daemon's value is left out of this run. Create the stack again without it", envFile, name)
+			continue
+		}
+		if !ok {
 			continue
 		}
 		env = append(env, name+"="+v)
@@ -380,16 +412,125 @@ func envFileDefines(envFile []byte, name string) bool {
 }
 
 func (s *StackService) runCompose(ctx context.Context, timeout time.Duration, args []string, envFile string) error {
+	_, err := s.runComposeOutput(ctx, timeout, args, envFile)
+	return err
+}
+
+func (s *StackService) runComposeOutput(ctx context.Context, timeout time.Duration, args []string, envFile string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	env, err := composeEnv(envFile)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrComposeFailed, err)
 	}
-	if _, err := s.Runner.Run(ctx, env, "docker", args...); err != nil {
-		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
+	out, err := s.Runner.Run(ctx, env, "docker", args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrComposeFailed, err)
 	}
-	return nil
+	return out, nil
+}
+
+// PublishedPorts returns the host ports the services of every stack publish,
+// read from each stack's Compose file as `docker compose config` resolves it
+// with the stack's .env, so a started stack and one that was only created are
+// the same and a hand-written .env is read as Compose reads it. Every profile
+// is included, since any of them can be started. A port Compose leaves to the
+// Engine is not a port. It fails, and never returns a partial set, when any
+// stack's ports cannot be read: a port nobody could check is not known to be
+// free.
+//
+// It runs without the stack lock, which an Up holds for as long as it pulls;
+// only a stack missing a generated file takes it, to write what is missing
+// from its row as Up does.
+func (s *StackService) PublishedPorts(ctx context.Context) (map[int]bool, error) {
+	rows, err := s.Store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing the stacks to find the ports they publish: %w", err)
+	}
+	used := map[int]bool{}
+	for _, st := range rows {
+		if err := s.restoreMissingFiles(ctx, st.Name); errors.Is(err, ErrStackNotFound) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("reading the ports of stack %s: %w", st.Name, err)
+		}
+		args := s.composeArgs(st.Name, "--profile", "*", "config", "--format", "json")
+		out, err := s.runComposeOutput(ctx, composeValidateTimeout, args, filepath.Join(s.dir(st.Name), stackEnvFile))
+		if err != nil {
+			return nil, fmt.Errorf("reading the ports of stack %s: %w", st.Name, err)
+		}
+		ports, err := composePublishedPorts(out)
+		if err != nil {
+			return nil, fmt.Errorf("reading the ports of stack %s: %w", st.Name, err)
+		}
+		for _, p := range ports {
+			used[p] = true
+		}
+	}
+	return used, nil
+}
+
+// restoreMissingFiles writes the generated files of the stack that are
+// missing from its directory, under the stack lock. A stack whose row is gone
+// by then was removed: nothing is written for it and ErrStackNotFound is
+// returned, which PublishedPorts skips, since a removed stack holds no port.
+func (s *StackService) restoreMissingFiles(ctx context.Context, name string) error {
+	missing := false
+	for _, f := range stackFileNames {
+		if _, err := os.Lstat(filepath.Join(s.dir(name), f)); errors.Is(err, fs.ErrNotExist) {
+			missing = true
+		} else if err != nil {
+			return fmt.Errorf("checking %s: %w", filepath.Join(s.dir(name), f), err)
+		}
+	}
+	if !missing {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.Store.Get(ctx, name)
+	if err != nil {
+		return err
+	}
+	return s.ensureFiles(st, false)
+}
+
+// composePublishedPorts reads the host ports from the JSON of `docker compose
+// config --format json`.
+func composePublishedPorts(out []byte) ([]int, error) {
+	var cfg struct {
+		Services map[string]struct {
+			Ports []struct {
+				Published json.RawMessage `json:"published"`
+			} `json:"ports"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		return nil, fmt.Errorf("reading the resolved compose file: %w", err)
+	}
+	var ports []int
+	for svc, s := range cfg.Services {
+		for _, p := range s.Ports {
+			var raw string
+			if len(p.Published) == 0 || string(p.Published) == "null" {
+				continue
+			}
+			if err := json.Unmarshal(p.Published, &raw); err != nil {
+				raw = string(p.Published)
+			}
+			lo, hi, err := parseHostPortRange(strings.TrimSpace(raw))
+			if err != nil {
+				return nil, fmt.Errorf("service %s: %w", svc, err)
+			}
+			if lo == 0 {
+				continue
+			}
+			for n := lo; n <= hi; n++ {
+				ports = append(ports, n)
+			}
+		}
+	}
+	return ports, nil
 }
 
 func (s *StackService) now() time.Time {
@@ -401,7 +542,9 @@ func (s *StackService) now() time.Time {
 
 // Create stores the stack's row (its .env sealed), generates its three
 // files into <Root>/<name> and checks them with `docker compose config`.
-// Nothing is started.
+// Nothing is started. A .env that defines a reserved variable (see
+// ReservedEnvNames) is refused as ErrReservedEnvName before anything is
+// stored or written.
 //
 // An existing plain directory of that name is adopted, so a stack removed
 // without its appdata can be installed again, but one that holds a
@@ -420,6 +563,9 @@ func (s *StackService) Create(ctx context.Context, n NewStack) (Stack, error) {
 	}
 	if strings.TrimSpace(n.Compose) == "" {
 		return Stack{}, fmt.Errorf("%w: the compose file is empty", ErrInvalidStack)
+	}
+	if names := ReservedEnvDefined(n.Env); len(names) > 0 {
+		return Stack{}, fmt.Errorf("%w: %s; Docker takes these from the daemon's environment", ErrReservedEnvName, strings.Join(names, ", "))
 	}
 	if err := s.checkRoot(); err != nil {
 		return Stack{}, err
@@ -655,6 +801,39 @@ func (s *StackService) ownsContainer(name string, c Container) bool {
 		}
 	}
 	return false
+}
+
+// ManagingStacks returns, by container ID, the name of the installed stack
+// that owns each of cs (ownsContainer); a container no stack owns has no
+// entry. A failed read of the stacks table is an error, never an empty map,
+// so a caller cannot take "could not tell" for "nothing is managed".
+func (s *StackService) ManagingStacks(ctx context.Context, cs []Container) (map[string]string, error) {
+	out := map[string]string{}
+	labelled := false
+	for _, c := range cs {
+		if c.Labels[composeProjectLabel] != "" {
+			labelled = true
+			break
+		}
+	}
+	if !labelled {
+		return out, nil
+	}
+	stacks, err := s.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing stacks to find which containers they manage: %w", err)
+	}
+	installed := make(map[string]bool, len(stacks))
+	for _, st := range stacks {
+		installed[st.Name] = true
+	}
+	for _, c := range cs {
+		name := c.Labels[composeProjectLabel]
+		if installed[name] && s.ownsContainer(name, c) {
+			out[c.ID] = name
+		}
+	}
+	return out, nil
 }
 
 // checkProjectOwned refuses unless every container carrying the stack's

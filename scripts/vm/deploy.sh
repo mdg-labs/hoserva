@@ -14,10 +14,10 @@
 # never a hand-maintained one, from the same source every other build
 # step reads (doc 12 §6): the latest 'v*' tag, matching api-check's own
 # "no release yet" fallback in the Makefile. Building needs
-# dpkg-buildpackage, debhelper and fakeroot, which — same as
-# scripts/release/build-deb.sh's own header comment records — CI
-# installs and the dev host and lab deliberately do not; this script
-# fails loudly there rather than reaching for an install of its own.
+# dpkg-buildpackage, debhelper and fakeroot (the dpkg-dev, debhelper and
+# fakeroot packages): the dev host needs them for local L3, as CI installs
+# them; this script fails loudly when they are missing rather than
+# reaching for an install of its own.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

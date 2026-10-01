@@ -151,14 +151,7 @@ func (c *EngineClient) StartedAt(ctx context.Context, id string) (time.Time, err
 	if err != nil {
 		return time.Time{}, err
 	}
-	if info.State == nil {
-		return time.Time{}, fmt.Errorf("container: the Engine returned no state for %q", ct.Name)
-	}
-	started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("container: reading when %q last started: %w", ct.Name, err)
-	}
-	return started.UTC(), nil
+	return startedAtOf(info, ct.Name)
 }
 
 func (c *EngineClient) CreatedAt(ctx context.Context, id string) (time.Time, error) {
@@ -170,12 +163,47 @@ func (c *EngineClient) CreatedAt(ctx context.Context, id string) (time.Time, err
 	if err != nil {
 		return time.Time{}, err
 	}
+	return createdAtOf(info, ct.Name)
+}
+
+func (c *EngineClient) Runtime(ctx context.Context, id string) (Runtime, error) {
+	ct, err := c.resolve(ctx, id)
+	if err != nil {
+		return Runtime{}, err
+	}
+	info, err := c.inspectEngine(ctx, ct.ID)
+	if err != nil {
+		return Runtime{}, err
+	}
+	created, err := createdAtOf(info, ct.Name)
+	if err != nil {
+		return Runtime{}, err
+	}
+	started, err := startedAtOf(info, ct.Name)
+	if err != nil {
+		return Runtime{}, err
+	}
+	return Runtime{CreatedAt: created, StartedAt: started, RestartCount: info.RestartCount}, nil
+}
+
+func startedAtOf(info dockercontainer.InspectResponse, name string) (time.Time, error) {
+	if info.State == nil {
+		return time.Time{}, fmt.Errorf("container: the Engine returned no state for %q", name)
+	}
+	started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("container: reading when %q last started: %w", name, err)
+	}
+	return started.UTC(), nil
+}
+
+func createdAtOf(info dockercontainer.InspectResponse, name string) (time.Time, error) {
 	created, err := time.Parse(time.RFC3339Nano, info.Created)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("container: reading when %q was created: %w", ct.Name, err)
+		return time.Time{}, fmt.Errorf("container: reading when %q was created: %w", name, err)
 	}
 	if created.IsZero() {
-		return time.Time{}, fmt.Errorf("container: the Engine gave no creation time for %q", ct.Name)
+		return time.Time{}, fmt.Errorf("container: the Engine gave no creation time for %q", name)
 	}
 	return created.UTC(), nil
 }

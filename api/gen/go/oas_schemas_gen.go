@@ -457,8 +457,22 @@ type App struct {
 	Tag   string   `json:"tag"`
 	State AppState `json:"state"`
 	// Human-readable Engine status, e.g. "Up 3 hours".
-	Status string     `json:"status"`
-	Ports  []AppPort  `json:"ports"`
+	Status string `json:"status"`
+	// The name of the installed stack that started this container, decided by the daemon from the
+	// container's Compose project and the directory Compose ran it from. Absent for a container no stack
+	// manages (one started by hand or by another tool). Set by `listApps` and `getApp`; the responses of
+	// the start, stop and restart operations do not carry it.
+	Stack OptString `json:"stack"`
+	// When the Engine created the container. Set by `getApp` only; the listing and the responses of the
+	// start, stop and restart operations do not carry it.
+	CreatedAt OptDateTime `json:"createdAt"`
+	// When the Engine last started the container. Absent for a container that has never run. Set by
+	// `getApp` only.
+	StartedAt OptDateTime `json:"startedAt"`
+	// How many times the Engine's restart policy has restarted the container. Set by `getApp` only.
+	RestartCount OptInt    `json:"restartCount"`
+	Ports        []AppPort `json:"ports"`
+	// Each mount with a host path carries its `location`, set by `listApps` and `getApp`.
 	Mounts []AppMount `json:"mounts"`
 }
 
@@ -495,6 +509,26 @@ func (s *App) GetState() AppState {
 // GetStatus returns the value of Status.
 func (s *App) GetStatus() string {
 	return s.Status
+}
+
+// GetStack returns the value of Stack.
+func (s *App) GetStack() OptString {
+	return s.Stack
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *App) GetCreatedAt() OptDateTime {
+	return s.CreatedAt
+}
+
+// GetStartedAt returns the value of StartedAt.
+func (s *App) GetStartedAt() OptDateTime {
+	return s.StartedAt
+}
+
+// GetRestartCount returns the value of RestartCount.
+func (s *App) GetRestartCount() OptInt {
+	return s.RestartCount
 }
 
 // GetPorts returns the value of Ports.
@@ -540,6 +574,26 @@ func (s *App) SetState(val AppState) {
 // SetStatus sets the value of Status.
 func (s *App) SetStatus(val string) {
 	s.Status = val
+}
+
+// SetStack sets the value of Stack.
+func (s *App) SetStack(val OptString) {
+	s.Stack = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *App) SetCreatedAt(val OptDateTime) {
+	s.CreatedAt = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *App) SetStartedAt(val OptDateTime) {
+	s.StartedAt = val
+}
+
+// SetRestartCount sets the value of RestartCount.
+func (s *App) SetRestartCount(val OptInt) {
+	s.RestartCount = val
 }
 
 // SetPorts sets the value of Ports.
@@ -660,10 +714,11 @@ func (s *AppImage) SetCreatedAt(val OptDateTime) {
 
 // Ref: #/components/schemas/AppMount
 type AppMount struct {
-	Source      OptString `json:"source"`
-	Destination string    `json:"destination"`
-	Mode        OptString `json:"mode"`
-	ReadWrite   bool      `json:"readWrite"`
+	Source      OptString           `json:"source"`
+	Destination string              `json:"destination"`
+	Mode        OptString           `json:"mode"`
+	ReadWrite   bool                `json:"readWrite"`
+	Location    OptAppMountLocation `json:"location"`
 }
 
 // GetSource returns the value of Source.
@@ -686,6 +741,11 @@ func (s *AppMount) GetReadWrite() bool {
 	return s.ReadWrite
 }
 
+// GetLocation returns the value of Location.
+func (s *AppMount) GetLocation() OptAppMountLocation {
+	return s.Location
+}
+
 // SetSource sets the value of Source.
 func (s *AppMount) SetSource(val OptString) {
 	s.Source = val
@@ -704,6 +764,115 @@ func (s *AppMount) SetMode(val OptString) {
 // SetReadWrite sets the value of ReadWrite.
 func (s *AppMount) SetReadWrite(val bool) {
 	s.ReadWrite = val
+}
+
+// SetLocation sets the value of Location.
+func (s *AppMount) SetLocation(val OptAppMountLocation) {
+	s.Location = val
+}
+
+// Which storage a mount's host path lies on, decided from the path alone against the daemon's known
+// mount points (the pool at `/mnt/user`, each data disk's and the cache disk's mount point). Nothing
+// is read from a data disk to decide it, so a listing never wakes one (doc 02 §1).
+// Ref: #/components/schemas/AppMountLocation
+type AppMountLocation struct {
+	// `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one
+	// data disk's own mount point. `cache` is a path under the cache disk. `outside` is anywhere else,
+	// including the boot device.
+	Kind AppMountLocationKind `json:"kind"`
+	// For `pool`, the first directory under `/mnt/user`, which is the share's name. Absent for the pool's
+	// root itself.
+	Share OptString `json:"share"`
+	// For `disk`, the data disk's number.
+	Disk OptInt `json:"disk"`
+}
+
+// GetKind returns the value of Kind.
+func (s *AppMountLocation) GetKind() AppMountLocationKind {
+	return s.Kind
+}
+
+// GetShare returns the value of Share.
+func (s *AppMountLocation) GetShare() OptString {
+	return s.Share
+}
+
+// GetDisk returns the value of Disk.
+func (s *AppMountLocation) GetDisk() OptInt {
+	return s.Disk
+}
+
+// SetKind sets the value of Kind.
+func (s *AppMountLocation) SetKind(val AppMountLocationKind) {
+	s.Kind = val
+}
+
+// SetShare sets the value of Share.
+func (s *AppMountLocation) SetShare(val OptString) {
+	s.Share = val
+}
+
+// SetDisk sets the value of Disk.
+func (s *AppMountLocation) SetDisk(val OptInt) {
+	s.Disk = val
+}
+
+// `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one
+// data disk's own mount point. `cache` is a path under the cache disk. `outside` is anywhere else,
+// including the boot device.
+type AppMountLocationKind string
+
+const (
+	AppMountLocationKindPool    AppMountLocationKind = "pool"
+	AppMountLocationKindDisk    AppMountLocationKind = "disk"
+	AppMountLocationKindCache   AppMountLocationKind = "cache"
+	AppMountLocationKindOutside AppMountLocationKind = "outside"
+)
+
+// AllValues returns all AppMountLocationKind values.
+func (AppMountLocationKind) AllValues() []AppMountLocationKind {
+	return []AppMountLocationKind{
+		AppMountLocationKindPool,
+		AppMountLocationKindDisk,
+		AppMountLocationKindCache,
+		AppMountLocationKindOutside,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppMountLocationKind) MarshalText() ([]byte, error) {
+	switch s {
+	case AppMountLocationKindPool:
+		return []byte(s), nil
+	case AppMountLocationKindDisk:
+		return []byte(s), nil
+	case AppMountLocationKindCache:
+		return []byte(s), nil
+	case AppMountLocationKindOutside:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppMountLocationKind) UnmarshalText(data []byte) error {
+	switch AppMountLocationKind(data) {
+	case AppMountLocationKindPool:
+		*s = AppMountLocationKindPool
+		return nil
+	case AppMountLocationKindDisk:
+		*s = AppMountLocationKindDisk
+		return nil
+	case AppMountLocationKindCache:
+		*s = AppMountLocationKindCache
+		return nil
+	case AppMountLocationKindOutside:
+		*s = AppMountLocationKindOutside
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/AppPort
@@ -2488,6 +2657,225 @@ func (s *CancelDiskRemovalRequest) GetMountpoint() string {
 // SetMountpoint sets the value of Mountpoint.
 func (s *CancelDiskRemovalRequest) SetMountpoint(val string) {
 	s.Mountpoint = val
+}
+
+// Ref: #/components/schemas/CatalogEntry
+type CatalogEntry struct {
+	ID string `json:"id"`
+	// Increases with every change to the template.
+	Revision   int      `json:"revision"`
+	Title      string   `json:"title"`
+	Categories []string `json:"categories"`
+	// The upstream documentation the template was written from.
+	Docs string `json:"docs"`
+	// Where the entry came from: `hoserva` for the curated catalog.
+	Source string `json:"source"`
+	// A stack of this template id exists.
+	Installed bool `json:"installed"`
+}
+
+// GetID returns the value of ID.
+func (s *CatalogEntry) GetID() string {
+	return s.ID
+}
+
+// GetRevision returns the value of Revision.
+func (s *CatalogEntry) GetRevision() int {
+	return s.Revision
+}
+
+// GetTitle returns the value of Title.
+func (s *CatalogEntry) GetTitle() string {
+	return s.Title
+}
+
+// GetCategories returns the value of Categories.
+func (s *CatalogEntry) GetCategories() []string {
+	return s.Categories
+}
+
+// GetDocs returns the value of Docs.
+func (s *CatalogEntry) GetDocs() string {
+	return s.Docs
+}
+
+// GetSource returns the value of Source.
+func (s *CatalogEntry) GetSource() string {
+	return s.Source
+}
+
+// GetInstalled returns the value of Installed.
+func (s *CatalogEntry) GetInstalled() bool {
+	return s.Installed
+}
+
+// SetID sets the value of ID.
+func (s *CatalogEntry) SetID(val string) {
+	s.ID = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *CatalogEntry) SetRevision(val int) {
+	s.Revision = val
+}
+
+// SetTitle sets the value of Title.
+func (s *CatalogEntry) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCategories sets the value of Categories.
+func (s *CatalogEntry) SetCategories(val []string) {
+	s.Categories = val
+}
+
+// SetDocs sets the value of Docs.
+func (s *CatalogEntry) SetDocs(val string) {
+	s.Docs = val
+}
+
+// SetSource sets the value of Source.
+func (s *CatalogEntry) SetSource(val string) {
+	s.Source = val
+}
+
+// SetInstalled sets the value of Installed.
+func (s *CatalogEntry) SetInstalled(val bool) {
+	s.Installed = val
+}
+
+// Ref: #/components/schemas/CatalogList
+type CatalogList struct {
+	// The installed catalog's serial.
+	Serial int64 `json:"serial"`
+	// When the catalog archive was built; absent when its index carries no time.
+	GeneratedAt OptDateTime    `json:"generatedAt"`
+	Templates   []CatalogEntry `json:"templates"`
+}
+
+// GetSerial returns the value of Serial.
+func (s *CatalogList) GetSerial() int64 {
+	return s.Serial
+}
+
+// GetGeneratedAt returns the value of GeneratedAt.
+func (s *CatalogList) GetGeneratedAt() OptDateTime {
+	return s.GeneratedAt
+}
+
+// GetTemplates returns the value of Templates.
+func (s *CatalogList) GetTemplates() []CatalogEntry {
+	return s.Templates
+}
+
+// SetSerial sets the value of Serial.
+func (s *CatalogList) SetSerial(val int64) {
+	s.Serial = val
+}
+
+// SetGeneratedAt sets the value of GeneratedAt.
+func (s *CatalogList) SetGeneratedAt(val OptDateTime) {
+	s.GeneratedAt = val
+}
+
+// SetTemplates sets the value of Templates.
+func (s *CatalogList) SetTemplates(val []CatalogEntry) {
+	s.Templates = val
+}
+
+// Ref: #/components/schemas/CatalogTemplate
+type CatalogTemplate struct {
+	ID         string   `json:"id"`
+	Revision   int      `json:"revision"`
+	Title      string   `json:"title"`
+	Categories []string `json:"categories"`
+	Docs       string   `json:"docs"`
+	// Where the template came from: `hoserva` for the curated catalog.
+	Source string `json:"source"`
+	// The template's `compose.yaml` text, with its `x-hoserva` block.
+	Compose string `json:"compose"`
+	// Empty when the template asks for nothing beyond an ordinary container.
+	Privileges []TemplatePrivilege `json:"privileges"`
+}
+
+// GetID returns the value of ID.
+func (s *CatalogTemplate) GetID() string {
+	return s.ID
+}
+
+// GetRevision returns the value of Revision.
+func (s *CatalogTemplate) GetRevision() int {
+	return s.Revision
+}
+
+// GetTitle returns the value of Title.
+func (s *CatalogTemplate) GetTitle() string {
+	return s.Title
+}
+
+// GetCategories returns the value of Categories.
+func (s *CatalogTemplate) GetCategories() []string {
+	return s.Categories
+}
+
+// GetDocs returns the value of Docs.
+func (s *CatalogTemplate) GetDocs() string {
+	return s.Docs
+}
+
+// GetSource returns the value of Source.
+func (s *CatalogTemplate) GetSource() string {
+	return s.Source
+}
+
+// GetCompose returns the value of Compose.
+func (s *CatalogTemplate) GetCompose() string {
+	return s.Compose
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *CatalogTemplate) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// SetID sets the value of ID.
+func (s *CatalogTemplate) SetID(val string) {
+	s.ID = val
+}
+
+// SetRevision sets the value of Revision.
+func (s *CatalogTemplate) SetRevision(val int) {
+	s.Revision = val
+}
+
+// SetTitle sets the value of Title.
+func (s *CatalogTemplate) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCategories sets the value of Categories.
+func (s *CatalogTemplate) SetCategories(val []string) {
+	s.Categories = val
+}
+
+// SetDocs sets the value of Docs.
+func (s *CatalogTemplate) SetDocs(val string) {
+	s.Docs = val
+}
+
+// SetSource sets the value of Source.
+func (s *CatalogTemplate) SetSource(val string) {
+	s.Source = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *CatalogTemplate) SetCompose(val string) {
+	s.Compose = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *CatalogTemplate) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
 }
 
 // Ref: #/components/schemas/ConfigImportArchive
@@ -4702,7 +5090,9 @@ type CreateStackRequest struct {
 	// The `docker-compose.yml` text.
 	Compose string `json:"compose"`
 	// The `.env` text. Write-only: it is stored sealed under the machine key and never returned. Absent
-	// means an empty `.env`.
+	// means an empty `.env`. It may not define `PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`,
+	// `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or `DOCKER_TLS_VERIFY`, which Docker takes
+	// from the daemon's environment (400 `invalid_stack_env`).
 	Env      OptString        `json:"env"`
 	Template OptStackTemplate `json:"template"`
 }
@@ -6161,6 +6551,218 @@ func (s GetAppLogsOK) Read(p []byte) (n int, err error) {
 	}
 	return s.Data.Read(p)
 }
+
+type GetCatalogTemplateIconOKImageJpeg struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImageJpeg) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImageJpegHeaders wraps GetCatalogTemplateIconOKImageJpeg with response headers.
+type GetCatalogTemplateIconOKImageJpegHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImageJpeg
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) GetResponse() GetCatalogTemplateIconOKImageJpeg {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImageJpegHeaders) SetResponse(val GetCatalogTemplateIconOKImageJpeg) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImageJpegHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateIconOKImagePNG struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImagePNG) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImagePNGHeaders wraps GetCatalogTemplateIconOKImagePNG with response headers.
+type GetCatalogTemplateIconOKImagePNGHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImagePNG
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) GetResponse() GetCatalogTemplateIconOKImagePNG {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImagePNGHeaders) SetResponse(val GetCatalogTemplateIconOKImagePNG) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImagePNGHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateIconOKImageSvgXML struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImageSvgXML) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImageSvgXMLHeaders wraps GetCatalogTemplateIconOKImageSvgXML with response headers.
+type GetCatalogTemplateIconOKImageSvgXMLHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImageSvgXML
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) GetResponse() GetCatalogTemplateIconOKImageSvgXML {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImageSvgXMLHeaders) SetResponse(val GetCatalogTemplateIconOKImageSvgXML) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImageSvgXMLHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateIconOKImageWEBP struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateIconOKImageWEBP) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateIconOKImageWEBPHeaders wraps GetCatalogTemplateIconOKImageWEBP with response headers.
+type GetCatalogTemplateIconOKImageWEBPHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateIconOKImageWEBP
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) GetResponse() GetCatalogTemplateIconOKImageWEBP {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetResponse(val GetCatalogTemplateIconOKImageWEBP) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateIconOKImageWEBPHeaders) getCatalogTemplateIconRes() {}
 
 type GetJobLogOK struct {
 	Data io.Reader
@@ -9362,6 +9964,52 @@ func (s *NotificationWebhookMethod) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// NewOptAppMountLocation returns new OptAppMountLocation with value set to v.
+func NewOptAppMountLocation(v AppMountLocation) OptAppMountLocation {
+	return OptAppMountLocation{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptAppMountLocation is optional AppMountLocation.
+type OptAppMountLocation struct {
+	Value AppMountLocation
+	Set   bool
+}
+
+// IsSet returns true if OptAppMountLocation was set.
+func (o OptAppMountLocation) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptAppMountLocation) Reset() {
+	var v AppMountLocation
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptAppMountLocation) SetTo(v AppMountLocation) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptAppMountLocation) Get() (v AppMountLocation, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptAppMountLocation) Or(d AppMountLocation) AppMountLocation {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptAppUpdateKind returns new OptAppUpdateKind with value set to v.

@@ -19,10 +19,12 @@ import (
 	"github.com/mdg-labs/hoserva/internal/container"
 )
 
-// StackCreator stores a stack and generates its files
+// StackCreator stores a stack and generates its files, and reports the host
+// ports the existing stacks publish, started or not
 // (container.StackService).
 type StackCreator interface {
 	Create(ctx context.Context, n container.NewStack) (container.Stack, error)
+	PublishedPorts(ctx context.Context) (map[int]bool, error)
 }
 
 // Installer resolves a template's inputs and installs it as a stack (doc 04
@@ -90,16 +92,24 @@ type Plan struct {
 	env string
 }
 
-// Preview resolves the inputs and computes the privilege summary without
-// touching anything. Secrets are not generated.
+// Preview resolves the inputs and computes the privilege summary. It creates
+// no stack and writes no file of the template. Reading the other stacks' ports
+// writes back any of their missing generated files from their rows, and never
+// changes an existing file. Secrets are not generated.
 func (in *Installer) Preview(ctx context.Context, req PlanRequest) (*Plan, error) {
 	return in.plan(ctx, req, false)
 }
 
 // Install resolves the inputs, generates the secrets and creates the stack:
 // its row, docker-compose.yml, .env and meta.json recording the source, id
-// and revision. Nothing is started. Installs run one at a time so two of
-// them cannot be given the same free port.
+// and revision. Nothing is started. A port is taken when a container
+// publishes or is configured to publish it, an existing stack's Compose file
+// publishes it (started or not), or the host listens on it, so an install is
+// never given a port an earlier install's stack already holds; installs run
+// one at a time so the stack is stored before the next one reads the ports.
+// A port something else takes after the install is not checked. Reading the
+// other stacks' ports writes back any of their missing generated files from
+// their rows, and never changes an existing file.
 func (in *Installer) Install(ctx context.Context, req PlanRequest) (*Plan, container.Stack, error) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
@@ -126,7 +136,13 @@ func invalid(format string, args ...any) error {
 }
 
 func (in *Installer) load(ctx context.Context, id string) (Entry, *Template, error) {
-	entry, err := in.Catalog.Entry(ctx, id)
+	return loadTemplate(ctx, in.Catalog, id)
+}
+
+// loadTemplate reads a catalog entry and refuses it unless it passes the
+// schema and the template rules and names the id it was found under.
+func loadTemplate(ctx context.Context, c Catalog, id string) (Entry, *Template, error) {
+	entry, err := c.Entry(ctx, id)
 	if err != nil {
 		return Entry{}, nil, err
 	}
@@ -149,6 +165,27 @@ func invalidTemplate(id string, issues []Issue) error {
 		msgs[i] = is.String()
 	}
 	return fmt.Errorf("%w: %s: %s", ErrInvalidTemplate, id, strings.Join(msgs, "; "))
+}
+
+// usedPorts is every port that is taken: what Ports reports and what the
+// existing stacks publish. It fails when either cannot be read.
+func (in *Installer) usedPorts(ctx context.Context) (map[int]bool, error) {
+	used, err := in.Ports.UsedPorts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stacked, err := in.Stacks.PublishedPorts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all := make(map[int]bool, len(used)+len(stacked))
+	for p := range used {
+		all[p] = true
+	}
+	for p := range stacked {
+		all[p] = true
+	}
+	return all, nil
 }
 
 func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (*Plan, error) {
@@ -186,7 +223,7 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 		switch t.Block.Inputs[n].Kind {
 		case KindPort:
 			if used == nil {
-				if used, err = in.Ports.UsedPorts(ctx); err != nil {
+				if used, err = in.usedPorts(ctx); err != nil {
 					return nil, fmt.Errorf("checking the ports for conflicts: %w", err)
 				}
 			}

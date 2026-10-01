@@ -93,11 +93,15 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 		out.Inputs[i] = ti
 	}
 	for i, pr := range p.Privileges {
-		tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}
-		if pr.Detail != "" {
-			tp.Detail = apiv1.NewOptString(pr.Detail)
-		}
-		out.Privileges[i] = tp
+		out.Privileges[i] = privilegeToAPI(pr)
 	}
 	return out
+}
+
+func privilegeToAPI(pr template.Privilege) apiv1.TemplatePrivilege {
+	tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}
+	if pr.Detail != "" {
+		tp.Detail = apiv1.NewOptString(pr.Detail)
+	}
+	return tp
 }

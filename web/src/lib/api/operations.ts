@@ -125,6 +125,28 @@ export function getAppUpdates(signal?: AbortSignal) {
   return hoservaClient.GET("/apps/updates", { signal });
 }
 
+export function getApp(id: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/{id}", { params: { path: { id } }, signal });
+}
+
+export function postAppRecreate(id: string) {
+  return hoservaClient.POST("/apps/{id}/recreate", { params: { path: { id } } });
+}
+
+// deleteAppdata is sent only when it is true: the daemon reads an absent
+// parameter as "keep the appdata", which is the safe choice.
+export function deleteApp(id: string, deleteAppdata: boolean) {
+  return hoservaClient.DELETE("/apps/{id}", {
+    params: { path: { id }, query: deleteAppdata ? { deleteAppdata: true } : {} },
+  });
+}
+
+export function deleteStack(name: string, deleteAppdata: boolean) {
+  return hoservaClient.DELETE("/stacks/{name}", {
+    params: { path: { name }, query: deleteAppdata ? { deleteAppdata: true } : {} },
+  });
+}
+
 export function postAppStart(id: string) {
   return hoservaClient.POST("/apps/{id}/start", { params: { path: { id } } });
 }

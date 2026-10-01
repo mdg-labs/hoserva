@@ -80,7 +80,7 @@ existing line by adding its PR number.
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
-- **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357
+- **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357, 527
 - **i18n** — a count-bearing catalog key with no `_one`/`_other` forms, so a count of one reads "1 files" — PR 370
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
@@ -124,6 +124,7 @@ existing line by adding its PR number.
 - **tests** — a readiness gate waits on more than the acceptance criterion measures (the cache disk in an array-disk settle), so unrelated activity fails it — PR 357
 - **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
 - **tests** — a check's cleanup runs after a later step shadows what it must remove (a mount over the directory holding a stray probe), so the leftover survives into later steps — PR 395
+- **tests** — a test swaps process-global state (the `log` output) and its cleanup restores a hard-coded default rather than the value it saved, clobbering whatever an earlier caller set — PR 527
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156
@@ -138,4 +139,5 @@ existing line by adding its PR number.
 - **platform** — a filesystem path concatenated into a URI or DSN (SQLite `file:`) unescaped, so a `?`, `#` or `%` in it opens a different file and drops the query options — PR 403
 - **platform** — Docker `--entrypoint` is one executable, never an argument list; splitting it on spaces runs a different program — PR 491
 - **platform** — `git merge --ff-only origin/<b>` as a sync check also succeeds when the local branch is ahead; compare `HEAD` to the remote ref — PR 491
+- **platform** — `git check-ignore` skips tracked paths unless given `--no-index`, so a "this source file is not ignored" check always passes even when a rule hides the directory — PR 527
 - **platform** — GitHub Actions: a job `timeout-minutes` at or below a step timeout it contains, so the job backstop cancels a step still inside its own bound — PR 403

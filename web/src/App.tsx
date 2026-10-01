@@ -9,6 +9,7 @@ import { DashboardPage } from "@/routes/dashboard";
 import { JobDetailPage } from "@/routes/jobs/detail";
 import { JobsPage } from "@/routes/jobs/index";
 import { AppsPage } from "@/routes/apps/index";
+import { AppDetailPage } from "@/routes/apps/detail";
 import { LoginPage } from "@/routes/login";
 import { PlaceholderPage } from "@/routes/placeholder-page";
 import { SectionLayout } from "@/routes/section-layout";
@@ -93,7 +94,7 @@ function AuthenticatedRoutes(): React.ReactElement {
         </Route>
         <Route path="apps/catalog/:appId" element={<PlaceholderPage titleKey="appsNav.catalog" />} />
         <Route path="apps/install/:appId" element={<PlaceholderPage titleKey="appsNav.installed" />} />
-        <Route path="apps/:name" element={<PlaceholderPage titleKey="appsNav.installed" />} />
+        <Route path="apps/:name" element={<AppDetailPage />} />
         <Route path="apps/:name/compose" element={<PlaceholderPage titleKey="appsNav.installed" />} />
 
         <Route element={<SectionLayout items={VMS_NAV(t)} />}>

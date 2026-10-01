@@ -1,0 +1,9 @@
+# The curated catalog archive this build embeds (Q65, doc 04 §7): one
+# published archive of mdg-labs/hoserva-catalog, named by the serial of its
+# GitHub Release `serial-<serial>` and by the SHA-256 of its catalog.tar.zst.
+# `make catalog-snapshot` fetches it from that release, checks both, and
+# checks its signature against the compiled-in catalog key
+# (internal/template.CatalogPublicKey). Bumping the snapshot is a commit that
+# changes only these two lines.
+serial=1790853250
+sha256=157f2eaba6699adfba6270aa7330f26764627b8995ca1aa59689f6907050d290

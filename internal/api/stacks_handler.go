@@ -19,6 +19,8 @@ func mapStackError(name string, err error, verb string) error {
 		return &apiError{code: "invalid_stack_name", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrInvalidStack):
 		return &apiError{code: "invalid_stack", statusCode: 400, message: err.Error()}
+	case errors.Is(err, container.ErrReservedEnvName):
+		return &apiError{code: "invalid_stack_env", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrStackNotFound):
 		return &apiError{code: "stack_not_found", statusCode: 404, message: fmt.Sprintf("no stack %q", name)}
 	case errors.Is(err, container.ErrStackExists):

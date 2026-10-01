@@ -15,7 +15,7 @@ type FakeCall struct {
 }
 
 // FailOn scripts op ("start", "stop", "restart", "remove", "recreate",
-// "recreate-swap", "recreate-local", "started-at", "created-at", "logs", "stats", "reconcile") to return
+// "recreate-swap", "recreate-local", "started-at", "created-at", "runtime", "configured-ports", "logs", "stats", "reconcile") to return
 // err for the container whose ID or name is id, or for every container when
 // id is "". The container is left exactly as it was. "pull-image",
 // "tag-image" and "untag-image" are scripted per image reference instead. A
@@ -527,6 +527,45 @@ func (f *FakeProvider) StartedAt(ctx context.Context, id string) (time.Time, err
 		return time.Time{}, err
 	}
 	return f.started[f.containers[i].ID], nil
+}
+
+// SetRestartCount scripts how often the Engine's restart policy has
+// restarted the container. A container nothing scripted has a count of zero.
+func (f *FakeProvider) SetRestartCount(id string, n int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.indexLocked(id)
+	if i < 0 {
+		return ErrNotFound
+	}
+	if f.restarts == nil {
+		f.restarts = make(map[string]int)
+	}
+	f.restarts[f.containers[i].ID] = n
+	return nil
+}
+
+// Runtime returns CreatedAt, StartedAt and the scripted restart count of the
+// container. FailOn("runtime", …) scripts an error.
+func (f *FakeProvider) Runtime(ctx context.Context, id string) (Runtime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return Runtime{}, f.listErr
+	}
+	i := f.indexLocked(id)
+	if i < 0 {
+		return Runtime{}, ErrNotFound
+	}
+	c := f.containers[i]
+	if err := f.failureLocked("runtime", c); err != nil {
+		return Runtime{}, err
+	}
+	created, ok := f.created[c.ID]
+	if !ok {
+		created = time.Unix(0, 0).UTC()
+	}
+	return Runtime{CreatedAt: created, StartedAt: f.started[c.ID], RestartCount: f.restarts[c.ID]}, nil
 }
 
 func (f *FakeProvider) Stats(ctx context.Context, id string) (Stats, error) {

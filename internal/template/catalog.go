@@ -2,12 +2,17 @@ package template
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"syscall"
+	"time"
 )
 
 // SourceCurated is the source name recorded for a template of Hoserva's own
@@ -21,6 +26,14 @@ var (
 	// ErrInvalidTemplate is returned when a catalog entry fails the schema
 	// or the template rules, so it is never installed.
 	ErrInvalidTemplate = errors.New("template: the catalog entry is not a valid template")
+	// ErrCatalogUnavailable is returned when the catalog cannot be listed:
+	// none is installed, or its index.json cannot be read or is not a
+	// catalog index.
+	ErrCatalogUnavailable = errors.New("template: the catalog is not available")
+	// ErrIconNotFound is returned when a template has no icon that can be
+	// served: no such file, not a plain file inside the template's
+	// directory, an extension outside the allow-list, or too large.
+	ErrIconNotFound = errors.New("template: the template has no icon that can be served")
 	// ErrInvalidInput is returned for an install value the template does
 	// not accept.
 	ErrInvalidInput = errors.New("template: invalid install input")
@@ -39,18 +52,180 @@ type Entry struct {
 	Data   []byte
 }
 
-// Catalog finds a template by id.
+// IndexEntry is one template as the catalog's index lists it.
+type IndexEntry struct {
+	ID         string
+	Revision   int
+	Title      string
+	Categories []string
+	Docs       string
+}
+
+// Index is what a catalog lists: its serial, when it was built when it says
+// so, and each template in the catalog's own order.
+type Index struct {
+	Serial      int64
+	GeneratedAt time.Time
+	Templates   []IndexEntry
+}
+
+// Icon is a template's icon file with the content type its extension is
+// allowed to be served as.
+type Icon struct {
+	ContentType string
+	Data        []byte
+}
+
+// Catalog is a source of templates (doc 04 §4): the one interface the
+// curated catalog sits behind, so another source changes what is registered,
+// not the code that lists, shows and installs templates.
 type Catalog interface {
+	// Name is the source's name, recorded on every template it supplies.
+	Name() string
+	// Index lists the templates, or fails with ErrCatalogUnavailable.
+	Index(ctx context.Context) (Index, error)
+	// Entry returns one template's compose.yaml, or ErrTemplateNotFound.
 	Entry(ctx context.Context, id string) (Entry, error)
+	// Icon returns one template's icon, ErrTemplateNotFound for an unknown
+	// template or ErrIconNotFound for one with no servable icon.
+	Icon(ctx context.Context, id string) (Icon, error)
+}
+
+const maxIconBytes = 1 << 20
+
+var iconTypes = map[string]string{
+	".svg":  "image/svg+xml",
+	".png":  "image/png",
+	".webp": "image/webp",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+}
+
+// iconFile returns the icon's file name and content type from the template
+// the entry holds.
+func iconFile(id string, entry Entry) (name, contentType string, err error) {
+	t, issues := Parse(entry.Data)
+	if t == nil {
+		return "", "", invalidTemplate(id, issues)
+	}
+	ct, ok := iconTypes[strings.ToLower(filepath.Ext(t.Block.Icon))]
+	if !ok {
+		return "", "", fmt.Errorf("%w: %q has the extension of no allowed image type", ErrIconNotFound, t.Block.Icon)
+	}
+	return t.Block.Icon, ct, nil
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// DirCatalog is a Catalog over a directory of <id>/compose.yaml, the layout
-// of the catalog archive's contents (doc 04 §7).
+// DirCatalog is a Catalog over a directory of index.json and <id>/, the
+// layout of the catalog archive's contents (doc 04 §7).
 type DirCatalog struct {
 	Root   string
 	Source string
+}
+
+var errNotPlain = errors.New("not a plain file")
+
+// openPlain opens a regular file for reading and refuses a symlink, however
+// it points, and anything that is not a regular file; opening never blocks
+// on a pipe.
+func openPlain(file string) (*os.File, error) {
+	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		return nil, fmt.Errorf("%w: %s is a symlink", errNotPlain, file)
+	}
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, fmt.Errorf("%w: %s", errNotPlain, file)
+	}
+	return f, nil
+}
+
+func (d DirCatalog) Name() string { return d.Source }
+
+type indexDoc struct {
+	Serial      int64     `json:"serial"`
+	GeneratedAt time.Time `json:"generatedAt"`
+	Templates   []struct {
+		ID         string   `json:"id"`
+		Revision   int      `json:"revision"`
+		Title      string   `json:"title"`
+		Categories []string `json:"categories"`
+		Docs       string   `json:"docs"`
+	} `json:"templates"`
+}
+
+func (d DirCatalog) Index(_ context.Context) (Index, error) {
+	file := filepath.Join(d.Root, indexFile)
+	f, err := openPlain(file)
+	if err != nil {
+		return Index{}, fmt.Errorf("%w: %v", ErrCatalogUnavailable, err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxIndexBytes+1))
+	if err != nil {
+		return Index{}, fmt.Errorf("%w: reading %s: %v", ErrCatalogUnavailable, file, err)
+	}
+	if len(data) > maxIndexBytes {
+		return Index{}, fmt.Errorf("%w: %s is larger than %d bytes", ErrCatalogUnavailable, file, maxIndexBytes)
+	}
+	var doc indexDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return Index{}, fmt.Errorf("%w: %s is not valid: %v", ErrCatalogUnavailable, file, err)
+	}
+	if doc.Serial <= 0 {
+		return Index{}, fmt.Errorf("%w: %s carries no serial", ErrCatalogUnavailable, file)
+	}
+	out := Index{Serial: doc.Serial, GeneratedAt: doc.GeneratedAt, Templates: make([]IndexEntry, len(doc.Templates))}
+	seen := make(map[string]bool, len(doc.Templates))
+	for i, t := range doc.Templates {
+		if !idPattern.MatchString(t.ID) || seen[t.ID] {
+			return Index{}, fmt.Errorf("%w: %s lists the template id %q twice or invalidly", ErrCatalogUnavailable, file, t.ID)
+		}
+		seen[t.ID] = true
+		cats := t.Categories
+		if cats == nil {
+			cats = []string{}
+		}
+		out.Templates[i] = IndexEntry{ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: cats, Docs: t.Docs}
+	}
+	return out, nil
+}
+
+func (d DirCatalog) Icon(ctx context.Context, id string) (Icon, error) {
+	entry, err := d.Entry(ctx, id)
+	if err != nil {
+		return Icon{}, err
+	}
+	name, contentType, err := iconFile(id, entry)
+	if err != nil {
+		return Icon{}, err
+	}
+	file := filepath.Join(d.Root, id, name)
+	f, err := openPlain(file)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotPlain) {
+		return Icon{}, fmt.Errorf("%w: %q is not a plain file of template %q", ErrIconNotFound, name, id)
+	}
+	if err != nil {
+		return Icon{}, fmt.Errorf("reading the icon of template %q: %w", id, err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxIconBytes+1))
+	if err != nil {
+		return Icon{}, fmt.Errorf("reading the icon of template %q: %w", id, err)
+	}
+	if len(data) > maxIconBytes {
+		return Icon{}, fmt.Errorf("%w: %q is larger than %d bytes", ErrIconNotFound, name, maxIconBytes)
+	}
+	return Icon{ContentType: contentType, Data: data}, nil
 }
 
 func (d DirCatalog) Entry(_ context.Context, id string) (Entry, error) {
@@ -78,10 +253,30 @@ func (d DirCatalog) Entry(_ context.Context, id string) (Entry, error) {
 	return Entry{Source: d.Source, Data: data}, nil
 }
 
-// MapCatalog is a Catalog held in memory, id to compose.yaml text.
+// MapCatalog is a Catalog held in memory, id to compose.yaml text, for tests
+// and the mock. Icons holds each template's icon file by template id, under
+// the file name its compose.yaml declares.
 type MapCatalog struct {
-	Source    string
-	Templates map[string]string
+	Source      string
+	Serial      int64
+	GeneratedAt time.Time
+	Templates   map[string]string
+	Icons       map[string][]byte
+}
+
+func (m MapCatalog) Name() string { return m.Source }
+
+func (m MapCatalog) Index(_ context.Context) (Index, error) {
+	ids := sortedKeys(m.Templates)
+	out := Index{Serial: m.Serial, GeneratedAt: m.GeneratedAt, Templates: make([]IndexEntry, len(ids))}
+	for i, id := range ids {
+		e := IndexEntry{ID: id, Title: id, Categories: []string{}}
+		if t, _ := Parse([]byte(m.Templates[id])); t != nil {
+			e = IndexEntry{ID: id, Revision: t.Block.Revision, Title: t.Block.Title, Categories: t.Block.Categories, Docs: t.Block.Docs}
+		}
+		out.Templates[i] = e
+	}
+	return out, nil
 }
 
 func (m MapCatalog) Entry(_ context.Context, id string) (Entry, error) {
@@ -90,4 +285,20 @@ func (m MapCatalog) Entry(_ context.Context, id string) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: %q", ErrTemplateNotFound, id)
 	}
 	return Entry{Source: m.Source, Data: []byte(data)}, nil
+}
+
+func (m MapCatalog) Icon(ctx context.Context, id string) (Icon, error) {
+	entry, err := m.Entry(ctx, id)
+	if err != nil {
+		return Icon{}, err
+	}
+	_, contentType, err := iconFile(id, entry)
+	if err != nil {
+		return Icon{}, err
+	}
+	data, ok := m.Icons[id]
+	if !ok || len(data) > maxIconBytes {
+		return Icon{}, fmt.Errorf("%w: template %q", ErrIconNotFound, id)
+	}
+	return Icon{ContentType: contentType, Data: data}, nil
 }

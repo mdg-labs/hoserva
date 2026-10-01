@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appComposePath,
   appDetailPath,
+  canRemove,
   canStart,
   canStop,
+  durationParts,
   publishedPorts,
+  removeRefusalKey,
   updateSummary,
   type AppPort,
   type AppUpdate,
@@ -44,6 +48,24 @@ describe("publishedPorts", () => {
       { hostIP: "::", hostPort: 8080, containerPort: 80, protocol: "tcp" },
     ];
     expect(publishedPorts(ports, "nas.local")).toHaveLength(1);
+  });
+
+  it("links a LAN binding of a port even when a loopback binding of it is listed first", () => {
+    const ports: AppPort[] = [
+      { hostIP: "127.0.0.1", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+      { hostIP: "0.0.0.0", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+    ];
+    expect(publishedPorts(ports, "nas.local")).toEqual([
+      { key: "8080/tcp", port: 8080, protocol: "tcp", href: "http://nas.local:8080" },
+    ]);
+  });
+
+  it("keeps the first reachable binding when several are", () => {
+    const ports: AppPort[] = [
+      { hostIP: "192.168.1.5", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+      { hostIP: "0.0.0.0", hostPort: 8080, containerPort: 80, protocol: "tcp" },
+    ];
+    expect(publishedPorts(ports, "nas.local").map((port) => port.href)).toEqual(["http://192.168.1.5:8080"]);
   });
 
   it("skips a container port that is not published to the host", () => {
@@ -96,5 +118,55 @@ describe("updateSummary", () => {
 describe("appDetailPath", () => {
   it("escapes the container name", () => {
     expect(appDetailPath("my app/1")).toBe("/apps/my%20app%2F1");
+  });
+});
+
+describe("canRemove", () => {
+  it("allows a container that is not running and none that is live or being removed", () => {
+    for (const state of ["created", "exited", "dead"] as const) {
+      expect(canRemove(state)).toBe(true);
+    }
+    for (const state of ["running", "paused", "restarting", "removing"] as const) {
+      expect(canRemove(state)).toBe(false);
+    }
+  });
+});
+
+describe("appComposePath", () => {
+  it("is the container's page followed by compose", () => {
+    expect(appComposePath("jelly fin")).toBe("/apps/jelly%20fin/compose");
+  });
+});
+
+describe("durationParts", () => {
+  const minute = 60_000;
+  it("keeps the two largest non-zero units", () => {
+    expect(durationParts(3 * 60 * minute + 30 * minute)).toEqual([
+      { unit: "hour", count: 3 },
+      { unit: "minute", count: 30 },
+    ]);
+    expect(durationParts((2 * 24 * 60 + 5 * 60 + 7) * minute)).toEqual([
+      { unit: "day", count: 2 },
+      { unit: "hour", count: 5 },
+    ]);
+    expect(durationParts(24 * 60 * minute + 7 * minute)).toEqual([
+      { unit: "day", count: 1 },
+      { unit: "minute", count: 7 },
+    ]);
+  });
+
+  it("has no part for less than a minute", () => {
+    expect(durationParts(59_999)).toEqual([]);
+    expect(durationParts(0)).toEqual([]);
+  });
+});
+
+describe("removeRefusalKey", () => {
+  it("names the five refusals the page explains and nothing else", () => {
+    for (const code of ["app_running", "appdata_shared", "appdata_unavailable", "array_stopped", "stack_project_shared"]) {
+      expect(removeRefusalKey(code)).toBe(code);
+    }
+    expect(removeRefusalKey("app_action_failed")).toBeNull();
+    expect(removeRefusalKey(undefined)).toBeNull();
   });
 });

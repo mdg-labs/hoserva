@@ -38,7 +38,7 @@ function imageRef(app: App): string {
   return app.tag ? `${app.image}:${app.tag}` : app.image;
 }
 
-function StateBadges({ app }: { app: App }): React.ReactElement {
+export function StateBadges({ app }: { app: App }): React.ReactElement {
   const { t } = useTranslation();
   const running = app.state === "running";
   return (
@@ -50,6 +50,7 @@ function StateBadges({ app }: { app: App }): React.ReactElement {
       {running && app.health === "starting" ? (
         <StatusBadge tone="info">{t("apps.health.starting")}</StatusBadge>
       ) : null}
+      {app.stack === undefined ? <StatusBadge tone="outline">{t("apps.unmanaged")}</StatusBadge> : null}
     </div>
   );
 }
@@ -84,7 +85,7 @@ function UpdateInfo({ app, updates }: { app: App; updates: Map<string, AppUpdate
   );
 }
 
-function PortLinks({ app }: { app: App }): React.ReactElement {
+export function PortLinks({ app }: { app: App }): React.ReactElement {
   const { t } = useTranslation();
   const ports = publishedPorts(app.ports, window.location.hostname);
   if (ports.length === 0) {

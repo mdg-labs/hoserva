@@ -1,8 +1,13 @@
 #!/usr/bin/make -f
-# Built only by CI (scripts/release/build-deb.sh) or by the maintainer's
-# own dpkg-buildpackage — never on this repo's dev host or lab
-# (CLAUDE.md: no packaging tool here touches a real disk, and this one
-# doesn't need to; every path below stays inside the build tree).
+# Built by scripts/release/build-deb.sh — in CI, and on the dev host for
+# L3 (scripts/vm/deploy.sh, doc 06 §4, D20) — or by the maintainer's own
+# dpkg-buildpackage. It needs dpkg-dev, debhelper and fakeroot, never
+# touches a real disk, and every path below stays inside the build tree.
+# build-deb.sh removes the files this build leaves in the tree.
+# HOSERVA_DEB_DESTDIR, exported by build-deb.sh, is the directory the .deb
+# is written to instead of the parent directory dpkg-buildpackage uses by
+# default, so a build writes nothing outside its own tree and temp
+# directory.
 #
 # --buildsystem=none below skips dh's own build-system autodetection,
 # which would otherwise notice go.mod and drive the build itself as a
@@ -20,9 +25,12 @@ export GOFLAGS = -trimpath
 	dh $@ --buildsystem=none
 
 override_dh_auto_build:
-	$(MAKE) -C $(CURDIR) web-build
+	$(MAKE) -C $(CURDIR) web-build catalog-snapshot
 	GOARCH=$(DEB_HOST_ARCH) go build -o hoservad ./cmd/hoservad
 	GOARCH=$(DEB_HOST_ARCH) go build -o hoserva ./cmd/hoserva
+
+override_dh_builddeb:
+	dh_builddeb --destdir=$(or $(HOSERVA_DEB_DESTDIR),..)
 
 override_dh_auto_test:
 	# ci.yml's own lint-and-unit and web jobs already run every test this

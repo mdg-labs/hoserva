@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # Assembles the GitHub Pages artifact for hoserva.dev (Q66, Q3, Q65):
-# docs (or a placeholder until site/ exists) at the root, the catalog
-# under /catalog/, and the release index under /releases/. Apt is not
-# part of this origin and is stripped if a docs tree tries to add it.
+# docs (or a placeholder until site/ exists) at the root and the release
+# index under /releases/. The catalog is published from its own
+# repository at catalog.hoserva.dev (Q66, Q65), so this site has no
+# /catalog/ path and strips one if a docs tree tries to add it. Apt is
+# not part of this origin and is stripped too.
 #
-# Permanent URLs — compiled into hoservad, never change:
+# Permanent URL — compiled into hoservad, never changes:
 #   https://hoserva.dev/releases/index.json
-#   https://hoserva.dev/catalog/
 #
-# usage: assemble-pages-site.sh <out-dir> <entries-dir> [catalog-dir] [docs-dir]
+# usage: assemble-pages-site.sh <out-dir> <entries-dir> [docs-dir]
 #
-# If catalog-dir is omitted or empty, a stub is written so /catalog/
-# exists as its own tree and cannot be overwritten by the docs root.
 # If docs-dir is omitted, site/dist is used when present, otherwise the
 # placeholder page that points at the GitHub repository.
 #
@@ -24,15 +23,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 
 usage() {
-  echo "usage: $0 <out-dir> <entries-dir> [catalog-dir] [docs-dir]" >&2
+  echo "usage: $0 <out-dir> <entries-dir> [docs-dir]" >&2
   exit 1
 }
 
-[ $# -ge 2 ] && [ $# -le 4 ] || usage
+[ $# -ge 2 ] && [ $# -le 3 ] || usage
 out="$1"
 entries_dir="$2"
-catalog_dir="${3:-}"
-docs_dir="${4:-}"
+docs_dir="${3:-}"
 
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
@@ -55,18 +53,10 @@ else
   cp "$script_dir/pages-placeholder.html" "$out/index.html"
 fi
 
-# Each of /catalog/ and /releases/ is its own tree. Wipe anything the
-# docs root (or a future Starlight build) may have emitted under those
-# names so they cannot clobber, or be clobbered by, the other two. Apt
-# does not publish here (#118).
+# /releases/ is generated here, and /catalog/ lives at catalog.hoserva.dev.
+# Wipe anything the docs root (or a future Starlight build) may have
+# emitted under those names, and under /apt/ (#118).
 rm -rf "$out/catalog" "$out/releases" "$out/apt"
-
-mkdir -p "$out/catalog"
-if [ -n "$catalog_dir" ] && [ -d "$catalog_dir" ] && [ -n "$(find "$catalog_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-  cp -a "$catalog_dir"/. "$out/catalog"/
-else
-  cp "$script_dir/pages-catalog-stub.html" "$out/catalog/index.html"
-fi
 
 mkdir -p "$out/releases"
 "$script_dir/assemble-release-index.sh" "$entries_dir" "$out/releases/index.json"

@@ -23,11 +23,33 @@ command -v snapraid >/dev/null 2>&1 \
 [[ -d "$LAB/mnt/parity1" ]] || die "no parity disk at \$LAB/mnt/parity1 — run create-array.sh first"
 
 conf="$LAB/snapraid.conf"
+
+# Only mounted disks count: a lab test can leave an empty, unmounted disk*
+# directory behind, and SnapRAID refuses two data entries on one device.
+data_dirs=()
+for d in "$LAB"/mnt/disk*/; do
+  if mountpoint -q "$d"; then
+    data_dirs+=("$d")
+  fi
+done
+((${#data_dirs[@]} > 0)) \
+  || die "no data disk is mounted under $LAB/mnt — run create-array.sh first"
+
+# SnapRAID prints "Nothing to do" rather than "Everything OK" for an array
+# with no files, so an unseeded lab is reported as such instead.
+seeded=false
+for d in "${data_dirs[@]}"; do
+  if [[ -n "$(find "$d" -type f ! -name '.snapraid.content*' -print -quit)" ]]; then
+    seeded=true
+    break
+  fi
+done
+$seeded || die "the data disks hold no files, so SnapRAID has nothing to sync — run make lab-seed first"
+
 {
   echo "parity $LAB/mnt/parity1/snapraid.parity"
   echo "content $LAB/mnt/parity1/snapraid.content"
-  for d in "$LAB"/mnt/disk*/; do
-    [[ -d "$d" ]] || continue
+  for d in "${data_dirs[@]}"; do
     name=$(basename "${d%/}")
     echo "content $d.snapraid.content"
     echo "data $name $d"

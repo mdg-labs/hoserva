@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1389,9 +1390,10 @@ func envNames(env []string) map[string]string {
 }
 
 // Compose lets a variable of its own environment override --env-file, so the
-// daemon's environment must not reach it: a stack whose .env defines a name
-// the daemon also has is interpolated from the .env.
-func TestStack_ComposeRunsWithAnExplicitEnvironmentThatNeverOverridesTheStacksEnv(t *testing.T) {
+// daemon's environment must not reach it whole: a stack's .env, whose
+// non-reserved names the daemon also has, is interpolated from the .env, and
+// Docker still gets the daemon's PATH and the other variables it needs.
+func TestStack_ComposeRunsWithTheDaemonsDockerVariablesAndNothingThatOverridesTheStacksEnv(t *testing.T) {
 	clearComposeEnv(t)
 	t.Setenv("DOCKER_HOST", "unix:///daemon.sock")
 	t.Setenv("PATH", "/daemon/bin")
@@ -1402,7 +1404,7 @@ func TestStack_ComposeRunsWithAnExplicitEnvironmentThatNeverOverridesTheStacksEn
 	if _, err := r.svc.Create(context.Background(), NewStack{
 		Name:    "nginx",
 		Compose: "services:\n  web:\n    image: nginx:1.27\n",
-		Env:     "DOCKER_HOST=tcp://stack:2375\nexport PATH=/stack/bin\nINVOCATION_ID=stack-invocation\nTOKEN=s3cret\n",
+		Env:     "INVOCATION_ID=stack-invocation\nTOKEN=s3cret\n",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1422,17 +1424,86 @@ func TestStack_ComposeRunsWithAnExplicitEnvironmentThatNeverOverridesTheStacksEn
 			t.Fatalf("%v ran with the daemon's whole environment", c.Args)
 		}
 		env := envNames(c.Env)
-		for _, name := range []string{"DOCKER_HOST", "PATH", "INVOCATION_ID", "COMPOSE_PROJECT_NAME"} {
+		if env["PATH"] != "/daemon/bin" || env["HOME"] != "/daemon/home" || env["DOCKER_HOST"] != "unix:///daemon.sock" {
+			t.Errorf("%v: environment %v, want the daemon's PATH, HOME and DOCKER_HOST, which Docker needs", c.Args, c.Env)
+		}
+		for _, name := range []string{"INVOCATION_ID", "COMPOSE_PROJECT_NAME"} {
 			if _, ok := env[name]; ok {
 				t.Errorf("%v: %s is in the environment, where Compose would take it over the stack's .env: %v", c.Args, name, c.Env)
 			}
 		}
-		if env["HOME"] != "/daemon/home" {
-			t.Errorf("%v: HOME = %q, want the daemon's, which the stack's .env does not define: %v", c.Args, env["HOME"], c.Env)
+		if len(env) != 3 {
+			t.Errorf("%v: environment %v, want only PATH, HOME and DOCKER_HOST", c.Args, c.Env)
 		}
-		if len(env) != 1 {
-			t.Errorf("%v: environment %v, want only HOME", c.Args, c.Env)
+	}
+}
+
+func TestStackCreate_RefusesAnEnvThatDefinesAReservedNameAndWritesNothing(t *testing.T) {
+	for _, env := range []string{
+		"PATH=/stack/bin\n",
+		"TOKEN=x\nexport HOME=/stack\n",
+		"DOCKER_HOST=tcp://stack:2375\n",
+		"DOCKER_CONFIG\n",
+		"  XDG_RUNTIME_DIR : /run\n",
+	} {
+		r := newStackRig(t)
+		_, err := r.svc.Create(context.Background(), NewStack{Name: "nginx", Compose: "services:\n  web:\n    image: nginx\n", Env: env})
+		if !errors.Is(err, ErrReservedEnvName) {
+			t.Fatalf("Create with .env %q: err = %v, want ErrReservedEnvName", env, err)
 		}
+		if len(r.store.rows) != 0 || r.store.calls != 0 {
+			t.Errorf(".env %q: a row was stored (%d rows, %d store calls)", env, len(r.store.rows), r.store.calls)
+		}
+		if _, statErr := os.Lstat(filepath.Join(r.root, "nginx")); statErr == nil || len(r.runner.Calls()) != 0 {
+			t.Errorf(".env %q: files were written or compose ran (%v, %d calls)", env, statErr, len(r.runner.Calls()))
+		}
+	}
+	r := newStackRig(t)
+	_, err := r.svc.Create(context.Background(), NewStack{Name: "nginx", Compose: "services:\n  web:\n    image: nginx\n", Env: "PATH=/x\nHOME=/y\n"})
+	if err == nil || !strings.Contains(err.Error(), "PATH, HOME") {
+		t.Errorf("err = %v, want it to name every reserved variable", err)
+	}
+	for _, name := range []string{"MYPATH", "PATHX", "DOCKER_HOSTNAME", "HOMEDIR"} {
+		r := newStackRig(t)
+		if _, err := r.svc.Create(context.Background(), NewStack{Name: "nginx", Compose: "services:\n  web:\n    image: nginx\n", Env: name + "=x\n# PATH=/commented\n"}); err != nil {
+			t.Errorf("a .env with %s was refused: %v", name, err)
+		}
+	}
+}
+
+// A stack stored before the rule keeps working: the daemon's value of a name
+// its .env defines is left out of the run, as it was, and a warning says so.
+func TestStack_ALegacyEnvThatDefinesAReservedNameKeepsTheDropAndLogsAWarning(t *testing.T) {
+	clearComposeEnv(t)
+	t.Setenv("PATH", "/daemon/bin")
+	t.Setenv("HOME", "/daemon/home")
+	r := newStackRig(t)
+	r.create(t, "nginx")
+	row := r.store.rows["nginx"]
+	row.SealedEnv = xorAll([]byte("export PATH=/stack/bin\nTOKEN=s3cret\n"))
+	r.store.rows["nginx"] = row
+	if err := os.WriteFile(filepath.Join(r.root, "nginx", ".env"), []byte("export PATH=/stack/bin\nTOKEN=s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var logged bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	before := len(r.runner.Calls())
+	if err := r.svc.Up(context.Background(), "nginx"); err != nil {
+		t.Fatal(err)
+	}
+	calls := r.runner.Calls()[before:]
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v, want one up", calls)
+	}
+	env := envNames(calls[0].Env)
+	if _, ok := env["PATH"]; ok || env["HOME"] != "/daemon/home" {
+		t.Errorf("environment %v, want the stack's PATH to win (the daemon's left out) and HOME to be the daemon's", calls[0].Env)
+	}
+	if got := logged.String(); !strings.Contains(got, "defines PATH") || !strings.Contains(got, filepath.Join(r.root, "nginx", ".env")) {
+		t.Errorf("log = %q, want a warning naming the .env and PATH", got)
 	}
 }
 

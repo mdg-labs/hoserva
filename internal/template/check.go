@@ -5,6 +5,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/mdg-labs/hoserva/internal/container"
 )
 
 // Host paths of the layout a template's defaults follow (doc 01 §6, D10).
@@ -24,6 +26,7 @@ type Check func(t *Template) []Issue
 var checks = []Check{
 	checkAllowedKeys,
 	checkServices,
+	checkReservedInputs,
 	checkReferences,
 	checkPathDefaults,
 	checkBindSources,
@@ -157,6 +160,19 @@ func walkStrings(v any, p []string, fn func(p []string, s string)) {
 			walkStrings(e, append(p[:len(p):len(p)], fmt.Sprint(i)), fn)
 		}
 	}
+}
+
+// checkReservedInputs refuses an input named like a variable Docker needs
+// from the daemon's environment. Install writes every input to the stack's
+// .env under its name, and a stack's .env may not define those.
+func checkReservedInputs(t *Template) []Issue {
+	var out []Issue
+	for _, name := range container.ReservedEnvNames() {
+		if _, ok := t.Block.Inputs[name]; ok {
+			out = append(out, Issue{Path: []string{BlockKey, "inputs", name}, Message: fmt.Sprintf("%s is a variable Docker takes from the daemon's environment, which a stack's .env cannot define; name the input differently", name)})
+		}
+	}
+	return out
 }
 
 // checkReferences holds every ${VAR} in the Compose file and the web UI

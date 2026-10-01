@@ -20,7 +20,8 @@ type PortSource interface {
 }
 
 // HostPorts is the PortSource of a running system: the host ports that
-// running containers publish and the ports the host itself listens on.
+// containers publish or are configured to publish, whether they run or are
+// stopped, and the ports the host itself listens on.
 type HostPorts struct {
 	Containers container.Provider
 	// ProcNet is the directory holding tcp, tcp6, udp and udp6; empty means
@@ -40,12 +41,22 @@ func (h HostPorts) UsedPorts(ctx context.Context) (map[int]bool, error) {
 	}
 	used := map[int]bool{}
 	for _, c := range all {
+		ports := c.Ports
 		switch c.State {
 		case "running", "restarting", "paused":
 		default:
-			continue
+			// The listing reports no published ports for a container that
+			// is not running, but it binds its configured ones when it
+			// starts.
+			ports, err = h.Containers.ConfiguredPorts(ctx, c.ID)
+			if errors.Is(err, container.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("reading the ports of the stopped container %s: %w", c.Name, err)
+			}
 		}
-		for _, p := range c.Ports {
+		for _, p := range ports {
 			if p.HostPort != 0 {
 				used[int(p.HostPort)] = true
 			}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,9 +31,15 @@ type fakeGPU struct {
 func (f fakeGPU) RenderDevices(context.Context) ([]string, error) { return f.devices, nil }
 func (f fakeGPU) RenderGID(context.Context) (string, error)       { return f.gid, f.gidErr }
 
+// fakeStacks keeps what is created, and publishes the host ports of those
+// stacks the way Compose resolves them: each `ports` entry with the stack's
+// .env substituted. Nothing is ever started.
 type fakeStacks struct {
-	created []container.NewStack
-	err     error
+	created  []container.NewStack
+	err      error
+	portsErr error
+	// existing are ports of stacks that were not created through this fake.
+	existing map[int]bool
 }
 
 func (f *fakeStacks) Create(_ context.Context, n container.NewStack) (container.Stack, error) {
@@ -41,6 +48,40 @@ func (f *fakeStacks) Create(_ context.Context, n container.NewStack) (container.
 	}
 	f.created = append(f.created, n)
 	return container.Stack{Name: n.Name, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision}, nil
+}
+
+func (f *fakeStacks) PublishedPorts(context.Context) (map[int]bool, error) {
+	if f.portsErr != nil {
+		return nil, f.portsErr
+	}
+	used := map[int]bool{}
+	for p := range f.existing {
+		used[p] = true
+	}
+	for _, n := range f.created {
+		var doc struct {
+			Services map[string]struct {
+				Ports []string `yaml:"ports"`
+			} `yaml:"services"`
+		}
+		if err := yaml.Unmarshal([]byte(n.Compose), &doc); err != nil {
+			return nil, err
+		}
+		env := envLines(n.Env)
+		for _, svc := range doc.Services {
+			for _, spec := range svc.Ports {
+				parts := strings.Split(os.Expand(spec, func(k string) string { return env[k] }), ":")
+				if len(parts) < 2 {
+					continue
+				}
+				host := parts[len(parts)-2]
+				if p, err := strconv.Atoi(host); err == nil {
+					used[p] = true
+				}
+			}
+		}
+	}
+	return used, nil
 }
 
 // zeroReader makes generated secrets repeatable.
@@ -206,6 +247,49 @@ func TestAnUnreadablePortSourceFailsTheInstallInsteadOfAssumingFreePorts(t *test
 	_, _, err := in.Install(context.Background(), PlanRequest{ID: "jellyfin"})
 	if !errors.Is(err, boom) || len(stacks.created) != 0 {
 		t.Fatalf("err = %v, created = %d", err, len(stacks.created))
+	}
+}
+
+func TestTwoInstallsInARowAreGivenDifferentPortsAlthoughNothingIsStarted(t *testing.T) {
+	in, stacks := newInstaller(t)
+	in.Ports = fakePorts{used: map[int]bool{}}
+	var ports []string
+	for _, name := range []string{"jellyfin", "jellyfin-2", "jellyfin-3"} {
+		plan, _, err := in.Install(context.Background(), PlanRequest{ID: "jellyfin", Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ports = append(ports, input(t, plan, "WEBUI_PORT").Value)
+	}
+	if strings.Join(ports, ",") != "8096,8097,8098" {
+		t.Errorf("ports = %v, want 8096, 8097, 8098", ports)
+	}
+	if env := envLines(stacks.created[1].Env); env["WEBUI_PORT"] != "8097" {
+		t.Errorf("the second stack's .env WEBUI_PORT = %q, want 8097", env["WEBUI_PORT"])
+	}
+}
+
+func TestPreviewSkipsThePortsOfStacksThatWereNeverStarted(t *testing.T) {
+	in, stacks := newInstaller(t)
+	stacks.existing = map[int]bool{8096: true}
+	plan, err := in.Preview(context.Background(), PlanRequest{ID: "jellyfin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port := input(t, plan, "WEBUI_PORT"); port.Value != "8097" || port.Requested != "8096" {
+		t.Errorf("WEBUI_PORT = %+v, want 8097 requested 8096", port)
+	}
+}
+
+func TestAnUnreadableStackPortSourceFailsThePreviewAndTheInstall(t *testing.T) {
+	in, stacks := newInstaller(t)
+	boom := errors.New("compose config failed")
+	stacks.portsErr = boom
+	if _, err := in.Preview(context.Background(), PlanRequest{ID: "jellyfin"}); !errors.Is(err, boom) {
+		t.Fatalf("Preview err = %v, want the stack port error", err)
+	}
+	if _, _, err := in.Install(context.Background(), PlanRequest{ID: "jellyfin"}); !errors.Is(err, boom) || len(stacks.created) != 0 {
+		t.Fatalf("Install err = %v, created = %d", err, len(stacks.created))
 	}
 }
 
@@ -867,5 +951,27 @@ func TestAnEmptyOptionalInputInAPrivilegeKeyIsResolvedLikeAnyEmptyValue(t *testi
 	_, err := in.Preview(context.Background(), PlanRequest{ID: "probe"})
 	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "privileged") {
 		t.Fatalf("err = %v, want the empty value refused as not a boolean", err)
+	}
+}
+
+func TestInstallRefusesATemplateWhoseInputIsNamedLikeAReservedDockerVariable(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.ReadFile(filepath.Join(fixtureDir, "jellyfin", ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(src), "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: ${PATH}", 1)
+	text = strings.Replace(text, "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    PATH: { kind: string, default: /x }", 1)
+	if err := os.MkdirAll(filepath.Join(dir, "jellyfin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "jellyfin", ComposeFile), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in, stacks := newInstaller(t)
+	in.Catalog = DirCatalog{Root: dir, Source: SourceCurated}
+	_, _, err = in.Install(context.Background(), PlanRequest{ID: "jellyfin"})
+	if !errors.Is(err, ErrInvalidTemplate) || !strings.Contains(err.Error(), "PATH") || len(stacks.created) != 0 {
+		t.Fatalf("err = %v, created = %d, want ErrInvalidTemplate naming PATH and no stack", err, len(stacks.created))
 	}
 }

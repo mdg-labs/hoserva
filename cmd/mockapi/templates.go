@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
@@ -99,6 +103,25 @@ x-hoserva:
 `,
 }
 
+// mockIcons is each mock template's icon file.
+var mockIcons = map[string][]byte{
+	"jellyfin":    []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#6a5acd"/></svg>`),
+	"aio-notes":   []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" fill="#2e8b57"/></svg>`),
+	"risky-agent": []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2 22 22H2z" fill="#cd5c5c"/></svg>`),
+}
+
+// mockCatalog is this mock's catalog source: the curated source's name over
+// the mock templates and their icons.
+func mockCatalog() template.MapCatalog {
+	return template.MapCatalog{
+		Source:      template.SourceCurated,
+		Serial:      1,
+		GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		Templates:   mockTemplates,
+		Icons:       mockIcons,
+	}
+}
+
 // mockGPU stands for a host with one render device and a render group.
 type mockGPU struct{}
 
@@ -108,7 +131,8 @@ func (mockGPU) RenderDevices(context.Context) ([]string, error) {
 
 func (mockGPU) RenderGID(context.Context) (string, error) { return "44", nil }
 
-// mockPorts reports the host ports this mock's running apps publish.
+// mockPorts reports the host ports this mock's apps publish or are
+// configured to publish, running or stopped.
 type mockPorts struct{ h *handler }
 
 func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
@@ -116,15 +140,77 @@ func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
 	defer m.h.appsMu.Unlock()
 	used := map[int]bool{}
 	for _, a := range m.h.apps {
-		switch a.State {
-		case apiv1.AppStateRunning, apiv1.AppStateRestarting, apiv1.AppStatePaused:
-		default:
-			continue
-		}
 		for _, p := range a.Ports {
 			if hp, ok := p.HostPort.Get(); ok && hp != 0 {
 				used[hp] = true
 			}
+		}
+	}
+	return used, nil
+}
+
+// composePorts is the host ports a Compose file publishes with env
+// substituted: the first number of a `ports` entry given as a string
+// ("${PORT}:80", "127.0.0.1:8080:80"), or a long-syntax `published`. An entry
+// with no host port is the Engine's to choose and is not a port.
+func composePorts(compose, env string) map[int]bool {
+	var doc struct {
+		Services map[string]struct {
+			Ports []yaml.Node `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	used := map[int]bool{}
+	if err := yaml.Unmarshal([]byte(compose), &doc); err != nil {
+		return used
+	}
+	values := map[string]string{}
+	for _, l := range strings.Split(env, "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(l), "="); ok {
+			values[k] = strings.Trim(v, `"'`)
+		}
+	}
+	expand := func(s string) string {
+		return os.Expand(s, func(k string) string {
+			name, def, hasDef := strings.Cut(k, ":-")
+			if v := values[name]; v != "" || !hasDef {
+				return v
+			}
+			return def
+		})
+	}
+	for _, svc := range doc.Services {
+		for i := range svc.Ports {
+			var host string
+			switch svc.Ports[i].Kind {
+			case yaml.ScalarNode:
+				parts := strings.Split(expand(svc.Ports[i].Value), ":")
+				if len(parts) < 2 {
+					continue
+				}
+				host = parts[len(parts)-2]
+			case yaml.MappingNode:
+				var long struct {
+					Published string `yaml:"published"`
+				}
+				if svc.Ports[i].Decode(&long) == nil {
+					host = expand(long.Published)
+				}
+			}
+			if n, err := strconv.Atoi(host); err == nil && n > 0 {
+				used[n] = true
+			}
+		}
+	}
+	return used
+}
+
+func (m mockStackCreator) PublishedPorts(context.Context) (map[int]bool, error) {
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	used := map[int]bool{}
+	for _, ports := range m.h.stackPorts {
+		for p := range ports {
+			used[p] = true
 		}
 	}
 	return used, nil
@@ -137,6 +223,9 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 	if strings.TrimSpace(n.Compose) == "" {
 		return container.Stack{}, fmt.Errorf("%w: the compose file is empty", container.ErrInvalidStack)
 	}
+	if names := container.ReservedEnvDefined(n.Env); len(names) > 0 {
+		return container.Stack{}, fmt.Errorf("%w: %s", container.ErrReservedEnvName, strings.Join(names, ", "))
+	}
 	m.h.stacksMu.Lock()
 	defer m.h.stacksMu.Unlock()
 	if _, ok := m.h.stacks[n.Name]; ok {
@@ -146,6 +235,7 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 	if m.h.stacks == nil {
 		m.h.stacks = map[string]apiv1.Stack{}
 	}
+	m.h.setStackPorts(n.Name, composePorts(n.Compose, n.Env))
 	m.h.stacks[n.Name] = apiv1.Stack{
 		Name:        n.Name,
 		Template:    apiv1.StackTemplate{Source: n.TemplateSource, ID: n.TemplateID, Revision: n.TemplateRevision},
@@ -156,7 +246,7 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 
 func (h *handler) templateInstaller() *template.Installer {
 	return &template.Installer{
-		Catalog: template.MapCatalog{Source: template.SourceCurated, Templates: mockTemplates},
+		Catalog: mockCatalog(),
 		Stacks:  mockStackCreator{h},
 		Ports:   mockPorts{h},
 		Shares: func(context.Context) ([]string, error) {
@@ -177,6 +267,10 @@ func (h *handler) templateInstaller() *template.Installer {
 // production handler gives it.
 func mapMockTemplateError(name string, err error) error {
 	switch {
+	case errors.Is(err, template.ErrCatalogUnavailable):
+		return &mockError{code: "catalog_unavailable", statusCode: 503, message: err.Error()}
+	case errors.Is(err, template.ErrIconNotFound):
+		return &mockError{code: "template_icon_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrTemplateNotFound):
 		return &mockError{code: "template_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidTemplate):
@@ -191,10 +285,82 @@ func mapMockTemplateError(name string, err error) error {
 		return &mockError{code: "invalid_stack_name", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrInvalidStack):
 		return &mockError{code: "invalid_stack", statusCode: 400, message: err.Error()}
+	case errors.Is(err, container.ErrReservedEnvName):
+		return &mockError{code: "invalid_stack_env", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrStackExists):
 		return &mockError{code: "stack_exists", statusCode: 409, message: fmt.Sprintf("a stack named %q already exists", name)}
 	}
 	return err
+}
+
+func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
+	catalog := mockCatalog()
+	index, err := catalog.Index(ctx)
+	if err != nil {
+		return nil, mapMockTemplateError("", err)
+	}
+	h.stacksMu.Lock()
+	installed := map[string]bool{}
+	for _, s := range h.stacks {
+		if s.Template.ID != "" {
+			installed[s.Template.ID] = true
+		}
+	}
+	h.stacksMu.Unlock()
+	out := &apiv1.CatalogList{Serial: index.Serial, Templates: make([]apiv1.CatalogEntry, len(index.Templates))}
+	if !index.GeneratedAt.IsZero() {
+		out.GeneratedAt = apiv1.NewOptDateTime(index.GeneratedAt)
+	}
+	for i, t := range index.Templates {
+		out.Templates[i] = apiv1.CatalogEntry{
+			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs,
+			Source: catalog.Name(), Installed: installed[t.ID],
+		}
+	}
+	return out, nil
+}
+
+func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalogTemplateParams) (*apiv1.CatalogTemplate, error) {
+	d, err := template.Show(ctx, mockCatalog(), params.ID)
+	if err != nil {
+		return nil, mapMockTemplateError(params.ID, err)
+	}
+	out := &apiv1.CatalogTemplate{
+		ID: d.ID, Revision: d.Revision, Title: d.Title, Categories: d.Categories, Docs: d.Docs,
+		Source: d.Source, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+	}
+	for i, pr := range d.Privileges {
+		tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}
+		if pr.Detail != "" {
+			tp.Detail = apiv1.NewOptString(pr.Detail)
+		}
+		out.Privileges[i] = tp
+	}
+	return out, nil
+}
+
+const (
+	mockIconCSP     = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+	mockIconNoSniff = "nosniff"
+)
+
+func (h *handler) GetCatalogTemplateIcon(ctx context.Context, params apiv1.GetCatalogTemplateIconParams) (apiv1.GetCatalogTemplateIconRes, error) {
+	icon, err := mockCatalog().Icon(ctx, params.ID)
+	if err != nil {
+		return nil, mapMockTemplateError(params.ID, err)
+	}
+	body := bytes.NewReader(icon.Data)
+	switch icon.ContentType {
+	case "image/svg+xml":
+		return &apiv1.GetCatalogTemplateIconOKImageSvgXMLHeaders{ContentSecurityPolicy: mockIconCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateIconOKImageSvgXML{Data: body}}, nil
+	case "image/png":
+		return &apiv1.GetCatalogTemplateIconOKImagePNGHeaders{ContentSecurityPolicy: mockIconCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateIconOKImagePNG{Data: body}}, nil
+	case "image/webp":
+		return &apiv1.GetCatalogTemplateIconOKImageWEBPHeaders{ContentSecurityPolicy: mockIconCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateIconOKImageWEBP{Data: body}}, nil
+	case "image/jpeg":
+		return &apiv1.GetCatalogTemplateIconOKImageJpegHeaders{ContentSecurityPolicy: mockIconCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateIconOKImageJpeg{Data: body}}, nil
+	}
+	return nil, fmt.Errorf("mock catalog icon of template %q has the content type %q, which the API does not serve", params.ID, icon.ContentType)
 }
 
 func (h *handler) PreviewTemplateInstall(ctx context.Context, req *apiv1.TemplateInstallRequest, params apiv1.PreviewTemplateInstallParams) (*apiv1.TemplateInstallPlan, error) {

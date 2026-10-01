@@ -1,14 +1,14 @@
 name: Pages
 
 # One GitHub Pages site at hoserva.dev (Q66, Q3, Q65, Q67): docs (or a
-# placeholder until site/ exists) at the root, the catalog under
-# /catalog/, and the release index under /releases/. Apt does not join
-# this origin (#118). HTTPS on the already-connected custom domain is a
+# placeholder until site/ exists) at the root and the release index
+# under /releases/. The catalog is published from its own repository at
+# catalog.hoserva.dev, so this site has no /catalog/ path. Apt does not
+# join this origin (#118). HTTPS on the already-connected custom domain is a
 # repository setting, not something this workflow flips.
 #
-# Permanent URLs — compiled into hoservad, never change:
+# Permanent URL — compiled into hoservad, never changes:
 #   https://hoserva.dev/releases/index.json
-#   https://hoserva.dev/catalog/
 #
 # A v* tag push runs release.yml, which attaches
 # release-index-entry.json to the GitHub Release. This workflow does

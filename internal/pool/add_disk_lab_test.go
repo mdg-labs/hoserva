@@ -56,6 +56,7 @@ func TestLabAppendDataDisk_RemountJoinsTheNewDiskWithNoRebuild(t *testing.T) {
 
 	t.Cleanup(func() {
 		_ = mounter.Unmount(context.Background(), catchAllWhere)
+		_ = os.Remove(catchAllWhere)
 	})
 	if err := mounter.Mount(ctx, catchAll); err != nil {
 		t.Fatalf("mounting catch-all: %v", err)
@@ -134,6 +135,7 @@ func createLoopDiskForPoolTest(t *testing.T, lab, name, mountpoint string) strin
 	}
 	t.Cleanup(func() {
 		_, _ = r.Run(context.Background(), "umount", mountpoint)
+		_ = os.Remove(mountpoint)
 	})
 	return dev
 }

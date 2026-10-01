@@ -234,7 +234,10 @@ type Invoker interface {
 	// overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
 	// letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
 	// that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
-	// generated file behind.
+	// generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's
+	// environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+	// `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is
+	// stored or written, so Docker always runs with the daemon's own values for them.
 	//
 	// POST /stacks
 	CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error)
@@ -405,7 +408,8 @@ type Invoker interface {
 	FormatExternalDisk(ctx context.Context, request *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
 	// GetApp invokes getApp operation.
 	//
-	// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+	// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
+	// manages it, if any.
 	//
 	// GET /apps/{id}
 	GetApp(ctx context.Context, params GetAppParams) (*App, error)
@@ -461,6 +465,27 @@ type Invoker interface {
 	//
 	// GET /cache/usage
 	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
+	// GetCatalogTemplate invokes getCatalogTemplate operation.
+	//
+	// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
+	// what its Compose content asks for beyond an ordinary container, computed with each input's default
+	// (a secret, which has none, with a generated-shaped value) and never from anything the template
+	// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
+	// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+	//
+	// GET /catalog/{id}
+	GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (*CatalogTemplate, error)
+	// GetCatalogTemplateIcon invokes getCatalogTemplateIcon operation.
+	//
+	// The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG)
+	// chosen by the file's extension, never by its content. A file that is not a plain file inside the
+	// template's own directory (a symlink, however it points), has another extension, or is larger than 1
+	// MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`.
+	// The response forbids content sniffing and scripts, styles and subresources beyond the image itself,
+	// so an SVG cannot run code when it is opened directly.
+	//
+	// GET /catalog/{id}/icon
+	GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (GetCatalogTemplateIconRes, error)
 	// GetCurrentSession invokes getCurrentSession operation.
 	//
 	// The signed-in user this session cookie belongs to.
@@ -694,15 +719,19 @@ type Invoker interface {
 	//
 	// Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no
 	// value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port
-	// and reported in the result's `requestedValue`, never refused. Then it creates the stack as
-	// `createStack` does: the stack's row records the template's source, id and revision, and
-	// `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and
-	// the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and
-	// `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result
-	// carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any
-	// other kind `previewTemplateInstall` lists is reported with its install. The stack errors of
-	// `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those
-	// of `previewTemplateInstall`.
+	// and reported in the result's `requestedValue`, never refused. Taken means what
+	// `previewTemplateInstall` lists, including the ports of stacks installed earlier that were never
+	// started, so two installs in a row are given different ports; installs run one at a time. Reading the
+	// ports of existing stacks regenerates their missing generated files from their rows, as
+	// `previewTemplateInstall` describes. A port that something other than Hoserva takes after the install
+	// is not checked. Then it creates the stack as `createStack` does: the stack's row records the
+	// template's source, id and revision, and `docker-compose.yml` (the template with its `x-hoserva`
+	// block kept, plus the `/dev/dri` device and the host's `render` group for a GPU that was chosen),
+	// `.env` (every input; secrets only here) and `meta.json` are generated and checked with
+	// `docker compose config`. Nothing is started. The result carries the privilege summary, so a template
+	// that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is
+	// reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409
+	// `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
 	//
 	// POST /templates/{id}/install
 	InstallTemplate(ctx context.Context, request *TemplateInstallRequest, params InstallTemplateParams) (*TemplateInstallResult, error)
@@ -756,10 +785,11 @@ type Invoker interface {
 	ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error)
 	// ListApps invokes listApps operation.
 	//
-	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
-	// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
-	// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
-	// 04 §3).
+	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
+	// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
+	// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
+	// every container as unmanaged. available is false, with no error, whenever Docker itself is not
+	// reachable (doc 04 §3).
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
@@ -770,6 +800,17 @@ type Invoker interface {
 	//
 	// GET /backup/destinations
 	ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error)
+	// ListCatalog invokes listCatalog operation.
+	//
+	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
+	// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
+	// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
+	// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
+	// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
+	// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+	//
+	// GET /catalog
+	ListCatalog(ctx context.Context) (*CatalogList, error)
 	// ListDisks invokes listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -1021,10 +1062,12 @@ type Invoker interface {
 	PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error)
 	// PreviewTemplateInstall invokes previewTemplateInstall operation.
 	//
-	// Resolves the template's inputs the way an install would, without creating or writing anything: paths
-	// default to the template's own default or, with none, to the existing share of the input's role
-	// (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a running container
-	// publishes or the host listens on resolves to the next free port above it, with the port asked for in
+	// Resolves the template's inputs the way an install would, without creating a stack or writing any
+	// file of the template: paths default to the template's own default or, with none, to the existing
+	// share of the input's role (`/mnt/user/<role>`) and list the existing shares as suggestions; a port
+	// that a container publishes or is configured to publish, running or stopped, that an existing stack's
+	// Compose file publishes (resolved with its `.env`, whether or not the stack was started), or that the
+	// host listens on resolves to the next free port above it, with the port asked for in
 	// `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists
 	// the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value
 	// here: it is marked `generated` and is generated by the install. The privilege summary is computed
@@ -1037,10 +1080,18 @@ type Invoker interface {
 	// `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
 	// input the template marks `optional` may be left empty and is written to `.env` with an empty value);
 	// a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
-	// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
-	// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
-	// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
-	// with 503 `docker_unavailable`.
+	// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an
+	// input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`,
+	// `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
+	// `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host
+	// cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a
+	// conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503
+	// `docker_unavailable`. The check also reads the ports of every existing stack with
+	// `docker compose config`; a stack whose ports cannot be read refuses the request
+	// (`stack_action_failed`) instead of the port being assumed free. Reading a stack's ports also
+	// regenerates, from the stack's row, any of its `docker-compose.yml`, `.env` or `meta.json` that is
+	// missing from its directory; a file that exists is never changed, and a stack removed meanwhile is
+	// skipped. `installTemplate` does the same.
 	//
 	// POST /templates/{id}/preview
 	PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error)
@@ -4076,7 +4127,10 @@ func (c *Client) sendCreateShare(ctx context.Context, request *CreateShareReques
 // overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a
 // letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file
 // that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no
-// generated file behind.
+// generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's
+// environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+// `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is
+// stored or written, so Docker always runs with the daemon's own values for them.
 //
 // POST /stacks
 func (c *Client) CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error) {
@@ -6637,7 +6691,8 @@ func (c *Client) sendFormatExternalDisk(ctx context.Context, request *FormatExte
 
 // GetApp invokes getApp operation.
 //
-// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
+// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
+// manages it, if any.
 //
 // GET /apps/{id}
 func (c *Client) GetApp(ctx context.Context, params GetAppParams) (*App, error) {
@@ -7631,6 +7686,302 @@ func (c *Client) sendGetCacheUsage(ctx context.Context) (res NilCacheUsageBreakd
 
 	stage = "DecodeResponse"
 	result, err := decodeGetCacheUsageResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetCatalogTemplate invokes getCatalogTemplate operation.
+//
+// The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary:
+// what its Compose content asks for beyond an ordinary container, computed with each input's default
+// (a secret, which has none, with a generated-shaped value) and never from anything the template
+// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
+// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+//
+// GET /catalog/{id}
+func (c *Client) GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (*CatalogTemplate, error) {
+	res, err := c.sendGetCatalogTemplate(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (res *CatalogTemplate, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCatalogTemplate"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog/{id}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCatalogTemplateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/catalog/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCatalogTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCatalogTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCatalogTemplateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetCatalogTemplateIcon invokes getCatalogTemplateIcon operation.
+//
+// The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG)
+// chosen by the file's extension, never by its content. A file that is not a plain file inside the
+// template's own directory (a symlink, however it points), has another extension, or is larger than 1
+// MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`.
+// The response forbids content sniffing and scripts, styles and subresources beyond the image itself,
+// so an SVG cannot run code when it is opened directly.
+//
+// GET /catalog/{id}/icon
+func (c *Client) GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (GetCatalogTemplateIconRes, error) {
+	res, err := c.sendGetCatalogTemplateIcon(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (res GetCatalogTemplateIconRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCatalogTemplateIcon"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog/{id}/icon"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCatalogTemplateIconOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/catalog/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/icon"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCatalogTemplateIconOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCatalogTemplateIconOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCatalogTemplateIconResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -10785,15 +11136,19 @@ func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq)
 //
 // Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no
 // value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port
-// and reported in the result's `requestedValue`, never refused. Then it creates the stack as
-// `createStack` does: the stack's row records the template's source, id and revision, and
-// `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and
-// the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and
-// `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result
-// carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any
-// other kind `previewTemplateInstall` lists is reported with its install. The stack errors of
-// `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those
-// of `previewTemplateInstall`.
+// and reported in the result's `requestedValue`, never refused. Taken means what
+// `previewTemplateInstall` lists, including the ports of stacks installed earlier that were never
+// started, so two installs in a row are given different ports; installs run one at a time. Reading the
+// ports of existing stacks regenerates their missing generated files from their rows, as
+// `previewTemplateInstall` describes. A port that something other than Hoserva takes after the install
+// is not checked. Then it creates the stack as `createStack` does: the stack's row records the
+// template's source, id and revision, and `docker-compose.yml` (the template with its `x-hoserva`
+// block kept, plus the `/dev/dri` device and the host's `render` group for a GPU that was chosen),
+// `.env` (every input; secrets only here) and `meta.json` are generated and checked with
+// `docker compose config`. Nothing is started. The result carries the privilege summary, so a template
+// that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is
+// reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409
+// `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
 //
 // POST /templates/{id}/install
 func (c *Client) InstallTemplate(ctx context.Context, request *TemplateInstallRequest, params InstallTemplateParams) (*TemplateInstallResult, error) {
@@ -11604,10 +11959,11 @@ func (c *Client) sendListAppdataArchives(ctx context.Context, params ListAppdata
 
 // ListApps invokes listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). Which
-// containers belong to an installed stack, and so the managed/unmanaged distinction against it, is not
-// reported yet (#489). available is false, with no error, whenever Docker itself is not reachable (doc
-// 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
+// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
+// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
+// every container as unmanaged. available is false, with no error, whenever Docker itself is not
+// reachable (doc 04 §3).
 //
 // GET /apps
 func (c *Client) ListApps(ctx context.Context) (*ListAppsOK, error) {
@@ -11849,6 +12205,136 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 
 	stage = "DecodeResponse"
 	result, err := decodeListBackupDestinationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListCatalog invokes listCatalog operation.
+//
+// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
+// from the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it
+// came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that
+// template id already exists (`installed`, from the `stacks` table). Entries are in the index's order.
+// Search, filters and paging are the caller's. A catalog that is not installed or whose `index.json`
+// cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list.
+//
+// GET /catalog
+func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
+	res, err := c.sendListCatalog(ctx)
+	return res, err
+}
+
+func (c *Client) sendListCatalog(ctx context.Context) (res *CatalogList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listCatalog"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListCatalogOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/catalog"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListCatalogOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListCatalogResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -14781,10 +15267,12 @@ func (c *Client) sendPreviewConfigImport(ctx context.Context, request *PreviewCo
 
 // PreviewTemplateInstall invokes previewTemplateInstall operation.
 //
-// Resolves the template's inputs the way an install would, without creating or writing anything: paths
-// default to the template's own default or, with none, to the existing share of the input's role
-// (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a running container
-// publishes or the host listens on resolves to the next free port above it, with the port asked for in
+// Resolves the template's inputs the way an install would, without creating a stack or writing any
+// file of the template: paths default to the template's own default or, with none, to the existing
+// share of the input's role (`/mnt/user/<role>`) and list the existing shares as suggestions; a port
+// that a container publishes or is configured to publish, running or stopped, that an existing stack's
+// Compose file publishes (resolved with its `.env`, whether or not the stack was started), or that the
+// host listens on resolves to the next free port above it, with the port asked for in
 // `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists
 // the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value
 // here: it is marked `generated` and is generated by the install. The privilege summary is computed
@@ -14797,10 +15285,18 @@ func (c *Client) sendPreviewConfigImport(ctx context.Context, request *PreviewCo
 // `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
 // input the template marks `optional` may be left empty and is written to `.env` with an empty value);
 // a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
-// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid`; a
-// GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port
-// above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs,
-// with 503 `docker_unavailable`.
+// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an
+// input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`,
+// `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
+// `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host
+// cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a
+// conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503
+// `docker_unavailable`. The check also reads the ports of every existing stack with
+// `docker compose config`; a stack whose ports cannot be read refuses the request
+// (`stack_action_failed`) instead of the port being assumed free. Reading a stack's ports also
+// regenerates, from the stack's row, any of its `docker-compose.yml`, `.env` or `meta.json` that is
+// missing from its directory; a file that exists is never changed, and a stack removed meanwhile is
+// skipped. `installTemplate` does the same.
 //
 // POST /templates/{id}/preview
 func (c *Client) PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error) {

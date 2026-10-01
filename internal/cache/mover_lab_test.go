@@ -122,6 +122,9 @@ func bringUpLabMoverTopology(t *testing.T, name string) labMoverTopology {
 		_ = mounter.Unmount(context.Background(), shareMount.Where)
 		_ = mounter.Unmount(context.Background(), catchAll.Where)
 		_ = mounter.Unmount(context.Background(), moverMount.Where)
+		_ = os.Remove(moverMount.Where)
+		_ = os.Remove(arrayRootWhere)
+		_ = os.Remove(catchAllWhere)
 	})
 
 	if err := mounter.Mount(ctx, catchAll); err != nil {

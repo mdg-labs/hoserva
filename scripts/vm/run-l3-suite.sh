@@ -1669,7 +1669,7 @@ if DEB="${DEB:-}" TAG="${TAG:-}" "$script_dir/deploy.sh"; then
     fail "install" "deploy succeeded but seed-existing-host.sh failed — guest did not get a Samba share, NFS export and fstab mount before the .deb"
   fi
 else
-  fail "install" "deploy.sh failed — see its own output above (on the dev host this is expected: dpkg-buildpackage/debhelper/fakeroot are deliberately not installed here, per scripts/release/build-deb.sh's own header comment; a hosted CI runner has them)"
+  fail "install" "deploy.sh failed — its own message above names the cause"
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 2/15 onboarding ==="

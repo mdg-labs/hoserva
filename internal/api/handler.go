@@ -199,6 +199,9 @@ type Handler struct {
 	// Stacks is the Compose stack model (doc 04 §2, D4) behind /stacks.
 	// Nil returns 501 from those operations.
 	Stacks *container.StackService
+	// Catalog is the template source behind /catalog, /catalog/{id} and
+	// /catalog/{id}/icon (doc 04 §4). Nil returns 501 from those operations.
+	Catalog template.Catalog
 	// TemplateInstall resolves and installs catalog templates (doc 04 §7)
 	// behind /templates/{id}/preview and /install. Nil returns 501 from
 	// those operations.

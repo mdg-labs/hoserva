@@ -61,8 +61,11 @@
     },
     "health": {
       "unhealthy": "Not responding",
-      "starting": "Starting up"
+      "starting": "Starting up",
+      "healthy": "Responding",
+      "none": "No health check"
     },
+    "unmanaged": "Not managed by Hoserva",
     "ports": {
       "none": "No ports open to the network",
       "open": "Open {{name}} on port {{port}}"
@@ -83,7 +86,9 @@
       "menu": "More actions for {{name}}",
       "startNamed": "Start {{name}}",
       "stopNamed": "Stop {{name}}",
-      "logsNamed": "Show logs of {{name}}"
+      "logsNamed": "Show logs of {{name}}",
+      "recreate": "Recreate",
+      "remove": "Remove"
     },
     "toast": {
       "startDone": "{{name}} started",
@@ -91,7 +96,8 @@
       "restartDone": "{{name}} restarted",
       "startFailed": "Could not start {{name}}",
       "stopFailed": "Could not stop {{name}}",
-      "restartFailed": "Could not restart {{name}}"
+      "restartFailed": "Could not restart {{name}}",
+      "recreateFailed": "Could not recreate {{name}}"
     },
     "errors": {
       "actionFailed": "The action failed.",
@@ -124,6 +130,102 @@
       "close": "Close",
       "empty": "This app has not written any output yet.",
       "loadFailed": "Could not load the logs."
+    },
+    "detail": {
+      "back": "Installed apps",
+      "loadFailed": "Could not load this app.",
+      "placeholder": "This tab is not available yet.",
+      "notKnown": "—",
+      "tabs": {
+        "overview": "Overview",
+        "logs": "Logs",
+        "stats": "Stats",
+        "config": "Config",
+        "update": "Update"
+      },
+      "notFound": {
+        "title": "App not found",
+        "description": "There is no app named {{name}} on this server. It may have been removed.",
+        "action": "Back to installed apps"
+      },
+      "actions": {
+        "label": "Actions for this app",
+        "cannotStart": "This app is already running, or cannot be started in its current state.",
+        "cannotStop": "This app is not running.",
+        "cannotRestart": "Only a running app can be restarted. Start it instead.",
+        "cannotRecreate": "This app is being removed.",
+        "cannotRemove": "Stop this app before removing it."
+      },
+      "recreate": {
+        "queued": "Recreating {{name}}",
+        "description": "Recreating pulls the image again and replaces the app with a fresh copy that keeps its settings and data. It runs in the background.",
+        "viewJob": "View progress"
+      },
+      "overview": {
+        "title": "Overview",
+        "state": "State",
+        "health": "Health check",
+        "image": "Image",
+        "tag": "Version tag",
+        "created": "Created",
+        "uptime": "Running for",
+        "notRunning": "Not running",
+        "restarts": "Automatic restarts",
+        "ports": "Web addresses"
+      },
+      "duration": {
+        "lessThanMinute": "Less than a minute",
+        "day_one": "{{count}} day",
+        "day_other": "{{count}} days",
+        "hour_one": "{{count}} hour",
+        "hour_other": "{{count}} hours",
+        "minute_one": "{{count}} minute",
+        "minute_other": "{{count}} minutes"
+      },
+      "mounts": {
+        "title": "Folders this app can use",
+        "none": "This app has no folders from the server.",
+        "path": "{{source}} → {{destination}}",
+        "noSource": "Docker-managed storage",
+        "readWrite": "Can change files",
+        "readOnly": "Read only"
+      },
+      "location": {
+        "pool": "Shared pool — files may be on any data disk",
+        "poolShare": "Shared pool, share {{share}} — files may be on any data disk",
+        "disk": "Data disk {{number}}",
+        "cache": "Cache disk",
+        "outside": "Outside the array, on the system disk or another device",
+        "unknown": "Unknown"
+      },
+      "stack": {
+        "title": "Compose file",
+        "description": "This app is installed as part of the {{stack}} stack, so its settings live in that stack's Compose file.",
+        "edit": "Edit the Compose file"
+      },
+      "remove": {
+        "title": "Remove {{name}}?",
+        "description": "The app stops being available. Its settings and data stay on the server unless you choose to delete them.",
+        "stackTitle": "Remove the {{stack}} stack?",
+        "stackDescription": "{{stack}} is installed as one stack, so removing it removes every app in it. Their settings and data stay on the server unless you choose to delete them.",
+        "willRemove": "This removes:",
+        "membersFailed": "Could not list the apps in this stack, so nothing can be removed yet.",
+        "appdata": "Also delete the app's settings and data",
+        "appdataDescription": "Deletes the folders and storage this app keeps its own data in. This cannot be undone. Leave it off to keep the data for a later install.",
+        "typedTitle": "Confirm deleting the data",
+        "typedDescription": "This permanently deletes the data of the apps listed above.",
+        "typedItem": "Delete the data of {{name}}",
+        "confirm": "Remove",
+        "done": "{{name}} removed",
+        "failed": "Could not remove this app.",
+        "refusals": {
+          "app_running": "This app is still running. Stop it first, then remove it.",
+          "appdata_shared": "Another app uses the same data folder, so the data was not deleted and nothing was removed.",
+          "appdata_unavailable": "Hoserva does not know where this app's data is kept, so it cannot delete it. Nothing was removed.",
+          "array_stopped": "The array is stopped, so the data cannot be deleted right now. Start the array and try again. Nothing was removed.",
+          "stack_project_shared": "Another Compose project with the same name is running on this server, so removing the stack could take down apps that are not part of it. Nothing was removed."
+        }
+      }
     }
   },
   "vmsNav": {

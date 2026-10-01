@@ -218,7 +218,49 @@ The image also carries `samba` and `smbclient` (issue #219), so `make test-integ
 
 Starting the lab needs access to the Docker daemon, which is root-equivalent on the host; that is the reason labs are only ever started through `make lab-up`, whose recipe is reviewed, never with an ad-hoc `docker run`.
 
-On macOS or Windows, the same container runs inside the Docker VM and works identically. **Development is not tied to a Linux desktop.**
+### The WSL2 development host
+
+The primary development host is Debian 13 (trixie) inside WSL2 on Windows, validated end to end: L1 (`make test`, `lint`, `build`, `gen`, `db-check`), L2 in CI's order, and L3 (`vm-up`, `vm-deploy` and a `vm-suite` run covering install, onboarding, array setup, pool restart, reboot persistence and Playwright). **Development is not tied to a Linux desktop.**
+
+- **Kernel and init.** The WSL2 kernel is 6.18 (`microsoft-standard-WSL2`) and the distro runs systemd (`[boot] systemd=true` in `/etc/wsl.conf`). Loop devices, FUSE and XFS are built in; btrfs is a loadable module only, and the lab currently formats only XFS. AppArmor is off.
+- **Docker.** Debian's own `docker.io`, `docker-compose` and `docker-buildx` run inside the distro, not Docker Desktop. The daemon is still root-equivalent, so the rules above apply unchanged: only through `make` targets.
+- **KVM.** `/dev/kvm` is present and nested virtualization works (`kvm_amd nested=1` on the validated AMD host), so L3 guests run as `domain type='kvm'`, not TCG. The user needs the `kvm` group to open it.
+- **No desktop automount.** WSL2 has no `udisks2` and no polkit, so the hazard in the next section (automounts and authentication dialogs on loop attach) does not arise, and the udev rule is unnecessary there. Installing it is harmless.
+- **`systemd-binfmt.service` fails on package install.** Installing `python3` makes it fail with "Failed to flush binfmt_misc rules … Read-only file system". This is a WSL quirk and harmless: Windows interop stays enabled.
+
+### Development host prerequisites
+
+A fresh host needs the following. Everything in the first two groups needs root; an agent never does it (`needs-sudo`: it prepares the commands and the maintainer runs them). The third group is per-user and needs no root.
+
+**Root (`needs-sudo`) — apt packages:**
+
+```bash
+sudo apt install make jq xxd shellcheck python3 xz-utils zstd unzip fakeroot rsync \
+    netcat-openbsd docker.io docker-compose docker-buildx \
+    qemu-system-x86 qemu-utils libvirt-daemon libvirt-daemon-driver-qemu libvirt-clients \
+    genisoimage xorriso dpkg-dev debhelper
+```
+
+`dpkg-dev`, `debhelper` and `fakeroot` build the `.deb` for `vm-deploy`; `xxd` and `jq` are used by the release and L3 scripts (`scripts/release/`, `scripts/vm/`); the QEMU, libvirt, `genisoimage` and `xorriso` packages are the L3 harness (§4).
+
+**Root (`needs-sudo`) — group membership:** the user must be in the `docker` and `kvm` groups.
+
+```bash
+sudo usermod -aG docker,kvm "$USER"
+```
+
+On WSL2, then run `wsl --shutdown` from Windows and reopen the distro so the new groups apply.
+
+**No root — toolchains under `~/.local`:** Debian trixie ships Go 1.24 and Node 20, older than CI's pins, so take both from the upstream release tarballs (verify their published checksums), unpack them under `~/.local`, and put their `bin` directories on `PATH`:
+
+| Tool | Version | Pinned in |
+|---|---|---|
+| Go | 1.27.1 | `go.mod`, `GO_VERSION` in `.github/workflows/ci.yml` |
+| Node.js (with npm) | 24.21.0 (`lts/krypton`) | `NODE_VERSION` in `.github/workflows/ci.yml`, `web/.nvmrc` |
+| golangci-lint | v2.13.2 | `golangci-lint-action` in `.github/workflows/ci.yml` |
+
+golangci-lint is installed from its own release for the pinned version, into `~/.local/bin`.
+
 
 ### The host's desktop will try to mount the lab's disks
 
@@ -230,7 +272,7 @@ The lab's device isolation is one-directional. `docker-compose.dev.yml` stops th
 - host-side activity on that mount lands in the very per-disk IO counters the spindown work measures (doc 08 §1) and the throughput comparison in doc 08 §6;
 - every attach *and* every detach raises another dialog, and three failed authentications trip `pam_faillock`'s default `deny=3`, locking the developer out of their own account — `sudo` included.
 
-**Install the rule before running a lab on a desktop machine** (once, needs root):
+**Install the rule before running a lab on a Linux desktop machine** (once, needs root; not needed on the WSL2 host above):
 
 ```bash
 sudo install -m 0644 scripts/devenv/99-hoserva-lab-loop.rules \
@@ -268,6 +310,7 @@ Where loop devices stop, VMs start: real block devices, real boot, real install,
 - Disk images, snapshots and domain names live under the workspace and carry `HOSERVA_LAB_ID`, so parallel agent lanes never collide and teardown removes only its own domains
 - 1 virtual disk for the OS, 7 virtual disks for the array (sparse qcow2, sized realistically)
 - Managed via a `Makefile` or Vagrant-equivalent scripts, provisioned with the `.deb` under test
+- `make vm-deploy` and `make vm-suite` build the `.deb` for the newest `v*` git tag. While no `v*` tag exists they fail unless given one: pass `TAG=v0.0.0-beta.1` (for example `make vm-suite TAG=v0.0.0-beta.1`), or `DEB=<path>` to deploy an already-built `.deb`
 
 ### Snapshots as the reset mechanism
 

@@ -3,6 +3,21 @@
 /dist/
 *.deb
 
+# What a local .deb build (scripts/release/build-deb.sh, debian/rules)
+# leaves in the tree: the two binaries at the repo root and debhelper's own
+# state under packaging/debian/. build-deb.sh removes them itself; this is
+# the second line of defence. /hoserva and /hoservad are anchored so
+# cmd/hoserva/ and cmd/hoservad/ stay tracked.
+/hoserva
+/hoservad
+/packaging/debian/.debhelper/
+/packaging/debian/debhelper-build-stamp
+/packaging/debian/files
+/packaging/debian/*.debhelper
+/packaging/debian/*.debhelper.log
+/packaging/debian/*.substvars
+/packaging/debian/hoserva/
+
 # The loop-device lab's per-lab image and mount roots (doc 06 §9, doc 12 §2) —
 # owned by root once the lab container touches them, so they are never
 # committed and must be destroyed with `make lab-destroy`, never `rm -rf`.
@@ -41,6 +56,14 @@ web/*.tsbuildinfo
 # writes there stays ignored.
 web/dist/*
 !web/dist/.gitkeep
+
+# internal/template/snapshot/ (the pinned catalog archive embedded via
+# internal/template/snapshot.go, Q65) is fetched by `make catalog-snapshot`
+# from scripts/devenv/catalog.pin, never committed. Its .gitkeep placeholder
+# is committed so `go:embed all:snapshot` has something to match on a clean
+# checkout that has never fetched it.
+internal/template/snapshot/*
+!internal/template/snapshot/.gitkeep
 
 # cmd/hoservad's --dev convenience (#22): database, machine key, TLS
 # certificate and job logs for a local dev run, never committed.

@@ -54,6 +54,20 @@ func TestFixturesValidateAgainstSpec(t *testing.T) {
 				}
 			}
 
+			if rawApps, err := fixtures.AppsJSON(scenario); err == nil {
+				var list apiv1.ListAppsOK
+				if err := list.UnmarshalJSON(rawApps); err != nil {
+					t.Fatalf("decode apps.json as ListAppsOK: %v", err)
+				}
+				assertNoDroppedFields(t, rawApps, &list)
+				if err := list.Validate(); err != nil {
+					t.Errorf("apps.json fails ListAppsOK.Validate(): %v", err)
+				}
+				if !list.Available && !list.Message.Set {
+					t.Error("apps.json reports Docker unavailable with no message")
+				}
+			}
+
 			rawEvents, err := fixtures.EventsJSONL(scenario)
 			if err != nil {
 				t.Fatalf("EventsJSONL: %v", err)
