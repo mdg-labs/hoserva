@@ -61,8 +61,60 @@ export function getJob(jobId: string, signal?: AbortSignal) {
   return hoservaClient.GET("/jobs/{jobId}", { params: { path: { jobId } }, signal });
 }
 
-export function getJobLog(jobId: string, signal?: AbortSignal) {
-  return hoservaClient.GET("/jobs/{jobId}/log", { params: { path: { jobId } }, signal });
+const GZIP_MAGIC = [0x1f, 0x8b];
+const JOB_LOG_NOT_FOUND_CODE = "job_log_not_found";
+
+// A log still being written has no gzip trailer, so the decompressor ends in
+// an error after it has already produced the lines written so far. Those
+// lines are the log; an error before any output is a corrupt stream.
+async function gunzipText(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const stream = new DecompressionStream("gzip");
+  const writer = stream.writable.getWriter();
+  void writer.write(bytes).catch(() => undefined);
+  void writer.close().catch(() => undefined);
+
+  const reader = stream.readable.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return text + decoder.decode();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } catch (error: unknown) {
+    if (text === "") {
+      throw error;
+    }
+    return text + decoder.decode();
+  }
+}
+
+// The response is gzip (`application/gzip`) that the daemon sends without a
+// Content-Encoding, so the browser leaves it compressed and it is inflated
+// here. A body that is already plain text (a proxy that decoded it) is
+// returned as it is.
+export async function getJobLog(jobId: string, signal?: AbortSignal): Promise<ClientResult<string>> {
+  const result = await hoservaClient.GET("/jobs/{jobId}/log", {
+    params: { path: { jobId } },
+    parseAs: "arrayBuffer",
+    signal,
+  });
+  if (result.error?.code === JOB_LOG_NOT_FOUND_CODE) {
+    return { data: undefined, response: { ok: true } };
+  }
+  if (result.error !== undefined || result.response?.ok === false) {
+    return { error: result.error, response: { ok: false } };
+  }
+  if (result.data === undefined) {
+    return { data: undefined, response: { ok: true } };
+  }
+  const bytes = new Uint8Array(result.data);
+  const isGzip = bytes[0] === GZIP_MAGIC[0] && bytes[1] === GZIP_MAGIC[1];
+  const text = isGzip ? await gunzipText(bytes) : new TextDecoder().decode(bytes);
+  return { data: text, response: { ok: true } };
 }
 
 export function getApps(signal?: AbortSignal) {
