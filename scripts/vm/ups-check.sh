@@ -8,10 +8,9 @@
 # scripts (packaging/nut-notify, packaging/nut-shutdown) and its real
 # systemd unit (packaging/debian/hoserva.service) are every one of them
 # used unmodified — this script only supplies the simulated battery and,
-# where the guest has no already-installed .deb to test against (this
-# repo's own dev host and lab, per scripts/vm/deploy.sh's own header:
-# dpkg-buildpackage/debhelper/fakeroot are deliberately not installed
-# there), a hoservad/hoserva built straight from source the same
+# where the guest has no already-installed .deb to test against (a step
+# run on its own, without scripts/vm/deploy.sh's .deb install before it),
+# a hoservad/hoserva built straight from source the same
 # build-elsewhere/run-inside way array-sequence-check.sh's own L3 test
 # binary already is — compiling touches no device.
 #
@@ -50,7 +49,7 @@ echo "ups-check[$HOSERVA_LAB_ID]: === setup: hoservad ==="
 if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   echo "ups-check[$HOSERVA_LAB_ID]: hoservad is already active on the guest (an earlier suite step installed it) — using it as-is"
 else
-  echo "ups-check[$HOSERVA_LAB_ID]: no active hoservad on the guest — building hoservad/hoserva from source and installing the real packaged pieces by hand (deploy.sh's own .deb build needs dpkg-buildpackage/debhelper/fakeroot, deliberately absent from the dev host and lab)"
+  echo "ups-check[$HOSERVA_LAB_ID]: no active hoservad on the guest — building hoservad/hoserva from source and installing the real packaged pieces by hand (no .deb was installed on the guest by an earlier step, e.g. deploy.sh)"
   BUILD_OUT="$VM_STATE_DIR/ups-build"
   mkdir -p -- "$BUILD_OUT"
   (cd "$VM_REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BUILD_OUT/hoservad" ./cmd/hoservad)

@@ -13,7 +13,7 @@
 # Always refreshes /usr/bin/hoservad from this workspace's source before
 # the assertion so the binary under test is the one just built — the
 # same build-elsewhere/run-inside pattern ups-check.sh uses when the
-# host has no dpkg-buildpackage (deploy.sh's own .deb path).
+# guest has no .deb installed by deploy.sh.
 #
 # Kill by MainPID only — never pkill/killall (orchestrate dispatch).
 set -euo pipefail
