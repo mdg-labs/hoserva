@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Unit tests for the GitHub Pages assembly path (Q66): placeholder
-# root, /catalog/ and /releases/ as distinct trees, the 900 MiB
-# fail-before-deploy canary, no /apt/, and fetch of
+# root, /releases/ as its own tree, no /catalog/ and no /apt/, the
+# 900 MiB fail-before-deploy canary, and fetch of
 # release-index-entry.json assets through a fake `gh` — never the live
 # GitHub API.
 set -euo pipefail
@@ -60,7 +60,7 @@ write_entry() {
 JSON
 }
 
-# Empty index, placeholder root, catalog stub, CNAME, .nojekyll, no apt.
+# Empty index, placeholder root, CNAME, .nojekyll, no catalog, no apt.
 empty_entries="$work/empty-entries"
 mkdir -p "$empty_entries"
 out0="$work/out0"
@@ -69,8 +69,12 @@ mkdir -p "$out0"
 assert_file "$out0/index.html" "placeholder"
 assert_contains "$out0/index.html" "https://github.com/mdg-labs/hoserva" "placeholder points at the repository"
 assert_contains "$out0/index.html" "https://hoserva.dev/releases/index.json" "permanent release-index URL"
-assert_contains "$out0/index.html" "https://hoserva.dev/catalog/" "permanent catalog URL"
-assert_file "$out0/catalog/index.html" "catalog stub"
+assert_contains "$out0/index.html" "https://catalog.hoserva.dev/" "placeholder points at the catalog's own site"
+if grep -Fq "hoserva.dev/catalog" "$out0/index.html"; then
+  note "FAIL: placeholder must not mention hoserva.dev/catalog"
+  fail=1
+fi
+assert_no_path "$out0/catalog" "no catalog tree on a placeholder site"
 assert_file "$out0/releases/index.json" "empty index"
 assert_file "$out0/CNAME" "custom domain"
 assert_eq "$(cat "$out0/CNAME")" "hoserva.dev" "CNAME"
@@ -79,8 +83,8 @@ assert_no_path "$out0/apt" "no apt tree on a placeholder site"
 assert_eq "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"]["stable"])' <"$out0/releases/index.json")" "[]" "empty stable channel"
 assert_eq "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"]["beta"])' <"$out0/releases/index.json")" "[]" "empty beta channel"
 
-# Version sort (v0.10.0 after v0.9.0), both channels, catalog contents
-# preserved, docs root does not clobber /catalog/ or /releases/.
+# Version sort (v0.10.0 after v0.9.0), both channels, and a docs root
+# neither adds /catalog/ nor clobbers /releases/.
 entries="$work/entries"
 mkdir -p "$entries"
 write_entry "$entries/a.json" "v0.9.0" "0.9.0" "stable"
@@ -96,23 +100,23 @@ echo 'from-docs-catalog' >"$docs/catalog/evil.html"
 echo 'from-docs-releases' >"$docs/releases/index.json"
 echo 'pool' >"$docs/apt/pool/x.deb"
 
-catalog="$work/catalog"
-mkdir -p "$catalog"
-echo 'real-catalog' >"$catalog/catalog.tar.zst"
-
 out1="$work/out1"
 mkdir -p "$out1"
-"$script_dir/assemble-pages-site.sh" "$out1" "$entries" "$catalog" "$docs"
+"$script_dir/assemble-pages-site.sh" "$out1" "$entries" "$docs"
 assert_contains "$out1/index.html" "DOCS-ROOT" "docs root kept"
 assert_contains "$out1/getting-started/index.html" "getting-started" "docs subtree kept"
-assert_file "$out1/catalog/catalog.tar.zst" "catalog tree from catalog-dir"
-assert_contains "$out1/catalog/catalog.tar.zst" "real-catalog" "catalog payload"
-assert_no_path "$out1/catalog/evil.html" "docs must not land in /catalog/"
+assert_no_path "$out1/catalog" "a docs catalog/ tree must not be published at /catalog/"
 assert_no_path "$out1/releases/from-docs" "docs must not land in /releases/"
 assert_no_path "$out1/apt" "apt stripped from the Pages artifact"
 assert_eq "$(python3 -c 'import json,sys; c=json.load(sys.stdin)["channels"]; print(c["stable"][0]["tag"], c["stable"][1]["tag"], c["beta"][0]["tag"], c["beta"][1]["tag"])' <"$out1/releases/index.json")" \
   "v0.10.0 v0.9.0 v0.10.0-beta.12 v0.10.0-beta.2" \
   "channels grouped and version-sorted newest first"
+
+# A fourth argument is the removed catalog-dir position and is refused.
+if "$script_dir/assemble-pages-site.sh" "$work/out-extra" "$empty_entries" "$docs" "$work/extra" >/dev/null 2>&1; then
+  note "FAIL: assemble-pages-site.sh should refuse more than three arguments"
+  fail=1
+fi
 
 # 900 MiB canary: a tiny limit must fail before anything would deploy.
 out2="$work/out2"
