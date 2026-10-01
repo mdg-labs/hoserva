@@ -115,8 +115,8 @@ type composeSim struct {
 	keep map[string]bool
 }
 
-func (c *composeSim) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := c.Runner.Run(ctx, name, args...)
+func (c *composeSim) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	out, err := c.Runner.Run(ctx, env, name, args...)
 	if err != nil {
 		return out, err
 	}
@@ -511,8 +511,8 @@ type cancelOnRun struct {
 	cancel context.CancelFunc
 }
 
-func (c cancelOnRun) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := c.Runner.Run(ctx, name, args...)
+func (c cancelOnRun) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	out, err := c.Runner.Run(ctx, env, name, args...)
 	c.cancel()
 	return out, err
 }
@@ -1124,9 +1124,9 @@ type hookRunner struct {
 	before func(args []string)
 }
 
-func (h hookRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (h hookRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	h.before(args)
-	return h.Runner.Run(ctx, name, args...)
+	return h.Runner.Run(ctx, env, name, args...)
 }
 
 func TestStackRemove_MissingDirectoryIsRegeneratedForDownThenRemoved(t *testing.T) {
@@ -1364,5 +1364,133 @@ func TestStack_ClearedSealedEnvNeverWritesAnEmptyEnv(t *testing.T) {
 	}
 	if exists(t, restored) {
 		t.Fatal("an empty .env was written from a cleared sealed env")
+	}
+}
+
+// clearComposeEnv unsets every variable composeEnv passes on, restoring them
+// when the test ends, so a test sees only what it sets.
+func clearComposeEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range composeEnvNames {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func envNames(env []string) map[string]string {
+	out := map[string]string{}
+	for _, kv := range env {
+		name, value, _ := strings.Cut(kv, "=")
+		out[name] = value
+	}
+	return out
+}
+
+// Compose lets a variable of its own environment override --env-file, so the
+// daemon's environment must not reach it: a stack whose .env defines a name
+// the daemon also has is interpolated from the .env.
+func TestStack_ComposeRunsWithAnExplicitEnvironmentThatNeverOverridesTheStacksEnv(t *testing.T) {
+	clearComposeEnv(t)
+	t.Setenv("DOCKER_HOST", "unix:///daemon.sock")
+	t.Setenv("PATH", "/daemon/bin")
+	t.Setenv("HOME", "/daemon/home")
+	t.Setenv("INVOCATION_ID", "daemon-invocation")
+	t.Setenv("COMPOSE_PROJECT_NAME", "daemon-project")
+	r := newStackRig(t)
+	if _, err := r.svc.Create(context.Background(), NewStack{
+		Name:    "nginx",
+		Compose: "services:\n  web:\n    image: nginx:1.27\n",
+		Env:     "DOCKER_HOST=tcp://stack:2375\nexport PATH=/stack/bin\nINVOCATION_ID=stack-invocation\nTOKEN=s3cret\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.Up(context.Background(), "nginx"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.Remove(context.Background(), "nginx", false); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := r.runner.Calls()
+	if len(calls) < 3 {
+		t.Fatalf("calls = %v, want a config, an up and a down", calls)
+	}
+	for _, c := range calls {
+		if c.Env == nil {
+			t.Fatalf("%v ran with the daemon's whole environment", c.Args)
+		}
+		env := envNames(c.Env)
+		for _, name := range []string{"DOCKER_HOST", "PATH", "INVOCATION_ID", "COMPOSE_PROJECT_NAME"} {
+			if _, ok := env[name]; ok {
+				t.Errorf("%v: %s is in the environment, where Compose would take it over the stack's .env: %v", c.Args, name, c.Env)
+			}
+		}
+		if env["HOME"] != "/daemon/home" {
+			t.Errorf("%v: HOME = %q, want the daemon's, which the stack's .env does not define: %v", c.Args, env["HOME"], c.Env)
+		}
+		if len(env) != 1 {
+			t.Errorf("%v: environment %v, want only HOME", c.Args, c.Env)
+		}
+	}
+}
+
+func TestStack_ComposeEnvKeepsTheDockerVariablesTheEnvFileDoesNotDefine(t *testing.T) {
+	clearComposeEnv(t)
+	t.Setenv("DOCKER_HOST", "unix:///daemon.sock")
+	t.Setenv("PATH", "/daemon/bin")
+	t.Setenv("INVOCATION_ID", "daemon-invocation")
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("# PATH=/commented\nMYPATH=/mine\nTOKEN=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{envFile, "", filepath.Join(t.TempDir(), "missing.env")} {
+		env, err := composeEnv(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := envNames(env)
+		if got["PATH"] != "/daemon/bin" || got["DOCKER_HOST"] != "unix:///daemon.sock" {
+			t.Errorf("composeEnv(%q) = %v, want the daemon's PATH and DOCKER_HOST", file, env)
+		}
+		if _, ok := got["INVOCATION_ID"]; ok {
+			t.Errorf("composeEnv(%q) = %v, passed a variable Docker does not need", file, env)
+		}
+		if env == nil {
+			t.Errorf("composeEnv(%q) is nil, which runs the command with the daemon's whole environment", file)
+		}
+	}
+}
+
+func TestStack_ComposeEnvIsNotNilWhenNothingIsPassed(t *testing.T) {
+	clearComposeEnv(t)
+	env, err := composeEnv("")
+	if err != nil || env == nil || len(env) != 0 {
+		t.Fatalf("composeEnv = %#v, %v, want an empty non-nil environment", env, err)
+	}
+}
+
+func TestStack_EnvFileDefines(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"PATH=/x", true},
+		{"  PATH = /x", true},
+		{"export PATH=/x", true},
+		{"PATH: /x", true},
+		{"PATH", true},
+		{"PATH\r\nOTHER=1", true},
+		{"OTHER=1\nPATH='/x'", true},
+		{"PATHX=/x", false},
+		{"MYPATH=/x", false},
+		{"# PATH=/x", false},
+		{"TOKEN=PATH=/x", false},
+		{"", false},
+	} {
+		if got := envFileDefines([]byte(tc.line), "PATH"); got != tc.want {
+			t.Errorf("envFileDefines(%q) = %v, want %v", tc.line, got, tc.want)
+		}
 	}
 }

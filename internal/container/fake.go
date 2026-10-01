@@ -177,6 +177,8 @@ var _ Provider = (*FakeProvider)(nil)
 type RunCall struct {
 	Name string
 	Args []string
+	// Env is the environment the call was given: nil for the daemon's own.
+	Env []string
 }
 
 // FakeRunner is a scriptable Runner (CLAUDE.md, doc 06 §2): the same
@@ -210,10 +212,10 @@ func (f *FakeRunner) Script(name string, args []string, output []byte, err error
 
 // Run implements Runner by returning whatever was scripted for this exact
 // argv, recording the call regardless.
-func (f *FakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (f *FakeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, RunCall{Name: name, Args: append([]string(nil), args...)})
+	f.calls = append(f.calls, RunCall{Name: name, Args: append([]string(nil), args...), Env: cloneEnv(env)})
 	key := runnerKey(name, args)
 	return f.outputs[key], f.errs[key]
 }
@@ -228,3 +230,10 @@ func (f *FakeRunner) Calls() []RunCall {
 }
 
 var _ Runner = (*FakeRunner)(nil)
+
+func cloneEnv(env []string) []string {
+	if env == nil {
+		return nil
+	}
+	return append([]string{}, env...)
+}

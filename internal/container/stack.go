@@ -334,13 +334,59 @@ func (s *StackService) composeArgsWithEnv(name, envFile string, sub ...string) [
 }
 
 func (s *StackService) compose(ctx context.Context, timeout time.Duration, name string, sub ...string) error {
-	return s.runCompose(ctx, timeout, s.composeArgs(name, sub...))
+	return s.runCompose(ctx, timeout, s.composeArgs(name, sub...), filepath.Join(s.dir(name), stackEnvFile))
 }
 
-func (s *StackService) runCompose(ctx context.Context, timeout time.Duration, args []string) error {
+// composeEnvNames are the only variables of the daemon's environment a
+// Compose run gets: what the Docker CLI needs to find its plugins, its
+// credential helpers and the Engine.
+var composeEnvNames = []string{
+	"PATH", "HOME", "XDG_RUNTIME_DIR",
+	"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
+}
+
+// composeEnv is the environment of a Compose run. Compose lets a variable of
+// its own environment override the same name in --env-file, and reads its own
+// settings (COMPOSE_PROJECT_NAME, COMPOSE_FILE, ...) from there, so the
+// daemon's environment is never passed on whole: the stack's .env, whose
+// values are recorded in the database, is what Compose interpolates. Of the
+// variables Docker needs, one the .env file also defines is left out, so the
+// stack's value wins and Docker falls back to its default for it. envFile is
+// the file --env-file names, or empty for a run without one.
+func composeEnv(envFile string) ([]string, error) {
+	var defined []byte
+	if envFile != "" {
+		b, err := os.ReadFile(envFile)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("reading %s: %w", envFile, err)
+		}
+		defined = b
+	}
+	env := make([]string, 0, len(composeEnvNames))
+	for _, name := range composeEnvNames {
+		v, ok := os.LookupEnv(name)
+		if !ok || envFileDefines(defined, name) {
+			continue
+		}
+		env = append(env, name+"="+v)
+	}
+	return env, nil
+}
+
+// envFileDefines reports whether a line of the .env file starts with name as
+// a key, with or without `export` and with or without a value.
+func envFileDefines(envFile []byte, name string) bool {
+	return regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?` + regexp.QuoteMeta(name) + `[ \t]*(?:[=:]|\r?$)`).Match(envFile)
+}
+
+func (s *StackService) runCompose(ctx context.Context, timeout time.Duration, args []string, envFile string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if _, err := s.Runner.Run(ctx, "docker", args...); err != nil {
+	env, err := composeEnv(envFile)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
+	}
+	if _, err := s.Runner.Run(ctx, env, "docker", args...); err != nil {
 		return fmt.Errorf("%w: %w", ErrComposeFailed, err)
 	}
 	return nil
@@ -568,8 +614,9 @@ func (s *StackService) down(ctx context.Context, st store.Stack, volumes bool) e
 	args := s.composeArgs(st.Name, sub...)
 	if noEnv {
 		args = append([]string{"compose", "--project-name", st.Name}, sub...)
+		envFile = ""
 	}
-	if err := s.runCompose(ctx, composeDownTimeout, args); err != nil {
+	if err := s.runCompose(ctx, composeDownTimeout, args, envFile); err != nil {
 		return fmt.Errorf("stopping stack %s: %w", st.Name, err)
 	}
 	return nil
