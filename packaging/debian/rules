@@ -4,6 +4,10 @@
 # dpkg-buildpackage. It needs dpkg-dev, debhelper and fakeroot, never
 # touches a real disk, and every path below stays inside the build tree.
 # build-deb.sh removes the files this build leaves in the tree.
+# HOSERVA_DEB_DESTDIR, exported by build-deb.sh, is the directory the .deb
+# is written to instead of the parent directory dpkg-buildpackage uses by
+# default, so a build writes nothing outside its own tree and temp
+# directory.
 #
 # --buildsystem=none below skips dh's own build-system autodetection,
 # which would otherwise notice go.mod and drive the build itself as a
@@ -24,6 +28,9 @@ override_dh_auto_build:
 	$(MAKE) -C $(CURDIR) web-build catalog-snapshot
 	GOARCH=$(DEB_HOST_ARCH) go build -o hoservad ./cmd/hoservad
 	GOARCH=$(DEB_HOST_ARCH) go build -o hoserva ./cmd/hoserva
+
+override_dh_builddeb:
+	dh_builddeb --destdir=$(or $(HOSERVA_DEB_DESTDIR),..)
 
 override_dh_auto_test:
 	# ci.yml's own lint-and-unit and web jobs already run every test this

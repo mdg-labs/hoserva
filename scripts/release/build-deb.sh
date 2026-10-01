@@ -3,11 +3,13 @@
 # Runs in CI (release.yml, ci.yml) and on the dev host for L3, where
 # scripts/vm/deploy.sh builds the .deb under test (doc 06 §4, D20). Needs
 # dpkg-dev (dpkg-buildpackage), debhelper and fakeroot wherever it runs.
-# It never touches a real disk. dpkg-buildpackage writes the .deb,
-# .buildinfo and .changes to this repository's parent directory; the
-# script moves the .deb to the output directory given below, and the
-# .buildinfo and .changes stay in the parent. It leaves this tree as it
-# found it, on success and on failure (the EXIT trap below).
+# It never touches a real disk. dpkg-buildpackage would write the .deb,
+# .buildinfo and .changes to this repository's parent directory, which
+# sibling clones (orchestrate's scratch clones) share under identical
+# file names, so all three go to a private mktemp directory instead and
+# the script moves the .deb to the output directory given below. It
+# writes and deletes nothing in the parent directory, and leaves this
+# tree as it found it, on success and on failure (the EXIT trap below).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,13 +49,18 @@ cd "$repo_root"
 # trap restores the changelog and removes exactly those named paths, so a
 # local build (a dev-host L3 run, an orchestrate scratch clone) never
 # leaves anything for `git status` or a later commit to sweep up.
+#
+# build_out holds the build's outputs outside the tree and the saved
+# changelog; the trap removes it as one directory, never a glob in the
+# parent.
 changelog=packaging/debian/changelog
-saved_changelog="$(mktemp)"
+build_out="$(mktemp -d)"
+saved_changelog="$build_out/changelog"
 cp -- "$changelog" "$saved_changelog"
 cleanup() {
   rm -f debian
   cp -- "$saved_changelog" "$changelog"
-  rm -f "$saved_changelog"
+  rm -rf -- "$build_out"
   rm -rf -- hoserva hoservad \
     packaging/debian/.debhelper \
     packaging/debian/debhelper-build-stamp \
@@ -78,8 +85,17 @@ hoserva (${version}) unstable; urgency=medium
  -- Hoserva release automation <releases@hoserva.dev>  $(date -R)
 CHANGELOG
 
-dpkg-buildpackage -a"$arch" -us -uc -b
+# --changes-file and --buildinfo-file place those two files; the .deb goes
+# where packaging/debian/rules' dh_builddeb --destdir sends it, from the
+# exported HOSERVA_DEB_DESTDIR. dpkg-genchanges and dpkg-genbuildinfo find
+# the .deb through their -u option, so both are pointed at the same place.
+base="hoserva_${version}_${arch}"
+HOSERVA_DEB_DESTDIR="$build_out" dpkg-buildpackage -a"$arch" -us -uc -b \
+  --changes-file="$build_out/$base.changes" \
+  --buildinfo-file="$build_out/$base.buildinfo" \
+  --changes-option=-u"$build_out" \
+  --buildinfo-option=-u"$build_out"
 
 mkdir -p "$out_dir"
-mv "../hoserva_${version}_${arch}.deb" "$out_dir/"
+mv "$build_out/$base.deb" "$out_dir/"
 echo "build-deb.sh: built $out_dir/hoserva_${version}_${arch}.deb"
