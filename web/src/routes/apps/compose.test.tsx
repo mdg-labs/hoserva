@@ -470,6 +470,24 @@ describe("Import", () => {
     expect(mockPut).not.toHaveBeenCalled();
   });
 
+  it("shows the catalog message, not the browser's error text, when a file cannot be read", async () => {
+    const readAsText = vi.spyOn(FileReader.prototype, "readAsText").mockImplementation(function (this: FileReader) {
+      this.onerror?.(new ProgressEvent("error") as ProgressEvent<FileReader>);
+    });
+    try {
+      open();
+      await editor();
+      const dialog = importDialog();
+      const file = new File([EDITED], "docker-compose.yml");
+      fireEvent.change(within(dialog).getByLabelText("Compose file"), { target: { files: [file] } });
+
+      expect(await within(dialog).findByText("Could not read the file.")).toBeInTheDocument();
+      expect(within(dialog).getByLabelText("Or paste the file's text")).toHaveValue("");
+    } finally {
+      readAsText.mockRestore();
+    }
+  });
+
   it("refuses a file over the size cap without loading it", async () => {
     open();
     await editor();

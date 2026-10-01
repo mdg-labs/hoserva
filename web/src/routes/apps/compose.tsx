@@ -107,7 +107,7 @@ function readText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.onerror = () => reject(reader.error ?? new Error());
     reader.readAsText(file);
   });
 }
@@ -142,8 +142,8 @@ function ImportDialog({
     setReading(true);
     try {
       setText(await readText(file));
-    } catch (err: unknown) {
-      setProblem(err instanceof Error ? err.message : t("apps.compose.import.readFailed"));
+    } catch {
+      setProblem(t("apps.compose.import.readFailed"));
     } finally {
       setReading(false);
     }
