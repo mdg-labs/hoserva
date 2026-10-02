@@ -1,0 +1,21 @@
+internal-boot-shared-1.img pool_guid=6895916408931496298 vdev_guid=7265743939272943903
+  p1: start_sector=2048 sectors=2048
+  p2: start_sector=4096 sectors=1044480
+  p3: start_sector=1048576 sectors=1048576
+  p4: start_sector=2097152 sectors=2097119
+internal-boot-shared-2.img pool_guid=6895916408931496298 vdev_guid=6619808012152237729
+  p1: start_sector=2048 sectors=2048
+  p2: start_sector=4096 sectors=1044480
+  p3: start_sector=1048576 sectors=1048576
+  p4: start_sector=2097152 sectors=2097119
+internal-boot-dedicated-1.img pool_guid=7329649480235144358 vdev_guid=5853838909075999356
+  p1: start_sector=2048 sectors=2048
+  p2: start_sector=4096 sectors=1044480
+  p3: start_sector=1048576 sectors=3143680
+  p4: start_sector=4192256 sectors=2015
+array-gpt-1.img
+internal-boot-shared-renamed-1.img pool_guid=8953267694897876691 vdev_guid=7508701949484645474
+  p1: start_sector=2048 sectors=2048
+  p2: start_sector=4096 sectors=1044480
+  p3: start_sector=1048576 sectors=1048576
+  p4: start_sector=2097152 sectors=2097119
