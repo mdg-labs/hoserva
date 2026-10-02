@@ -5,6 +5,9 @@
 # real signing key.
 set -euo pipefail
 
+# Throwaway repos must not pick up the developer's signing config (tag.gpgsign, commit.gpgsign).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/release/lib.sh
 source "$script_dir/lib.sh"

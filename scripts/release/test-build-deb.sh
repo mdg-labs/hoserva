@@ -19,6 +19,9 @@
 # redirect them.
 set -euo pipefail
 
+# Throwaway repos must not pick up the developer's signing config (tag.gpgsign, commit.gpgsign).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 
