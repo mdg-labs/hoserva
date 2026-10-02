@@ -151,6 +151,10 @@ func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) c
 	}
 }
 
+// A cache row that is a partition is, by construction, a spare partition of
+// the boot disk (the only partition Hoserva assigns), so its content-file
+// copy is the boot copy's device (Q18).
+//
 // layoutFromStore leaves an unlisted disk out of snapraid.conf (#358,
 // doc 09 §4 step 8). An unpooled disk stays listed: SnapRAID must record
 // it empty in a sync while its data line is still there, or every later
@@ -168,6 +172,7 @@ func layoutFromStore(disks []store.ArrayDisk) parity.Layout {
 			l.DataMounts = append(l.DataMounts, parity.DataMount{RoleIndex: d.RoleIndex, Mountpoint: d.Mountpoint})
 		case store.ArrayRoleCache:
 			l.CacheMount = d.Mountpoint
+			l.CacheOnBootDevice = disk.IsPartition(d.Device, d.ByIDName)
 		}
 	}
 	return l

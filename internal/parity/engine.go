@@ -119,11 +119,25 @@ type DiffFile struct {
 	RelPath string
 }
 
-// DiskDiff is one data disk's file count before and after the change this
-// diff reports.
+// DiskDiff is one data disk's entry count before and after the change this
+// diff reports. Both count regular files and links (symlinks and hardlinked
+// names) alike, the kinds a diff reports changes for; LinksBefore is how
+// many of FilesBefore are links.
 type DiskDiff struct {
 	FilesBefore int
 	FilesAfter  int
+	LinksBefore int
+}
+
+// RegularFilesBefore is the array's tracked regular files across every
+// disk: the sum of FilesBefore less LinksBefore. The guard's removed-percent
+// rule divides by this total, as it did before links were counted per disk.
+func (r DiffReport) RegularFilesBefore() int {
+	var n int
+	for _, dd := range r.PerDisk {
+		n += dd.FilesBefore - dd.LinksBefore
+	}
+	return n
 }
 
 // Progress is one update from a running sync, scrub, fix or check. Err is

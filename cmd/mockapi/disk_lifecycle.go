@@ -127,6 +127,9 @@ func mockResolveAssignedDisk(device string, fsOpt apiv1.OptArrayDiskFilesystem, 
 		}
 	}
 	assigned := disk.AssignedDisk{Device: device, Filesystem: fs, Adopt: adoptOpt.Or(false)}
+	if disk.IsBootDiskPartition(mockInventoryAsDisks(listed), device) {
+		return disk.AssignedDisk{}, mockBootPartitionError(disk.ErrBootPartitionNotCache, device)
+	}
 	found := false
 	for _, d := range listed {
 		if d.Device != device {
@@ -181,12 +184,23 @@ func mockFilesystemToAPI(fs disk.FilesystemType) apiv1.ArrayDiskFilesystem {
 func mockInventoryAsDisks(listed []apiv1.DiskInventoryEntry) []disk.Disk {
 	out := make([]disk.Disk, 0, len(listed))
 	for _, d := range listed {
-		out = append(out, disk.Disk{
+		entry := disk.Disk{
 			Device:       d.Device,
 			WWN:          d.Wwn.Or(""),
 			Serial:       d.Serial.Or(""),
 			WeakIdentity: d.WeakIdentity.Or(false),
-		})
+			Boot:         d.Boot,
+		}
+		for _, c := range d.CachePartitions {
+			entry.CachePartitions = append(entry.CachePartitions, disk.CachePartition{
+				Device:   c.Device,
+				Size:     c.SizeBytes,
+				ByIDName: c.ByIdName.Or(""),
+				PartUUID: c.PartUuid.Or(""),
+				Reason:   disk.ReasonSpareBootPartition,
+			})
+		}
+		out = append(out, entry)
 	}
 	return out
 }

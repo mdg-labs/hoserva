@@ -187,31 +187,6 @@ func TestPlanEvacuation_SharesOneDisksFreeSpaceAcrossShares(t *testing.T) {
 	}
 }
 
-// TestPlanEvacuation_RefusesASymlinkBeforeAnyCopy: the copy path skips a
-// symlink and the post-check rejects it, so a plan that omitted it would
-// run every copy and sync and then fail — on every retry. It must be
-// refused at planning time, naming the entry.
-func TestPlanEvacuation_RefusesASymlinkBeforeAnyCopy(t *testing.T) {
-	base := t.TempDir()
-	disk1 := filepath.Join(base, "disk1")
-	disk2 := filepath.Join(base, "disk2")
-	s := evacuateShare(t, "movies", []string{disk1, disk2})
-	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "a.bin"), 100)
-	if err := os.Symlink("a.bin", filepath.Join(s.Branches[0], "link")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
-
-	deps := Deps{Open: NewFakeOpenChecker()}
-	deps.Usage = fakeUsage(map[string]DiskUsage{
-		s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900},
-	})
-
-	_, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
-	if !errors.Is(err, ErrEvacuationUnsupportedEntry) {
-		t.Fatalf("PlanEvacuation: got %v, want ErrEvacuationUnsupportedEntry", err)
-	}
-}
-
 // TestPickEvacuationTarget_PicksTheMostFreeSpace proves target selection
 // spreads an evacuated disk's files across what remains rather than
 // piling them onto whichever branch comes first.

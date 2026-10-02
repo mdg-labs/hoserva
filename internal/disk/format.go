@@ -42,13 +42,33 @@ var ErrUnmanagedDevice = errors.New("disk: format target is not a loop device or
 // and the typed confirmation this plan was checked against (doc 03 §3.1
 // step 6) named a specific disk, not a path that might now belong to a
 // different one.
+//
+// A boot-disk partition assigned as the cache is the one partition it
+// formats (bootpartition.go); with no BlankProber that case is refused,
+// so FormatAssigned never formats a partition.
 func FormatAssigned(ctx context.Context, p Provider, plan TopologyPlan, dev string, fs FilesystemType) error {
+	return FormatAssignedProbed(ctx, p, nil, plan, dev, fs)
+}
+
+// FormatAssignedProbed is FormatAssigned with the BlankProber a
+// boot-disk cache partition needs. For that partition it re-resolves the
+// partition's identity and re-probes it blank immediately before mkfs,
+// then formats through its by-id path with a context marker the Provider
+// honours for that exact path only.
+func FormatAssignedProbed(ctx context.Context, p Provider, probe BlankProber, plan TopologyPlan, dev string, fs FilesystemType) error {
 	assigned, ok := plan.findDevice(dev)
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrDiskNotAssigned, dev)
 	}
-	if err := allowFormatDevice(assigned); err != nil {
+	if err := allowFormatDevice(plan, assigned); err != nil {
 		return err
+	}
+	if IsPartition(assigned.Device, assigned.ByIDName) {
+		target, err := resolveCachePartitionTarget(ctx, p, probe, assigned)
+		if err != nil {
+			return err
+		}
+		return p.Format(withBootCacheTarget(ctx, target), target, fs)
 	}
 	target, err := resolveFormatTarget(ctx, p, dev, assigned.WWN, assigned.Serial, assigned.ByIDName)
 	if err != nil {
@@ -155,7 +175,18 @@ func identityOrDevice(byIDName, dev string) string {
 // make AdoptCheck (or the boot-disk refusal resolveFormatTarget also
 // performs) land on the wrong physical disk. A disk with no by-id link at
 // all keeps using its plain Device path, unchanged.
+//
+// Every disk's identity and boot-device checks, and a boot-disk cache
+// partition's blank probe, run before any disk in the plan is formatted,
+// so a refused disk erases nothing; FormatAssignedProbed repeats them
+// immediately before each mkfs.
 func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, sizes map[string]int64, confirmation string) error {
+	return FormatPlanProbed(ctx, p, r, LinuxBlankProber{Exec: r}, plan, sizes, confirmation)
+}
+
+// FormatPlanProbed is FormatPlan with an explicit BlankProber for the
+// boot-disk cache partition; a nil probe refuses that partition.
+func FormatPlanProbed(ctx context.Context, p Provider, r Runner, probe BlankProber, plan TopologyPlan, sizes map[string]int64, confirmation string) error {
 	if err := plan.CheckConfirmation(confirmation); err != nil {
 		return err
 	}
@@ -167,6 +198,18 @@ func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, si
 	}
 
 	disks := plan.assignedDisks()
+
+	for _, d := range disks {
+		if IsPartition(d.Device, d.ByIDName) {
+			if _, err := resolveCachePartitionTarget(ctx, p, probe, d); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := resolveFormatTarget(ctx, p, d.Device, d.WWN, d.Serial, d.ByIDName); err != nil {
+			return err
+		}
+	}
 
 	for _, d := range disks {
 		if d.Adopt {
@@ -184,7 +227,7 @@ func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, si
 		if d.Adopt {
 			continue
 		}
-		if err := FormatAssigned(ctx, p, plan, d.Device, d.Filesystem); err != nil {
+		if err := FormatAssignedProbed(ctx, p, probe, plan, d.Device, d.Filesystem); err != nil {
 			return err
 		}
 	}
@@ -193,23 +236,32 @@ func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, si
 
 // CheckFormatTargets refuses (ErrUnmanagedDevice) a partition path such
 // as /dev/sda1 — standing in for a real disk a bug might name — so mkfs
-// never runs against it. Whole disks and loop devices are left to the
-// assignment, identity and boot guards.
+// never runs against it, with one exception: the cache slot may be a
+// boot-disk partition that is not adopted (ErrBootPartitionAdopt
+// otherwise), whose identity and blankness FormatAssignedProbed then
+// verifies. Whole disks and loop devices are left to the assignment,
+// identity and boot guards.
 func CheckFormatTargets(plan TopologyPlan) error {
 	for _, d := range plan.assignedDisks() {
-		if err := allowFormatDevice(d); err != nil {
+		if err := allowFormatDevice(plan, d); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func allowFormatDevice(assigned AssignedDisk) error {
+func allowFormatDevice(plan TopologyPlan, assigned AssignedDisk) error {
 	if IsLoopDevice(assigned.Device) {
 		return nil
 	}
-	if looksLikePartition(assigned.Device) {
+	if !IsPartition(assigned.Device, assigned.ByIDName) {
+		return nil
+	}
+	if plan.Cache == nil || plan.Cache.Device != assigned.Device {
 		return fmt.Errorf("%w: %s", ErrUnmanagedDevice, assigned.Device)
+	}
+	if assigned.Adopt {
+		return fmt.Errorf("%w: %s", ErrBootPartitionAdopt, assigned.Device)
 	}
 	return nil
 }

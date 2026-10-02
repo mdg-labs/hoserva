@@ -158,8 +158,12 @@ func parseScanLine(d *DiffLog, rest string) {
 // parsed diff into the public DiffReport (doc 02 §2) the threshold guard
 // consumes. FilesAfter projects what each disk will hold once this diff's
 // changes are committed by a sync: before + added + copied-in - removed
-// for that disk. MovedByHoserva is always zero here — matching a removal
-// to a relocation manifest (Q15) is the guard's own job, not Engine's.
+// for that disk. A diff's scan lines report a symlink or a hardlinked name
+// exactly like a regular file, so FilesBefore is a disk's regular files
+// (status) plus its links (before.PerDiskLinkCount): both counts, and the
+// projection between them, cover the same entries. MovedByHoserva is
+// always zero here — matching a removal to a relocation manifest (Q15) is
+// the guard's own job, not Engine's.
 func BuildDiffReport(before StatusReport, d DiffLog) DiffReport {
 	report := DiffReport{
 		Added:   d.Added,
@@ -170,9 +174,10 @@ func BuildDiffReport(before StatusReport, d DiffLog) DiffReport {
 		PerDisk: map[string]DiskDiff{},
 	}
 	for id, mount := range d.DataMounts {
-		b := before.PerDiskFileCount[id]
+		links := before.PerDiskLinkCount[id]
+		b := before.PerDiskFileCount[id] + links
 		after := b + d.diskAdd[id] + d.diskCopyIn[id] - d.diskRemove[id]
-		report.PerDisk[filepath.Clean(mount)] = DiskDiff{FilesBefore: b, FilesAfter: after}
+		report.PerDisk[filepath.Clean(mount)] = DiskDiff{FilesBefore: b, FilesAfter: after, LinksBefore: links}
 	}
 	report.RemovedFiles = projectDiffFiles(d.DataMounts, d.removed)
 	report.AddedFiles = append(projectDiffFiles(d.DataMounts, d.added), projectDiffFiles(d.DataMounts, d.copiedIn)...)

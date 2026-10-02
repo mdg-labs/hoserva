@@ -76,6 +76,15 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			continue
 		}
 		checked = append(checked, disk.MountUnit{Where: d.Mountpoint, UUID: d.FSUUID})
+		// A cache on a boot-disk partition is matched by its parent
+		// disk's identity, and the inventory's cached filesystem for that
+		// disk is its first partition's, never this partition's — so the
+		// recorded UUID is not compared here; ArrayDiskUUIDCheck above
+		// still confirms the mounted partition's filesystem at Start.
+		expectedFSUUID := d.FSUUID
+		if disk.IsPartition(d.Device, d.ByIDName) {
+			expectedFSUUID = ""
+		}
 		expected = append(expected, disk.ExpectedDisk{
 			Identity: disk.Identity{
 				WWN:          d.WWN,
@@ -87,7 +96,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 				// carrying a different filesystem must not be reported
 				// present, since Startup would then try to mount it by a
 				// UUID that never appears as a device.
-				FSUUID: d.FSUUID,
+				FSUUID: expectedFSUUID,
 			},
 			Role:    d.Role,
 			MountAt: d.Mountpoint,

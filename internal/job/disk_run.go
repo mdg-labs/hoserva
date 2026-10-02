@@ -26,6 +26,10 @@ type DiskFormatDeps struct {
 	Store     *store.ArrayStore
 	Generator *config.Generator
 	Mounter   disk.UnitMounter
+	// Probe confirms a boot-disk cache partition blank immediately before
+	// it is formatted (disk.FormatPlanProbed). Nil probes with blkid
+	// through Runner.
+	Probe disk.BlankProber
 	// ArrayReady, when set, runs once applyArrayFromStore has persisted
 	// topology and mounted every physical disk: hoservad uses it to
 	// rebuild its own job.ArraySequence from that freshly written
@@ -93,7 +97,11 @@ func RunDiskFormat(d DiskFormatDeps) RunFunc {
 			return err
 		}
 
-		if err := disk.FormatPlan(ctx, d.Provider, d.Runner, plan, params.Sizes, params.Confirmation); err != nil {
+		probe := d.Probe
+		if probe == nil {
+			probe = disk.LinuxBlankProber{Exec: d.Runner}
+		}
+		if err := disk.FormatPlanProbed(ctx, d.Provider, d.Runner, probe, plan, params.Sizes, params.Confirmation); err != nil {
 			return err
 		}
 
@@ -270,6 +278,7 @@ func snapraidLayout(plan disk.TopologyPlan) parity.Layout {
 	}
 	if plan.Cache != nil {
 		l.CacheMount = "/mnt/cache"
+		l.CacheOnBootDevice = disk.IsPartition(plan.Cache.Device, plan.Cache.ByIDName)
 	}
 	return l
 }

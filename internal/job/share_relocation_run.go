@@ -3,7 +3,9 @@ package job
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/parity"
@@ -119,8 +121,47 @@ func RunShareRelocation(d ShareRelocationDeps) RunFunc {
 				return fmt.Errorf("job: share relocation: clearing relocation manifest: %w", clearErr)
 			}
 		}
+		if err == nil && !report.Interrupted && report.Incomplete() {
+			return &OutcomeError{Status: StatusFailed, Code: relocationIncompleteCode, Err: incompleteRelocationError(report)}
+		}
 		return err
 	}
+}
+
+// relocationIncompleteCode is the error code of a share relocation that
+// ran to its end but left entries behind: the job fails rather than
+// succeeds, because the share's files are not all on the new side.
+const relocationIncompleteCode = "relocation_incomplete"
+
+const incompleteListLimit = 10
+
+// incompleteRelocationError names what an incomplete relocation left
+// behind and why. Runtime-only sockets are not part of it; the job log
+// already carries every entry, this is the part a job's error text keeps.
+func incompleteRelocationError(report cache.Report) error {
+	var parts []string
+	for _, e := range report.LeftBehind() {
+		if e.Result == cache.ResultSkippedSocket {
+			continue
+		}
+		why := string(e.Result)
+		switch {
+		case e.Err != "":
+			why += ": " + e.Err
+		case e.Reason != "":
+			why += ": " + e.Reason
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", e.Path, why))
+	}
+	shown := parts
+	if len(shown) > incompleteListLimit {
+		shown = shown[:incompleteListLimit]
+	}
+	msg := fmt.Sprintf("share relocation incomplete: %d entries left behind: %s", len(parts), strings.Join(shown, "; "))
+	if len(parts) > len(shown) {
+		msg += fmt.Sprintf("; and %d more (see the job log)", len(parts)-len(shown))
+	}
+	return errors.New(msg)
 }
 
 // persistRelocationManifestOnCheckpoint wraps save so that, in addition to

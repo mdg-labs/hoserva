@@ -94,22 +94,18 @@ func evacuationSyncFunc(eng parity.Engine) job.EvacuationSyncFunc {
 
 // rebalanceTrackedFileCount adapts eng.Diff into job.RebalanceDeps/
 // EvacuationDeps.TrackedFileCount (cache.Deps.TrackedFileCount's own
-// required shape, internal/cache/mover.go): the sum of
-// DiffReport.PerDisk[mount].FilesBefore across every disk in a fresh
-// diff, exactly the "totalBefore" the threshold guard's own next
-// Evaluate call will divide by (parity/guard.go's Evaluate) — never an
-// independent filesystem walk, which cache.Deps.TrackedFileCount's own
-// doc comment forbids.
+// required shape, internal/cache/mover.go): the array's regular files in a
+// fresh diff (DiffReport.RegularFilesBefore, which leaves out the links
+// PerDisk[mount].FilesBefore counts), exactly the "totalBefore" the
+// threshold guard's own next Evaluate call will divide by
+// (parity/guard.go's Evaluate) — never an independent filesystem walk,
+// which cache.Deps.TrackedFileCount's own doc comment forbids.
 func rebalanceTrackedFileCount(eng parity.Engine) func(ctx context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		diff, err := eng.Diff(ctx)
 		if err != nil {
 			return 0, err
 		}
-		var total int
-		for _, dd := range diff.PerDisk {
-			total += dd.FilesBefore
-		}
-		return total, nil
+		return diff.RegularFilesBefore(), nil
 	}
 }

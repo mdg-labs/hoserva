@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +63,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 				ContainsData:    apiv1.NewOptBool(false),
 				LooksLikeUnraid: apiv1.NewOptBool(false),
 			},
+			mockBootNVMe(),
 			mockUSBDisk(),
 		}
 	}
@@ -116,6 +118,29 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 	}
 	return append(disks, mockUSBDisk())
 }
+
+// mockBootNVMe is the shared-NVMe layout (doc 01 §6): one NVMe holding the
+// Debian root and a spare partition, which `listDisks` reports as the one
+// partition a cache may use. fresh-install carries it, so the wizard has a
+// cache candidate to offer beside the two data disks.
+func mockBootNVMe() apiv1.DiskInventoryEntry {
+	return apiv1.DiskInventoryEntry{
+		Device:    "/dev/nvme0n1",
+		SizeBytes: mockBootNVMeSize,
+		Model:     apiv1.NewOptString("Samsung SSD 970 EVO Plus 1TB"),
+		Serial:    apiv1.NewOptString("S4EWNX0M123456X"),
+		Boot:      true,
+		CachePartitions: []apiv1.CachePartition{{
+			Device:    "/dev/nvme0n1p3",
+			SizeBytes: mockBootNVMeSize - 64*disk.GB,
+			ByIdName:  apiv1.NewOptString("nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part3"),
+			PartUuid:  apiv1.NewOptString("5b3d9e0a-03"),
+			Reason:    apiv1.CachePartitionReasonSpareBootPartition,
+		}},
+	}
+}
+
+const mockBootNVMeSize = 1 * disk.TB
 
 func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 	if scenario == "fresh-install" {
@@ -528,17 +553,21 @@ func (h *handler) GetCacheUsage(ctx context.Context) (apiv1.NilCacheUsageBreakdo
 }
 
 func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest) (*apiv1.Job, error) {
-	plan, err := mockTopologyPlan(req)
+	sizes := mockDiskSizes(h.scenario)
+	plan, err := mockTopologyPlan(req, mockInventoryAsDisks(mockDiskInventory(h.scenario)), sizes)
 	if err != nil {
 		return nil, err
 	}
 	if req.Confirmation == "" || plan.CheckConfirmation(req.Confirmation) != nil {
 		return nil, errConfirmRequired()
 	}
-	if err := plan.Validate(mockDiskSizes(h.scenario)); err != nil {
+	if err := plan.Validate(sizes); err != nil {
 		return nil, errInvalidPlan(err)
 	}
 	if err := disk.CheckFormatTargets(plan); err != nil {
+		if errors.Is(err, disk.ErrBootPartitionAdopt) {
+			return nil, errInvalidPlan(err)
+		}
 		return nil, &mockError{code: "unmanaged_device", statusCode: 400, message: err.Error()}
 	}
 	h.mu.Lock()
@@ -570,12 +599,38 @@ func mockDiskSizes(scenario string) map[string]int64 {
 	return sizes
 }
 
-func mockTopologyPlan(req *apiv1.CreateArrayRequest) (disk.TopologyPlan, error) {
+// mockBootPartitionError mirrors internal/api's mapBootPartitionError.
+func mockBootPartitionError(err error, device string) error {
+	switch {
+	case errors.Is(err, disk.ErrBootPartitionNotCache):
+		return &mockError{code: "boot_partition_cache_only", statusCode: 400, message: fmt.Sprintf("%v: %s", disk.ErrBootPartitionNotCache, device)}
+	case errors.Is(err, disk.ErrBootPartitionAdopt):
+		return errInvalidPlan(err)
+	default:
+		return &mockError{code: "unmanaged_device", statusCode: 400, message: err.Error()}
+	}
+}
+
+// mockTopologyPlan mirrors internal/api's diskFormatParamsFromRequest
+// against the mock's own inventory: a boot-disk partition is bound through
+// the same disk.BindBootPartition production uses, and its size is added
+// to sizes.
+func mockTopologyPlan(req *apiv1.CreateArrayRequest, listed []disk.Disk, sizes map[string]int64) (disk.TopologyPlan, error) {
 	var plan disk.TopologyPlan
 	for _, a := range req.Disks {
 		assigned, err := mockAssignedDisk(a)
 		if err != nil {
 			return disk.TopologyPlan{}, err
+		}
+		if i := slices.IndexFunc(listed, func(d disk.Disk) bool { return d.Device == a.Device }); i >= 0 && listed[i].Boot {
+			return disk.TopologyPlan{}, errInvalidPlan(fmt.Errorf("disk: refusing to assign the boot device %s", a.Device))
+		}
+		if bound, size, isPart, err := disk.BindBootPartition(listed, assigned, a.Role == apiv1.ArrayDiskRoleCache); isPart {
+			if err != nil {
+				return disk.TopologyPlan{}, mockBootPartitionError(err, a.Device)
+			}
+			assigned = bound
+			sizes[a.Device] = size
 		}
 		switch a.Role {
 		case apiv1.ArrayDiskRoleParity:

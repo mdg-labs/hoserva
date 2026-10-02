@@ -7,7 +7,8 @@
 # disk, the Playwright journeys (journey 9 — config export, fresh install
 # and restore through the UI — as its own step after them), spindown,
 # network confirm-or-revert
-# (issue #114), the array stop/start sequence (issue #146), and the UPS
+# (issue #114), the cache on the boot disk's spare partition in a VM of its
+# own (issue #557), the array stop/start sequence (issue #146), and the UPS
 # on-battery/power-restored/low-battery flow against NUT's own dummy-ups
 # driver (issue #250).
 #
@@ -45,14 +46,14 @@ L3_STEP_ORDER=(
   maintenance-gate disk-yank midsync-destroy reboot-persistence
   config-backup-restore bare-metal-restore playwright journey-9 spindown
   spindown-30min nfs-export
-  immutable-mountpoint network-revert array-sequence ups
+  immutable-mountpoint network-revert boot-cache array-sequence ups
 )
 declare -A L3_STEP_PREREQS=(
   [array-stop-start]="" [smb-stop-start]="" [pool-restart]=""
   [storage-target]="" [maintenance-gate]="" [disk-yank]=""
   [midsync-destroy]="" [reboot-persistence]="" [config-backup-restore]=""
   [bare-metal-restore]="" [playwright]="" [journey-9]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
-  [immutable-mountpoint]="" [network-revert]="" [array-sequence]="" [ups]=""
+  [immutable-mountpoint]="" [network-revert]="" [boot-cache]="" [array-sequence]="" [ups]=""
 )
 # Exactly the label text each step's own pass/fail/not_yet call below
 # uses as STEP_NAMES's entry, so a skipped step's summary row lines up
@@ -75,6 +76,7 @@ declare -A L3_STEP_LABELS=(
   [nfs-export]="NFS export mount"
   [immutable-mountpoint]="immutable mountpoint guard"
   [network-revert]="network confirm-or-revert"
+  [boot-cache]="array with the cache on the boot disk's spare partition"
   [array-sequence]="array stop/start sequence"
   [ups]="UPS on-battery/power-restored/low-battery"
 )
@@ -94,7 +96,7 @@ L3_GROUP_REST=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
   config-backup-restore bare-metal-restore playwright journey-9 spindown-30min nfs-export
-  immutable-mountpoint network-revert array-sequence ups
+  immutable-mountpoint network-revert boot-cache array-sequence ups
 )
 
 # L3_LIST_STEPS/L3_LIST_GROUPS (issue #392): pure data queries against the
@@ -2039,6 +2041,15 @@ elif vm_domain_running "$VM_DOMAIN"; then
   fi
 else
   not_yet "network confirm-or-revert" "no running domain (install step above did not complete — see step 1)"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === array with the cache on the boot disk's spare partition (doc 01 §6, issue #557) ==="
+if ! l3_step_selected boot-cache; then
+  l3_skip "${L3_STEP_LABELS[boot-cache]}"
+elif "$script_dir/boot-cache-check.sh"; then
+  pass "array with the cache on the boot disk's spare partition"
+else
+  fail "array with the cache on the boot disk's spare partition" "see boot-cache-check.sh output above (issue #557) — it boots and destroys a second VM of its own in the shared-nvme topology, independent of this suite's VM"
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 15/15 array stop/start sequence: missing disk at boot, service stops before unmount ==="

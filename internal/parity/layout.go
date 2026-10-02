@@ -84,7 +84,12 @@ type Layout struct {
 	ParityMounts []string    `json:"parity_mounts"`
 	DataMounts   []DataMount `json:"data_mounts"`
 	CacheMount   string      `json:"cache_mount,omitempty"`
-	Excludes     []string    `json:"excludes,omitempty"`
+	// CacheOnBootDevice is true when CacheMount is a partition of the disk
+	// the boot filesystem lives on: the boot copy of the content file and a
+	// copy on the cache are then one physical device (Q18), so only the
+	// boot copy is placed and the data disks supply the rest.
+	CacheOnBootDevice bool     `json:"cache_on_boot_device,omitempty"`
+	Excludes          []string `json:"excludes,omitempty"`
 }
 
 // Validate checks Q19's parity-count rule, that there is at least one data
@@ -146,9 +151,10 @@ func (l Layout) Validate() error {
 // ContentPaths computes Q18's content-file placement: the boot device
 // first, cache if present, then data disks in DataMounts order, until
 // the count reaches parity-disks+2. Boot, cache and every data mount are
-// always distinct physical devices in Hoserva's own layout (doc 01 §6),
-// so the number of paths chosen is also the number of distinct devices
-// used — and because Q19 limits parity to 1 or 2 disks, that minimum is
+// distinct physical devices in Hoserva's own layout (doc 01 §6) — except
+// a cache on the boot disk (CacheOnBootDevice), which gets no copy of its
+// own — so the number of paths chosen is also the number of distinct
+// devices used — and because Q19 limits parity to 1 or 2 disks, that minimum is
 // always 3 or 4, so Q18's "at least three distinct physical devices"
 // half is already satisfied whenever the copy-count half is.
 func (l Layout) ContentPaths() ([]string, error) {
@@ -159,7 +165,7 @@ func (l Layout) ContentPaths() ([]string, error) {
 	min := len(l.ParityMounts) + 2
 	paths := []string{BootContentPath}
 
-	if l.CacheMount != "" {
+	if l.CacheMount != "" && !l.CacheOnBootDevice {
 		paths = append(paths, filepath.Join(l.CacheMount, contentFileName))
 	}
 

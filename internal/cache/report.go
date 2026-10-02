@@ -31,9 +31,19 @@ const (
 	// ResultSkippedNoSpace is a file the array has no eligible disk with
 	// room for (size plus minfreespace).
 	ResultSkippedNoSpace Result = "skipped_no_space"
-	// ResultSkippedNotRegular is a non-regular file (directory, symlink,
-	// device, socket) the mover leaves alone.
+	// ResultSkippedNotRegular is an entry of a type this package has no
+	// way to recreate. Symlinks, FIFOs and device nodes are recreated and
+	// sockets are ResultSkippedSocket, so nothing a Linux filesystem
+	// holds reaches it.
 	ResultSkippedNotRegular Result = "skipped_not_regular"
+	// ResultSkippedSocket is a Unix socket. A socket is runtime state its
+	// owner recreates when it starts, so it is reported and left where it
+	// is rather than copied.
+	ResultSkippedSocket Result = "skipped_socket"
+	// ResultLeftBehind is an entry still on the source when the relocation
+	// ended that no entry of this run explains: an earlier run of the same
+	// job left it, and its reason was not carried across the resume.
+	ResultLeftBehind Result = "left_behind"
 	// ResultSkippedGone is a file that disappeared between enumeration
 	// and processing — not an error, just no longer there to move.
 	ResultSkippedGone Result = "skipped_gone"
@@ -53,18 +63,25 @@ type Entry struct {
 	Path   string
 	Bytes  int64
 	Result Result
+	// Kind names the entry's type when it is not a regular file:
+	// "symlink", "fifo", "char_device", "block_device" or "socket".
+	Kind   string
 	Reason string
 	Err    string
 }
 
 func (e Entry) reasonSuffix() string {
+	kind := ""
+	if e.Kind != "" {
+		kind = " (" + e.Kind + ")"
+	}
 	switch {
 	case e.Err != "":
-		return ": " + e.Err
+		return kind + ": " + e.Err
 	case e.Reason != "":
-		return ": " + e.Reason
+		return kind + ": " + e.Reason
 	default:
-		return ""
+		return kind
 	}
 }
 
@@ -74,7 +91,12 @@ type Report struct {
 	StartedAt   time.Time
 	FinishedAt  time.Time
 	Interrupted bool
-	Entries     []Entry
+	// Relocation is set on the report of a share relocation, where every
+	// entry the run did not move is something the user asked to have
+	// moved. A scheduled mover pass leaves it false: files inside the
+	// grace period or held open are routine there.
+	Relocation bool
+	Entries    []Entry
 }
 
 func (r *Report) add(e Entry) { r.Entries = append(r.Entries, e) }
@@ -89,11 +111,41 @@ func (r Report) Skipped() []Entry {
 	for _, e := range r.Entries {
 		switch e.Result {
 		case ResultSkippedOpen, ResultSkippedGrace, ResultSkippedExcluded,
-			ResultSkippedNoSpace, ResultSkippedNotRegular, ResultSkippedGone, ResultConflict:
+			ResultSkippedNoSpace, ResultSkippedNotRegular, ResultSkippedSocket, ResultSkippedGone, ResultConflict:
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// LeftBehind returns every entry whose source is still where it was after
+// the run, for a reason that is not "it no longer exists": skipped, in
+// conflict, failed, or copied but not yet deleted. Sockets are included;
+// RuntimeOnly separates them out.
+func (r Report) LeftBehind() []Entry {
+	var out []Entry
+	for _, e := range r.Entries {
+		switch e.Result {
+		case ResultMoved, ResultSkippedGone:
+		default:
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Incomplete reports whether a relocation left anything but runtime-only
+// sockets behind, so the share's files are not all on the new side yet.
+func (r Report) Incomplete() bool {
+	if !r.Relocation {
+		return false
+	}
+	for _, e := range r.LeftBehind() {
+		if e.Result != ResultSkippedSocket {
+			return true
+		}
+	}
+	return false
 }
 
 // Failed returns every entry the mover could not process.
@@ -127,7 +179,7 @@ func (r Report) Summary() string {
 	for _, e := range r.Entries {
 		counts[e.Result]++
 	}
-	return fmt.Sprintf(
+	summary := fmt.Sprintf(
 		"mover: %d moved (%d bytes), %d skipped, %d pending delete, %d failed, duration %s",
 		counts[ResultMoved], r.MovedBytes(),
 		len(r.Skipped()),
@@ -135,4 +187,15 @@ func (r Report) Summary() string {
 		counts[ResultFailed],
 		r.FinishedAt.Sub(r.StartedAt),
 	)
+	if !r.Relocation {
+		return summary
+	}
+	if sockets := counts[ResultSkippedSocket]; sockets > 0 {
+		summary += fmt.Sprintf("; %d runtime-only socket(s) left in place", sockets)
+	}
+	if r.Incomplete() {
+		left := len(r.LeftBehind()) - counts[ResultSkippedSocket]
+		summary += fmt.Sprintf("; relocation incomplete: %d left behind (see the entries above for each path and why)", left)
+	}
+	return summary
 }

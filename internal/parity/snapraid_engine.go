@@ -216,7 +216,9 @@ func (e *SnapraidEngine) CurrentRelocationManifest(ctx context.Context) ([]Manif
 }
 
 // Diff runs `snapraid status` (for the before-counts BuildDiffReport
-// needs) and then `snapraid diff`, and combines them into the public
+// needs), `snapraid list` when status reports any symlink or hardlink
+// (status counts regular files only, and the diff's tallies count links
+// too), and then `snapraid diff`, and combines them into the public
 // DiffReport (doc 02 §2). Diff's own exit code 2 ("There are
 // differences!") is diff's normal, expected result, never an error; only
 // an exit code diff itself never documents is treated as one.
@@ -234,6 +236,14 @@ func (e *SnapraidEngine) Diff(ctx context.Context) (DiffReport, error) {
 // reads the whole content file, and neither it nor diff writes anything
 // that would make an earlier snapshot stale for this purpose).
 func (e *SnapraidEngine) diffFromStatus(ctx context.Context, before StatusReport) (DiffReport, error) {
+	if before.TrackedLinks > 0 {
+		list, err := e.List(ctx)
+		if err != nil {
+			return DiffReport{}, fmt.Errorf("parity: counting each disk's links for the diff: %w", err)
+		}
+		before.PerDiskLinkCount = list.LinkCount
+	}
+
 	logPath, cleanup, err := e.newLog("diff")
 	if err != nil {
 		return DiffReport{}, err

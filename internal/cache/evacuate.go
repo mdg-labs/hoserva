@@ -29,10 +29,11 @@ var ErrEvacuationNoOtherBranch = errors.New("cache: share has no other branch to
 var ErrEvacuationWontFit = errors.New("cache: remaining disks do not have room to evacuate this disk")
 
 // ErrEvacuationUnsupportedEntry is PlanEvacuation's refusal for an entry
-// the copy path never moves — a symlink, fifo, socket or device node, or
-// a leftover partial copy. EvacuationPostCheck accepts nothing but empty
-// directories, so planning past one would run every copy and sync only to
-// fail the post-check, and fail every retry the same way.
+// the copy path never moves — a socket, which is runtime state with
+// nothing to copy, or a leftover partial copy. EvacuationPostCheck
+// accepts nothing but empty directories, so planning past one would run
+// every copy and sync only to fail the post-check, and fail every retry
+// the same way.
 var ErrEvacuationUnsupportedEntry = errors.New("cache: evacuated disk holds an entry evacuation cannot move")
 
 // ErrEvacuationNonShareContent is PlanEvacuation's refusal when disk
@@ -223,7 +224,7 @@ func planShareEvacuation(ctx context.Context, disk string, s Share, deps Deps, d
 	if err := refuseUnsupportedEntries(sourceBranch); err != nil {
 		return nil, nil, err
 	}
-	rels, err := enumerateFiles(sourceBranch)
+	rels, err := enumerateEntries(sourceBranch)
 	if err != nil {
 		return nil, nil, fmt.Errorf("enumerate %q: %w", sourceBranch, err)
 	}
@@ -291,10 +292,10 @@ type evacuationTarget struct {
 	usage  *DiskUsage
 }
 
-// refuseUnsupportedEntries fails on the first entry under root that
-// enumerateFiles would skip — anything but a directory or a regular,
-// non-temporary file — so the refusal comes before any copy, with its
-// cause, instead of from EvacuationPostCheck after the whole run.
+// refuseUnsupportedEntries fails on the first entry under root that the
+// copy path cannot move — a socket, or a temp-suffixed leftover — so the
+// refusal comes before any copy, with its cause, instead of from
+// EvacuationPostCheck after the whole run.
 func refuseUnsupportedEntries(root string) error {
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -303,7 +304,7 @@ func refuseUnsupportedEntries(root string) error {
 		if d.IsDir() {
 			return nil
 		}
-		if !d.Type().IsRegular() || strings.Contains(d.Name(), tempSuffix) {
+		if d.Type()&fs.ModeSocket != 0 || strings.Contains(d.Name(), tempSuffix) {
 			return fmt.Errorf("%w: %s", ErrEvacuationUnsupportedEntry, path)
 		}
 		return nil

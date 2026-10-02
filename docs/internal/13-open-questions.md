@@ -306,7 +306,7 @@ SnapRAID prints exactly that warning when touch is needed. Running touch conditi
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, doc 05 §4
 
 **Default: one on the boot device (`/var/lib/hoserva/snapraid.content`, listed first), one on cache if present, then data disks with the most free space, until the count reaches at least `parity disks + 2` on at least three distinct physical devices.**
-Listing the boot-device copy first means `snapraid status` polling reads a disk that is always awake (Q13). Requiring distinct physical devices turns doc 02's "3 separate disks, one not a data disk" into a rule the config generator can check.
+Listing the boot-device copy first means `snapraid status` polling reads a disk that is always awake (Q13). Requiring distinct physical devices turns doc 02's "3 separate disks, one not a data disk" into a rule the config generator can check. A cache that is a partition of the boot disk (doc 02 §4) is not a distinct device: it gets no copy of its own and the data disks supply the rest.
 
 ### Q19 — Number of parity disks in v1
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 00 §4, doc 03 §3.1, doc 05 §2, §3, doc 07 §1

@@ -47,6 +47,13 @@ type AssignedDisk struct {
 	// weak-identity disk at a renumbered /dev/sdX path as an existing
 	// array member rather than a fresh one (Q21).
 	FSUUID string
+	// PartUUID is the partition table's identifier for a boot-disk
+	// partition assigned as the cache (CachePartition.PartUUID) — empty
+	// for every whole disk. WWN and Serial are then the parent disk's, and
+	// ByIDName is the partition's own "-partN" by-id link. It is
+	// re-checked, with the by-id name, immediately before mkfs and is
+	// never persisted.
+	PartUUID string
 }
 
 // TopologyPlan is the array-setup Topology job's payload (doc 01 §4's
