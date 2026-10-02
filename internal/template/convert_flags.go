@@ -44,16 +44,16 @@ func init() {
 		"--user":                {true, nonBlank("user", func(c *converter, v string) { c.svc.User = v })},
 		"--workdir":             {true, nonBlank("working directory", func(c *converter, v string) { c.svc.WorkingDir = v })},
 		"--hostname":            {true, nonBlank("hostname", func(c *converter, v string) { c.svc.Hostname = v })},
-		"--group-add":           {true, nonBlank("group", func(c *converter, v string) { c.svc.GroupAdd = appendOnce(c.svc.GroupAdd, v) })},
+		"--group-add":           {true, nonBlankEach("group", func(c *converter, v string) { c.svc.GroupAdd = appendOnce(c.svc.GroupAdd, v) })},
 		"--entrypoint":          {true, entrypoint},
 		"--interactive":         {false, boolean(func(c *converter, v bool) { c.svc.StdinOpen = &v })},
 		"--tty":                 {false, boolean(func(c *converter, v bool) { c.svc.Tty = &v })},
 		"--init":                {false, boolean(func(c *converter, v bool) { c.svc.Init = &v })},
 		"--read-only":           {false, boolean(func(c *converter, v bool) { c.svc.ReadOnly = &v })},
 		"--device":              {true, device},
-		"--cap-add":             {true, matching("capability", capRe, func(c *converter, v string) { c.svc.CapAdd = appendOnce(c.svc.CapAdd, v) })},
-		"--cap-drop":            {true, matching("capability", capRe, func(c *converter, v string) { c.svc.CapDrop = appendOnce(c.svc.CapDrop, v) })},
-		"--security-opt":        {true, nonBlank("security option", func(c *converter, v string) { c.svc.SecurityOpt = appendOnce(c.svc.SecurityOpt, v) })},
+		"--cap-add":             {true, matchingEach("capability", capRe, func(c *converter, v string) { c.svc.CapAdd = appendOnce(c.svc.CapAdd, v) })},
+		"--cap-drop":            {true, matchingEach("capability", capRe, func(c *converter, v string) { c.svc.CapDrop = appendOnce(c.svc.CapDrop, v) })},
+		"--security-opt":        {true, nonBlankEach("security option", func(c *converter, v string) { c.svc.SecurityOpt = appendOnce(c.svc.SecurityOpt, v) })},
 		"--sysctl":              {true, keyValue("sysctl", func(c *converter) map[string]string { return c.sysctls })},
 		"--ulimit":              {true, ulimit},
 		"--dns":                 {true, dns},
@@ -83,7 +83,7 @@ func init() {
 		"--env":                {true, envFlag},
 		"--pid":                {true, pid},
 		"--cgroupns":           {true, cgroupns},
-		"--device-cgroup-rule": {true, matching("device cgroup rule", cgroupRule, func(c *converter, v string) { c.svc.DeviceCgroupRules = appendOnce(c.svc.DeviceCgroupRules, v) })},
+		"--device-cgroup-rule": {true, matchingEach("device cgroup rule", cgroupRule, func(c *converter, v string) { c.svc.DeviceCgroupRules = appendOnce(c.svc.DeviceCgroupRules, v) })},
 	}
 }
 
@@ -112,23 +112,44 @@ func (c *converter) scalar(f runFlag) {
 	c.scalars[f.Name] = f.Value
 }
 
+// single makes a repeatable flag's apply single-valued: once a value is
+// accepted, scalar notes a repeat that overrides an earlier one.
+func single(apply func(*converter, runFlag) string) func(*converter, runFlag) string {
+	return func(c *converter, f runFlag) string {
+		if why := apply(c, f); why != "" {
+			return why
+		}
+		c.scalar(f)
+		return ""
+	}
+}
+
 func matching(what string, re *regexp.Regexp, set func(c *converter, v string)) func(*converter, runFlag) string {
+	return single(matchingEach(what, re, set))
+}
+
+// matchingEach is matching for a flag docker run repeats into a list, where
+// every value is kept.
+func matchingEach(what string, re *regexp.Regexp, set func(c *converter, v string)) func(*converter, runFlag) string {
 	return func(c *converter, f runFlag) string {
 		if !re.MatchString(f.Value) {
 			return fmt.Sprintf("%s is not a valid %s", showWords(f.Value), what)
 		}
-		c.scalar(f)
 		set(c, f.Value)
 		return ""
 	}
 }
 
 func nonBlank(what string, set func(c *converter, v string)) func(*converter, runFlag) string {
+	return single(nonBlankEach(what, set))
+}
+
+// nonBlankEach is nonBlank for a flag docker run repeats into a list.
+func nonBlankEach(what string, set func(c *converter, v string)) func(*converter, runFlag) string {
 	return func(c *converter, f runFlag) string {
 		if strings.TrimSpace(f.Value) == "" {
 			return "the " + what + " is empty"
 		}
-		c.scalar(f)
 		set(c, f.Value)
 		return ""
 	}

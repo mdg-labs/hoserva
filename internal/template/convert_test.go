@@ -721,6 +721,19 @@ func TestConvertUnraid_RepeatedScalarFlagUsesTheLastValueAndSaysSo(t *testing.T)
 	}
 }
 
+func TestConvertUnraid_RepeatedListFlagKeepsEveryValueWithoutANote(t *testing.T) {
+	c, svc := convertOK(t, `<ExtraParams>--cap-add=NET_ADMIN --cap-add=SYS_TIME --security-opt=no-new-privileges --security-opt=apparmor=unconfined</ExtraParams>`)
+	if caps, _ := svc["cap_add"].([]any); len(caps) != 2 {
+		t.Errorf("cap_add = %v, want both capabilities", svc["cap_add"])
+	}
+	if opts, _ := svc["security_opt"].([]any); len(opts) != 2 {
+		t.Errorf("security_opt = %v, want both options", svc["security_opt"])
+	}
+	if hasWarning(c, WarnNote, "more than once") {
+		t.Errorf("a list flag is noted as if a value were dropped: %+v", c.Warnings)
+	}
+}
+
 func TestConvertUnraid_SecondElementWithAnotherValueIsReported(t *testing.T) {
 	c, svc := convertOK(t, `<Network>host</Network><Network>bridge</Network>`)
 	if svc["network_mode"] != "host" {
