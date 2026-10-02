@@ -106,8 +106,10 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 
 		fsType, fsLabel, fsUUID := l.discoveryFS(name)
 		var cachePartitions []CachePartition
+		var partitions []BootPartition
 		if bootSet[dev] {
 			cachePartitions = l.cacheCandidates(name, id, mounts)
+			partitions = l.bootPartitions(name, id)
 		}
 		disks = append(disks, Disk{
 			Device:          dev,
@@ -124,6 +126,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			ContainsData:    fsType != "",
 			LooksLikeUnraid: LooksLikeUnraidLabel(fsLabel),
 			CachePartitions: cachePartitions,
+			Partitions:      partitions,
 		})
 	}
 

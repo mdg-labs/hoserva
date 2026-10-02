@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -447,7 +447,9 @@ lint-gh:
 # shellcheck over the user-run Unraid script and its tests, and over the
 # release helpers that publish it. In CI a missing shellcheck is a failure,
 # as for golangci-lint above.
-SHELL_LINT_FILES = tools/unraid/prepare-migration.sh tools/unraid/test-prepare-migration.sh \
+SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh \
+	scripts/vm/unraid-fixture.sh scripts/vm/unraid-capture.sh scripts/vm/unraid-capture-guest.sh scripts/vm/unraid-lib.sh \
+	tools/unraid/prepare-migration.sh tools/unraid/test-prepare-migration.sh \
 	scripts/release/stamp-prepare-script.sh scripts/release/test-stamp-prepare-script.sh \
 	scripts/release/test-publish-release.sh \
 	tools/unraid/testdata/stubs/docker tools/unraid/testdata/stubs/findmnt tools/unraid/testdata/stubs/lsblk \
@@ -675,6 +677,21 @@ lab-verify-refusal: lab-require-id
 lab-snapraid-check: lab-require-id
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/snapraid-check.sh
 
+# The synthetic Unraid source (doc 06 §5, issue #74), built inside the lab on
+# loop devices backed by this lab's own images. VARIANT names a directory under
+# testdata/unraid-fixtures/ and is read from the environment, never spliced
+# into the recipe. lab-unraid-verify re-reads the build through read-only
+# norecovery mounts and diffs it against its manifest, then checks that the
+# builder refuses every device that is not this lab's own.
+lab-unraid-fixture: lab-require-id
+	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 "$$VARIANT"
+
+lab-unraid-verify: lab-require-id
+	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-verify VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-unraid-fixture.sh
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 --verify "$$VARIANT"
+
 # doc 12 §3's planned integration target (issue #219): a Hoserva-generated
 # smb.conf, exercised against a real smbd, inside the lab. gen-smb-conf runs
 # on the host, into this lab's own bind-mounted directory, because the lab
@@ -762,6 +779,27 @@ vm-snapshot:
 vm-restore:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-restore NAME=clean)" >&2; exit 1; }
 	scripts/vm/restore-vm.sh
+
+# Builds a synthetic Unraid source (doc 06 §5, issue #74) on this lab's
+# guest's own array disks before any .deb is deployed, verifies it, and takes
+# the snapshot named like the variant, so `make vm-restore NAME=<variant>`
+# returns to it. HOSERVA_VM_DATA_SIZE and HOSERVA_VM_PARITY_SIZE of 2000G or
+# less at `make vm-up` give the MBR layout; 2T (2 TiB) and larger, including
+# the defaults, give GPT.
+vm-unraid-fixture:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
+	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
+	scripts/vm/unraid-fixture.sh
+
+# Regenerates the committed capture of a variant (containers.json,
+# networks.json, autostart, var.ini, smart/, capture.json, report.txt): runs the
+# fixture's containers in this lab's guest, runs tools/unraid/prepare-migration.sh
+# against the fixture's flash root there, and copies the result back into
+# testdata/unraid-fixtures/<variant>/flash/config/hoserva/.
+vm-unraid-capture:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
+	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
+	scripts/vm/unraid-capture.sh
 
 vm-deploy:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-deploy)" >&2; exit 1; }

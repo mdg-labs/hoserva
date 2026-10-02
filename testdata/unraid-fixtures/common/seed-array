@@ -1,0 +1,61 @@
+# Seed data for the array disks disk1, disk2 and disk3 (doc 06 §5). One line
+# per entry, fields separated by '|': operation, disk slot, path inside the
+# disk, then key=value arguments. A path may use printf %b escapes (\0040 is
+# a space). Operations: include, dir, file, text, symlink, fifo, socket,
+# chardev, sparse, xattr, mode.
+
+# media: one share across all three disks, high-water allocation
+file|disk1|media/movies/apollo-landing.bin|size=300000
+file|disk2|media/movies/orbit-study.bin|size=280000
+file|disk3|media/movies/lunar-night.bin|size=260000
+file|disk1|media/tv/season01/e01.bin|size=150000
+file|disk2|media/tv/season01/e02.bin|size=150000
+file|disk3|media/tv/season01/e03.bin|size=150000
+file|disk3|media/photos/2026/summer-01.bin|size=40000
+file|disk3|media/photos/2026/summer-02.bin|size=40000
+# a path that exists on two data disks, with different content
+file|disk1|media/movies/duplicate.bin|size=20000
+file|disk2|media/movies/duplicate.bin|size=21000
+
+# documents: two disks, most-free allocation
+file|disk1|documents/tax-2025.bin|size=90000
+file|disk2|documents/tax-2026.bin|size=90000
+text|disk2|documents/manual.txt|content=Manual for the fixture printer.\n
+# names that differ only in case, in one directory
+text|disk1|documents/Reports/Q3.txt|content=upper-case name\n
+text|disk1|documents/Reports/q3.txt|content=lower-case name\n
+# non-ASCII names and a name that ends in a space
+text|disk2|documents/Café menu.txt|content=Latin-1 range\n
+text|disk2|documents/日本語/メモ.txt|content=CJK\n
+text|disk2|documents/naïve résumé.txt|content=combining forms\n
+text|disk1|documents/notes\0040|content=this file name ends in a space\n
+# Samba metadata and an application-owned attribute
+file|disk1|documents/scan-0001.bin|size=30000|xattr=user.DOSATTRIB="0x20"|xattr=user.DosStream.Zone.Identifier:$DATA=0x5b5a6f6e6554
+file|disk1|documents/scan-0002.bin|size=30000|xattr=user.DOSATTRIB="0x21"|xattr=user.fixtureapp.rating="5"
+
+# backup: a single disk, fill-up allocation
+file|disk3|backup/weekly-2026-09-01.bin|size=500000
+file|disk3|backup/weekly-2026-09-08.bin|size=500000
+
+# isos: a single disk
+file|disk2|isos/installer-netinst.bin|size=700000
+
+# a hidden top-level directory that is not a share
+text|disk2|.Trash-99/files/removed-note.txt|content=moved to the trash\n
+text|disk2|.Trash-99/info/removed-note.txt.trashinfo|content=[Trash Info]\n
+mode|disk2|.Trash-99|mode=0700
+
+# appdata left on the array: relative, absolute and dangling symlinks, a FIFO,
+# a socket, a device node, a sparse file and attributes
+file|disk1|appdata/notes/data/v1/index.db|size=60000
+dir|disk1|appdata/notes/data/v2
+symlink|disk1|appdata/notes/current|target=data/v1
+symlink|disk1|appdata/notes/documents-link|target=/mnt/user/documents
+symlink|disk1|appdata/notes/gone|target=data/removed-long-ago
+fifo|disk1|appdata/notes/run/control.fifo
+socket|disk1|appdata/notes/run/notes.sock
+chardev|disk1|appdata/notes/dev/null0|major=1|minor=3
+sparse|disk1|appdata/notes/db/sparse.img|size=64M|data=4096@10M|data=4096@40M
+file|disk1|appdata/notes/config.json|size=2048|xattr=user.DOSATTRIB="0x20"|xattr=user.fixtureapp.rev="42"
+file|disk1|appdata/mediaserver/library.db|size=120000
+file|disk1|appdata/mediaserver/Metadata/index.bin|size=50000

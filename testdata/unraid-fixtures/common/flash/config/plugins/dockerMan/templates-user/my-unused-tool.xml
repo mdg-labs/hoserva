@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>unused-tool</Name>
+  <Repository>fixture/unused-tool:3</Repository>
+  <Registry>https://registry.example.invalid/fixture/unused-tool</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://example.invalid/fixture/unused-tool</Support>
+  <Project>https://example.invalid/fixture</Project>
+  <Overview>A template whose container was removed.</Overview>
+  <Category>Tools:</Category>
+  <WebUI/>
+  <TemplateURL/>
+  <Icon>https://example.invalid/fixture/unused-tool.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1757937600</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Data" Target="/data" Default="" Mode="{3}" Description="" Type="{5}" Display="always" Required="{7}" Mask="{8}">/mnt/user/appdata/unused-tool</Config>
+  <Config Name="Port" Target="9000" Default="9000" Mode="tcp" Description="" Type="Port" Display="always" Required="True" Mask="False">9000</Config>
+</Container>

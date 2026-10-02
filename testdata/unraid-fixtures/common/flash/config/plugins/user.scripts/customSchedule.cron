@@ -1,0 +1,1 @@
+30 2 * * * /usr/local/emhttp/plugins/user.scripts/startCustom.php /boot/config/plugins/user.scripts/scripts/nightly-report/script > /dev/null 2>&1

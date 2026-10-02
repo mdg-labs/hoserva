@@ -1,0 +1,6 @@
+# Flash extras every variant shares. macOS AppleDouble twins ("._name") sit next
+# to some files, a template included; the scan must ignore them.
+appledouble config/plugins/dockerMan/templates-user/my-notes.xml
+appledouble config/share.cfg
+appledouble config/shares/media.cfg
+appledouble changes.txt

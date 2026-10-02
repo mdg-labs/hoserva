@@ -286,6 +286,21 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-snapraid-check
+      # The synthetic Unraid source the migration tests start from (issue #74,
+      # doc 06 §5): the primary variant is built on loop devices, then
+      # re-read through read-only mounts and diffed against its manifest, so a
+      # broken builder fails on push. The same step proves the builder's
+      # guards can refuse and its self-check can fail.
+      - name: lab-unraid-fixture
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+          VARIANT: unraid-6.12-xfs-single-parity
+        run: make lab-unraid-fixture
+      - name: lab-unraid-verify
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+          VARIANT: unraid-6.12-xfs-single-parity
+        run: make lab-unraid-verify
       # The lab image carries samba and smbclient (issue #219), so CI
       # exercises a real smbd against a Hoserva-generated smb.conf rather
       # than only ever running this by hand.

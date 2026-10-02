@@ -1,0 +1,10 @@
+# No cache device: appdata, domains and system live on the array, and no
+# share uses a cache.
+unraid_version=7.3.2
+unraid_release=2026-09-10
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2
+disk disk3  kind=data   fs=xfs   size=320M target=disk3
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-no-cache
+include ../common/spec-flash

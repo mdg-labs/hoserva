@@ -57,6 +57,38 @@ func (l *Lister) cacheCandidates(parentName string, parent Identity, mounts []Mo
 	return out
 }
 
+// bootPartitions lists every partition of the boot disk with the
+// identity and filesystem udev's cache holds for it, in partition-number
+// order. Unlike cacheCandidates it applies no exclusion: a formatted, mounted
+// or swap partition is listed too, since a bare-metal restore has to see a
+// formatted cache partition to recognise it. It reads sysfs, udev's
+// database and by-id only and never opens a device. A partition udev has no
+// entry for is listed with no filesystem, and an unreadable by-id directory
+// leaves every ByIDName empty: a caller that cannot see what it needs then
+// finds nothing to match, never a partition it could mistake for another.
+func (l *Lister) bootPartitions(parentName string, parent Identity) []BootPartition {
+	byID, _ := scanPartitionByID(l.ByIDDir)
+	var out []BootPartition
+	for _, part := range l.partitions(parentName) {
+		p := BootPartition{Device: "/dev/" + part}
+		if sectors, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "size")); err == nil && sectors > 0 {
+			p.Size = sectors * 512
+		}
+		if number := strings.TrimSpace(readSysString(filepath.Join(l.SysBlockDir, part, "partition"))); number != "" && parent.ByIDName != "" {
+			if want := parent.ByIDName + "-part" + number; slices.Contains(byID[part], want) {
+				p.ByIDName = want
+			}
+		}
+		if props, ok := l.udevProps(part); ok {
+			p.PartUUID = props["ID_PART_ENTRY_UUID"]
+			p.Filesystem = props["ID_FS_TYPE"]
+			p.FSUUID = props["ID_FS_UUID"]
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func (l *Lister) cacheCandidate(part string, parent Identity, byIDNames, named []string) (CachePartition, bool) {
 	number := strings.TrimSpace(readSysString(filepath.Join(l.SysBlockDir, part, "partition")))
 	wantByID := parent.ByIDName + "-part" + number
@@ -180,24 +212,34 @@ func unitWhats(path string) ([]string, error) {
 
 // specNamesPartition reports whether a device specification from a
 // mounts listing, swaps, fstab or unit file names the partition at dev:
-// by kernel path, PARTUUID, PARTLABEL, a /dev/disk/by-partuuid,
-// by-partlabel or by-id link, or any other /dev path that resolves to it.
+// by kernel path, PARTUUID, PARTLABEL, ID (a /dev/disk/by-id name), a
+// /dev/disk/by-partuuid, by-partlabel or by-id link, or any other /dev path
+// that resolves to it.
 // A label is compared with partLabel, the partition's udev
 // ID_PART_ENTRY_NAME; when udev reports none, or the name cannot be
 // decoded, the spec cannot be ruled out, so it counts as naming the
-// partition.
+// partition. A PARTLABEL=, PARTUUID= or ID= value may be wrapped in one pair of
+// matching quotes, the way blkid prints it; an unbalanced quote leaves the
+// value unreadable, so it counts as naming the partition too.
 func specNamesPartition(spec, dev, partUUID, partLabel string, byIDNames []string) bool {
 	spec = strings.TrimSpace(spec)
 	if label, ok := strings.CutPrefix(spec, "PARTLABEL="); ok {
-		return partLabelMayMatch(label, partLabel)
+		label, balanced := unquoteTagValue(label)
+		return !balanced || partLabelMayMatch(label, partLabel)
+	}
+	if id, ok := strings.CutPrefix(spec, "PARTUUID="); ok {
+		id, balanced := unquoteTagValue(id)
+		return !balanced || strings.EqualFold(id, partUUID)
+	}
+	if id, ok := strings.CutPrefix(spec, "ID="); ok {
+		id, balanced := unquoteTagValue(id)
+		return !balanced || slices.Contains(byIDNames, id)
 	}
 	if label, ok := strings.CutPrefix(spec, "/dev/disk/by-partlabel/"); ok && partLabelMayMatch(label, partLabel) {
 		return true
 	}
 	switch {
 	case spec == dev:
-		return true
-	case strings.EqualFold(spec, "PARTUUID="+partUUID):
 		return true
 	case strings.EqualFold(spec, "/dev/disk/by-partuuid/"+partUUID):
 		return true
@@ -212,6 +254,24 @@ func specNamesPartition(spec, dev, partUUID, partLabel string, byIDNames []strin
 		}
 	}
 	return false
+}
+
+// unquoteTagValue strips one pair of matching single or double quotes from
+// a tag value. It reports false for a value with a quote on only one end,
+// or with two different ones.
+func unquoteTagValue(v string) (string, bool) {
+	isQuote := func(c byte) bool { return c == '"' || c == '\'' }
+	if v == "" {
+		return v, true
+	}
+	first, last := v[0], v[len(v)-1]
+	switch {
+	case len(v) >= 2 && isQuote(first) && first == last:
+		return v[1 : len(v)-1], true
+	case isQuote(first) || isQuote(last):
+		return v, false
+	}
+	return v, true
 }
 
 // partLabelMayMatch reports whether a PARTLABEL or by-partlabel name can

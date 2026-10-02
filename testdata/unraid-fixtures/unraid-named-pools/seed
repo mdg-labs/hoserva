@@ -1,0 +1,9 @@
+include|../common/seed-array
+include|../common/seed-cache-system
+file|fast|appdata/notes/data/v3/index.db|size=70000
+symlink|fast|appdata/notes/latest|target=data/v3
+fifo|fast|appdata/notes/run/fast.fifo
+file|fast|appdata/photos/thumbs.db|size=90000|xattr=user.fixtureapp.rev="7"
+file|fast|appdata/gateway/proxy.conf|size=1500
+file|fast|appdata/mediaserver/transcode-cache.bin|size=100000
+file|fast|domains/vm-scratch/disk.bin|size=30000

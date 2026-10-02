@@ -321,7 +321,7 @@ make vm-up                 # fresh Debian + Hoserva installed
 make vm-snapshot NAME=clean
 make vm-snapshot NAME=array-configured
 make vm-snapshot NAME=array-with-data
-make vm-snapshot NAME=unraid-fixtures    # synthetic Unraid disks for migration testing (§5)
+make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity   # synthetic Unraid disks for migration testing (§5); snapshot named like the variant
 make vm-restore NAME=array-with-data     # seconds, not a reinstall
 ```
 
@@ -388,7 +388,36 @@ No agent runs Unraid or connects to a real Unraid server — not the maintainer'
 2. Seeds share directories with realistic data and varied cache settings, plus `appdata`, `domains` and `system`
 3. Writes a matching flash tree — disk assignments, share and user configuration, `plugins/dockerMan/templates-user/*.xml` authored for the fixture (never copied from any catalog), and `libvirt.img` for VM variants — packed as a Flash Backup zip
 4. Records per-disk file lists, sizes and sha256 as the fixture's expected result
-5. **Snapshots** the result (`unraid-fixtures`) so every migration test restores it in seconds
+5. **Snapshots** the result (L3: the VM snapshot named like the variant) so every migration test restores it in seconds
+
+**Running it.** One builder, two tiers. It runs as root on whichever system owns the block devices, never on the development host:
+
+```
+make lab-unraid-fixture VARIANT=<variant>    # L2: inside the lab container, on loop devices
+make lab-unraid-verify  VARIANT=<variant>    # L2: the self-check, below
+make vm-unraid-fixture  VARIANT=<variant>    # L3: inside this lab's guest, then the snapshot <variant>
+make vm-unraid-capture  VARIANT=<variant>    # L3: regenerate the committed Phase A capture
+```
+
+`VARIANT` names a directory under `testdata/unraid-fixtures/`, and `make vm-restore NAME=<variant>` returns the guest to the built fixture. The builder refuses any device that is not its own tier's: in L2 a loop device must be the only one backed by one of the variant's images under the lab's own `$LAB/unraid/<variant>/img/`, in L3 a disk must be one of the guest's virtio array disks, found by the serial `make vm-up` gave it. The L3 build runs before any `.deb` is deployed (it refuses a guest that has Hoserva installed) and installs what it needs in the disposable guest. The lab image carries `fdisk` (for `sfdisk`), `gdisk`, `zip`, `unzip` and `attr` for it (Dockerfile). A variant directory holds:
+
+- `spec` — the disks (Unraid slot, kind, filesystem, size, and which L3 disk each maps onto), the Unraid version, and the macOS `._*` twins to lay next to flash files;
+- `seed` (with the shared `common/seed-*`) — the data: files, directories, symlinks, FIFOs, sockets, device nodes, sparse files and `user.*` attributes, each on a named disk;
+- `flash/` — the authored flash tree, laid over `common/flash/`. The builder adds `changes.txt` (the version line), `config/disk.cfg` (per-slot `diskFsType.N` and `diskIdSlot.N="-"`, like a real server), an opaque `config/super.dat`, the `bz*` and `EFI/` placeholders, `previous/`, a `.git/` directory and `config/hoserva/disks.ini`.
+
+**What it builds.**
+
+- *Partitions.* A disk of at most 4294967295 sectors (2199023255040 bytes, the largest an MBR table can hold) gets one MBR partition starting at sector 64, the "MBR: 4K-aligned" layout (S2, doc 08 §2). A larger disk gets GPT with one partition of type `0fc63daf-8483-4772-8e79-3d69d8477de4` from sector 64, ending 33 sectors before the end of the disk, the layout observed on a real 7.3.2 array (doc 08 §2). The L3 disks keep the sizes `make vm-up` gave them: `HOSERVA_VM_PARITY_SIZE` and `HOSERVA_VM_DATA_SIZE` of `2000G` give MBR; the defaults (8T and 4T) and `2T` (2 TiB, which an MBR table cannot hold) give GPT. In L2, `unraid-7x-xfs-single-parity` mixes both: its parity disk and `disk3` are larger than 2 TiB, the other disks are not.
+- *Filesystems.* XFS with `crc`, `finobt`, `sparse`, `reflink`, `bigtime` and `inobtcount` on and `rmapbt` and `nrext64` off; one data disk of `unraid-6.12-xfs-single-parity` and of `unraid-7x-xfs-single-parity` is made with both on, the way a newer `mkfs` makes it. A pool is single-device btrfs or XFS. No filesystem carries a label, as on Unraid.
+- *Parity.* The first parity partition holds the bytewise XOR of the data partitions over its first 64 MiB (or the smallest partition, if that is smaller); the rest stays as it was (sparse in L2). With an odd number of data disks this leaves a valid-looking XFS superblock on the parity disk, as on a real server: `unraid-6.12-xfs-single-parity` and `unraid-named-pools` assert it, and `unraid-dual-parity`, with four data disks, asserts there is none. The second parity partition of `unraid-dual-parity` holds opaque random bytes over the same window; Unraid computes its second parity differently, and nothing else about it is modelled.
+- *Seed data.* Shares that span disks and shares on one disk, with Fill-up, Most-free and High-water allocation and the cache settings `yes`, `no`, `only` and `prefer`. `appdata` with relative, absolute and dangling symlinks, a FIFO, a socket, a device node, a sparse file, and files carrying `user.DOSATTRIB`, `user.DosStream.*` and an application's own `user.*` attribute. A file at the same path on two data disks, a hidden `.Trash-99` directory, names that differ only in case, non-ASCII names, a name ending in a space. Everything is owned by `nobody:users` (99:100), files `0666` and directories `0777`.
+- *Flash tree and zips.* `flash-backup.zip` is packed the way Unraid's `flash_backup` does (the zip's root is `/boot`; every top-level entry but `prev` and `previous`); `flash-hand-zipped.zip` is packed the way a user zipping `/boot` would (also holding `previous/`). Both hold `._*` twins (one next to a template) and a `.git/` directory, which the scan must ignore. The flash holds `shares/*.cfg` with names, cache settings, export flags and the three allocation methods, an orphan `shares/oldstuff.cfg`, `pools/*.cfg` (with `diskBootSize="0"` on the 7.x variants), user accounts, the templates, a Compose Manager project, a User Scripts entry with `customSchedule.cron`, `parity-checks.log` and the Phase A capture. The disk identities (`disks.ini` and `pools/*.cfg`'s `diskId`) are rendered at build time from the serials the target disks report (L3) or from synthetic ones (L2, whose loop devices report none); nothing is copied from a real server.
+
+**The capture** (`flash/config/hoserva/`, Q89) is the output of `tools/unraid/prepare-migration.sh`, produced by `make vm-unraid-capture` in the disposable L3 guest and committed. The variant's containers run under the guest's Docker (images imported from a busybox root filesystem, nothing pulled from a registry), the script runs against the fixture's flash, on a FAT32 image, and its disks mounted read-only, and `containers.json`, `networks.json`, `autostart`, `var.ini`, `smart/`, `capture.json` and `report.txt` are copied back; `disks.ini` is not committed. The builder copies the committed capture and does not need Docker. Container ids and timestamps in it come from the guest, and `capture.json` is newer than every template (`--verify` fails otherwise). The containers cover running dockerMan containers with a template, one stopped, template-only templates (one with literal `{n}` placeholder attributes), a template whose file name differs in case from its `<Name>` (`my-Photos.xml`, `photos`), a dockerMan container without a template, a container made by hand, a Compose Manager container, an `autostart` list naming only some running containers, and a container on a custom ipvlan network defined in `networks.json`.
+
+**What it records**, under the lab's own `$LAB/unraid/<variant>/expected/` (L3: `/srv/unraid-fixtures/<variant>/expected/` in the guest, copied to `.vm/<id>/unraid/<variant>/`) and never committed: `manifest.sha256` (every file's sha256, size, mode, owner, disk and path, with per-disk and per-share file counts and byte totals), `entries.tsv` (directories, symlinks, FIFOs, sockets, device nodes, sparse files and extended attributes), `layout.txt` (partition scheme, filesystem features, parity), `flash.sha256` and the two Flash Backup zips.
+
+**The self-check.** `unraid-fixture.sh --verify <variant>` re-attaches the disks read-only, checks that each parity disk holds what it should, re-reads every file through `ro,norecovery` mounts and diffs the result against `expected/`, then unpacks both zips and compares them with the flash tree. `make lab-unraid-verify` runs `scripts/devenv/test-unraid-fixture.sh` first, which shows the checks can fail: a loop device is refused unless it is the only one backed by this variant's own image, the L3 guard refuses everything that is not one of the guest's virtio array disks, the L3 tier refuses to start outside a virtual machine, and a small variant built in a scratch directory fails `--verify` when a manifest hash is changed, when the parity disk stops holding the XOR of the data disks, and when a data file is changed on disk. CI's `lab` job builds `unraid-6.12-xfs-single-parity` and runs `make lab-unraid-verify` on it.
 
 **Optional calibration.** If the maintainer places an Unraid **Diagnostics** zip (Tools → Diagnostics) in `~/.local/share/hoserva/calibration/`, agents compare the fixtures' partition layout, filesystem parameters and config file shapes against it and record any divergence in doc 05 as general layout facts — never values copied from the bundle. The directory sits outside every repository and workspace, because a bundle that isn't anonymised holds hostnames, addresses, disk serials, user and share names and logs. The orchestrator names it in a dispatch as a read-only path; nothing from it is copied into a workspace, committed, or quoted in an issue, comment or commit message, and no agent ever fetches anything from the server. Without it, the fixtures rest on public sources alone, and quirks of disks Unraid itself formatted are stated residual risk.
 
@@ -538,6 +567,7 @@ scripts/vm/             the L3 *test* VM harness (lifecycle, snapshots, provisio
 testdata/configs/       golden files
 testdata/parsers/       real-world tool output corpus
 testdata/unraid-templates/  project-authored Unraid XML template corpus (§2)
+testdata/unraid-fixtures/   definitions of the synthetic Unraid sources: spec, seed data, authored flash tree, committed Phase A capture (§5)
 web/fixtures/           API fixtures shared by the mock server and backend tests
 .lab/                   gitignored per-lab image and mount roots
 ```

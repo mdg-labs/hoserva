@@ -1,0 +1,15 @@
+# The primary path: Unraid 6.12, single parity, three XFS data disks (an odd
+# number, so the parity disk carries a valid-looking XFS superblock) and a
+# btrfs cache. disk2 is formatted by a newer mkfs (rmapbt and nrext64 on), beside
+# two with the default features. No disk is larger than 2 TiB, so each gets the
+# MBR layout.
+unraid_version=6.12.15
+unraid_release=2025-03-25
+expect_parity_signature=xfs
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2 xfs=rmapbt-nrext64
+disk disk3  kind=data   fs=xfs   size=320M target=disk3
+disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity
+include ../common/spec-flash

@@ -98,7 +98,10 @@ const (
 //
 // CachePartitions is set only on a Boot disk: the spare partitions on it
 // that qualify to hold the cache (CachePartition). It comes from the same
-// cached sources as the rest of List and never opens a device.
+// cached sources as the rest of List and never opens a device. Partitions
+// is likewise set only on a Boot disk: every partition of it, formatted or
+// not, so a recorded cache partition can be found again whatever it holds
+// (BootPartition).
 type Disk struct {
 	Device          string
 	Size            int64
@@ -115,6 +118,7 @@ type Disk struct {
 	ContainsData    bool
 	LooksLikeUnraid bool
 	CachePartitions []CachePartition
+	Partitions      []BootPartition
 }
 
 // ReasonSpareBootPartition is the CachePartition.Reason code for the one
@@ -136,6 +140,23 @@ type CachePartition struct {
 	ByIDName string
 	PartUUID string
 	Reason   string
+}
+
+// BootPartition is one partition of the boot disk as udev's cache and
+// /dev/disk/by-id report it, whatever it holds: Device is its kernel name,
+// ByIDName its by-id link (the parent's by-id name plus "-partN", empty
+// when there is none), PartUUID the partition table's own identifier, and
+// Filesystem and FSUUID the cached ID_FS_TYPE and ID_FS_UUID, empty when
+// udev reports none. It is an inventory, not a candidate list: a partition
+// listed here may be mounted, swap or in use (see CachePartition for the
+// spare ones).
+type BootPartition struct {
+	Device     string
+	Size       int64
+	ByIDName   string
+	PartUUID   string
+	Filesystem string
+	FSUUID     string
 }
 
 // SMARTReport is one SMART poll's result. Skipped is true when a standby

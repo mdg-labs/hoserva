@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>photos</Name>
+  <Repository>fixture/photos:latest</Repository>
+  <Registry>https://registry.example.invalid/fixture/photos</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://example.invalid/fixture/photos</Support>
+  <Project>https://example.invalid/fixture</Project>
+  <Overview>A photo gallery written for Hoserva migration fixtures.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8082]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://example.invalid/fixture/photos.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1757937600</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web port" Target="8082" Default="8082" Mode="tcp" Description="" Type="Port" Display="always" Required="true" Mask="False">8082</Config>
+  <Config Name="Library" Target="/photos" Default="" Mode="rw" Description="" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/photos</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/photos" Mode="rw" Description="" Type="Path" Display="advanced-hide" Required="true" Mask="false">/mnt/user/appdata/photos</Config>
+</Container>

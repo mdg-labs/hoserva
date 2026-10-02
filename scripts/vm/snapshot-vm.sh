@@ -15,7 +15,7 @@ vm_assert_own_domain "$VM_DOMAIN"
 
 NAME="${NAME:-}"
 [[ -n "$NAME" ]] || die "set NAME (e.g. make vm-snapshot NAME=clean)"
-[[ "$NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || die "invalid NAME '$NAME': letters, digits, '_', '-' only, starting with a letter or digit"
+[[ "$NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || die "invalid NAME '$NAME': letters, digits, '.', '_', '-' only, starting with a letter or digit"
 
 vm_domain_exists "$VM_DOMAIN" || die "domain '$VM_DOMAIN' does not exist — run 'make vm-up' first"
 

@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>old-thing</Name>
+  <Repository>fixture/old-thing:1</Repository>
+  <Registry>https://registry.example.invalid/fixture/old-thing</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>False</Privileged>
+  <Support>https://example.invalid/fixture/old-thing</Support>
+  <Project>https://example.invalid/fixture</Project>
+  <Overview>Another template whose container was removed.</Overview>
+  <Category>Tools:</Category>
+  <WebUI/>
+  <TemplateURL/>
+  <Icon>https://example.invalid/fixture/old-thing.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1757937600</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/old-thing" Mode="rw" Description="" Type="Path" Display="always" Required="True" Mask="False">/mnt/user/appdata/old-thing</Config>
+</Container>

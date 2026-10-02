@@ -194,3 +194,139 @@ func TestParseDiskMapping(t *testing.T) {
 		}
 	}
 }
+
+const (
+	nvmeByID      = "nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X"
+	nvmeCacheByID = nvmeByID + "-part3"
+	nvmeCacheUUID = "u-cache"
+)
+
+func recordedBootCache() store.ArrayDisk {
+	return store.ArrayDisk{Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/nvme0n1p3", Filesystem: "ext4", FSUUID: nvmeCacheUUID,
+		Serial: "S4EWNX0M123456X", ByIDName: nvmeCacheByID, Mountpoint: "/mnt/cache"}
+}
+
+func sharedNVMe(cache disk.BootPartition) disk.Disk {
+	return disk.Disk{
+		Device: "/dev/nvme0n1", Serial: "S4EWNX0M123456X", ByIDName: nvmeByID, Boot: true,
+		Partitions: []disk.BootPartition{
+			{Device: "/dev/nvme0n1p1", ByIDName: nvmeByID + "-part1", Filesystem: "vfat", FSUUID: "u-efi"},
+			{Device: "/dev/nvme0n1p2", ByIDName: nvmeByID + "-part2", Filesystem: "ext4", FSUUID: "u-root"},
+			cache,
+		},
+	}
+}
+
+func cachePart(fsType, uuid string) disk.BootPartition {
+	return disk.BootPartition{Device: "/dev/nvme0n1p3", Size: 900 << 30, ByIDName: nvmeCacheByID, PartUUID: "5b3d9e0a-03", Filesystem: fsType, FSUUID: uuid}
+}
+
+func TestMapArrayDisks_ACacheOnABootDiskPartition(t *testing.T) {
+	recorded := []store.ArrayDisk{recordedDisk("data", 1, "u-d1", "wwn-d1"), recordedBootCache()}
+	data := disk.Disk{Device: "/dev/sdb", WWN: "wwn-d1", Serial: "ser-u-d1", FSUUID: "u-d1"}
+
+	for _, tc := range []struct {
+		name   string
+		attach []disk.Disk
+		state  string
+		device string
+	}{
+		{"the same layout", []disk.Disk{data, sharedNVMe(cachePart("ext4", nvmeCacheUUID))}, DiskMatched, "/dev/nvme0n1p3"},
+		{"the partition renumbered to another kernel name", []disk.Disk{data, sharedNVMe(disk.BootPartition{
+			Device: "/dev/nvme0n1p7", ByIDName: nvmeCacheByID, Filesystem: "ext4", FSUUID: nvmeCacheUUID})}, DiskMatched, "/dev/nvme0n1p7"},
+		{"another filesystem on the partition", []disk.Disk{data, sharedNVMe(cachePart("ext4", "u-other"))}, DiskReplaced, "/dev/nvme0n1p3"},
+		{"no filesystem on the partition", []disk.Disk{data, sharedNVMe(cachePart("", ""))}, DiskReplaced, "/dev/nvme0n1p3"},
+		{"no partition on the boot disk", []disk.Disk{data, func() disk.Disk {
+			d := sharedNVMe(cachePart("", ""))
+			d.Partitions = d.Partitions[:2]
+			return d
+		}()}, DiskAbsent, ""},
+		{"no boot disk with partitions listed", []disk.Disk{data, {Device: "/dev/nvme0n1", Serial: "S4EWNX0M123456X", ByIDName: nvmeByID, Boot: true}}, DiskAbsent, ""},
+		{"another boot disk", []disk.Disk{data, func() disk.Disk {
+			d := sharedNVMe(cachePart("ext4", "u-other"))
+			d.Serial = "OTHER"
+			return d
+		}()}, DiskAbsent, ""},
+		{"another boot disk holding the filesystem", []disk.Disk{data, func() disk.Disk {
+			d := sharedNVMe(cachePart("ext4", nvmeCacheUUID))
+			d.Serial = "OTHER"
+			return d
+		}()}, DiskReplaced, "/dev/nvme0n1p3"},
+		{"the filesystem on a partition of another by-id name", []disk.Disk{data, sharedNVMe(disk.BootPartition{
+			Device: "/dev/nvme0n1p4", ByIDName: nvmeByID + "-part4", Filesystem: "ext4", FSUUID: nvmeCacheUUID})}, DiskReplaced, "/dev/nvme0n1p4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := stateOf(t, MapArrayDisks(recorded, tc.attach), store.ArrayRoleCache, 1)
+			if m.State != tc.state {
+				t.Fatalf("cache state = %s, want %s", m.State, tc.state)
+			}
+			switch {
+			case tc.device == "" && m.Attached != nil:
+				t.Fatalf("attached = %s, want none", m.Attached.Device)
+			case tc.device != "" && (m.Attached == nil || m.Attached.Device != tc.device):
+				t.Fatalf("attached = %v, want %s", m.Attached, tc.device)
+			}
+			if m.Attached != nil && m.Attached.Device == "/dev/nvme0n1" {
+				t.Fatal("the whole boot disk was matched")
+			}
+		})
+	}
+
+	t.Run("a matched partition is confirmed on its own device", func(t *testing.T) {
+		mapped := MapArrayDisks(recorded, []disk.Disk{data, sharedNVMe(cachePart("ext4", nvmeCacheUUID))})
+		got := MatchedMapping(mapped)
+		want := []DiskMappingEntry{{Role: "data", RoleIndex: 1, Device: "/dev/sdb"}, {Role: "cache", RoleIndex: 1, Device: "/dev/nvme0n1p3"}}
+		if len(got.Disks) != 2 || got.Disks[0] != want[0] || got.Disks[1] != want[1] {
+			t.Fatalf("MatchedMapping = %+v, want %+v", got, want)
+		}
+		if err := checkConfirmed(mapped, got); err != nil {
+			t.Fatalf("checkConfirmed: %v", err)
+		}
+	})
+
+	t.Run("a recorded filesystem UUID of none matches a partition that has one", func(t *testing.T) {
+		rec := recordedBootCache()
+		rec.FSUUID = ""
+		m := MapArrayDisks([]store.ArrayDisk{rec}, []disk.Disk{sharedNVMe(cachePart("ext4", nvmeCacheUUID))})[0]
+		if m.State != DiskMatched {
+			t.Fatalf("state = %s, want matched", m.State)
+		}
+	})
+
+	t.Run("a boot disk and its clone make the partition ambiguous", func(t *testing.T) {
+		a := sharedNVMe(cachePart("ext4", nvmeCacheUUID))
+		b := sharedNVMe(cachePart("ext4", nvmeCacheUUID))
+		b.Device = "/dev/nvme1n1"
+		m := MapArrayDisks([]store.ArrayDisk{recordedBootCache()}, []disk.Disk{a, b})[0]
+		if m.State != DiskAmbiguous || m.Attached != nil {
+			t.Fatalf("state = %s attached = %v, want ambiguous and none", m.State, m.Attached)
+		}
+	})
+}
+
+func TestMapArrayDisks_OnlyTheCacheSlotEverSitsOnTheBootDisk(t *testing.T) {
+	boot := sharedNVMe(cachePart("ext4", nvmeCacheUUID))
+	asData := recordedBootCache()
+	asData.Role, asData.Mountpoint = store.ArrayRoleData, "/mnt/disk1"
+	asParity := recordedBootCache()
+	asParity.Role, asParity.Mountpoint = store.ArrayRoleParity, "/mnt/parity1"
+	wholeBoot := store.ArrayDisk{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/nvme0n1", Filesystem: "ext4", FSUUID: "u-whole",
+		Serial: "S4EWNX0M123456X", ByIDName: nvmeByID, Mountpoint: "/mnt/disk2"}
+	wholeBootCache := store.ArrayDisk{Role: store.ArrayRoleCache, RoleIndex: 2, Device: "/dev/nvme0n1", Filesystem: "ext4", FSUUID: "u-whole2",
+		Serial: "S4EWNX0M123456X", ByIDName: nvmeByID, Mountpoint: "/mnt/cache2"}
+
+	mapped := MapArrayDisks([]store.ArrayDisk{asData, asParity, wholeBoot, wholeBootCache}, []disk.Disk{boot})
+	for _, m := range mapped {
+		if m.State != DiskAbsent || m.Attached != nil {
+			t.Errorf("%s = %s attached %v, want absent: the boot disk and its partitions are never a data or parity disk, nor a whole-disk cache", m.Name(), m.State, m.Attached)
+		}
+	}
+}
+
+func TestMapArrayDisks_ACachePartitionIsNeverMatchedByAWholeDisk(t *testing.T) {
+	whole := disk.Disk{Device: "/dev/nvme1n1", Serial: "S4EWNX0M123456X", ByIDName: nvmeByID, FSUUID: nvmeCacheUUID}
+	m := MapArrayDisks([]store.ArrayDisk{recordedBootCache()}, []disk.Disk{whole})[0]
+	if m.State != DiskAbsent || m.Attached != nil {
+		t.Fatalf("state = %s attached %v, want absent: the whole disk is not the partition", m.State, m.Attached)
+	}
+}
