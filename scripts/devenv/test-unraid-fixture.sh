@@ -168,7 +168,7 @@ umount "$work/rw"
 losetup -d "$tdev"
 tdev=""
 if out=$(run --verify "$variant"); then bad "verify accepted a data file changed on disk"; else
-  ok "verify fails when a data file is changed on disk"
+  if [[ $out == *"not the XOR of the data disks"* ]]; then ok "verify fails when a data file is changed on disk"; else bad "verify failed for another reason: $out"; fi
 fi
 
 if ((fail)); then

@@ -30,6 +30,7 @@ existing line by adding its PR number.
 - **partial-failure** — a compensating delete, or a live apply that must follow an already-committed row, uses the request context, so a disconnect cancels it and leaves DB and live state disagreeing — PR 344, 382
 - **partial-failure** — a compensating undo run after any failure of a multi-step operation without confirming the failure came before the change took effect (a swap that fails after the replacement took over), so the undo drops the record and kept state the recovery path needs — PR 510
 - **partial-failure** — validation interleaved with writes, so a refused 400 still leaves the fields before the failing one applied — PR 382
+- **partial-failure** — a regenerate step deletes the committed output before the replacement has been fetched, so a failed copy leaves it missing or partial — PR 567
 - **partial-failure** — rollback restores the row and files but not the live state (mounts) — PR 218
 - **partial-failure** — rollback restores a snapshot read before an unserialized write window, so a concurrent save that succeeded in between is silently reverted — PR 357
 - **live-state** — change persisted and written to config but never applied to what is running (an idempotency early return keyed on a name that never changes; units written but the live mount left on its old branches) — PR 338
@@ -121,7 +122,7 @@ existing line by adding its PR number.
 - **security** — user or state values written into a config format without escaping control characters — PR 254
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached) — PR 159, 163, 231, 337, 403, 421, 430
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic) — PR 159, 163, 231, 337, 403, 421, 430, 567
 - **tests** — a short real deadline also bounds setup I/O ahead of the code under test (the SQLite write entering maintenance), so on a loaded runner the error comes from the setup step and an `errors.Is` check still passes; trip the deadline once the step under test is reached and assert its own error text — PR 433
 - **tests** — an end-to-end failure detector defined as "any banner but this list of informational ones", not extended when the change adds a new informational note, so the expected note fails the journey — PR 474
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
@@ -129,11 +130,14 @@ existing line by adding its PR number.
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344
 - **tests** — a restart check treats systemd active as API-ready, so the single login races the listener — PR 344
 - **tests** — a process probe matches any process in `/proc` instead of this test's own child, so an unrelated one triggers the next step early — PR 357
+- **tests** — a fixture or capture script clears every resource on a shared daemon (all Docker containers and networks) instead of refusing a populated one and removing only what it created — PR 567
+- **tests** — a fixture generator shared by several variants hard-codes a value only some of them support (a cache-pool path), so a variant without it records a state its own spec rules out — PR 568
 - **tests** — a readiness gate waits on more than the acceptance criterion measures (the cache disk in an array-disk settle), so unrelated activity fails it — PR 357
 - **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
 - **tests** — a check's cleanup runs after a later step shadows what it must remove (a mount over the directory holding a stray probe), so the leftover survives into later steps — PR 395
 - **tests** — a test swaps process-global state (the `log` output) and its cleanup restores a hard-coded default rather than the value it saved, clobbering whatever an earlier caller set — PR 527
 - **docs** — a design doc or spike verdict says a behaviour is verified (by fixtures, the lab or the scan) when the check that would verify it has not been built yet — PR 562
+- **docs** — a fixture or spec comment states a property only one build tier produces (an L2-only partition layout) as if every build had it — PR 568
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156

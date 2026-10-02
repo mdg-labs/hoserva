@@ -33,11 +33,16 @@ CAP="$OUT/capture-root"
 RESULT="$OUT/capture"
 BOOT_IMG="$OUT/boot.img"
 bootdev=""
+containers_owned=false
 
 # shellcheck disable=SC2317 # called from the EXIT trap
 cleanup_capture() {
   local rc=$?
   set +e
+  if [[ $containers_owned == true ]]; then
+    docker rm -f notes mediaserver photos syncer gateway dbtool handmade stack-web >/dev/null 2>&1
+    docker network rm br0 stack_default >/dev/null 2>&1
+  fi
   cleanup
   if [[ -n $bootdev ]]; then
     if [[ $(losetup --noheadings --output BACK-FILE "$bootdev" 2>/dev/null) == "$BOOT_IMG" ]]; then losetup -d "$bootdev"; fi
@@ -88,10 +93,11 @@ printf 'version="%s"\n' "$SPEC_VERSION" >"$CAP/etc/unraid-version"
 work=$(mktemp -d "$OUT/capture-work.XXXXXX")
 trap 'rm -rf -- "$work"; cleanup_capture' EXIT
 
-docker ps -aq | xargs -r docker rm -f >/dev/null
-docker network ls --format '{{.Name}}' | while read -r n; do
-  case $n in bridge | host | none) ;; *) docker network rm "$n" >/dev/null ;; esac
-done
+existing_containers=$(docker ps -aq)
+existing_networks=$(docker network ls --format '{{.Name}}' | awk '$0 != "bridge" && $0 != "host" && $0 != "none"')
+[[ -z $existing_containers && -z $existing_networks ]] \
+  || die "refusing to capture: this Docker daemon already has containers or networks of its own. Run the capture on a fresh guest ('make vm-up', or 'make vm-restore' to a snapshot taken before any container ran)"
+containers_owned=true
 
 mkdir -p -- "$work/rootfs/bin"
 cp /bin/busybox "$work/rootfs/bin/busybox"

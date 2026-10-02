@@ -31,14 +31,19 @@ unraid_guest_build "$VARIANT" no-capture
 echo "vm-unraid-capture[$HOSERVA_LAB_ID]: running the containers and the prepare script in the guest"
 vm_ssh "sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' bash '$UNRAID_GUEST_DIR/scripts/vm/unraid-capture-guest.sh' '$VARIANT'"
 
-dest="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT/flash/config/hoserva"
+variant_dir="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT"
+dest="$variant_dir/flash/config/hoserva"
 echo "vm-unraid-capture[$HOSERVA_LAB_ID]: copying the capture to ${dest#"$VM_REPO_ROOT"/}"
-rm -rf -- "$dest"
-mkdir -p -- "$dest"
-vm_ssh "sudo tar -C '$UNRAID_GUEST_OUT/$VARIANT/capture' -cf - ." | tar -C "$dest" --no-same-owner --no-same-permissions -xf -
+# beside flash/, not inside it: the builder copies all of flash/ into a fixture
+tmp_dest="$(mktemp -d -- "$variant_dir/.capture.XXXXXX")"
+trap 'rm -rf -- "$tmp_dest"' EXIT
+vm_ssh "sudo tar -C '$UNRAID_GUEST_OUT/$VARIANT/capture' -cf - ." | tar -C "$tmp_dest" --no-same-owner --no-same-permissions -xf -
 # the FAT32 flash has no permissions: keep them out of the committed files
-find "$dest" -type d -exec chmod 0755 {} +
-find "$dest" -type f -exec chmod 0644 {} +
+find "$tmp_dest" -type d -exec chmod 0755 {} +
+find "$tmp_dest" -type f -exec chmod 0644 {} +
+mkdir -p -- "$(dirname -- "$dest")"
+rm -rf -- "$dest"
+mv -- "$tmp_dest" "$dest"
 
 unraid_guest_push
 unraid_guest_build "$VARIANT"
