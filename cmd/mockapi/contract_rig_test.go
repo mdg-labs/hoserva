@@ -328,6 +328,7 @@ func contractContainerProvider(t *testing.T, appdata string) *container.FakeProv
 		ImageID: "sha256:jellyfin",
 		State:   "running",
 		Status:  "Up 3 hours",
+		Ports:   []container.Port{{HostPort: 8096, ContainerPort: 8096, Protocol: "tcp"}},
 		Mounts:  []container.Mount{{Source: jellyfinDir, Destination: "/config", ReadWrite: true}},
 	})
 	f.AddContainer(container.Container{

@@ -64,6 +64,8 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.GetStackOperation:                       RoleViewer,
 	apiv1.CreateStackOperation:                    RoleAdmin,
 	apiv1.UpdateStackOperation:                    RoleAdmin,
+	apiv1.GetStackConfigOperation:                 RoleAdmin,
+	apiv1.UpdateStackConfigOperation:              RoleAdmin,
 	apiv1.StartStackOperation:                     RoleAdmin,
 	apiv1.RemoveStackOperation:                    RoleAdmin,
 	apiv1.ConvertUnraidTemplateOperation:          RoleAdmin,

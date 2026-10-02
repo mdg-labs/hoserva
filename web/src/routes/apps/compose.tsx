@@ -264,7 +264,7 @@ function StatusBanners({ status, onRetryStart, retrying }: { status: Status | nu
   }
 }
 
-function JobFollow({ queued, stackName }: { queued: Job; stackName: string }): React.ReactElement {
+export function JobFollow({ queued, stackName }: { queued: Job; stackName: string }): React.ReactElement {
   const { t } = useTranslation();
   const [finished, setFinished] = useState(FINISHED.includes(queued.status));
   const query = useApiQuery<Job>({

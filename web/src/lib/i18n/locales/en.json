@@ -388,10 +388,48 @@
         "action": "Back to {{name}}"
       }
     },
+    "config": {
+      "title": "Settings",
+      "description": "The values this app was installed with. Applying changes saves the new values and restarts the app, so it is briefly unavailable.",
+      "loadFailed": "Could not load the settings of this app.",
+      "manuallyEdited": "Manually edited",
+      "manuallyEditedHelp": "This app's Compose file was changed by hand. Applying settings only changes these values and never rewrites the Compose file.",
+      "none": "This app has no settings to change.",
+      "noTemplate": {
+        "title": "No settings form for this app",
+        "unmanaged": "{{name}} is not part of an app stack that Hoserva manages, so there are no settings to change here.",
+        "noForm": "{{name}} was not installed from an app template, so it has no settings form. Change it in its Compose file instead.",
+        "editor": "Open the Compose editor"
+      },
+      "device": {
+        "none": "No graphics device is used.",
+        "help": "The device is set in the app's Compose file. Change it there."
+      },
+      "secret": {
+        "set": "A value is set. It is kept on the server and is never shown.",
+        "notSet": "No value is set.",
+        "replace": "Replace",
+        "generate": "Generate",
+        "keep": "Keep the current value",
+        "placeholder": "Type the new value",
+        "willGenerate": "A new value is made up when you apply. It is never shown."
+      },
+      "apply": "Apply changes",
+      "discard": "Discard changes",
+      "unapplied": "You have changes that are not applied yet.",
+      "confirm": {
+        "title": "Apply the new settings to {{name}}?",
+        "description": "Hoserva saves these values and starts the app with them. Every container whose settings changed is recreated, so it restarts and is briefly unavailable."
+      },
+      "saveFailed": "Could not save the settings. Nothing was changed.",
+      "startFailed": "Could not start the app.",
+      "notStarted": "The settings were saved, but the app was not restarted",
+      "notStartedDescription": "The app keeps running with its previous settings until it is started again.",
+      "retryStart": "Try starting again"
+    },
     "detail": {
       "back": "Installed apps",
       "loadFailed": "Could not load this app.",
-      "placeholder": "This tab is not available yet.",
       "notKnown": "—",
       "tabs": {
         "overview": "Overview",

@@ -45,6 +45,12 @@ var (
 	// ErrNoFreePort is returned when no port above the requested one is
 	// free.
 	ErrNoFreePort = errors.New("template: no free port is left above the requested one")
+	// ErrPortTaken is returned when a stack's port input is changed to a
+	// port that a container, another stack or the host already uses.
+	ErrPortTaken = errors.New("template: the port is already in use")
+	// ErrStackHasNoTemplate is returned for a stack whose Compose file has
+	// no x-hoserva block, so it has no inputs to show or change.
+	ErrStackHasNoTemplate = errors.New("template: the stack has no x-hoserva block")
 )
 
 // Entry is one template as a catalog holds it: the compose.yaml bytes and

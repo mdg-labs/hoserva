@@ -35,11 +35,58 @@ func (f fakeGPU) RenderGID(context.Context) (string, error)       { return f.gid
 // stacks the way Compose resolves them: each `ports` entry with the stack's
 // .env substituted. Nothing is ever started.
 type fakeStacks struct {
-	created  []container.NewStack
+	created []container.NewStack
+	// edited names the stacks Get reports as manually edited.
+	edited   map[string]bool
 	err      error
 	portsErr error
 	// existing are ports of stacks that were not created through this fake.
 	existing map[int]bool
+	// envErr fails UpdateEnv, and envWrites counts the calls that reached it.
+	envErr    error
+	envWrites int
+}
+
+func (f *fakeStacks) find(name string) (int, bool) {
+	for i, n := range f.created {
+		if n.Name == name {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (f *fakeStacks) Get(_ context.Context, name string) (container.Stack, error) {
+	i, ok := f.find(name)
+	if !ok {
+		return container.Stack{}, container.ErrStackNotFound
+	}
+	n := f.created[i]
+	return container.Stack{Name: n.Name, Compose: n.Compose, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision, ManuallyEdited: f.edited[name]}, nil
+}
+
+func (f *fakeStacks) Env(_ context.Context, name string) (string, error) {
+	i, ok := f.find(name)
+	if !ok {
+		return "", container.ErrStackNotFound
+	}
+	return f.created[i].Env, nil
+}
+
+func (f *fakeStacks) UpdateEnv(ctx context.Context, name, env string) (container.Stack, error) {
+	f.envWrites++
+	if f.envErr != nil {
+		return container.Stack{}, f.envErr
+	}
+	if names := container.ReservedEnvDefined(env); len(names) > 0 {
+		return container.Stack{}, container.ErrReservedEnvName
+	}
+	i, ok := f.find(name)
+	if !ok {
+		return container.Stack{}, container.ErrStackNotFound
+	}
+	f.created[i].Env = env
+	return f.Get(ctx, name)
 }
 
 func (f *fakeStacks) Create(_ context.Context, n container.NewStack) (container.Stack, error) {

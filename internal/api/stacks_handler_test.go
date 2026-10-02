@@ -53,6 +53,16 @@ func (m *stackMemStore) UpdateCompose(_ context.Context, name, compose string, m
 	return nil
 }
 
+func (m *stackMemStore) UpdateEnv(_ context.Context, name string, sealedEnv []byte) error {
+	st, ok := m.rows[name]
+	if !ok {
+		return store.ErrStackNotFound
+	}
+	st.SealedEnv = sealedEnv
+	m.rows[name] = st
+	return nil
+}
+
 func (m *stackMemStore) Delete(_ context.Context, name string) error {
 	delete(m.rows, name)
 	return nil

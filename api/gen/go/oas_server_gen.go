@@ -657,6 +657,22 @@ type Handler interface {
 	//
 	// GET /stacks/{name}
 	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
+	// GetStackConfig implements getStackConfig operation.
+	//
+	// The inputs of the template a stack was installed from, with the value each has now. The inputs are
+	// read from the `x-hoserva` block of the stack's stored `docker-compose.yml` text, so the catalog is
+	// not needed and a stack whose Compose file was edited by hand is read as it runs (`manuallyEdited`
+	// says so), and the values from the stack's `.env`. A secret is never returned: `set` says whether the
+	// `.env` gives it a value. A `device` input is `readOnly`: its device mapping is part of the Compose
+	// file, which the form never writes. A `path` input that is not appdata lists the existing shares'
+	// paths as suggestions, as `previewTemplateInstall` does. A stack whose Compose file has no
+	// `x-hoserva` block (one made with `createStack` without a template) is refused with 409
+	// `stack_has_no_template`; one whose block is not valid with 422 `template_invalid`; an unknown stack
+	// with 404 `stack_not_found` and a name that is not a valid stack name with 400 `invalid_stack_name`.
+	// A stack whose `.env` cannot be opened (a restore without the backup passphrase) is a plain failure.
+	//
+	// GET /stacks/{name}/config
+	GetStackConfig(ctx context.Context, params GetStackConfigParams) (*StackConfig, error)
 	// GetStackTemplateUpdate implements getStackTemplateUpdate operation.
 	//
 	// Compares the template revision the stack was installed from (its `stacks` row) with the revision the
@@ -1793,6 +1809,31 @@ type Handler interface {
 	//
 	// PUT /stacks/{name}
 	UpdateStack(ctx context.Context, req *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error)
+	// UpdateStackConfig implements updateStackConfig operation.
+	//
+	// Changes the values of some of the stack's template inputs. Every value is checked with the rules
+	// `previewTemplateInstall` uses, before anything is stored: a value that does not fit its kind, a path
+	// that is not absolute, a `string` input emptied that is not optional, or a `device` input given a
+	// different value (its mapping is in the Compose file, so it is changed there) is refused with 400
+	// `invalid_template_input`; a `port` input changed to a port that a container publishes or is
+	// configured to publish, that another stack's Compose file publishes, or that the host listens on, is
+	// refused with 409 `no_free_port` and is never moved to another port (the stack's own ports are not
+	// taken); a `.env` that would define a variable Docker takes from the daemon's environment is refused
+	// with 400 `invalid_stack_env`. A refusal changes nothing. Otherwise the new `.env` is sealed into the
+	// stack's row and the stack's `.env` file is regenerated from it: only the lines of the inputs that
+	// changed are rewritten and every other line is kept. If writing the file fails the row is put back as
+	// it was. `docker-compose.yml` is never regenerated from the template, so a manual edit of it stays,
+	// and nothing is restarted: `startStack` makes the change take effect. An input without an entry keeps
+	// its value. An empty entry takes the input's default, as in an install, and so clears an optional
+	// `string` input. A secret with no entry or an empty one keeps the sealed value; a non-empty one
+	// replaces it; one named in `generate` gets a newly generated value (48 hexadecimal characters), and
+	// naming one that is not a secret, or that also has a value, is refused with 400
+	// `invalid_template_input`. The answer is `getStackConfig`'s, with the values as they are now. The
+	// other errors of `getStackConfig` apply; 503 `docker_unavailable` is answered only when a port was
+	// changed, since the check needs Docker.
+	//
+	// PUT /stacks/{name}/config
+	UpdateStackConfig(ctx context.Context, req *UpdateStackConfigRequest, params UpdateStackConfigParams) (*StackConfig, error)
 	// UpdateUPSSettings implements updateUPSSettings operation.
 	//
 	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the

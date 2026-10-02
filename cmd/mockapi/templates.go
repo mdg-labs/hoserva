@@ -236,14 +236,18 @@ func (mockGPU) RenderDevices(context.Context) ([]string, error) {
 
 func (mockGPU) RenderGID(context.Context) (string, error) { return "44", nil }
 
+// mockBusyPort is a host port something outside Hoserva listens on in this
+// mock, so a form can meet a port conflict on a port no app lists.
+const mockBusyPort = 9000
+
 // mockPorts reports the host ports this mock's apps publish or are
-// configured to publish, running or stopped.
+// configured to publish, running or stopped, and the one the host listens on.
 type mockPorts struct{ h *handler }
 
 func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
 	m.h.appsMu.Lock()
 	defer m.h.appsMu.Unlock()
-	used := map[int]bool{}
+	used := map[int]bool{mockBusyPort: true}
 	for _, a := range m.h.apps {
 		for _, p := range a.Ports {
 			if hp, ok := p.HostPort.Get(); ok && hp != 0 {
@@ -351,6 +355,53 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 	return container.Stack{Name: n.Name, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision, InstalledAt: now}, nil
 }
 
+func (m mockStackCreator) Get(_ context.Context, name string) (container.Stack, error) {
+	if !container.ValidStackName(name) {
+		return container.Stack{}, fmt.Errorf("%w: %q", container.ErrInvalidStackName, name)
+	}
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	s, ok := m.h.stacks[name]
+	if !ok {
+		return container.Stack{}, fmt.Errorf("%w: %s", container.ErrStackNotFound, name)
+	}
+	return container.Stack{
+		Name:             s.Name,
+		TemplateSource:   s.Template.Source,
+		TemplateID:       s.Template.ID,
+		TemplateRevision: s.Template.Revision,
+		InstalledAt:      s.InstalledAt,
+		Compose:          s.Compose.Or(""),
+		ManuallyEdited:   s.ManuallyEdited,
+	}, nil
+}
+
+func (m mockStackCreator) Env(ctx context.Context, name string) (string, error) {
+	if _, err := m.Get(ctx, name); err != nil {
+		return "", err
+	}
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	return m.h.stackEnvs[name], nil
+}
+
+// UpdateEnv replaces the stack's .env and works its ports out again from the
+// Compose text, as production does with the row and `docker compose config`.
+func (m mockStackCreator) UpdateEnv(ctx context.Context, name, env string) (container.Stack, error) {
+	if names := container.ReservedEnvDefined(env); len(names) > 0 {
+		return container.Stack{}, fmt.Errorf("%w: %s", container.ErrReservedEnvName, strings.Join(names, ", "))
+	}
+	st, err := m.Get(ctx, name)
+	if err != nil {
+		return container.Stack{}, err
+	}
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	m.h.setStackEnv(name, env)
+	m.h.setStackPorts(name, composePorts(st.Compose, env))
+	return st, nil
+}
+
 func (h *handler) templateInstaller() *template.Installer {
 	return &template.Installer{
 		Catalog: h.mockCatalogs(),
@@ -386,8 +437,12 @@ func mapMockTemplateError(name string, err error) error {
 		return &mockError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
 	case errors.Is(err, template.ErrGPUUnavailable):
 		return &mockError{code: "gpu_unavailable", statusCode: 409, message: err.Error()}
-	case errors.Is(err, template.ErrNoFreePort):
+	case errors.Is(err, template.ErrNoFreePort), errors.Is(err, template.ErrPortTaken):
 		return &mockError{code: "no_free_port", statusCode: 409, message: err.Error()}
+	case errors.Is(err, template.ErrStackHasNoTemplate):
+		return &mockError{code: "stack_has_no_template", statusCode: 409, message: fmt.Sprintf("stack %q was not installed from a template and has no inputs to change; edit its Compose file instead", name)}
+	case errors.Is(err, container.ErrStackNotFound):
+		return errStackNotFound(name)
 	case errors.Is(err, container.ErrInvalidStackName):
 		return &mockError{code: "invalid_stack_name", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrInvalidStack):

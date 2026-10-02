@@ -16,5 +16,8 @@ FROM stacks ORDER BY name ASC;
 -- name: UpdateStackCompose :execrows
 UPDATE stacks SET compose = ?, manually_edited = ? WHERE name = ?;
 
+-- name: UpdateStackEnv :execrows
+UPDATE stacks SET env = ? WHERE name = ?;
+
 -- name: DeleteStack :execrows
 DELETE FROM stacks WHERE name = ?;

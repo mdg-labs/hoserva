@@ -136,3 +136,46 @@ func TestStackStore_UpdateComposeSetsTheFlagAndKeepsTheRest(t *testing.T) {
 		t.Fatal("the database accepted manually_edited = 2")
 	}
 }
+
+func TestStackStore_UpdateEnvReplacesOnlyTheSealedEnv(t *testing.T) {
+	ctx := context.Background()
+	migrations, err := Load()
+	if err != nil {
+		t.Fatalf("loading migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "stack-env-test.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("opening test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	runner := &Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
+	if _, _, err := runner.Apply(ctx); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+	st := NewStackStore(db)
+
+	at := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	rec := Stack{Name: "nginx", TemplateSource: "catalog", TemplateID: "nginx", TemplateRevision: "3", Compose: "services: {}\n", SealedEnv: []byte{1, 2, 3}, InstalledAt: at, ManuallyEdited: true}
+	if err := st.Insert(ctx, rec); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := st.UpdateEnv(ctx, "nginx", []byte{9, 8}); err != nil {
+		t.Fatalf("UpdateEnv: %v", err)
+	}
+	got, err := st.Get(ctx, "nginx")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got.SealedEnv) != "\x09\x08" {
+		t.Fatalf("sealed env = %v, want [9 8]", got.SealedEnv)
+	}
+	if got.Compose != rec.Compose || !got.ManuallyEdited || got.TemplateRevision != "3" || !got.InstalledAt.Equal(at) {
+		t.Fatalf("UpdateEnv changed another column: %+v", got)
+	}
+	if err := st.UpdateEnv(ctx, "missing", []byte{1}); !errors.Is(err, ErrStackNotFound) {
+		t.Fatalf("UpdateEnv(missing) = %v, want ErrStackNotFound", err)
+	}
+	if err := st.UpdateEnv(ctx, "nginx", nil); err != nil {
+		t.Fatalf("UpdateEnv with a nil sealed env: %v", err)
+	}
+}

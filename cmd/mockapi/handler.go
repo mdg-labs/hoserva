@@ -203,6 +203,14 @@ func newHandler(scenario string) (*handler, error) {
 		return nil, err
 	}
 
+	stacks := mockStacksFor(apps)
+	stackEnvs := make(map[string]string, len(stacks))
+	stackPorts := make(map[string]map[int]bool, len(stacks))
+	for name, st := range stacks {
+		stackEnvs[name] = mockStackEnv
+		stackPorts[name] = composePorts(st.Compose.Or(""), mockStackEnv)
+	}
+
 	return &handler{
 		scenario:     scenario,
 		jobs:         jobs,
@@ -216,7 +224,9 @@ func newHandler(scenario string) (*handler, error) {
 		shares:       make(map[string]apiv1.Share),
 		apps:         apps,
 		appsDown:     appsDown,
-		stacks:       mockStacksFor(apps),
+		stacks:       stacks,
+		stackEnvs:    stackEnvs,
+		stackPorts:   stackPorts,
 
 		bulkExcluded:        make(map[string]bool),
 		registryCredentials: make(map[string]bool),

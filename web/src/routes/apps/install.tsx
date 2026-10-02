@@ -85,7 +85,7 @@ function shownValue(input: TemplateInput, values: Record<string, string>): strin
   return input.value ?? "";
 }
 
-function InputField({
+export function InputField({
   input,
   value,
   optional,

@@ -254,6 +254,8 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.GetStackOperation,
 		apiv1.CreateStackOperation,
 		apiv1.UpdateStackOperation,
+		apiv1.GetStackConfigOperation,
+		apiv1.UpdateStackConfigOperation,
 		apiv1.StartStackOperation,
 		apiv1.RemoveStackOperation,
 		apiv1.RunConfigBackupOperation,

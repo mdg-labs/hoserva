@@ -12,6 +12,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/template"
 )
 
 func errStackNotFound(name string) error {
@@ -110,6 +111,65 @@ func (h *handler) UpdateStack(ctx context.Context, req *apiv1.UpdateStackRequest
 	h.stacks[params.Name] = s
 	h.setStackPorts(params.Name, composePorts(req.Compose, h.stackEnvs[params.Name]))
 	return &apiv1.UpdateStackResult{Applied: true, Stack: s}, nil
+}
+
+// GetStackConfig and UpdateStackConfig run the production installer over the
+// mock's stacks, so a value is refused exactly as the daemon refuses it.
+func (h *handler) GetStackConfig(ctx context.Context, params apiv1.GetStackConfigParams) (*apiv1.StackConfig, error) {
+	cfg, err := h.templateInstaller().Config(ctx, params.Name)
+	if err != nil {
+		return nil, mapMockTemplateError(params.Name, err)
+	}
+	out := mockStackConfigToAPI(cfg)
+	return &out, nil
+}
+
+func (h *handler) UpdateStackConfig(ctx context.Context, req *apiv1.UpdateStackConfigRequest, params apiv1.UpdateStackConfigParams) (*apiv1.StackConfig, error) {
+	cfg, err := h.templateInstaller().UpdateConfig(ctx, params.Name, template.ConfigUpdate{
+		Values:   req.Values.Or(nil),
+		Generate: req.Generate,
+	})
+	if err != nil {
+		return nil, mapMockTemplateError(params.Name, err)
+	}
+	out := mockStackConfigToAPI(cfg)
+	return &out, nil
+}
+
+func mockStackConfigToAPI(c *template.StackConfig) apiv1.StackConfig {
+	out := apiv1.StackConfig{
+		Stack: apiv1.Stack{
+			Name:           c.Stack.Name,
+			Template:       apiv1.StackTemplate{Source: c.Stack.TemplateSource, ID: c.Stack.TemplateID, Revision: c.Stack.TemplateRevision},
+			InstalledAt:    c.Stack.InstalledAt,
+			ManuallyEdited: c.Stack.ManuallyEdited,
+		},
+		Inputs: make([]apiv1.StackConfigInput, len(c.Inputs)),
+	}
+	for i, in := range c.Inputs {
+		ci := apiv1.StackConfigInput{
+			Name:        in.Name,
+			Kind:        apiv1.StackConfigInputKind(in.Kind),
+			ReadOnly:    in.ReadOnly,
+			Suggestions: in.Suggestions,
+		}
+		if in.Role != "" {
+			ci.Role = apiv1.NewOptStackConfigInputRole(apiv1.StackConfigInputRole(in.Role))
+		}
+		if in.Label != "" {
+			ci.Label = apiv1.NewOptString(in.Label)
+		}
+		if in.Description != "" {
+			ci.Description = apiv1.NewOptString(in.Description)
+		}
+		if in.Kind == template.KindSecret {
+			ci.Set = apiv1.NewOptBool(in.Set)
+		} else {
+			ci.Value = apiv1.NewOptString(in.Value)
+		}
+		out.Inputs[i] = ci
+	}
+	return out
 }
 
 // StartStack mirrors production: the stack is looked up, then the array

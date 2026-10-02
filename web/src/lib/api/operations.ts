@@ -24,6 +24,7 @@ type UpdateUPSSettingsRequest = components["schemas"]["UpdateUPSSettingsRequest"
 type ApplyHostConfigRequest = components["schemas"]["ApplyHostConfigRequest"];
 type CatalogSettingsUpdate = components["schemas"]["CatalogSettingsUpdate"];
 type TemplateInstallRequest = components["schemas"]["TemplateInstallRequest"];
+type UpdateStackConfigRequest = components["schemas"]["UpdateStackConfigRequest"];
 
 export function getStatus(signal?: AbortSignal) {
   return hoservaClient.GET("/status", { signal });
@@ -160,6 +161,14 @@ export function updateStack(name: string, compose: string, dryRun: boolean) {
     params: { path: { name }, query: dryRun ? { dryRun: true } : {} },
     body: { compose },
   });
+}
+
+export function getStackConfig(name: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/stacks/{name}/config", { params: { path: { name } }, signal });
+}
+
+export function updateStackConfig(name: string, body: UpdateStackConfigRequest) {
+  return hoservaClient.PUT("/stacks/{name}/config", { params: { path: { name } }, body });
 }
 
 export function startStack(name: string) {

@@ -83,6 +83,7 @@ type StackStore interface {
 	Get(ctx context.Context, name string) (store.Stack, error)
 	List(ctx context.Context) ([]store.Stack, error)
 	UpdateCompose(ctx context.Context, name, compose string, manuallyEdited bool) error
+	UpdateEnv(ctx context.Context, name string, sealedEnv []byte) error
 	Delete(ctx context.Context, name string) error
 }
 
@@ -746,6 +747,121 @@ func (s *StackService) Update(ctx context.Context, name, compose string, dryRun 
 		return Stack{}, errors.Join(err, s.undoComposeWrite(old, compose))
 	}
 	return stackFrom(updated), nil
+}
+
+// Env returns the stack's .env text, opened from its row. It is the only way
+// the secrets of a stack come out of the row: the caller must never put the
+// text in a response, a log line or an error.
+func (s *StackService) Env(ctx context.Context, name string) (string, error) {
+	if !ValidStackName(name) {
+		return "", fmt.Errorf("%w: %q", ErrInvalidStackName, name)
+	}
+	st, err := s.Store.Get(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	env, err := s.Cipher.Decrypt(st.SealedEnv)
+	if err != nil {
+		return "", fmt.Errorf("opening the .env of stack %s: %w", name, err)
+	}
+	return string(env), nil
+}
+
+// UpdateEnv seals env into the stack's row and regenerates the stack's .env
+// from it, leaving docker-compose.yml, meta.json and every other column as
+// they are. Nothing is restarted: Up makes the change take effect. An env
+// that defines a reserved variable (ReservedEnvNames) is refused as
+// ErrReservedEnvName before anything is stored or written.
+//
+// The row is updated before the file is written, and put back if the write
+// fails. Only .env is replaced (through a temporary file and a rename); the
+// stack's other files are written only if missing. A write that fails after
+// the rename (the directory sync) has put the new text on disk, so the text
+// the file held before is written back, or the file removed if there was
+// none, before UpdateEnv reports the error.
+//
+// Callers that derive env from the current one serialize their own
+// read-modify-write: the stack lock only covers each call.
+func (s *StackService) UpdateEnv(ctx context.Context, name, env string) (Stack, error) {
+	if !ValidStackName(name) {
+		return Stack{}, fmt.Errorf("%w: %q", ErrInvalidStackName, name)
+	}
+	if names := ReservedEnvDefined(env); len(names) > 0 {
+		return Stack{}, fmt.Errorf("%w: %s; Docker takes these from the daemon's environment", ErrReservedEnvName, strings.Join(names, ", "))
+	}
+	if err := s.checkRoot(); err != nil {
+		return Stack{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	old, err := s.Store.Get(ctx, name)
+	if err != nil {
+		return Stack{}, err
+	}
+	sealed, err := s.Cipher.Encrypt([]byte(env))
+	if err != nil {
+		return Stack{}, fmt.Errorf("sealing the .env of stack %s: %w", name, err)
+	}
+	path := filepath.Join(s.dir(name), stackEnvFile)
+	prev, err := os.ReadFile(path)
+	hadFile := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return Stack{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if err := s.Store.UpdateEnv(ctx, name, sealed); err != nil {
+		return Stack{}, err
+	}
+	updated := old
+	updated.SealedEnv = sealed
+	if err := s.writeEnv(updated, []byte(env)); err != nil {
+		// The compensation must not be cancelled with the request, or a
+		// disconnect would leave the row and the file disagreeing.
+		cleanup := context.WithoutCancel(ctx)
+		if rerr := s.Store.UpdateEnv(cleanup, name, old.SealedEnv); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("putting back the .env of stack %s in its row: %w", name, rerr))
+		}
+		return Stack{}, errors.Join(err, s.undoEnvWrite(path, prev, hadFile, env))
+	}
+	return stackFrom(updated), nil
+}
+
+// writeEnv writes the stack's missing generated files from st, and then
+// replaces .env with env.
+func (s *StackService) writeEnv(st store.Stack, env []byte) error {
+	if err := s.ensureFiles(st, false); err != nil {
+		return err
+	}
+	dir := s.dir(st.Name)
+	if err := writeFileAtomic(filepath.Join(dir, stackEnvFile), env, stackFileModes[stackEnvFile]); err != nil {
+		return err
+	}
+	return s.syncStackDir(dir)
+}
+
+// undoEnvWrite puts the .env the stack had before a failed UpdateEnv back
+// when the file holds the text the failed call wrote. A file that holds
+// anything else was not replaced and is left alone.
+func (s *StackService) undoEnvWrite(path string, prev []byte, hadFile bool, written string) error {
+	cur, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("checking %s after a failed change: %w", path, err)
+	case string(cur) != written:
+		return nil
+	}
+	if !hadFile {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("removing %s after a failed change: %w", path, err)
+		}
+		return nil
+	}
+	if err := writeFileAtomic(path, prev, stackFileModes[stackEnvFile]); err != nil {
+		return fmt.Errorf("putting back the previous %s: %w", path, err)
+	}
+	return nil
 }
 
 // validateCompose runs `docker compose config` on compose from a temporary

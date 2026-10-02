@@ -126,3 +126,100 @@ func TestStackEditRefusedFileIsAnErrorAndNeedsAFile(t *testing.T) {
 		t.Fatal("stack edit of a missing file succeeded")
 	}
 }
+
+func testStackConfig() *apiv1.StackConfig {
+	return &apiv1.StackConfig{
+		Stack: apiv1.Stack{Name: "web", Template: apiv1.StackTemplate{Source: "hoserva", ID: "notes", Revision: "3"}, InstalledAt: time.Now().UTC(), ManuallyEdited: true},
+		Inputs: []apiv1.StackConfigInput{
+			{Name: "DB_PASSWORD", Kind: apiv1.StackConfigInputKindSecret, Set: apiv1.NewOptBool(true)},
+			{Name: "GPU", Kind: apiv1.StackConfigInputKindDevice, ReadOnly: true, Value: apiv1.NewOptString("/dev/dri/renderD128")},
+			{Name: "SITE_NAME", Kind: apiv1.StackConfigInputKindString, Value: apiv1.NewOptString("Notes")},
+			{Name: "WEBUI_PORT", Kind: apiv1.StackConfigInputKindPort, Value: apiv1.NewOptString("3000")},
+		},
+	}
+}
+
+func TestStackConfigPrintsTheInputsAndNeverASecret(t *testing.T) {
+	var requests []string
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		writeJSON(t, w, http.StatusOK, testStackConfig())
+	})
+	printed, err := runAppCLI(t, sock, "stack", "config", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"DB_PASSWORD: set (the value is never shown)",
+		"GPU: /dev/dri/renderD128 (read-only",
+		"SITE_NAME: Notes",
+		"WEBUI_PORT: 3000",
+		"edited by hand",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+	printed, err = runAppCLI(t, sock, "--json", "stack", "config", "web")
+	if err != nil || !strings.Contains(printed, `"readOnly": true`) || strings.Contains(printed, `"value": ""`) {
+		t.Errorf("--json = %q, %v", printed, err)
+	}
+	if strings.Join(requests, "|") != "GET /api/v1/stacks/web/config|GET /api/v1/stacks/web/config" {
+		t.Errorf("requests = %v, want only reads", requests)
+	}
+}
+
+func TestStackConfigSetAndGenerateSendThemInOnePut(t *testing.T) {
+	var gotRequest, gotBody string
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotRequest = r.Method + " " + r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		writeJSON(t, w, http.StatusOK, testStackConfig())
+	})
+	printed, err := runAppCLI(t, sock, "stack", "config", "web", "--set", "SITE_NAME=Team notes", "--set", "WEBUI_PORT=3100", "--generate", "DB_PASSWORD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRequest != "PUT /api/v1/stacks/web/config" {
+		t.Fatalf("request = %q", gotRequest)
+	}
+	var body struct {
+		Values   map[string]string `json:"values"`
+		Generate []string          `json:"generate"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Values) != 2 || body.Values["SITE_NAME"] != "Team notes" || body.Values["WEBUI_PORT"] != "3100" || len(body.Generate) != 1 || body.Generate[0] != "DB_PASSWORD" {
+		t.Errorf("body = %s", gotBody)
+	}
+	if !strings.Contains(printed, "hoserva stack start web") {
+		t.Errorf("output does not say the change needs a start:\n%s", printed)
+	}
+}
+
+func TestStackConfigRefusalsAreErrorsAndBadSetsSendNothing(t *testing.T) {
+	var calls int
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"code":"no_free_port","message":"template: the port is already in use: WEBUI_PORT asks for 4000"}`))
+	})
+	if _, err := runAppCLI(t, sock, "stack", "config", "web", "--set", "WEBUI_PORT=4000"); err == nil || !strings.Contains(err.Error(), "WEBUI_PORT asks for 4000") {
+		t.Fatalf("a refused change: error = %v, want the daemon's message", err)
+	}
+	callsAfterRefusal := calls
+	for _, args := range [][]string{
+		{"stack", "config", "web", "--set", "NOEQUALS"},
+		{"stack", "config", "web", "--set", "A=1", "--set", "A=2"},
+	} {
+		if _, err := runAppCLI(t, sock, args...); err == nil {
+			t.Errorf("%v succeeded", args)
+		}
+	}
+	if calls != callsAfterRefusal {
+		t.Error("a malformed --set reached the daemon")
+	}
+}

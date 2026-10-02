@@ -828,6 +828,146 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Installed stack's template inputs (#519) ---
+	{
+		op:   "GetStackConfig",
+		name: "valid_installed_stack",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackConfig",
+		name: "stack_made_without_a_template_has_none",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "plain", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "plain"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackConfig",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackConfig",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "../etc"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "valid_change_of_a_port_and_a_generated_secret",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{
+				Values:   apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"WEBUI_PORT": "3100", "APPDATA": "/mnt/cache/notes"}),
+				Generate: []string{"DB_PASSWORD"},
+			}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "port_another_container_takes",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"WEBUI_PORT": "8096"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "port_out_of_range",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"WEBUI_PORT": "70000"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "device_input_cannot_change",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"TRANSCODE_GPU": "/dev/dri/renderD128"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "generate_of_a_name_that_is_not_a_secret",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{Generate: []string{"WEBUI_PORT"}}, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "value_for_an_input_the_stack_lacks",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"NOPE": "1"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "stack_made_without_a_template_has_none",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "plain", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{}, apiv1.UpdateStackConfigParams{Name: "plain"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{}, apiv1.UpdateStackConfigParams{Name: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{}, apiv1.UpdateStackConfigParams{Name: "../etc"})
+			return err
+		},
+	},
 	// --- Unraid template converter (#69) ---
 	{
 		op:   "ConvertUnraidTemplate",

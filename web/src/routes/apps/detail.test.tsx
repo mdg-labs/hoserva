@@ -262,7 +262,7 @@ describe("Overview", () => {
     expect(await screen.findByText("Not running")).toBeInTheDocument();
   });
 
-  it("offers the five tabs, and the Config one says it is not available yet", async () => {
+  it("offers the five tabs, and the Config one of an unmanaged container points to the Compose editor", async () => {
     installGet({ apps: [postgres] });
     renderPage("postgres");
 
@@ -270,7 +270,7 @@ describe("Overview", () => {
       expect(await screen.findByRole("tab", { name: label })).toBeInTheDocument();
     }
     fireEvent.click(screen.getByRole("tab", { name: "Config" }));
-    expect(await screen.findByText("This tab is not available yet.")).toBeInTheDocument();
+    expect(await screen.findByText(/is not part of an app stack that Hoserva manages/)).toBeInTheDocument();
   });
 
   it("fills the Logs, Stats and Update tabs from the application's route tree", async () => {

@@ -12789,6 +12789,52 @@ func (o OptShareSMB) Or(d ShareSMB) ShareSMB {
 	return d
 }
 
+// NewOptStackConfigInputRole returns new OptStackConfigInputRole with value set to v.
+func NewOptStackConfigInputRole(v StackConfigInputRole) OptStackConfigInputRole {
+	return OptStackConfigInputRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStackConfigInputRole is optional StackConfigInputRole.
+type OptStackConfigInputRole struct {
+	Value StackConfigInputRole
+	Set   bool
+}
+
+// IsSet returns true if OptStackConfigInputRole was set.
+func (o OptStackConfigInputRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStackConfigInputRole) Reset() {
+	var v StackConfigInputRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStackConfigInputRole) SetTo(v StackConfigInputRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStackConfigInputRole) Get() (v StackConfigInputRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStackConfigInputRole) Or(d StackConfigInputRole) StackConfigInputRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptStackTemplate returns new OptStackTemplate with value set to v.
 func NewOptStackTemplate(v StackTemplate) OptStackTemplate {
 	return OptStackTemplate{
@@ -13197,6 +13243,52 @@ func (o OptUpdateChannel) Get() (v UpdateChannel, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptUpdateChannel) Or(d UpdateChannel) UpdateChannel {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptUpdateStackConfigRequestValues returns new OptUpdateStackConfigRequestValues with value set to v.
+func NewOptUpdateStackConfigRequestValues(v UpdateStackConfigRequestValues) OptUpdateStackConfigRequestValues {
+	return OptUpdateStackConfigRequestValues{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUpdateStackConfigRequestValues is optional UpdateStackConfigRequestValues.
+type OptUpdateStackConfigRequestValues struct {
+	Value UpdateStackConfigRequestValues
+	Set   bool
+}
+
+// IsSet returns true if OptUpdateStackConfigRequestValues was set.
+func (o OptUpdateStackConfigRequestValues) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUpdateStackConfigRequestValues) Reset() {
+	var v UpdateStackConfigRequestValues
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUpdateStackConfigRequestValues) SetTo(v UpdateStackConfigRequestValues) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUpdateStackConfigRequestValues) Get() (v UpdateStackConfigRequestValues, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUpdateStackConfigRequestValues) Or(d UpdateStackConfigRequestValues) UpdateStackConfigRequestValues {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -15981,6 +16073,272 @@ func (s *Stack) SetCompose(val OptString) {
 	s.Compose = val
 }
 
+// Ref: #/components/schemas/StackConfig
+type StackConfig struct {
+	Stack Stack `json:"stack"`
+	// The template's inputs, sorted by name.
+	Inputs []StackConfigInput `json:"inputs"`
+}
+
+// GetStack returns the value of Stack.
+func (s *StackConfig) GetStack() Stack {
+	return s.Stack
+}
+
+// GetInputs returns the value of Inputs.
+func (s *StackConfig) GetInputs() []StackConfigInput {
+	return s.Inputs
+}
+
+// SetStack sets the value of Stack.
+func (s *StackConfig) SetStack(val Stack) {
+	s.Stack = val
+}
+
+// SetInputs sets the value of Inputs.
+func (s *StackConfig) SetInputs(val []StackConfigInput) {
+	s.Inputs = val
+}
+
+// Ref: #/components/schemas/StackConfigInput
+type StackConfigInput struct {
+	Name        string                  `json:"name"`
+	Kind        StackConfigInputKind    `json:"kind"`
+	Role        OptStackConfigInputRole `json:"role"`
+	Label       OptString               `json:"label"`
+	Description OptString               `json:"description"`
+	// The value the stack's `.env` gives the input; empty when it gives none. Absent for a secret.
+	Value OptString `json:"value"`
+	// Present on a `secret` input only: whether the stack's `.env` gives it a value. The value itself is
+	// never returned.
+	Set OptBool `json:"set"`
+	// True for a `device` input, which `updateStackConfig` refuses to change.
+	ReadOnly bool `json:"readOnly"`
+	// The existing shares' paths for a `path` input that is not appdata.
+	Suggestions []string `json:"suggestions"`
+}
+
+// GetName returns the value of Name.
+func (s *StackConfigInput) GetName() string {
+	return s.Name
+}
+
+// GetKind returns the value of Kind.
+func (s *StackConfigInput) GetKind() StackConfigInputKind {
+	return s.Kind
+}
+
+// GetRole returns the value of Role.
+func (s *StackConfigInput) GetRole() OptStackConfigInputRole {
+	return s.Role
+}
+
+// GetLabel returns the value of Label.
+func (s *StackConfigInput) GetLabel() OptString {
+	return s.Label
+}
+
+// GetDescription returns the value of Description.
+func (s *StackConfigInput) GetDescription() OptString {
+	return s.Description
+}
+
+// GetValue returns the value of Value.
+func (s *StackConfigInput) GetValue() OptString {
+	return s.Value
+}
+
+// GetSet returns the value of Set.
+func (s *StackConfigInput) GetSet() OptBool {
+	return s.Set
+}
+
+// GetReadOnly returns the value of ReadOnly.
+func (s *StackConfigInput) GetReadOnly() bool {
+	return s.ReadOnly
+}
+
+// GetSuggestions returns the value of Suggestions.
+func (s *StackConfigInput) GetSuggestions() []string {
+	return s.Suggestions
+}
+
+// SetName sets the value of Name.
+func (s *StackConfigInput) SetName(val string) {
+	s.Name = val
+}
+
+// SetKind sets the value of Kind.
+func (s *StackConfigInput) SetKind(val StackConfigInputKind) {
+	s.Kind = val
+}
+
+// SetRole sets the value of Role.
+func (s *StackConfigInput) SetRole(val OptStackConfigInputRole) {
+	s.Role = val
+}
+
+// SetLabel sets the value of Label.
+func (s *StackConfigInput) SetLabel(val OptString) {
+	s.Label = val
+}
+
+// SetDescription sets the value of Description.
+func (s *StackConfigInput) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetValue sets the value of Value.
+func (s *StackConfigInput) SetValue(val OptString) {
+	s.Value = val
+}
+
+// SetSet sets the value of Set.
+func (s *StackConfigInput) SetSet(val OptBool) {
+	s.Set = val
+}
+
+// SetReadOnly sets the value of ReadOnly.
+func (s *StackConfigInput) SetReadOnly(val bool) {
+	s.ReadOnly = val
+}
+
+// SetSuggestions sets the value of Suggestions.
+func (s *StackConfigInput) SetSuggestions(val []string) {
+	s.Suggestions = val
+}
+
+type StackConfigInputKind string
+
+const (
+	StackConfigInputKindPath     StackConfigInputKind = "path"
+	StackConfigInputKindPort     StackConfigInputKind = "port"
+	StackConfigInputKindString   StackConfigInputKind = "string"
+	StackConfigInputKindSecret   StackConfigInputKind = "secret"
+	StackConfigInputKindTimezone StackConfigInputKind = "timezone"
+	StackConfigInputKindDevice   StackConfigInputKind = "device"
+)
+
+// AllValues returns all StackConfigInputKind values.
+func (StackConfigInputKind) AllValues() []StackConfigInputKind {
+	return []StackConfigInputKind{
+		StackConfigInputKindPath,
+		StackConfigInputKindPort,
+		StackConfigInputKindString,
+		StackConfigInputKindSecret,
+		StackConfigInputKindTimezone,
+		StackConfigInputKindDevice,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StackConfigInputKind) MarshalText() ([]byte, error) {
+	switch s {
+	case StackConfigInputKindPath:
+		return []byte(s), nil
+	case StackConfigInputKindPort:
+		return []byte(s), nil
+	case StackConfigInputKindString:
+		return []byte(s), nil
+	case StackConfigInputKindSecret:
+		return []byte(s), nil
+	case StackConfigInputKindTimezone:
+		return []byte(s), nil
+	case StackConfigInputKindDevice:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StackConfigInputKind) UnmarshalText(data []byte) error {
+	switch StackConfigInputKind(data) {
+	case StackConfigInputKindPath:
+		*s = StackConfigInputKindPath
+		return nil
+	case StackConfigInputKindPort:
+		*s = StackConfigInputKindPort
+		return nil
+	case StackConfigInputKindString:
+		*s = StackConfigInputKindString
+		return nil
+	case StackConfigInputKindSecret:
+		*s = StackConfigInputKindSecret
+		return nil
+	case StackConfigInputKindTimezone:
+		*s = StackConfigInputKindTimezone
+		return nil
+	case StackConfigInputKindDevice:
+		*s = StackConfigInputKindDevice
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type StackConfigInputRole string
+
+const (
+	StackConfigInputRoleAppdata   StackConfigInputRole = "appdata"
+	StackConfigInputRoleShare     StackConfigInputRole = "share"
+	StackConfigInputRoleMedia     StackConfigInputRole = "media"
+	StackConfigInputRoleDownloads StackConfigInputRole = "downloads"
+	StackConfigInputRoleGpu       StackConfigInputRole = "gpu"
+)
+
+// AllValues returns all StackConfigInputRole values.
+func (StackConfigInputRole) AllValues() []StackConfigInputRole {
+	return []StackConfigInputRole{
+		StackConfigInputRoleAppdata,
+		StackConfigInputRoleShare,
+		StackConfigInputRoleMedia,
+		StackConfigInputRoleDownloads,
+		StackConfigInputRoleGpu,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StackConfigInputRole) MarshalText() ([]byte, error) {
+	switch s {
+	case StackConfigInputRoleAppdata:
+		return []byte(s), nil
+	case StackConfigInputRoleShare:
+		return []byte(s), nil
+	case StackConfigInputRoleMedia:
+		return []byte(s), nil
+	case StackConfigInputRoleDownloads:
+		return []byte(s), nil
+	case StackConfigInputRoleGpu:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StackConfigInputRole) UnmarshalText(data []byte) error {
+	switch StackConfigInputRole(data) {
+	case StackConfigInputRoleAppdata:
+		*s = StackConfigInputRoleAppdata
+		return nil
+	case StackConfigInputRoleShare:
+		*s = StackConfigInputRoleShare
+		return nil
+	case StackConfigInputRoleMedia:
+		*s = StackConfigInputRoleMedia
+		return nil
+	case StackConfigInputRoleDownloads:
+		*s = StackConfigInputRoleDownloads
+		return nil
+	case StackConfigInputRoleGpu:
+		*s = StackConfigInputRoleGpu
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/StackTemplate
 type StackTemplate struct {
 	// Where the template came from; empty for a stack no template installed.
@@ -18276,6 +18634,48 @@ func (s *UpdateShareRequest) SetSmb(val OptShareSMB) {
 // SetNfs sets the value of Nfs.
 func (s *UpdateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
+}
+
+// Ref: #/components/schemas/UpdateStackConfigRequest
+type UpdateStackConfigRequest struct {
+	// Input name to its new value. An input with no entry keeps its value; an empty entry takes the
+	// input's default. An entry for a name that is not one of the stack's inputs is refused.
+	Values OptUpdateStackConfigRequestValues `json:"values"`
+	// Names of secret inputs to give a newly generated value.
+	Generate []string `json:"generate"`
+}
+
+// GetValues returns the value of Values.
+func (s *UpdateStackConfigRequest) GetValues() OptUpdateStackConfigRequestValues {
+	return s.Values
+}
+
+// GetGenerate returns the value of Generate.
+func (s *UpdateStackConfigRequest) GetGenerate() []string {
+	return s.Generate
+}
+
+// SetValues sets the value of Values.
+func (s *UpdateStackConfigRequest) SetValues(val OptUpdateStackConfigRequestValues) {
+	s.Values = val
+}
+
+// SetGenerate sets the value of Generate.
+func (s *UpdateStackConfigRequest) SetGenerate(val []string) {
+	s.Generate = val
+}
+
+// Input name to its new value. An input with no entry keeps its value; an empty entry takes the
+// input's default. An entry for a name that is not one of the stack's inputs is refused.
+type UpdateStackConfigRequestValues map[string]string
+
+func (s *UpdateStackConfigRequestValues) init() UpdateStackConfigRequestValues {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
 }
 
 // Ref: #/components/schemas/UpdateStackRequest

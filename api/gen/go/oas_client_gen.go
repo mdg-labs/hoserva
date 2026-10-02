@@ -678,6 +678,22 @@ type Invoker interface {
 	//
 	// GET /stacks/{name}
 	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
+	// GetStackConfig invokes getStackConfig operation.
+	//
+	// The inputs of the template a stack was installed from, with the value each has now. The inputs are
+	// read from the `x-hoserva` block of the stack's stored `docker-compose.yml` text, so the catalog is
+	// not needed and a stack whose Compose file was edited by hand is read as it runs (`manuallyEdited`
+	// says so), and the values from the stack's `.env`. A secret is never returned: `set` says whether the
+	// `.env` gives it a value. A `device` input is `readOnly`: its device mapping is part of the Compose
+	// file, which the form never writes. A `path` input that is not appdata lists the existing shares'
+	// paths as suggestions, as `previewTemplateInstall` does. A stack whose Compose file has no
+	// `x-hoserva` block (one made with `createStack` without a template) is refused with 409
+	// `stack_has_no_template`; one whose block is not valid with 422 `template_invalid`; an unknown stack
+	// with 404 `stack_not_found` and a name that is not a valid stack name with 400 `invalid_stack_name`.
+	// A stack whose `.env` cannot be opened (a restore without the backup passphrase) is a plain failure.
+	//
+	// GET /stacks/{name}/config
+	GetStackConfig(ctx context.Context, params GetStackConfigParams) (*StackConfig, error)
 	// GetStackTemplateUpdate invokes getStackTemplateUpdate operation.
 	//
 	// Compares the template revision the stack was installed from (its `stacks` row) with the revision the
@@ -1814,6 +1830,31 @@ type Invoker interface {
 	//
 	// PUT /stacks/{name}
 	UpdateStack(ctx context.Context, request *UpdateStackRequest, params UpdateStackParams) (*UpdateStackResult, error)
+	// UpdateStackConfig invokes updateStackConfig operation.
+	//
+	// Changes the values of some of the stack's template inputs. Every value is checked with the rules
+	// `previewTemplateInstall` uses, before anything is stored: a value that does not fit its kind, a path
+	// that is not absolute, a `string` input emptied that is not optional, or a `device` input given a
+	// different value (its mapping is in the Compose file, so it is changed there) is refused with 400
+	// `invalid_template_input`; a `port` input changed to a port that a container publishes or is
+	// configured to publish, that another stack's Compose file publishes, or that the host listens on, is
+	// refused with 409 `no_free_port` and is never moved to another port (the stack's own ports are not
+	// taken); a `.env` that would define a variable Docker takes from the daemon's environment is refused
+	// with 400 `invalid_stack_env`. A refusal changes nothing. Otherwise the new `.env` is sealed into the
+	// stack's row and the stack's `.env` file is regenerated from it: only the lines of the inputs that
+	// changed are rewritten and every other line is kept. If writing the file fails the row is put back as
+	// it was. `docker-compose.yml` is never regenerated from the template, so a manual edit of it stays,
+	// and nothing is restarted: `startStack` makes the change take effect. An input without an entry keeps
+	// its value. An empty entry takes the input's default, as in an install, and so clears an optional
+	// `string` input. A secret with no entry or an empty one keeps the sealed value; a non-empty one
+	// replaces it; one named in `generate` gets a newly generated value (48 hexadecimal characters), and
+	// naming one that is not a secret, or that also has a value, is refused with 400
+	// `invalid_template_input`. The answer is `getStackConfig`'s, with the values as they are now. The
+	// other errors of `getStackConfig` apply; 503 `docker_unavailable` is answered only when a port was
+	// changed, since the check needs Docker.
+	//
+	// PUT /stacks/{name}/config
+	UpdateStackConfig(ctx context.Context, request *UpdateStackConfigRequest, params UpdateStackConfigParams) (*StackConfig, error)
 	// UpdateUPSSettings invokes updateUPSSettings operation.
 	//
 	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
@@ -11173,6 +11214,160 @@ func (c *Client) sendGetStack(ctx context.Context, params GetStackParams) (res *
 
 	stage = "DecodeResponse"
 	result, err := decodeGetStackResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetStackConfig invokes getStackConfig operation.
+//
+// The inputs of the template a stack was installed from, with the value each has now. The inputs are
+// read from the `x-hoserva` block of the stack's stored `docker-compose.yml` text, so the catalog is
+// not needed and a stack whose Compose file was edited by hand is read as it runs (`manuallyEdited`
+// says so), and the values from the stack's `.env`. A secret is never returned: `set` says whether the
+// `.env` gives it a value. A `device` input is `readOnly`: its device mapping is part of the Compose
+// file, which the form never writes. A `path` input that is not appdata lists the existing shares'
+// paths as suggestions, as `previewTemplateInstall` does. A stack whose Compose file has no
+// `x-hoserva` block (one made with `createStack` without a template) is refused with 409
+// `stack_has_no_template`; one whose block is not valid with 422 `template_invalid`; an unknown stack
+// with 404 `stack_not_found` and a name that is not a valid stack name with 400 `invalid_stack_name`.
+// A stack whose `.env` cannot be opened (a restore without the backup passphrase) is a plain failure.
+//
+// GET /stacks/{name}/config
+func (c *Client) GetStackConfig(ctx context.Context, params GetStackConfigParams) (*StackConfig, error) {
+	res, err := c.sendGetStackConfig(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetStackConfig(ctx context.Context, params GetStackConfigParams) (res *StackConfig, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getStackConfig"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/stacks/{name}/config"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetStackConfigOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/config"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetStackConfigOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetStackConfigOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetStackConfigResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -24779,6 +24974,172 @@ func (c *Client) sendUpdateStack(ctx context.Context, request *UpdateStackReques
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateStackResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateStackConfig invokes updateStackConfig operation.
+//
+// Changes the values of some of the stack's template inputs. Every value is checked with the rules
+// `previewTemplateInstall` uses, before anything is stored: a value that does not fit its kind, a path
+// that is not absolute, a `string` input emptied that is not optional, or a `device` input given a
+// different value (its mapping is in the Compose file, so it is changed there) is refused with 400
+// `invalid_template_input`; a `port` input changed to a port that a container publishes or is
+// configured to publish, that another stack's Compose file publishes, or that the host listens on, is
+// refused with 409 `no_free_port` and is never moved to another port (the stack's own ports are not
+// taken); a `.env` that would define a variable Docker takes from the daemon's environment is refused
+// with 400 `invalid_stack_env`. A refusal changes nothing. Otherwise the new `.env` is sealed into the
+// stack's row and the stack's `.env` file is regenerated from it: only the lines of the inputs that
+// changed are rewritten and every other line is kept. If writing the file fails the row is put back as
+// it was. `docker-compose.yml` is never regenerated from the template, so a manual edit of it stays,
+// and nothing is restarted: `startStack` makes the change take effect. An input without an entry keeps
+// its value. An empty entry takes the input's default, as in an install, and so clears an optional
+// `string` input. A secret with no entry or an empty one keeps the sealed value; a non-empty one
+// replaces it; one named in `generate` gets a newly generated value (48 hexadecimal characters), and
+// naming one that is not a secret, or that also has a value, is refused with 400
+// `invalid_template_input`. The answer is `getStackConfig`'s, with the values as they are now. The
+// other errors of `getStackConfig` apply; 503 `docker_unavailable` is answered only when a port was
+// changed, since the check needs Docker.
+//
+// PUT /stacks/{name}/config
+func (c *Client) UpdateStackConfig(ctx context.Context, request *UpdateStackConfigRequest, params UpdateStackConfigParams) (*StackConfig, error) {
+	res, err := c.sendUpdateStackConfig(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateStackConfig(ctx context.Context, request *UpdateStackConfigRequest, params UpdateStackConfigParams) (res *StackConfig, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateStackConfig"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/stacks/{name}/config"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateStackConfigOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/config"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateStackConfigRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateStackConfigOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateStackConfigOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateStackConfigResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
