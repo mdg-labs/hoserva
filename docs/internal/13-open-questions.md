@@ -347,7 +347,7 @@ mergerfs and SnapRAID are filesystem-agnostic, so a single-device btrfs or ext4 
 R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against. Residual: only the ≤2TB MBR/4K-aligned partition layout and the primary XFS path are fixture-verified so far; GPT (>2TB) disks, ext4/btrfs disks and a VM/`libvirt.img` fixture remain (doc 08 §2).
 
 ### Q25 — Where migration reads Unraid config from *(contradiction)*
-**Status:** Default (flash config tree confirmed via `unraid/webgui` source, doc 08 §2 — every path Q25 depends on lives under `/boot/config/`, exactly the Flash Backup zip's own root) · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
+**Status:** Default (flash config tree confirmed via `unraid/webgui` source, doc 08 §2 — every path Q25 depends on lives under `/boot/config/`, which is `config/` inside the Flash Backup zip, whose root is `/boot`) · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
 
 **The contradiction:** Phase B step 11 removes the Unraid USB stick. Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
 

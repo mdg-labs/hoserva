@@ -179,7 +179,7 @@ Supporting details from Unraid's own documentation: XFS is described as generall
 
 **Flash configuration layout** (doc 06 §5's acceptance criterion; every path below sourced from `unraid/webgui`, cross-checked byte-identical between the `6.12.15` and `7.3.2` tags — no version difference found for any of it):
 
-| Path (relative to the flash's `config/` — i.e. `/boot/config/` on a running Unraid box, and the root of the Flash Backup zip, Q25) | Contents | Source |
+| Path (relative to the flash's `config/` — i.e. `/boot/config/` on a running Unraid box, and a path inside the Flash Backup zip, whose root is `/boot`, Q25) | Contents | Source |
 |---|---|---|
 | `disk.cfg` | Global array settings plus per-slot keys (`diskFsType.N`, `diskIdSlot.N`, `diskFsType`, ...) | `sbin/upgrade` |
 | `share.cfg` | Global share defaults (cache policy, allocator, mover schedule, ...) | `sbin/mover`, `emhttp/plugins/dynamix/scripts/diagnostics` |
@@ -201,10 +201,37 @@ What it could not confirm: the Diagnostics zip captures configuration and system
 
 **A finding from reading the Diagnostics generator's own source** (`emhttp/plugins/dynamix/scripts/diagnostics`, same repository and tags): its default anonymisation redacts share names, `ident.cfg` (hostname/identity fields), IP addresses, wireless credentials, and the `Read`/`WriteList` fields inside `.cfg` files — but does **not** redact per-disk serial numbers or filesystem UUIDs in `disk.cfg`/`pools/*.cfg`. Both were present, unredacted, in the bundle read for this spike. This confirms the calibration-handling rule this project's own process already follows (never quote a serial or UUID from the bundle, regardless of the file's name) is necessary rather than a precaution against a hypothetical — Unraid's own "Diagnostics" tool, in its anonymised default mode, genuinely leaves those two fields exposed. Stated here as a sourced fact about the tool's own behaviour, confirmed by reading its public source; no value from the bundle itself is reproduced.
 
+**Calibration against a running 7.3.2 server (2026-10-02).** Three sources: a zip of `/boot` the maintainer made by hand from a 7.3.2 server (read in place, outside the repository), Unraid's public `webgui` source, and a read-only calibration session the maintainer opened on that same server. Everything below is a general layout fact or a count; no serial, UUID, name, address or other value from the server is reproduced here or anywhere in the repository.
+
+*Flash Backup zip.*
+- `emhttp/plugins/dynamix/scripts/flash_backup` does `chdir('/boot')` and zips every top-level entry, so the zip's root is the root of `/boot` (`config/`, `syslinux/`, `EFI/`, the `bz*` files, `changes.txt`, …) and `config/` is a prefix inside it. The 7.3.2 version writes the file into RAM or onto a user share and excludes only `prev`/`previous`. Current `unraid/webgui` streams to stdout instead, also excludes `System Volume Information`, `.Trash-0`, `.Trashes`, `.Spotlight-V100`, `.fseventsd`, `.TemporaryItems` and earlier `*-boot-backup-*.zip` files, and adds `flash_backup_save` ("save to server"), which asks for a cache pool first. The file name is `<server>-v<version>-boot-backup-<YYYYMMDD-HHMM>.zip`.
+- Two kinds of entry are excluded in neither version, because they sit below the top level: macOS `._*` AppleDouble twins (also next to each template), and `.git/` with `.gitattributes` (Unraid Connect's flash backup, with a `noprivatekeys` filter for WireGuard).
+- The zip has no `/etc/unraid-version`; the first line of `changes.txt` (`# Version X.Y.Z <date>`) gives the version.
+
+*Config tree.*
+- `disk.cfg` carries `diskIdSlot.N` (`-` on every slot), `diskFsType.N` and global settings. The array's slot → disk assignment is in `config/super.dat` (4 KiB, binary, with `super.old` beside it). `pools/<name>.cfg` carries a text `diskId`, and on 7.3 a `diskBootSize` on every pool (`"0"` on an ordinary pool of a USB-boot server).
+- `shares/*.cfg` can outlive its share (13 files for 12 shares); `/var/local/emhttp/shares.ini` has `hasCfg`.
+- User Scripts: `config/plugins/user.scripts/scripts/<name>/{script,name,description}` and `config/plugins/user.scripts/customSchedule.cron`. This closes Q83's "Unconfirmed". The `user.scripts.enhanced` plugin keeps only `categories.json` beside its package.
+- Compose Manager plugin: `config/plugins/compose.manager/projects/<name>/compose.yaml`, plus an `autostart` file.
+- Docker: `docker.cfg` has `DOCKER_IMAGE_TYPE` (`folder` is directory mode) and `DOCKER_IMAGE_FILE`. Directory mode keeps every image layer as a btrfs subvolume (1,176 on this server).
+- VM Manager: `libvirt.img` is a 1 GiB btrfs loop image mounted at `/etc/libvirt`; `domain.cfg`'s `IMAGE_FILE` often points into `system` on the cache.
+
+*Runtime state in `/var/local/emhttp/`* — text ini files, read by Unraid's own scripts with `parse_ini_file`: `disks.ini` (one section per slot: `idx name device id size … status format temp … type color spindownDelay spinupGroup idSb sizeSb`, plus `fsType`), `var.ini` (`sbSynced`, `sbSyncExit`, `sbSyncErrs`, `mdResync`, `mdState`, `mdNum*`), `shares.ini`, `users.ini`, and `smart/<slot>` (cached `smartctl` attribute output). `/var/lib/docker/unraid-autostart` is Unraid's container autostart list.
+
+*Disks.*
+- Disks over 2 TB: GPT with one partition starting at **sector 64**, ending 33 sectors before the end of the disk, of type `0fc63daf-8483-4772-8e79-3d69d8477de4`.
+- Array and cache filesystems carry **no label**. `disk.LooksLikeUnraidLabel` (`internal/disk/discovery.go`) therefore does not match a real 7.3.2 array.
+- **The parity disk reports `xfs` with a UUID** in udev and `blkid`. With an odd number of data disks whose XFS superblocks share geometry, single parity (bytewise XOR) leaves a valid-looking superblock at the start of the parity partition. Parity can only be identified by its slot (`disks.ini`), never by its filesystem signature.
+- Unraid mounts XFS data disks with `nouuid` (`rw,noatime,nouuid,inode64,logbufs=8,logbsize=32k,noquota`). Array partitions are mounted through Unraid's md driver (`/dev/mdNp1`), and the `/dev/sdX1` nodes are removed.
+- XFS features seen: `crc finobt sparse reflink bigtime inobtcount ftype` everywhere, plus `rmapbt` and `nrext64` on disks made by a newer `mkfs`.
+- The USB stick: MBR, one partition at sector 2048 of type `0x0b`, FAT32 labelled `UNRAID`.
+
+*Templates (counts only).* Every template is `<Container version="2">`. Attributes can hold literal placeholders (`Mode="{3}"`, `Type="{5}"`, `Required="{7}"`, `Mask="{8}"`) and mixed-case booleans, and Unraid 7 adds `<TailscaleStateDir>`. The converter already tolerates all of these; they are recorded so fixtures (written, never copied, D19) include them.
+
 ### Residual risk
 
 - **Scale.** This spike proves adoption end to end on 320 MiB loop devices with 11 files; a real 8–24 TB array with millions of inodes is untested for mount time, `xfs_repair -n` wall-clock, or sha256-verification throughput.
-- **GPT (>2 TB) data disks.** The layout this spike built and verified is Unraid's documented MBR/4K-aligned default for disks 2 TB or smaller. The large majority of real array disks are >2 TB and always GPT, per the same source — but the exact partition-start Unraid's GPT path produces is not in the public `webgui` repository (the actual partitioning runs in Unraid's closed-source base OS), so this spike states that as an open gap rather than guessing a sector number. This is a narrower gap than it sounds: every filesystem-level check this spike exercises (`xfs_repair -n`, UUID mount, sha256 verify) operates on the partition's contents, not the partition table format, so none of it is expected to differ for GPT — only the partition-table-parsing step of a real `hoserva migrate scan` is actually unverified here.
+- **GPT (>2 TB) data disks.** The layout this spike built and verified is Unraid's documented MBR/4K-aligned default for disks 2 TB or smaller. The large majority of real array disks are >2 TB and always GPT, per the same source. The exact partition-start Unraid's GPT path produces is not in the public `webgui` repository (the actual partitioning runs in Unraid's closed-source base OS); the 2026-10-02 calibration below observed it on a real 7.3.2 server (one partition starting at sector 64, ending 33 sectors before the end of the disk). That settles the number as calibration, not as a built fixture: a GPT fixture with those values is still needed. This is a narrower gap than it sounds: every filesystem-level check this spike exercises (`xfs_repair -n`, UUID mount, sha256 verify) operates on the partition's contents, not the partition table format, so none of it is expected to differ for GPT — only the partition-table-parsing step of a real `hoserva migrate scan` is actually unverified here.
 - **ext4 and single-device btrfs data disks** (Q23) are not built or checked by this spike — only XFS.
 - **VM/`libvirt.img` adoption** (Q55) is confirmed by source-reading here, not by building or adopting an actual VM fixture — that is spike S11's job (doc 14 §5).
 - **The dirty-log/`norecovery` timing finding** is measured on this lab's XFS-on-loop-device setup and this container's IO/writeback behaviour; a real disk's own checkpoint timing before a crash-consistent transaction is safely visible without recovery is not established here.
@@ -212,7 +239,7 @@ What it could not confirm: the Diagnostics zip captures configuration and system
 
 ### Remaining hands-on work
 
-Ext4/single-device-btrfs fixtures, a GPT/>2TB fixture (pending a source for Unraid's own GPT partition-start behaviour, or an explicit decision to use a standard tool's default alignment as a stated proxy), the VM/`libvirt.img` fixture (S11), and running this against L3 once the VM harness exists, to catch anything the loop-device lab's own IO/writeback characteristics might be masking.
+Ext4/single-device-btrfs fixtures, a GPT/>2TB fixture (start sector 64 and the end-of-disk margin observed in the 2026-10-02 calibration, not yet built), the VM/`libvirt.img` fixture (S11), and running this against L3 once the VM harness exists, to catch anything the loop-device lab's own IO/writeback characteristics might be masking.
 
 ---
 
