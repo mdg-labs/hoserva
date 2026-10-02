@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Test stand-in for df: free space per mount name from STUB_DF
+# ("<name> <available KiB>" per line).
+set -euo pipefail
+
+: "${STUB_VIOLATIONS:?}"
+if [ "$#" -ne 3 ] || [ "$1" != -Pk ] || [ "$2" != -- ]; then
+  printf 'df %s\n' "$*" >>"$STUB_VIOLATIONS"
+  exit 99
+fi
+name=${3##*/}
+avail=$(awk -v n="$name" '$1 == n { print $2 }' "${STUB_DF:?}")
+[ -n "$avail" ] || exit 1
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/fixture 100000000 1 %s 1%% %s\n' "$avail" "$3"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Test guard: the script must never call this.
+: "${STUB_VIOLATIONS:?}"
+printf '%s %s\n' "${0##*/}" "$*" >>"$STUB_VIOLATIONS"
+exit 99

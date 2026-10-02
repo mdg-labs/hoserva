@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Test stand-in for Info-ZIP's `zip -qr - <names>`: zips the named paths
+under the current directory to stdout and records its argv and cwd."""
+import os
+import sys
+import zipfile
+
+log = os.environ["STUB_ZIP_LOG"]
+with open(log, "a") as f:
+    f.write("cwd=%s\n" % os.getcwd())
+    f.write("argv=%s\n" % "\x1f".join(sys.argv[1:]))
+
+if os.environ.get("STUB_ZIP_FAIL"):
+    sys.stdout.buffer.write(b"PK-partial")
+    sys.exit(18)
+
+args = sys.argv[1:]
+if args[:2] != ["-qr", "-"] or len(args) < 3:
+    sys.stderr.write("stub zip: refused: %s\n" % args)
+    sys.exit(99)
+
+class Sink:
+    def __init__(self):
+        self.out = sys.stdout.buffer
+    def write(self, b):
+        return self.out.write(b)
+    def flush(self):
+        self.out.flush()
+
+with zipfile.ZipFile(Sink(), "w", zipfile.ZIP_DEFLATED) as z:
+    for name in args[2:]:
+        if os.path.isdir(name):
+            z.write(name)
+            for d, dirs, files in os.walk(name):
+                dirs.sort()
+                for x in sorted(dirs) + sorted(files):
+                    z.write(os.path.join(d, x))
+        else:
+            z.write(name)

@@ -1,0 +1,6 @@
+plex|1.5MB (virtual 800MB)
+sonarr|0B (virtual 200MB)
+Radarr|12.3kB (virtual 210MB)
+orphan|0B (virtual 90MB)
+stack-web|2.25GB (virtual 3GB)
+handmade|0B (virtual 5MB)

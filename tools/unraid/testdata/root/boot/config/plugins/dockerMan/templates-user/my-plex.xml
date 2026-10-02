@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>plex</Name>
+  <Repository>example/plex</Repository>
+  <Config Name="Config" Target="/config" Default="" Mode="rw" Description="" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plex</Config>
+</Container>

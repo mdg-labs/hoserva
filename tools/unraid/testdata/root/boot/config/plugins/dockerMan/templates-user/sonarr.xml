@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>sonarr</Name>
+  <Repository>example/sonarr</Repository>
+</Container>

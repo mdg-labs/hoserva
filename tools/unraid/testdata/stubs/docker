@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Test stand-in for docker: replays fixture JSON and refuses every
+# subcommand except the four read-only ones the script is allowed to use.
+set -euo pipefail
+
+: "${STUB_VIOLATIONS:?}"
+: "${STUB_DOCKER_DATA:?}"
+containers=${STUB_CONTAINERS:-$STUB_DOCKER_DATA/containers.json}
+networks=$STUB_DOCKER_DATA/networks.json
+sizes=${STUB_PS_SIZES:-$STUB_DOCKER_DATA/ps-sizes.txt}
+
+inspect_format='{{.Name}}|{{.State.Status}}|{{if eq (index .Config.Labels "net.unraid.docker.managed") "dockerman"}}dockerman{{else if index .Config.Labels "com.docker.compose.project"}}compose{{else}}manual{{end}}|{{index .Config.Labels "com.docker.compose.project"}}'
+ps_format='{{.Names}}|{{.Size}}'
+
+refuse() {
+  printf 'docker %s\n' "$*" >>"$STUB_VIOLATIONS"
+  printf 'stub docker: refused: docker %s\n' "$*" >&2
+  exit 99
+}
+
+cat >/dev/null
+
+if [ "${STUB_DOCKER_MODE:-running}" = stopped ]; then
+  echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
+  exit 1
+fi
+
+args="$*"
+sub=${1:-}
+case $sub in
+  ps)
+    case $args in
+      "ps -aq") jq -r '.[].Id' "$containers" ;;
+      "ps -a -s --format $ps_format") cat "$sizes" ;;
+      *) refuse "$args" ;;
+    esac
+    ;;
+  inspect)
+    if [ "${STUB_DOCKER_MODE:-running}" = inspect-fails ]; then
+      echo "Error: No such object" >&2
+      exit 1
+    fi
+    if [ "${2:-}" = --format ]; then
+      [ "${3:-}" = "$inspect_format" ] || refuse "$args"
+      jq -r '.[] | "\(.Name)|\(.State.Status)|\(if (.Config.Labels["net.unraid.docker.managed"] // "") == "dockerman" then "dockerman" elif (.Config.Labels["com.docker.compose.project"] // "") != "" then "compose" else "manual" end)|\(.Config.Labels["com.docker.compose.project"] // "")"' "$containers"
+    else
+      shift
+      case ${1:-} in -*) refuse "$args" ;; esac
+      jq '[.[] | select(.Id as $i | $ARGS.positional | index($i))]' "$containers" --args "$@"
+    fi
+    ;;
+  network)
+    case ${2:-} in
+      ls)
+        [ "$args" = "network ls -q" ] || refuse "$args"
+        jq -r '.[].Id' "$networks"
+        ;;
+      inspect)
+        shift 2
+        case ${1:-} in -*) refuse "network inspect $*" ;; esac
+        jq '[.[] | select(.Id as $i | $ARGS.positional | index($i))]' "$networks" --args "$@"
+        ;;
+      *) refuse "$args" ;;
+    esac
+    ;;
+  *) refuse "$args" ;;
+esac
