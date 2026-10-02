@@ -5376,6 +5376,17 @@ func (s *Migration) Validate() error {
 		})
 	}
 	if err := func() error {
+		if s.FlashDevices == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "flashDevices",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if value, ok := s.Report.Get(); ok {
 			if err := func() error {
 				if err := value.Validate(); err != nil {

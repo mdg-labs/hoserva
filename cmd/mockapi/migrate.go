@@ -3,23 +3,35 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/migrate"
 )
 
+// mockFlashDevice is the Unraid USB stick this mock offers: a FAT filesystem
+// labelled UNRAID that is neither the boot disk nor in the array. The mock reads
+// no stick; like production it refuses any other device.
+const mockFlashDevice = "/dev/sdu"
+
 // mockMigration is the migration session this mock instance keeps: a report
-// and the size of the zip it came from. Like production's session it holds
-// the report only; the mock keeps no zip.
+// and the size of the zip it came from, or the device it was read from. Like
+// production's session it holds the report only; the mock keeps no zip.
 type mockMigration struct {
 	mu         sync.Mutex
 	report     *migrate.Report
 	size       int64
+	device     string
 	receivedAt time.Time
+}
+
+func (m *mockMigration) zipOnly() bool {
+	return m.report != nil && m.report.BootMode == "internal"
 }
 
 func errMigrationRefusal(code string, status int, err error) error {
@@ -38,6 +50,10 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("invalid_flash_backup", 400, err)
 	case errors.Is(err, migrate.ErrUnsupportedLayout):
 		return errMigrationRefusal("unsupported_layout", 400, err)
+	case errors.Is(err, migrate.ErrNotFlashDevice):
+		return errMigrationRefusal("invalid_flash_device", 400, err)
+	case errors.Is(err, migrate.ErrZipOnly):
+		return errMigrationRefusal("zip_only_source", 409, err)
 	}
 	return err
 }
@@ -50,7 +66,7 @@ func errNoMigrationReport() error {
 // what the UI shows after a scan, with one SMART finding so a flagged row has
 // something to render.
 func mockMigrationReport(version string, unverified bool, at time.Time) *migrate.Report {
-	r := &migrate.Report{GeneratedAt: at, UnraidVersion: version, UnverifiedLayout: unverified}
+	r := &migrate.Report{GeneratedAt: at, UnraidVersion: version, UnverifiedLayout: unverified, BootMode: "usb"}
 	add := func(check string, st migrate.Status, subject, detail string) {
 		r.Rows = append(r.Rows, migrate.Row{Check: check, Status: st, Subject: subject, Detail: detail})
 	}
@@ -107,9 +123,48 @@ func (h *handler) StartMigrationScan(ctx context.Context, req *apiv1.StartMigrat
 	h.jobs[j.ID] = *j
 	h.mu.Unlock()
 
+	report := mockMigrationReport(flash.Version, flash.LayoutProblem() != "", now)
+	if flash.Capture != nil {
+		report.BootMode = flash.Capture.Boot.Mode
+	}
 	h.migration.mu.Lock()
-	h.migration.report = mockMigrationReport(flash.Version, flash.LayoutProblem() != "", now)
-	h.migration.size, h.migration.receivedAt = size.n, now
+	h.migration.report = report
+	h.migration.size, h.migration.device, h.migration.receivedAt = size.n, "", now
+	h.migration.mu.Unlock()
+	return j, nil
+}
+
+// StartMigrationDeviceScan answers as production does for the stick: a device
+// that is not the one UNRAID-labelled FAT disk on offer is refused, and so is
+// any stick once the session's capture says Unraid booted internally.
+func (h *handler) StartMigrationDeviceScan(ctx context.Context, req *apiv1.StartMigrationDeviceScanReq) (*apiv1.Job, error) {
+	if req == nil || req.Device == "" {
+		return nil, &mockError{code: "invalid_flash_device", statusCode: 400, message: "the device is required"}
+	}
+	h.migration.mu.Lock()
+	zipOnly := h.migration.zipOnly()
+	h.migration.mu.Unlock()
+	if zipOnly {
+		return nil, errMigrationRefusal("zip_only_source", 409, migrate.ErrZipOnly)
+	}
+	if req.Device != mockFlashDevice {
+		return nil, errMigrationRefusal("invalid_flash_device", 400, fmt.Errorf("%w: %s is not a FAT filesystem labelled UNRAID on a disk outside the array", migrate.ErrNotFlashDevice, req.Device))
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationScan, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	h.mu.Lock()
+	j.Status = apiv1.JobStatusSucceeded
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	h.jobs[j.ID] = *j
+	h.mu.Unlock()
+
+	h.migration.mu.Lock()
+	h.migration.report = mockMigrationReport("7.3.2", req.UnverifiedLayout.Or(false), now)
+	h.migration.size, h.migration.device, h.migration.receivedAt = 0, req.Device, now
 	h.migration.mu.Unlock()
 	return j, nil
 }
@@ -128,12 +183,22 @@ func (c *countingReader) Read(p []byte) (int, error) {
 func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	h.migration.mu.Lock()
 	defer h.migration.mu.Unlock()
-	out := &apiv1.Migration{Phase: apiv1.MigrationPhaseNone}
+	out := &apiv1.Migration{Phase: apiv1.MigrationPhaseNone, FlashDevices: []apiv1.MigrationFlashDevice{}, ZipOnly: h.migration.zipOnly()}
 	if r := h.migration.report; r != nil {
 		out.Phase = apiv1.MigrationPhaseScanned
-		out.SourceSize = apiv1.NewOptInt64(h.migration.size)
 		out.SourceReceivedAt = apiv1.NewOptDateTime(h.migration.receivedAt)
+		if h.migration.device != "" {
+			out.SourceDevice = apiv1.NewOptString(h.migration.device)
+		} else {
+			out.SourceSize = apiv1.NewOptInt64(h.migration.size)
+		}
 		out.Report = apiv1.NewOptMigrationReport(mockMigrationReportToAPI(r))
+	}
+	if !out.ZipOnly {
+		out.FlashDevices = append(out.FlashDevices, apiv1.MigrationFlashDevice{
+			Device: mockFlashDevice, Size: 16 * disk.GB,
+			Model: apiv1.NewOptString("SanDisk Cruzer Fit"), Serial: apiv1.NewOptString("4C530001240603119335"),
+		})
 	}
 	return out, nil
 }
@@ -168,6 +233,6 @@ func (h *handler) GetMigrationReport(ctx context.Context) (apiv1.GetMigrationRep
 func (h *handler) ForgetMigration(ctx context.Context) error {
 	h.migration.mu.Lock()
 	defer h.migration.mu.Unlock()
-	h.migration.report, h.migration.size, h.migration.receivedAt = nil, 0, time.Time{}
+	h.migration.report, h.migration.size, h.migration.device, h.migration.receivedAt = nil, 0, "", time.Time{}
 	return nil
 }

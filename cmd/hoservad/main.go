@@ -622,7 +622,7 @@ func run(cfg config) error {
 	wireContainerUpdates(handler, registry, updateChecker, newUpdater(apps, store.NewImageHistoryStore(db), appdataService, updateChecker), awaitReconciled)
 	wireRestoreDrill(registry, backupService, api.NewDrillStore(db), notifyService)
 	wireConfigBackup(registry, backupService, notifyService)
-	if err := wireMigration(ctx, handler, registry, disks, store.NewMigrationSessionStore(db), absStateDir); err != nil {
+	if err := wireMigration(ctx, handler, registry, disks, disk.KernelReadOnlyMounter{Runner: linuxDisks.Exec}, store.NewMigrationSessionStore(db), absStateDir); err != nil {
 		// The migrator is optional: without it its operations answer 501
 		// rather than failing the daemon's start.
 		log.Printf("hoservad: the Unraid migrator is not available: %v", err)

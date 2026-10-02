@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	ht "github.com/ogen-go/ogen/http"
@@ -21,43 +22,36 @@ func migrateCmd() *cobra.Command {
 }
 
 func migrateScanCmd() *cobra.Command {
-	var zipPath string
+	var zipPath, device string
 	var unverified bool
 	cmd := &cobra.Command{
-		Use:   "scan --flash-backup <zip>",
-		Short: "Scan an Unraid Flash Backup and print the go / no-go report",
-		Long: "Reads the Flash Backup zip in memory, matches Unraid's disks to this machine's, runs the pre-flight checks " +
-			"and prints the written report. Nothing is written to a disk or to the zip. An Unraid version or flash layout " +
+		Use:   "scan (--flash-backup <zip> | --flash-device <device>)",
+		Short: "Scan an Unraid Flash Backup or the Unraid USB stick and print the go / no-go report",
+		Long: "Reads Unraid's configuration from the Flash Backup zip, in memory, or from the Unraid USB stick attached to this machine " +
+			"(--flash-device /dev/sdX, one of the devices `hoserva migrate status` lists), matches Unraid's disks to this machine's, " +
+			"runs the pre-flight checks and prints the written report. Nothing is written to a disk, to the zip or to the stick: the stick " +
+			"is mounted read-only for the scan and unmounted again, and nothing is copied from it. An Unraid version or flash layout " +
 			"Hoserva has not been verified against is refused unless --unverified-layout is given, and the report says so.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			f, err := os.Open(zipPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = f.Close() }()
-			st, err := f.Stat()
-			if err != nil {
-				return err
-			}
-			// A real Flash Backup is hundreds of MiB; the daemon bounds how long
-			// the upload may take, so the client's own 5-minute request timeout
-			// is not applied to it.
-			uploader, err := newAPIClientWith(0, nil)
-			if err != nil {
-				return err
+			if cmd.Flags().Changed("flash-device") && device == "" {
+				return fmt.Errorf("--flash-device needs a device, such as /dev/sdb")
 			}
 			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
-			req := &apiv1.StartMigrationScanReq{File: ht.MultipartFile{Name: filepath.Base(zipPath), File: f, Size: st.Size()}}
-			if unverified {
-				req.UnverifiedLayout = apiv1.NewOptBool(true)
-			}
-			j, err := uploader.StartMigrationScan(apiCtx(), req)
-			if err != nil {
-				return mapAPIErr(err)
+			var j *apiv1.Job
+			if cmd.Flags().Changed("flash-device") {
+				req := &apiv1.StartMigrationDeviceScanReq{Device: device}
+				if unverified {
+					req.UnverifiedLayout = apiv1.NewOptBool(true)
+				}
+				if j, err = c.StartMigrationDeviceScan(apiCtx(), req); err != nil {
+					return mapAPIErr(err)
+				}
+			} else if j, err = uploadFlashBackup(zipPath, unverified); err != nil {
+				return err
 			}
 			ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -87,9 +81,41 @@ func migrateScanCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&zipPath, "flash-backup", "", "The Unraid Flash Backup zip to scan")
-	_ = cmd.MarkFlagRequired("flash-backup")
+	cmd.Flags().StringVar(&device, "flash-device", "", "The Unraid USB stick to scan, attached to this machine, such as /dev/sdb")
+	cmd.MarkFlagsMutuallyExclusive("flash-backup", "flash-device")
+	cmd.MarkFlagsOneRequired("flash-backup", "flash-device")
 	cmd.Flags().BoolVar(&unverified, "unverified-layout", false, "Scan an Unraid version or flash layout Hoserva has not been verified against; the override is recorded in the report")
 	return cmd
+}
+
+// uploadFlashBackup sends the zip at zipPath to the daemon and returns the scan
+// job it queued.
+func uploadFlashBackup(zipPath string, unverified bool) (*apiv1.Job, error) {
+	f, err := os.Open(zipPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	// A real Flash Backup is hundreds of MiB; the daemon bounds how long
+	// the upload may take, so the client's own 5-minute request timeout
+	// is not applied to it.
+	uploader, err := newAPIClientWith(0, nil)
+	if err != nil {
+		return nil, err
+	}
+	req := &apiv1.StartMigrationScanReq{File: ht.MultipartFile{Name: filepath.Base(zipPath), File: f, Size: st.Size()}}
+	if unverified {
+		req.UnverifiedLayout = apiv1.NewOptBool(true)
+	}
+	j, err := uploader.StartMigrationScan(apiCtx(), req)
+	if err != nil {
+		return nil, mapAPIErr(err)
+	}
+	return j, nil
 }
 
 func printMigrationReport(c *apiv1.Client, w io.Writer) error {
@@ -129,6 +155,18 @@ func migrateStatusCmd() *cobra.Command {
 			fmt.Printf("Migration: %s\n", migrationPhaseLabels[m.Phase])
 			if e, ok := m.ScanError.Get(); ok {
 				fmt.Printf("Scan error: %s\n", e)
+			}
+			if dev, ok := m.SourceDevice.Get(); ok {
+				fmt.Printf("Source: the Unraid USB stick at %s\n", dev)
+			}
+			switch {
+			case m.ZipOnly:
+				fmt.Println("Flash devices: none; Unraid booted from an internal device, so the Flash Backup zip is the only source")
+			case len(m.FlashDevices) == 0:
+				fmt.Println("Flash devices: none attached")
+			}
+			for _, d := range m.FlashDevices {
+				fmt.Printf("Flash device: %s (%s)\n", d.Device, strings.TrimSpace(d.Model.Or("")+fmt.Sprintf(" %.1f GiB", float64(d.Size)/(1<<30))))
 			}
 			if r, ok := m.Report.Get(); ok {
 				if v, ok := r.UnraidVersion.Get(); ok {

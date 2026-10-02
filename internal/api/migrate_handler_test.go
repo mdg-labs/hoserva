@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,6 +80,10 @@ func TestHandler_MigrationOperations_Return501WithoutAService(t *testing.T) {
 		"GetMigrationReport": func() error { _, err := h.GetMigrationReport(ctx); return err },
 		"ForgetMigration":    func() error { return h.ForgetMigration(ctx) },
 		"StartMigrationScan": func() error { _, err := h.StartMigrationScan(ctx, scanRequest(nil, false)); return err },
+		"StartMigrationDeviceScan": func() error {
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: "/dev/sdz"})
+			return err
+		},
 	} {
 		err := call()
 		if err == nil {
@@ -228,5 +234,181 @@ func TestHandler_StartMigrationScan_RefusedByTheSchedulerLeavesThePreviousSessio
 	after, _ := svc.State(ctx)
 	if after.Phase != migrate.PhaseScanned || after.Source.File != before.Source.File {
 		t.Errorf("session after the refusal = %+v, want it unchanged", after)
+	}
+}
+
+const testStick = "/dev/sdz"
+
+// stickHandler is migrationHandler with an UNRAID-labelled FAT disk at
+// testStick that a fake read-only mounter fills with the files mutate leaves of
+// flashZip's.
+func stickHandler(t *testing.T, mutate func(map[string]string)) (*api.Handler, *migrate.Service, *disk.FakeReadOnlyMounter) {
+	t.Helper()
+	h, _, registry := newTestHandler(t)
+	disks := disk.NewFakeProvider()
+	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "PARITYSERIAL", Size: 2 << 40})
+	disks.AddDisk("/dev/sdc", disk.Disk{Serial: "DATASERIAL", Size: 1 << 40})
+	disks.AddDisk(testStick, disk.Disk{Size: 16 << 30, Model: "Flash Drive", Filesystem: "vfat", Label: "UNRAID", FSUUID: "ABCD-1234"})
+	disks.AddDisk("/dev/sdy", disk.Disk{Filesystem: "vfat", Label: "UNRAID", FSUUID: "1111-2222"})
+	mounter := disk.NewFakeReadOnlyMounter()
+	data := flashZip(t, "7.3.2", mutate)
+	mounter.OnMount = func(where string) error {
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return err
+		}
+		for _, f := range zr.File {
+			rc, err := f.Open()
+			if err != nil {
+				return err
+			}
+			content, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				return err
+			}
+			p := filepath.Join(where, filepath.FromSlash(f.Name))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(p, content, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	svc := &migrate.Service{
+		Dir:      filepath.Join(t.TempDir(), "migrate"),
+		Scanner:  &migrate.Scanner{Disks: disks, UIDOwner: func(int) (string, error) { return "", nil }},
+		Sessions: store.NewMigrationSessionStore(openTestDB(t)),
+		Mounter:  mounter,
+		ArrayDevices: func(context.Context) (map[string]struct{}, error) {
+			return map[string]struct{}{"/dev/sdy": {}}, nil
+		},
+	}
+	h.Migration = svc
+	registry.Register(job.TypeMigrationScan, false, job.RunMigrationScan(svc.RunScan))
+	return h, svc, mounter
+}
+
+func TestHandler_StartMigrationDeviceScan_ScansTheStickReadOnlyAndReportsItsDevice(t *testing.T) {
+	h, _, mounter := stickHandler(t, nil)
+	ctx := context.Background()
+
+	before, err := h.GetMigration(ctx)
+	if err != nil || len(before.FlashDevices) != 1 || before.FlashDevices[0].Device != testStick || before.ZipOnly {
+		t.Fatalf("GetMigration offers %+v (zipOnly %v), %v; want only %s, as /dev/sdy is in the array", before.FlashDevices, before.ZipOnly, err, testStick)
+	}
+	if m, ok := before.FlashDevices[0].Model.Get(); !ok || m != "Flash Drive" || before.FlashDevices[0].Size != 16<<30 {
+		t.Errorf("the offered device = %+v", before.FlashDevices[0])
+	}
+
+	j, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: testStick})
+	if err != nil {
+		t.Fatalf("StartMigrationDeviceScan: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationScan || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %s %s, want a migration_scan topology job", j.Type, j.Class)
+	}
+	if done, err := h.Scheduler.Await(ctx, j.ID.String()); err != nil || done.Status != job.StatusSucceeded {
+		t.Fatalf("scan job = %+v, %v", done, err)
+	}
+	got, err := h.GetMigration(ctx)
+	if err != nil || got.Phase != apiv1.MigrationPhaseScanned {
+		t.Fatalf("GetMigration = %+v, %v", got, err)
+	}
+	if dev, ok := got.SourceDevice.Get(); !ok || dev != testStick || got.SourceSize.Set {
+		t.Errorf("source = device %q, size set %v; want %s and no zip size", dev, got.SourceSize.Set, testStick)
+	}
+	if len(mounter.Mounts) != 2 || len(mounter.MountedPaths()) != 0 {
+		t.Errorf("mounts = %v, still mounted %v; want a mount for the inspect and one for the job, none left", mounter.Mounts, mounter.MountedPaths())
+	}
+}
+
+func TestHandler_StartMigrationDeviceScan_RefusalsQueueNothingAndLeaveNothingMounted(t *testing.T) {
+	cases := map[string]struct {
+		device  string
+		mutate  func(map[string]string)
+		mount   error
+		status  int
+		code    string
+		mounted bool
+	}{
+		"no device":                  {device: "", status: 400, code: "invalid_flash_device"},
+		"a disk in the array":        {device: "/dev/sdy", status: 400, code: "invalid_flash_device"},
+		"a data disk":                {device: "/dev/sdb", status: 400, code: "invalid_flash_device"},
+		"a device that is not there": {device: "/dev/nope", status: 400, code: "invalid_flash_device"},
+		"no disk.cfg":                {device: testStick, mutate: func(f map[string]string) { delete(f, "config/disk.cfg") }, status: 400, code: "invalid_flash_backup", mounted: true},
+		"an unknown version":         {device: testStick, mutate: func(f map[string]string) { f["changes.txt"] = "# Version 6.9.2 2021-01-01\n" }, status: 400, code: "unsupported_layout", mounted: true},
+		"an internal-boot capture": {device: testStick, mutate: func(f map[string]string) {
+			f["config/hoserva/capture.json"] = `{"boot":{"mode":"internal","filesystem":"zfs","devices":[]}}`
+		}, status: 409, code: "zip_only_source", mounted: true},
+		"a stick that will not mount": {device: testStick, mount: errors.New("wrong fs type"), status: 409, code: "flash_device_unreadable", mounted: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, svc, mounter := stickHandler(t, tc.mutate)
+			mounter.MountErr = tc.mount
+			_, err := h.StartMigrationDeviceScan(context.Background(), &apiv1.StartMigrationDeviceScanReq{Device: tc.device})
+			if err == nil {
+				t.Fatal("StartMigrationDeviceScan accepted it")
+			}
+			if st, code := statusOf(h, err); st != tc.status || code != tc.code {
+				t.Errorf("= %d %s (%v), want %d %s", st, code, err, tc.status, tc.code)
+			}
+			if tc.mounted != (len(mounter.Mounts) > 0) {
+				t.Errorf("mounts = %v, want a mount: %v", mounter.Mounts, tc.mounted)
+			}
+			if got := mounter.MountedPaths(); len(got) != 0 {
+				t.Errorf("left mounted: %v", got)
+			}
+			jobs, _ := h.Store.List(context.Background(), job.ListFilter{})
+			if len(jobs) != 0 {
+				t.Errorf("a refused scan queued %v", jobs)
+			}
+			if st, _ := svc.State(context.Background()); st.Phase != migrate.PhaseNone {
+				t.Errorf("phase = %s", st.Phase)
+			}
+		})
+	}
+}
+
+func TestHandler_StartMigrationDeviceScan_NotConfiguredWithoutAMounter(t *testing.T) {
+	h, svc, _ := stickHandler(t, nil)
+	svc.Mounter = nil
+	_, err := h.StartMigrationDeviceScan(context.Background(), &apiv1.StartMigrationDeviceScanReq{Device: testStick})
+	if st, code := statusOf(h, err); st != 501 || code != "not_configured" {
+		t.Fatalf("= %d %s (%v), want 501 not_configured", st, code, err)
+	}
+	if got, err := h.GetMigration(context.Background()); err != nil || len(got.FlashDevices) != 0 {
+		t.Fatalf("GetMigration without a mounter = %+v, %v; want no device offered", got, err)
+	}
+}
+
+func TestHandler_StartMigrationDeviceScan_RefusedByTheSchedulerLeavesThePreviousSessionAndTheStickUnmounted(t *testing.T) {
+	h, svc, mounter := stickHandler(t, nil)
+	ctx := context.Background()
+	j, err := h.StartMigrationScan(ctx, scanRequest(flashZip(t, "7.3.2", nil), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Scheduler.Await(ctx, j.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := svc.State(ctx)
+
+	if err := h.Scheduler.EnterMaintenance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: testStick})
+	if st, code := statusOf(h, err); st != 409 || code != "maintenance_mode" {
+		t.Fatalf("in maintenance mode = %d %s (%v), want 409 maintenance_mode", st, code, err)
+	}
+	after, _ := svc.State(ctx)
+	if after.Phase != migrate.PhaseScanned || after.Source.File != before.Source.File {
+		t.Errorf("session after the refusal = %+v, want it unchanged", after)
+	}
+	if got := mounter.MountedPaths(); len(got) != 0 {
+		t.Errorf("left mounted: %v", got)
 	}
 }

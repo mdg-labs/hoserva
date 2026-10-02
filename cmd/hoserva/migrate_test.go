@@ -28,8 +28,12 @@ type migrateDaemon struct {
 	requests  []string
 	uploaded  string
 	unverif   string
+	deviceReq string
 	jobStatus apiv1.JobStatus
 	refuse    *apiv1.Error
+
+	zipOnly      bool
+	sourceDevice string
 }
 
 func startMigrateDaemon(t *testing.T) *migrateDaemon {
@@ -84,6 +88,17 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationScan, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
 		out, err := j.MarshalJSON()
 		reply(200, out, err)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/migrate/scan/device":
+		body, _ := io.ReadAll(r.Body)
+		d.deviceReq = string(body)
+		if d.refuse != nil {
+			out, err := d.refuse.MarshalJSON()
+			reply(http.StatusBadRequest, out, err)
+			return
+		}
+		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationScan, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
+		out, err := j.MarshalJSON()
+		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs/"+d.id.String():
 		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationScan, Class: apiv1.JobClassTopology, Status: d.jobStatus, CreatedAt: time.Now().UTC()}
 		if d.jobStatus == apiv1.JobStatusFailed {
@@ -92,7 +107,13 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		out, err := j.MarshalJSON()
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/migrate":
-		m := apiv1.Migration{Phase: apiv1.MigrationPhaseScanned}
+		m := apiv1.Migration{Phase: apiv1.MigrationPhaseScanned, ZipOnly: d.zipOnly, FlashDevices: []apiv1.MigrationFlashDevice{}}
+		if !d.zipOnly {
+			m.FlashDevices = append(m.FlashDevices, apiv1.MigrationFlashDevice{Device: "/dev/sdb", Size: 16 << 30, Model: apiv1.NewOptString("Flash Drive")})
+		}
+		if d.sourceDevice != "" {
+			m.SourceDevice = apiv1.NewOptString(d.sourceDevice)
+		}
 		m.Report = apiv1.NewOptMigrationReport(apiv1.MigrationReport{
 			GeneratedAt: time.Now().UTC(), UnraidVersion: apiv1.NewOptString("7.3.2"), UnverifiedLayout: true, Verdict: apiv1.MigrationVerdictGoWithWarnings,
 			Rows: []apiv1.MigrationReportRow{{Check: "smart", Status: apiv1.MigrationCheckStatusFlag, Detail: "x"}},
@@ -119,6 +140,12 @@ func (d *migrateDaemon) upload() (zip, unverified string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.uploaded, d.unverif
+}
+
+func (d *migrateDaemon) deviceRequest() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.deviceReq
 }
 
 func writeZip(t *testing.T, content string) string {
@@ -166,10 +193,45 @@ func TestMigrateScanSendsTheUnverifiedLayoutOverride(t *testing.T) {
 	}
 }
 
+func TestMigrateScanOfTheStickSendsTheDeviceWaitsForTheJobAndPrintsTheReport(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	d := startMigrateDaemon(t)
+
+	printed, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-device", "/dev/sdb", "--unverified-layout")
+	if err != nil {
+		t.Fatalf("migrate scan --flash-device: %v", err)
+	}
+	if printed != migrateTestReport {
+		t.Errorf("output = %q, want the report document", printed)
+	}
+	if got := d.deviceRequest(); got != `{"device":"/dev/sdb","unverifiedLayout":true}` {
+		t.Errorf("request body = %s", got)
+	}
+	got := d.seen()
+	if len(got) != 3 || got[0] != "POST /api/v1/migrate/scan/device" || got[1] != "GET /api/v1/jobs/"+d.id.String() || got[2] != "GET /api/v1/migrate/report" {
+		t.Errorf("requests = %v, want the device scan, one poll and the report", got)
+	}
+}
+
+func TestMigrateScanTakesExactlyOneSource(t *testing.T) {
+	d := startMigrateDaemon(t)
+	if _, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-backup", writeZip(t, "z"), "--flash-device", "/dev/sdb"); err == nil {
+		t.Error("migrate scan with both sources succeeded")
+	}
+	if _, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-device", ""); err == nil || !strings.Contains(err.Error(), "needs a device") {
+		t.Errorf("migrate scan with an empty --flash-device = %v, want it refused for naming no device", err)
+	}
+	if got := d.seen(); len(got) != 0 {
+		t.Errorf("requests = %v, want none for an unusable command line", got)
+	}
+}
+
 func TestMigrateScanRequiresTheZipAndFailsOnAMissingFile(t *testing.T) {
 	d := startMigrateDaemon(t)
 	if _, err := runBackupCLI(t, d.sock, "migrate", "scan"); err == nil {
-		t.Error("migrate scan without --flash-backup succeeded")
+		t.Error("migrate scan without a source succeeded")
 	}
 	if _, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-backup", filepath.Join(t.TempDir(), "missing.zip")); err == nil {
 		t.Error("migrate scan of a file that does not exist succeeded")
@@ -218,6 +280,9 @@ func TestMigrateStatusSummarisesTheReport(t *testing.T) {
 			t.Errorf("status output lacks %q:\n%s", want, printed)
 		}
 	}
+	if !strings.Contains(printed, "Flash device: /dev/sdb (Flash Drive 16.0 GiB)") {
+		t.Errorf("status output does not list the stick:\n%s", printed)
+	}
 	printed, err = runBackupCLI(t, d.sock, "--json", "migrate", "status")
 	if err != nil || !strings.Contains(printed, `"go_with_warnings"`) {
 		t.Errorf("--json output = %q, %v", printed, err)
@@ -250,5 +315,24 @@ func TestMigrateForgetDeletesTheSession(t *testing.T) {
 	}
 	if got := d.seen(); len(got) != 1 || got[0] != "DELETE /api/v1/migrate" {
 		t.Errorf("requests = %v", got)
+	}
+}
+
+func TestMigrateStatusSaysWhenTheZipIsTheOnlySourceAndNamesAStickSource(t *testing.T) {
+	d := startMigrateDaemon(t)
+	d.mu.Lock()
+	d.zipOnly, d.sourceDevice = true, "/dev/sdb"
+	d.mu.Unlock()
+	printed, err := runBackupCLI(t, d.sock, "migrate", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Source: the Unraid USB stick at /dev/sdb", "the Flash Backup zip is the only source"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("status output lacks %q:\n%s", want, printed)
+		}
+	}
+	if strings.Contains(printed, "Flash device: ") {
+		t.Errorf("status offers a stick although the zip is the only source:\n%s", printed)
 	}
 }

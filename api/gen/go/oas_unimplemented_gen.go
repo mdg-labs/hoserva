@@ -550,8 +550,10 @@ func (UnimplementedHandler) FinishDiskRemoval(ctx context.Context, req *FinishDi
 // ForgetMigration implements forgetMigration operation.
 //
 // Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
-// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment).
-// Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A
+// scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied
+// from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
+// runs.
 //
 // DELETE /migrate
 func (UnimplementedHandler) ForgetMigration(ctx context.Context) error {
@@ -776,7 +778,12 @@ func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsPar
 // `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
 // its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
 // scan, if there was one, is still returned). The rows name and count; they never quote a file's
-// content. `getMigrationReport` returns the same report as a document.
+// content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks
+// a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled
+// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
+// true, once the session's report was made from a capture that says Unraid booted from an internal
+// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
+// no such disk is attached or this daemon cannot read one.
 //
 // GET /migrate
 func (UnimplementedHandler) GetMigration(ctx context.Context) (r *Migration, _ error) {
@@ -2068,6 +2075,29 @@ func (UnimplementedHandler) StartArray(ctx context.Context) (r *SystemStatus, _ 
 //
 // POST /parity/fix
 func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartMigrationDeviceScan implements startMigrationDeviceScan operation.
+//
+// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
+// stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the
+// `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private
+// mountpoint under the daemon's state directory for the one read made here before anything is queued
+// and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing
+// is copied from it. The stick is the user's rollback. Refused before anything is queued: 400
+// `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot
+// disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the
+// session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot
+// pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not
+// be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no
+// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless
+// `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when
+// this daemon has no migration service or cannot read a flash device. The result is the report the
+// same flash's zip gives.
+//
+// POST /migrate/scan/device
+func (UnimplementedHandler) StartMigrationDeviceScan(ctx context.Context, req *StartMigrationDeviceScanReq) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

@@ -18,9 +18,9 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
 
-// contractFlashZip is a minimal Flash Backup: a version, a kernel and a
+// contractFlashFiles is a minimal Flash Backup: a version, a kernel and a
 // disk.cfg, as the migrator's allowlist asks for.
-func contractFlashZip(version string, mutate func(map[string]string)) []byte {
+func contractFlashFiles(version string, mutate func(map[string]string)) map[string]string {
 	files := map[string]string{
 		"changes.txt":     "# Version " + version + " 2026-01-01\n",
 		"bzimage":         "kernel",
@@ -29,9 +29,13 @@ func contractFlashZip(version string, mutate func(map[string]string)) []byte {
 	if mutate != nil {
 		mutate(files)
 	}
+	return files
+}
+
+func contractFlashZip(version string, mutate func(map[string]string)) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	for name, content := range files {
+	for name, content := range contractFlashFiles(version, mutate) {
 		w, err := zw.Create(name)
 		if err != nil {
 			panic(err)
@@ -128,6 +132,50 @@ func TestMockMigration_ScanQueuesAFinishedTopologyJobAndForgetClearsTheSession(t
 	}
 	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseNone {
 		t.Errorf("phase after forget = %s", m.Phase)
+	}
+}
+
+// The mock offers the stick GetMigration lists and refuses every other device,
+// as production does; a zip whose capture says Unraid booted internally leaves
+// the zip as the only source.
+func TestMockMigration_OffersOneUNRAIDStickAndRefusesAnyOtherDevice(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("healthy")
+	m, _ := h.GetMigration(ctx)
+	if len(m.FlashDevices) != 1 || m.FlashDevices[0].Device != mockFlashDevice || m.ZipOnly {
+		t.Fatalf("GetMigration offers %+v (zipOnly %v), want %s", m.FlashDevices, m.ZipOnly, mockFlashDevice)
+	}
+	for _, dev := range []string{"/dev/sdb", "/dev/sdf", mockFlashDevice + "1", ""} {
+		_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: dev})
+		if status := h.NewError(ctx, err); status.StatusCode != 400 || status.Response.Code != "invalid_flash_device" {
+			t.Errorf("StartMigrationDeviceScan(%q) = %v, want 400 invalid_flash_device", dev, err)
+		}
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseNone {
+		t.Fatalf("a refused device changed the session: %+v", m)
+	}
+
+	if _, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = h.GetMigration(ctx)
+	if m.Phase != apiv1.MigrationPhaseScanned || m.SourceDevice.Or("") != mockFlashDevice || m.SourceSize.Set {
+		t.Fatalf("session after the stick scan = %+v, want a scanned session sourced from the device with no zip size", m)
+	}
+
+	zipData := contractFlashZip("7.3.2", func(f map[string]string) {
+		f["config/hoserva/capture.json"] = `{"boot":{"mode":"internal","filesystem":"zfs","devices":[]}}`
+	})
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(zipData, false)); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = h.GetMigration(ctx)
+	if !m.ZipOnly || len(m.FlashDevices) != 0 || m.SourceDevice.Set || !m.SourceSize.Set {
+		t.Fatalf("session after an internal-boot zip = %+v, want zip only with no stick", m)
+	}
+	_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice})
+	if status := h.NewError(ctx, err); status.StatusCode != 409 || status.Response.Code != "zip_only_source" {
+		t.Fatalf("StartMigrationDeviceScan = %v, want 409 zip_only_source", err)
 	}
 }
 

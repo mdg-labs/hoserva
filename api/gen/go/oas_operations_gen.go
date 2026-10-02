@@ -151,6 +151,7 @@ const (
 	StartAppdataBackupOperation             OperationName = "StartAppdataBackup"
 	StartArrayOperation                     OperationName = "StartArray"
 	StartFixOperation                       OperationName = "StartFix"
+	StartMigrationDeviceScanOperation       OperationName = "StartMigrationDeviceScan"
 	StartMigrationScanOperation             OperationName = "StartMigrationScan"
 	StartMoverOperation                     OperationName = "StartMover"
 	StartRebalanceOperation                 OperationName = "StartRebalance"

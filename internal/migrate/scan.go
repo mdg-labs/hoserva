@@ -121,6 +121,9 @@ func (s *Scanner) Scan(ctx context.Context, src FlashSource, opts ScanOptions) (
 		now = s.Now
 	}
 	r := &Report{GeneratedAt: now().UTC(), UnraidVersion: f.Version}
+	if f.Capture != nil {
+		r.BootMode = f.Capture.Boot.Mode
+	}
 
 	s.checkVersion(r, f, opts)
 	checkCapture(r, f)

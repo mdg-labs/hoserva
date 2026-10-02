@@ -4088,6 +4088,76 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartMigrationDeviceScan",
+		name: "valid_queues_the_scan_of_the_stick",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationDeviceScan",
+		name: "a_disk_that_is_not_the_stick",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: "/dev/sdb"})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationDeviceScan",
+		name: "a_device_that_does_not_exist",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: "/dev/nope"})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationDeviceScan",
+		name: "no_device",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationDeviceScan",
+		name: "zip_only_after_an_internal_boot_capture",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			zipData := contractFlashZip("7.3.2", func(f map[string]string) {
+				f["config/hoserva/capture.json"] = `{"boot":{"mode":"internal","filesystem":"zfs","devices":[]}}`
+			})
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(zipData, false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationDeviceScan",
+		name: "refused_in_maintenance_mode",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice})
+			return err
+		},
+	},
+	{
+		op:   "GetMigration",
+		name: "valid_after_a_scan_of_the_stick",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice}); err != nil {
+				return err
+			}
+			return contractAwaitScanned(ctx, h)
+		},
+	},
+	{
 		op:   "GetMigration",
 		name: "valid_before_any_scan",
 		run: func(ctx context.Context, h apiv1.Handler) error {

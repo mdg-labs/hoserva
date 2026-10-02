@@ -38,3 +38,22 @@ implementation of this package loses a user's data.
   write of the row. A start marks an interrupted scan failed and forgets a source
   the row names that this machine does not have, as after a config import of
   another installation's archive.
+- **The Unraid stick is the rollback, so it is only ever read, mounted read-only.**
+  A stick is offered only when udev reports a FAT filesystem labelled `UNRAID` on a
+  disk that is not the boot disk, not in the array and whose UUID no other disk
+  shares (`mount -U` would be ambiguous). It is mounted through
+  `disk.ReadOnlyMounter` only (never `external.go`'s read-write path), by UUID, as an
+  argv, at `<Dir>/stick`, and a mount counts only once the kernel's mount table
+  shows it `ro` on both the mount and the superblock. It stays mounted for one read
+  (the inspect when queuing, and the job's scan) and is unmounted after each; a
+  stick that cannot be unmounted fails the scan, and the next mount refuses until
+  the leftover is released, which `Recover` also tries at start. Nothing is copied
+  from it, so a stick source has no file: the scan record's file is
+  `device:<path>`, and `Forget` has nothing of it to remove. The lab test
+  (`stick_lab_test.go`) hashes the whole device before, during and after a scan,
+  because FAT's dirty bit goes back on a clean unmount and a read-write mount
+  would otherwise leave no trace afterwards.
+- **An internal-boot server's zip is the only source** (Q25). The report keeps the
+  capture's boot mode; `internal` offers no stick and refuses a stick scan, and so
+  does a stick whose own capture says `internal`, which is a copy Unraid no longer
+  writes.

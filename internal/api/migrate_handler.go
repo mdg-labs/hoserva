@@ -36,6 +36,14 @@ func migrateError(err error) error {
 		return &apiError{code: "scan_in_progress", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrNoReport):
 		return &apiError{code: "no_migration_report", statusCode: 404, message: err.Error()}
+	case errors.Is(err, migrate.ErrNotFlashDevice):
+		return &apiError{code: "invalid_flash_device", statusCode: 400, message: err.Error()}
+	case errors.Is(err, migrate.ErrZipOnly):
+		return &apiError{code: "zip_only_source", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrFlashDevice):
+		return &apiError{code: "flash_device_unreadable", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrNoDeviceSource):
+		return errMigrationNotConfigured()
 	}
 	return err
 }
@@ -69,6 +77,36 @@ func (h *Handler) StartMigrationScan(ctx context.Context, req *apiv1.StartMigrat
 	return jobToAPI(queued)
 }
 
+// StartMigrationDeviceScan reads Unraid's configuration from the USB stick,
+// mounted read-only for the duration, and queues the migration_scan job (doc 05
+// §3, Q25).
+func (h *Handler) StartMigrationDeviceScan(ctx context.Context, req *apiv1.StartMigrationDeviceScanReq) (*apiv1.Job, error) {
+	if h.Migration == nil || h.Scheduler == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	if req == nil || req.Device == "" {
+		return nil, &apiError{code: "invalid_flash_device", statusCode: 400, message: "the device is required"}
+	}
+	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false)}
+	var queued *job.Job
+	err := h.Migration.StartDeviceScan(ctx, req.Device, opts, func(ctx context.Context, scan string) (string, error) {
+		params, err := json.Marshal(job.MigrationScanParams{Upload: scan})
+		if err != nil {
+			return "", err
+		}
+		j, err := h.Scheduler.Submit(ctx, job.TypeMigrationScan, []string{migrate.JobResource}, params)
+		if err != nil {
+			return "", mapSchedulerError(uuid.Nil, err)
+		}
+		queued = j
+		return j.ID, nil
+	})
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	return jobToAPI(queued)
+}
+
 // GetMigration returns the migration session: its phase and its report.
 func (h *Handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	if h.Migration == nil {
@@ -83,11 +121,31 @@ func (h *Handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 		out.ScanError = apiv1.NewOptString(st.ScanError)
 	}
 	if st.Source != nil {
-		out.SourceSize = apiv1.NewOptInt64(st.Source.Size)
 		out.SourceReceivedAt = apiv1.NewOptDateTime(st.Source.ReceivedAt)
+		if dev, ok := st.Source.IsDevice(); ok {
+			out.SourceDevice = apiv1.NewOptString(dev)
+		} else {
+			out.SourceSize = apiv1.NewOptInt64(st.Source.Size)
+		}
 	}
 	if st.Report != nil {
 		out.Report = apiv1.NewOptMigrationReport(migrationReportToAPI(st.Report))
+	}
+	offer, err := h.Migration.FlashOffer(ctx)
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	out.ZipOnly = offer.ZipOnly
+	out.FlashDevices = make([]apiv1.MigrationFlashDevice, 0, len(offer.Devices))
+	for _, d := range offer.Devices {
+		item := apiv1.MigrationFlashDevice{Device: d.Device, Size: d.Size}
+		if d.Model != "" {
+			item.Model = apiv1.NewOptString(d.Model)
+		}
+		if d.Serial != "" {
+			item.Serial = apiv1.NewOptString(d.Serial)
+		}
+		out.FlashDevices = append(out.FlashDevices, item)
 	}
 	return out, nil
 }

@@ -10,6 +10,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 // MaxZipBytes bounds the Flash Backup zip a session accepts. A real flash is a
@@ -28,8 +30,8 @@ const maxEntryBytes int64 = 16 << 20
 var ErrInvalidZip = errors.New("not a usable Flash Backup zip")
 
 // FlashSource is where Unraid's configuration is read from: the Flash Backup
-// zip today, a flash device mounted read-only later. Its root is /boot, so every
-// config file is named under "config/". Names are slash-separated and never
+// zip, or the flash device mounted read-only (DirSource). Its root is /boot, so
+// every config file is named under "config/". Names are slash-separated and never
 // carry the junk a flash accumulates (ignoredPath).
 type FlashSource interface {
 	// List returns every regular file under dir ("" for the root), sorted.
@@ -171,4 +173,109 @@ func OpenZipFile(p string) (*ZipSource, *os.File, error) {
 		return nil, nil, err
 	}
 	return src, f, nil
+}
+
+// DirSource is a FlashSource over a directory that is a flash device mounted
+// read-only. It reads through an os.Root, so no name leads out of the directory,
+// and it only ever opens a file for reading. List and Read cannot return the
+// error a failing device gives, so the first one is kept for Err: a scan that
+// listed half a flash because the stick was pulled must not report on it.
+type DirSource struct {
+	root *os.Root
+
+	mu  sync.Mutex
+	err error
+}
+
+// OpenDir opens dir, the mountpoint of a flash device, as a source.
+func OpenDir(dir string) (*DirSource, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &DirSource{root: root}, nil
+}
+
+// Close releases the directory.
+func (d *DirSource) Close() error { return d.root.Close() }
+
+// Err returns the first read error List or Read met, or nil.
+func (d *DirSource) Err() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.err
+}
+
+func (d *DirSource) fail(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.err == nil {
+		d.err = err
+	}
+}
+
+// List implements FlashSource. It reads directory entries only, never a file,
+// and does not enter a directory the scan ignores.
+func (d *DirSource) List(dir string) []string {
+	start := "."
+	if dir != "" {
+		start = path.Clean(dir)
+	}
+	var out []string
+	err := fs.WalkDir(d.root.FS(), start, func(name string, e fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && name == start {
+				return fs.SkipDir
+			}
+			return err
+		}
+		if name != "." && ignoredPath(name) {
+			if e.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if e.Type().IsRegular() {
+			out = append(out, name)
+		}
+		return nil
+	})
+	if err != nil {
+		d.fail(fmt.Errorf("listing %q: %w", dir, err))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Read implements FlashSource.
+func (d *DirSource) Read(name string) ([]byte, error) {
+	f, err := d.root.Open(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return nil, fmt.Errorf("%s: %w", name, fs.ErrNotExist)
+		}
+		d.fail(err)
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		d.fail(err)
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: %w", name, fs.ErrNotExist)
+	}
+	if st.Size() > maxEntryBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, maxEntryBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxEntryBytes+1))
+	if err != nil {
+		d.fail(err)
+		return nil, err
+	}
+	if int64(len(data)) > maxEntryBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, maxEntryBytes)
+	}
+	return data, nil
 }

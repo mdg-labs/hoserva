@@ -74,9 +74,13 @@ type Report struct {
 	// UnverifiedLayout is true when the scan went ahead only because
 	// --unverified-layout overrode a refusal of the version or flash layout
 	// (Q24).
-	UnverifiedLayout bool    `json:"unverifiedLayout"`
-	Verdict          Verdict `json:"verdict"`
-	Rows             []Row   `json:"rows"`
+	UnverifiedLayout bool `json:"unverifiedLayout"`
+	// BootMode is the capture's boot mode ("usb" or "internal"), empty when the
+	// capture does not say. The session keeps it, so a later scan can tell that
+	// the zip is the only source (Q25) without reading a source again.
+	BootMode string  `json:"bootMode,omitempty"`
+	Verdict  Verdict `json:"verdict"`
+	Rows     []Row   `json:"rows"`
 }
 
 func (r *Report) add(check string, st Status, subject, format string, args ...any) {

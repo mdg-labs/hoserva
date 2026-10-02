@@ -53,7 +53,9 @@ func (h *Handler) externalStore() *store.ExternalStore {
 	return h.ArrayStore.External()
 }
 
-func (h *Handler) arrayDevices(ctx context.Context) (map[string]struct{}, error) {
+// ArrayDevices is the set of devices in the array. A disk in it is never offered
+// for anything outside the array.
+func (h *Handler) ArrayDevices(ctx context.Context) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	if h.ArrayStore == nil {
 		return out, nil
@@ -82,7 +84,7 @@ func (h *Handler) ListExternalDisks(ctx context.Context) (*apiv1.ListExternalDis
 		}
 	}
 
-	arrayDevs, err := h.arrayDevices(ctx)
+	arrayDevs, err := h.ArrayDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +145,7 @@ func (h *Handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterE
 	if err := disk.RefuseBootDevice(ctx, h.Disks, req.Device); err != nil {
 		return nil, errInvalidPlan(err)
 	}
-	arrayDevs, err := h.arrayDevices(ctx)
+	arrayDevs, err := h.ArrayDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +431,7 @@ func (h *Handler) resolveExternal(ctx context.Context, label string, persist boo
 			}
 		}
 	}
-	arrayDevs, err := h.arrayDevices(ctx)
+	arrayDevs, err := h.ArrayDevices(ctx)
 	if err != nil {
 		return store.ExternalDisk{}, disk.Disk{}, registered, err
 	}
@@ -452,7 +454,7 @@ func (h *Handler) inventoryDisk(ctx context.Context, label string) (disk.Disk, e
 	if err != nil {
 		return disk.Disk{}, fmt.Errorf("listing disks: %w", err)
 	}
-	arrayDevs, err := h.arrayDevices(ctx)
+	arrayDevs, err := h.ArrayDevices(ctx)
 	if err != nil {
 		return disk.Disk{}, err
 	}

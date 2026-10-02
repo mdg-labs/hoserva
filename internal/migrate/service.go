@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -42,7 +43,9 @@ const (
 	PhaseScanned    Phase = "scanned"
 )
 
-// SourceInfo describes the zip a report was made from.
+// SourceInfo describes what a report was made from: an uploaded zip, or a flash
+// device (IsDevice), for which the zip's size is 0 and ReceivedAt is when it was
+// scanned.
 type SourceInfo struct {
 	File       string    `json:"file"`
 	Size       int64     `json:"size"`
@@ -64,8 +67,9 @@ type session struct {
 	Scan   *scanRecord
 }
 
-// State is the session as the API shows it. Source is the zip the Report was
-// made from, whose name is never shown: it is a file in the state directory.
+// State is the session as the API shows it. Source is what the Report was made
+// from; an uploaded zip's name is never shown, it is a file in the state
+// directory.
 type State struct {
 	Phase     Phase
 	ScanError string
@@ -93,8 +97,17 @@ type Service struct {
 	// own outcome (a queued job cancelled, or dropped when the array stops) is
 	// failed, not running.
 	JobEnded func(ctx context.Context, id string) (status string, ended bool, err error)
+	// Mounter mounts the Unraid flash device read-only for a scan of it. Nil
+	// means this daemon reads zips only.
+	Mounter disk.ReadOnlyMounter
+	// ArrayDevices returns the devices in this machine's array, which are never
+	// offered as the flash. Nil means none are known.
+	ArrayDevices func(ctx context.Context) (map[string]struct{}, error)
 
-	mu sync.Mutex
+	// stickMu serialises the one private mountpoint a flash device is read at.
+	// It is taken after mu, never before.
+	stickMu sync.Mutex
+	mu      sync.Mutex
 	// scanJob is the job queued for the staged upload named here. It lives in
 	// memory only: a scan the previous process left unfinished is failed by
 	// Recover, so no persisted scan outlives the job that was to run it.
@@ -164,7 +177,7 @@ func (s *Service) scanOutcome(ctx context.Context, sc *scanRecord) (running bool
 		return false, "", nil
 	case sc.Error != "":
 		return false, sc.Error, nil
-	case !s.fileExists(sc.File):
+	case !isDeviceScan(sc.File) && !s.fileExists(sc.File):
 		return false, "the scan's upload is no longer on this machine; scan again", nil
 	case s.JobEnded == nil || s.scanJob.upload != sc.File:
 		return false, "this scan's job is not known to this daemon; scan again", nil
@@ -249,7 +262,7 @@ func (s *Service) Recover(ctx context.Context) error {
 		sess.Scan.Error = "the scan was interrupted by a restart; scan again"
 		changed = true
 	}
-	if sess.Source != nil && !s.fileExists(sess.Source.File) {
+	if sess.Source != nil && !isDeviceScan(sess.Source.File) && !s.fileExists(sess.Source.File) {
 		sess.Source = nil
 		changed = true
 	}
@@ -258,6 +271,7 @@ func (s *Service) Recover(ctx context.Context) error {
 			return err
 		}
 	}
+	s.recoverStick(ctx)
 	return s.prune(sess)
 }
 
@@ -302,12 +316,24 @@ func (s *Service) StartScan(ctx context.Context, upload io.Reader, opts ScanOpti
 		return err
 	}
 
+	rec := &scanRecord{File: name, Size: size, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout}
+	if err := s.queue(ctx, sess, rec, submit); err != nil {
+		return err
+	}
+	staged = false
+	return nil
+}
+
+// queue records rec as the session's scan and calls submit, which queues the
+// job. The caller holds s.mu. A submit that fails puts the previous session
+// back.
+func (s *Service) queue(ctx context.Context, sess *session, rec *scanRecord, submit func(ctx context.Context, scan string) (jobID string, err error)) error {
 	previous := *sess
-	sess.Scan = &scanRecord{File: name, Size: size, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout}
+	sess.Scan = rec
 	if err := s.save(ctx, sess); err != nil {
 		return fmt.Errorf("recording the scan: %w", err)
 	}
-	jobID, err := submit(ctx, name)
+	jobID, err := submit(ctx, rec.File)
 	if err != nil {
 		// A request that was cancelled is a reason submit can fail; the previous
 		// session is put back all the same.
@@ -316,8 +342,7 @@ func (s *Service) StartScan(ctx context.Context, upload io.Reader, opts ScanOpti
 		}
 		return err
 	}
-	staged = false
-	s.scanJob.upload, s.scanJob.id = name, jobID
+	s.scanJob.upload, s.scanJob.id = rec.File, jobID
 	s.pruneLogged(sess)
 	return nil
 }
@@ -390,6 +415,9 @@ func (s *Service) RunScan(ctx context.Context, out io.Writer, upload string) err
 }
 
 func (s *Service) scan(ctx context.Context, rec scanRecord) (*Report, error) {
+	if isDeviceScan(rec.File) {
+		return s.scanDevice(ctx, rec)
+	}
 	src, f, err := OpenZipFile(s.path(rec.File))
 	if err != nil {
 		return nil, err

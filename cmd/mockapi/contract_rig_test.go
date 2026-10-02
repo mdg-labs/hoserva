@@ -427,6 +427,8 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		provider.AddDisk(e.Device, contractDiskFromInventory(e))
 	}
 
+	provider.AddDisk(mockFlashDevice, disk.Disk{Size: 16 * disk.GB, Filesystem: "vfat", Label: "UNRAID", FSUUID: "ABCD-1234"})
+
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(t.TempDir())
 	registry := job.NewRegistry()
@@ -437,10 +439,24 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	}
 	// The migration scan runs for real, over the rig's disks, so a case that
 	// starts one can read its report once it has finished.
+	stick := disk.NewFakeReadOnlyMounter()
+	stick.OnMount = func(where string) error {
+		for name, content := range contractFlashFiles("7.3.2", nil) {
+			p := filepath.Join(where, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	migrationSvc := &migrate.Service{
 		Dir:      filepath.Join(t.TempDir(), "migrate"),
 		Scanner:  &migrate.Scanner{Disks: provider, UIDOwner: func(int) (string, error) { return "", nil }},
 		Sessions: store.NewMigrationSessionStore(db),
+		Mounter:  stick,
 		JobEnded: func(ctx context.Context, id string) (string, bool, error) {
 			j, err := jobStore.Get(ctx, id)
 			if err != nil {

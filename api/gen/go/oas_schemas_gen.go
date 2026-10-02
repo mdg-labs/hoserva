@@ -9581,11 +9581,18 @@ type Migration struct {
 	Phase MigrationPhase `json:"phase"`
 	// Why the latest scan did not finish. Present only in `scan_failed`.
 	ScanError OptString `json:"scanError"`
-	// The size in bytes of the zip the report was made from.
+	// The size in bytes of the zip the report was made from. Absent when it was made from a flash device.
 	SourceSize OptInt64 `json:"sourceSize"`
-	// When the zip the report was made from was uploaded.
-	SourceReceivedAt OptDateTime        `json:"sourceReceivedAt"`
-	Report           OptMigrationReport `json:"report"`
+	// When the zip the report was made from was uploaded, or the flash device was scanned.
+	SourceReceivedAt OptDateTime `json:"sourceReceivedAt"`
+	// The device the report was read from, when it was made from the Unraid USB stick and not from a zip.
+	SourceDevice OptString `json:"sourceDevice"`
+	// The disks a scan can read as the Unraid USB stick now.
+	FlashDevices []MigrationFlashDevice `json:"flashDevices"`
+	// True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is
+	// the only source and no stick is offered (Q25).
+	ZipOnly bool               `json:"zipOnly"`
+	Report  OptMigrationReport `json:"report"`
 }
 
 // GetPhase returns the value of Phase.
@@ -9606,6 +9613,21 @@ func (s *Migration) GetSourceSize() OptInt64 {
 // GetSourceReceivedAt returns the value of SourceReceivedAt.
 func (s *Migration) GetSourceReceivedAt() OptDateTime {
 	return s.SourceReceivedAt
+}
+
+// GetSourceDevice returns the value of SourceDevice.
+func (s *Migration) GetSourceDevice() OptString {
+	return s.SourceDevice
+}
+
+// GetFlashDevices returns the value of FlashDevices.
+func (s *Migration) GetFlashDevices() []MigrationFlashDevice {
+	return s.FlashDevices
+}
+
+// GetZipOnly returns the value of ZipOnly.
+func (s *Migration) GetZipOnly() bool {
+	return s.ZipOnly
 }
 
 // GetReport returns the value of Report.
@@ -9631,6 +9653,21 @@ func (s *Migration) SetSourceSize(val OptInt64) {
 // SetSourceReceivedAt sets the value of SourceReceivedAt.
 func (s *Migration) SetSourceReceivedAt(val OptDateTime) {
 	s.SourceReceivedAt = val
+}
+
+// SetSourceDevice sets the value of SourceDevice.
+func (s *Migration) SetSourceDevice(val OptString) {
+	s.SourceDevice = val
+}
+
+// SetFlashDevices sets the value of FlashDevices.
+func (s *Migration) SetFlashDevices(val []MigrationFlashDevice) {
+	s.FlashDevices = val
+}
+
+// SetZipOnly sets the value of ZipOnly.
+func (s *Migration) SetZipOnly(val bool) {
+	s.ZipOnly = val
 }
 
 // SetReport sets the value of Report.
@@ -9701,6 +9738,56 @@ func (s *MigrationCheckStatus) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/MigrationFlashDevice
+type MigrationFlashDevice struct {
+	// The disk's device path, which `startMigrationDeviceScan` takes.
+	Device string `json:"device"`
+	// Bytes.
+	Size   int64     `json:"size"`
+	Model  OptString `json:"model"`
+	Serial OptString `json:"serial"`
+}
+
+// GetDevice returns the value of Device.
+func (s *MigrationFlashDevice) GetDevice() string {
+	return s.Device
+}
+
+// GetSize returns the value of Size.
+func (s *MigrationFlashDevice) GetSize() int64 {
+	return s.Size
+}
+
+// GetModel returns the value of Model.
+func (s *MigrationFlashDevice) GetModel() OptString {
+	return s.Model
+}
+
+// GetSerial returns the value of Serial.
+func (s *MigrationFlashDevice) GetSerial() OptString {
+	return s.Serial
+}
+
+// SetDevice sets the value of Device.
+func (s *MigrationFlashDevice) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetSize sets the value of Size.
+func (s *MigrationFlashDevice) SetSize(val int64) {
+	s.Size = val
+}
+
+// SetModel sets the value of Model.
+func (s *MigrationFlashDevice) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *MigrationFlashDevice) SetSerial(val OptString) {
+	s.Serial = val
 }
 
 // Ref: #/components/schemas/MigrationPhase
@@ -17663,6 +17750,34 @@ func (s *StartFixRequest) SetConfirm(val bool) {
 // SetDisk sets the value of Disk.
 func (s *StartFixRequest) SetDisk(val OptInt32) {
 	s.Disk = val
+}
+
+type StartMigrationDeviceScanReq struct {
+	// The disk's device path, as `flashDevices` lists it (`/dev/sdb`).
+	Device string `json:"device"`
+	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
+	// (Q24).
+	UnverifiedLayout OptBool `json:"unverifiedLayout"`
+}
+
+// GetDevice returns the value of Device.
+func (s *StartMigrationDeviceScanReq) GetDevice() string {
+	return s.Device
+}
+
+// GetUnverifiedLayout returns the value of UnverifiedLayout.
+func (s *StartMigrationDeviceScanReq) GetUnverifiedLayout() OptBool {
+	return s.UnverifiedLayout
+}
+
+// SetDevice sets the value of Device.
+func (s *StartMigrationDeviceScanReq) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetUnverifiedLayout sets the value of UnverifiedLayout.
+func (s *StartMigrationDeviceScanReq) SetUnverifiedLayout(val OptBool) {
+	s.UnverifiedLayout = val
 }
 
 type StartMigrationScanReq struct {

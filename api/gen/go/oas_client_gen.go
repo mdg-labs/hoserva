@@ -452,8 +452,10 @@ type Invoker interface {
 	// ForgetMigration invokes forgetMigration operation.
 	//
 	// Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
-	// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment).
-	// Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+	// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A
+	// scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied
+	// from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
+	// runs.
 	//
 	// DELETE /migrate
 	ForgetMigration(ctx context.Context) error
@@ -621,7 +623,12 @@ type Invoker interface {
 	// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
 	// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
 	// scan, if there was one, is still returned). The rows name and count; they never quote a file's
-	// content. `getMigrationReport` returns the same report as a document.
+	// content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks
+	// a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled
+	// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
+	// true, once the session's report was made from a capture that says Unraid booted from an internal
+	// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
+	// no such disk is attached or this daemon cannot read one.
 	//
 	// GET /migrate
 	GetMigration(ctx context.Context) (*Migration, error)
@@ -1652,6 +1659,26 @@ type Invoker interface {
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, request *StartFixRequest) (*Job, error)
+	// StartMigrationDeviceScan invokes startMigrationDeviceScan operation.
+	//
+	// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
+	// stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the
+	// `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private
+	// mountpoint under the daemon's state directory for the one read made here before anything is queued
+	// and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing
+	// is copied from it. The stick is the user's rollback. Refused before anything is queued: 400
+	// `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot
+	// disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the
+	// session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot
+	// pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not
+	// be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no
+	// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless
+	// `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when
+	// this daemon has no migration service or cannot read a flash device. The result is the report the
+	// same flash's zip gives.
+	//
+	// POST /migrate/scan/device
+	StartMigrationDeviceScan(ctx context.Context, request *StartMigrationDeviceScanReq) (*Job, error)
 	// StartMigrationScan invokes startMigrationScan operation.
 	//
 	// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
@@ -7296,8 +7323,10 @@ func (c *Client) sendFinishDiskRemoval(ctx context.Context, request *FinishDiskR
 // ForgetMigration invokes forgetMigration operation.
 //
 // Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
-// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment).
-// Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A
+// scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied
+// from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
+// runs.
 //
 // DELETE /migrate
 func (c *Client) ForgetMigration(ctx context.Context) error {
@@ -10058,7 +10087,12 @@ func (c *Client) sendGetMetrics(ctx context.Context, params GetMetricsParams) (r
 // `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
 // its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
 // scan, if there was one, is still returned). The rows name and count; they never quote a file's
-// content. `getMigrationReport` returns the same report as a document.
+// content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks
+// a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled
+// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
+// true, once the session's report was made from a capture that says Unraid booted from an internal
+// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
+// no such disk is attached or this daemon cannot read one.
 //
 // GET /migrate
 func (c *Client) GetMigration(ctx context.Context) (*Migration, error) {
@@ -22188,6 +22222,148 @@ func (c *Client) sendStartFix(ctx context.Context, request *StartFixRequest) (re
 
 	stage = "DecodeResponse"
 	result, err := decodeStartFixResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartMigrationDeviceScan invokes startMigrationDeviceScan operation.
+//
+// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
+// stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the
+// `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private
+// mountpoint under the daemon's state directory for the one read made here before anything is queued
+// and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing
+// is copied from it. The stick is the user's rollback. Refused before anything is queued: 400
+// `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot
+// disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the
+// session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot
+// pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not
+// be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no
+// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless
+// `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when
+// this daemon has no migration service or cannot read a flash device. The result is the report the
+// same flash's zip gives.
+//
+// POST /migrate/scan/device
+func (c *Client) StartMigrationDeviceScan(ctx context.Context, request *StartMigrationDeviceScanReq) (*Job, error) {
+	res, err := c.sendStartMigrationDeviceScan(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendStartMigrationDeviceScan(ctx context.Context, request *StartMigrationDeviceScanReq) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startMigrationDeviceScan"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/scan/device"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartMigrationDeviceScanOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/scan/device"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStartMigrationDeviceScanRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartMigrationDeviceScanOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartMigrationDeviceScanOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartMigrationDeviceScanResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

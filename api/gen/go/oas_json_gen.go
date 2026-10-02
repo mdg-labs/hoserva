@@ -20173,6 +20173,24 @@ func (s *Migration) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.SourceDevice.Set {
+			e.FieldStart("sourceDevice")
+			s.SourceDevice.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("flashDevices")
+		e.ArrStart()
+		for _, elem := range s.FlashDevices {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("zipOnly")
+		e.Bool(s.ZipOnly)
+	}
+	{
 		if s.Report.Set {
 			e.FieldStart("report")
 			s.Report.Encode(e)
@@ -20180,12 +20198,15 @@ func (s *Migration) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfMigration = [5]string{
+var jsonFieldsNameOfMigration = [8]string{
 	0: "phase",
 	1: "scanError",
 	2: "sourceSize",
 	3: "sourceReceivedAt",
-	4: "report",
+	4: "sourceDevice",
+	5: "flashDevices",
+	6: "zipOnly",
+	7: "report",
 }
 
 // Decode decodes Migration from json.
@@ -20237,6 +20258,46 @@ func (s *Migration) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"sourceReceivedAt\"")
 			}
+		case "sourceDevice":
+			if err := func() error {
+				s.SourceDevice.Reset()
+				if err := s.SourceDevice.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"sourceDevice\"")
+			}
+		case "flashDevices":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				s.FlashDevices = make([]MigrationFlashDevice, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MigrationFlashDevice
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.FlashDevices = append(s.FlashDevices, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"flashDevices\"")
+			}
+		case "zipOnly":
+			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				v, err := d.Bool()
+				s.ZipOnly = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"zipOnly\"")
+			}
 		case "report":
 			if err := func() error {
 				s.Report.Reset()
@@ -20257,7 +20318,7 @@ func (s *Migration) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00000001,
+		0b01100001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -20345,6 +20406,153 @@ func (s MigrationCheckStatus) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *MigrationCheckStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationFlashDevice) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationFlashDevice) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("device")
+		e.Str(s.Device)
+	}
+	{
+		e.FieldStart("size")
+		e.Int64(s.Size)
+	}
+	{
+		if s.Model.Set {
+			e.FieldStart("model")
+			s.Model.Encode(e)
+		}
+	}
+	{
+		if s.Serial.Set {
+			e.FieldStart("serial")
+			s.Serial.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfMigrationFlashDevice = [4]string{
+	0: "device",
+	1: "size",
+	2: "model",
+	3: "serial",
+}
+
+// Decode decodes MigrationFlashDevice from json.
+func (s *MigrationFlashDevice) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationFlashDevice to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "device":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Device = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"device\"")
+			}
+		case "size":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int64()
+				s.Size = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"size\"")
+			}
+		case "model":
+			if err := func() error {
+				s.Model.Reset()
+				if err := s.Model.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"model\"")
+			}
+		case "serial":
+			if err := func() error {
+				s.Serial.Reset()
+				if err := s.Serial.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"serial\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationFlashDevice")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationFlashDevice) {
+					name = jsonFieldsNameOfMigrationFlashDevice[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationFlashDevice) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationFlashDevice) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -33725,6 +33933,119 @@ func (s *StartFixRequest) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *StartFixRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *StartMigrationDeviceScanReq) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *StartMigrationDeviceScanReq) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("device")
+		e.Str(s.Device)
+	}
+	{
+		if s.UnverifiedLayout.Set {
+			e.FieldStart("unverifiedLayout")
+			s.UnverifiedLayout.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfStartMigrationDeviceScanReq = [2]string{
+	0: "device",
+	1: "unverifiedLayout",
+}
+
+// Decode decodes StartMigrationDeviceScanReq from json.
+func (s *StartMigrationDeviceScanReq) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode StartMigrationDeviceScanReq to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "device":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Device = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"device\"")
+			}
+		case "unverifiedLayout":
+			if err := func() error {
+				s.UnverifiedLayout.Reset()
+				if err := s.UnverifiedLayout.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"unverifiedLayout\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode StartMigrationDeviceScanReq")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfStartMigrationDeviceScanReq) {
+					name = jsonFieldsNameOfStartMigrationDeviceScanReq[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *StartMigrationDeviceScanReq) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *StartMigrationDeviceScanReq) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
