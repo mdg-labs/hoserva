@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>sidecar</Name>
+  <Repository>registry.example.com/team/sidecar:1.0.0</Repository>
+  <Network>container:vpn</Network>
+  <ExtraParams>--pid=container:vpn</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/sidecar" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sidecar</Config>
+</Container>

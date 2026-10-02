@@ -308,6 +308,13 @@ type Invoker interface {
 	//
 	// DELETE /notifications/channels/{channelId}
 	DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error
+	// DeleteRegistryCredential invokes deleteRegistryCredential operation.
+	//
+	// Deletes the credential saved for this registry; the update check asks it anonymously again. A
+	// registry with none is 404 `registry_credential_not_found`.
+	//
+	// DELETE /registry-credentials/{registry}
+	DeleteRegistryCredential(ctx context.Context, params DeleteRegistryCredentialParams) error
 	// DeleteShare invokes deleteShare operation.
 	//
 	// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
@@ -834,11 +841,12 @@ type Invoker interface {
 	// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
 	// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
 	// `skipped` means the registry was rate limiting requests and is asked again at the next check,
-	// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
-	// that it could not look: the registry wants a login (registries are checked anonymously only) or the
-	// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
-	// of them means up to date. available is false, with no error, whenever Docker itself is not
-	// reachable.
+	// `failed` that the check could not tell (including a registry whose saved credential cannot be used
+	// or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached
+	// the image yet or that it could not look: the registry wants a login and no credential is saved for
+	// it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
+	// update. The `message` says which. None of them means up to date. available is false, with no error,
+	// whenever Docker itself is not reachable.
 	//
 	// GET /apps/updates
 	ListAppUpdates(ctx context.Context) (*ListAppUpdatesOK, error)
@@ -934,6 +942,16 @@ type Invoker interface {
 	//
 	// GET /notifications
 	ListNotifications(ctx context.Context) (*ListNotificationsOK, error)
+	// ListRegistryCredentials invokes listRegistryCredentials operation.
+	//
+	// The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image
+	// references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never
+	// returned: only the host is. A host listed here whose credential was cleared by a restore without the
+	// backup passphrase makes the update check report its images as `failed` until `putRegistryCredential`
+	// saves it again.
+	//
+	// GET /registry-credentials
+	ListRegistryCredentials(ctx context.Context) (*RegistryCredentialList, error)
 	// ListSessions invokes listSessions operation.
 	//
 	// Every session across every account, with revoke (doc 03 §7).
@@ -1184,6 +1202,21 @@ type Invoker interface {
 	//
 	// POST /templates/{id}/preview
 	PreviewTemplateInstall(ctx context.Context, request *TemplateInstallRequest, params PreviewTemplateInstallParams) (*TemplateInstallPlan, error)
+	// PutRegistryCredential invokes putRegistryCredential operation.
+	//
+	// Saves the username and password the update check logs in to this registry with, replacing any it
+	// already has, sealed under the machine key (Q28). The password is write-only: no operation returns it
+	// and it is never logged. The credential is sent only to this registry's own host (and, for Docker
+	// Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another
+	// host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
+	// another host, is not logged in to and its images are reported `failed`. It is carried in a config
+	// archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the
+	// credential is cleared and the restore report names it. A host that is not a registry host name, or
+	// an empty username or password, a username with a colon, or a value with control characters is 400
+	// `invalid_registry_credential`.
+	//
+	// PUT /registry-credentials/{registry}
+	PutRegistryCredential(ctx context.Context, request *PutRegistryCredentialRequest, params PutRegistryCredentialParams) error
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -5247,6 +5280,150 @@ func (c *Client) sendDeleteNotificationChannel(ctx context.Context, params Delet
 
 	stage = "DecodeResponse"
 	result, err := decodeDeleteNotificationChannelResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// DeleteRegistryCredential invokes deleteRegistryCredential operation.
+//
+// Deletes the credential saved for this registry; the update check asks it anonymously again. A
+// registry with none is 404 `registry_credential_not_found`.
+//
+// DELETE /registry-credentials/{registry}
+func (c *Client) DeleteRegistryCredential(ctx context.Context, params DeleteRegistryCredentialParams) error {
+	_, err := c.sendDeleteRegistryCredential(ctx, params)
+	return err
+}
+
+func (c *Client) sendDeleteRegistryCredential(ctx context.Context, params DeleteRegistryCredentialParams) (res *DeleteRegistryCredentialNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("deleteRegistryCredential"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/registry-credentials/{registry}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, DeleteRegistryCredentialOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/registry-credentials/"
+	{
+		// Encode "registry" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "registry",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Registry))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, DeleteRegistryCredentialOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, DeleteRegistryCredentialOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeDeleteRegistryCredentialResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -12419,11 +12596,12 @@ func (c *Client) sendListAppUpdateHistory(ctx context.Context) (res *ListAppUpda
 // of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
 // `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
 // `skipped` means the registry was rate limiting requests and is asked again at the next check,
-// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
-// that it could not look: the registry wants a login (registries are checked anonymously only) or the
-// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
-// of them means up to date. available is false, with no error, whenever Docker itself is not
-// reachable.
+// `failed` that the check could not tell (including a registry whose saved credential cannot be used
+// or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached
+// the image yet or that it could not look: the registry wants a login and no credential is saved for
+// it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
+// update. The `message` says which. None of them means up to date. available is false, with no error,
+// whenever Docker itself is not reachable.
 //
 // GET /apps/updates
 func (c *Client) ListAppUpdates(ctx context.Context) (*ListAppUpdatesOK, error) {
@@ -13897,6 +14075,135 @@ func (c *Client) sendListNotifications(ctx context.Context) (res *ListNotificati
 
 	stage = "DecodeResponse"
 	result, err := decodeListNotificationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListRegistryCredentials invokes listRegistryCredentials operation.
+//
+// The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image
+// references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never
+// returned: only the host is. A host listed here whose credential was cleared by a restore without the
+// backup passphrase makes the update check report its images as `failed` until `putRegistryCredential`
+// saves it again.
+//
+// GET /registry-credentials
+func (c *Client) ListRegistryCredentials(ctx context.Context) (*RegistryCredentialList, error) {
+	res, err := c.sendListRegistryCredentials(ctx)
+	return res, err
+}
+
+func (c *Client) sendListRegistryCredentials(ctx context.Context) (res *RegistryCredentialList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listRegistryCredentials"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/registry-credentials"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListRegistryCredentialsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/registry-credentials"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListRegistryCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListRegistryCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListRegistryCredentialsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -16312,6 +16619,161 @@ func (c *Client) sendPreviewTemplateInstall(ctx context.Context, request *Templa
 
 	stage = "DecodeResponse"
 	result, err := decodePreviewTemplateInstallResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PutRegistryCredential invokes putRegistryCredential operation.
+//
+// Saves the username and password the update check logs in to this registry with, replacing any it
+// already has, sealed under the machine key (Q28). The password is write-only: no operation returns it
+// and it is never logged. The credential is sent only to this registry's own host (and, for Docker
+// Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another
+// host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
+// another host, is not logged in to and its images are reported `failed`. It is carried in a config
+// archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the
+// credential is cleared and the restore report names it. A host that is not a registry host name, or
+// an empty username or password, a username with a colon, or a value with control characters is 400
+// `invalid_registry_credential`.
+//
+// PUT /registry-credentials/{registry}
+func (c *Client) PutRegistryCredential(ctx context.Context, request *PutRegistryCredentialRequest, params PutRegistryCredentialParams) error {
+	_, err := c.sendPutRegistryCredential(ctx, request, params)
+	return err
+}
+
+func (c *Client) sendPutRegistryCredential(ctx context.Context, request *PutRegistryCredentialRequest, params PutRegistryCredentialParams) (res *PutRegistryCredentialNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("putRegistryCredential"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/registry-credentials/{registry}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PutRegistryCredentialOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/registry-credentials/"
+	{
+		// Encode "registry" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "registry",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Registry))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePutRegistryCredentialRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PutRegistryCredentialOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PutRegistryCredentialOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePutRegistryCredentialResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

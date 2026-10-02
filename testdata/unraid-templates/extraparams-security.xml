@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>widened</Name>
+  <Repository>registry.example.com/team/widened:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--cap-add=NET_ADMIN --cap-add SYS_PTRACE --cap-drop=MKNOD --security-opt apparmor=unconfined --group-add 44 --pid=host --cgroupns=host --device-cgroup-rule='c 189:* rwm' --read-only --init</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/widened" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/widened</Config>
+</Container>

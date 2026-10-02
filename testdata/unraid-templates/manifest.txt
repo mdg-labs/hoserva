@@ -1,0 +1,36 @@
+# Expected outcome of every template in this directory, and the last recorded
+# clean-conversion rate (Q36, doc 06 §2). `make test-corpus` fails when a
+# template converts differently from what is listed here, or when the rate
+# falls below the recorded one. A change that raises the rate updates the
+# "recorded" line in the same commit.
+#
+# Outcomes: clean (needs no manual action), warnings (needs manual action),
+# failed (not a template the converter can read).
+#
+# recorded clean=14 total=26
+all-fields.xml clean
+extraparams-equals-spacing.xml clean
+extraparams-health.xml clean
+extraparams-merge-conflict.xml warnings
+extraparams-merge-duplicates.xml clean
+extraparams-resources.xml clean
+extraparams-runtime.xml clean
+extraparams-security.xml clean
+extraparams-short-separate.xml clean
+extraparams-shell-syntax.xml warnings
+extraparams-short-forms.xml clean
+extraparams-untranslated.xml warnings
+legacy-nested.xml warnings
+malformed-no-repository.xml failed
+malformed-unclosed.xml failed
+malformed-wrong-root.xml failed
+minimal-clean.xml clean
+naming-and-args.xml clean
+network-container.xml clean
+network-custom.xml warnings
+network-host.xml clean
+network-invalid.xml warnings
+path-flagged.xml warnings
+path-invalid.xml warnings
+unknown-fields.xml warnings
+variables.xml clean

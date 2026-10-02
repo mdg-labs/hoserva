@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>everything</Name>
+  <Repository>registry.example.com/team/everything:3.0.0</Repository>
+  <Registry>https://registry.example.com/team/everything</Registry>
+  <Network>bridge</Network>
+  <MyIP></MyIP>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://example.com/support</Support>
+  <Project>https://example.com/everything</Project>
+  <Overview>Exercises every field the converter reads.</Overview>
+  <Category>Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://example.com/templates/everything.xml</TemplateURL>
+  <Icon>https://example.com/icons/everything.png</Icon>
+  <ExtraParams>--restart=unless-stopped --memory=1g</ExtraParams>
+  <PostArgs>--serve --verbose</PostArgs>
+  <CPUset>0,1</CPUset>
+  <DateInstalled>1700000000</DateInstalled>
+  <DonateText>Support the project</DonateText>
+  <DonateLink>https://example.com/donate</DonateLink>
+  <Requires>A running database reachable from this container.</Requires>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Sync port" Target="9000" Default="9000" Mode="udp" Description="Sync traffic" Type="Port" Display="always" Required="false" Mask="false">9000</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/everything" Mode="rw" Description="Application data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/everything</Config>
+  <Config Name="Shared" Target="/shared" Default="/mnt/user/shared" Mode="ro" Description="Read-only share" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/shared</Config>
+  <Config Name="Admin user" Target="ADMIN_USER" Default="admin" Mode="" Description="Name of the first administrator" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
+  <Config Name="Admin password" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Password of the first administrator" Type="Variable" Display="always" Required="true" Mask="true">changeme</Config>
+  <Config Name="Tuner" Target="" Default="" Mode="" Description="Capture device" Type="Device" Display="advanced" Required="false" Mask="false">/dev/dvb</Config>
+  <Config Name="Group label" Target="com.example.group" Default="" Mode="" Description="Stack label" Type="Label" Display="advanced" Required="false" Mask="false">tools</Config>
+</Container>

@@ -34,6 +34,9 @@ func appUpdateCmds() []*cobra.Command {
 		},
 		appUpdatePolicyCmd(),
 		appUpdateSettingsCmd(),
+		appRegistryCredentialsCmd(),
+		appRegistryCredentialSetCmd(),
+		appRegistryCredentialDeleteCmd(),
 	}
 }
 

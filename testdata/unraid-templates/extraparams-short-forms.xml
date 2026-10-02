@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>short-forms</Name>
+  <Repository>registry.example.com/team/short:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>-it -m512m -u 99:100 -h short-host -w /srv -e MODE=fast -p 127.0.0.1:9090:9090 -v /mnt/user/appdata/short-extra:/extra:ro</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/short" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/short</Config>
+</Container>

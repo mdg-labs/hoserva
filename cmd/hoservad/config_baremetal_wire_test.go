@@ -118,7 +118,7 @@ func newWiredInstall(t *testing.T) *wiredInstall {
 			StacksDir:    filepath.Join(w.stateDir, "stacks"),
 		},
 		Recipient:         w.recipient,
-		Secrets:           backupSecretSource(w.settings, acme.NewStore(db), api.NewUPSStore(db), api.NewBackupDestinationStore(db), notify.NewStore(db)),
+		Secrets:           backupSecretSource(w.settings, acme.NewStore(db), api.NewUPSStore(db), api.NewBackupDestinationStore(db), notify.NewStore(db), store.NewRegistryCredentialStore(db)),
 		Cipher:            machineKey,
 		DestinationCipher: machineKey,
 		Destinations: []backup.Destination{{ID: "boot", Name: "Boot device", Path: filepath.Join(w.root, "backups"), Enabled: true,

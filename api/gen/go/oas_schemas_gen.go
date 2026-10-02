@@ -6042,6 +6042,9 @@ type DeleteBackupDestinationNoContent struct{}
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
 type DeleteNotificationChannelNoContent struct{}
 
+// DeleteRegistryCredentialNoContent is response for DeleteRegistryCredential operation.
+type DeleteRegistryCredentialNoContent struct{}
+
 // DeleteShareDataNoContent is response for DeleteShareData operation.
 type DeleteShareDataNoContent struct{}
 
@@ -14099,6 +14102,37 @@ func (s *PreviewConfigImportReq) SetPassphrase(val OptString) {
 	s.Passphrase = val
 }
 
+// PutRegistryCredentialNoContent is response for PutRegistryCredential operation.
+type PutRegistryCredentialNoContent struct{}
+
+// Ref: #/components/schemas/PutRegistryCredentialRequest
+type PutRegistryCredentialRequest struct {
+	// The account name; it cannot contain a colon.
+	Username string `json:"username"`
+	// The password or access token. Write-only: it is stored sealed and no operation returns it.
+	Password string `json:"password"`
+}
+
+// GetUsername returns the value of Username.
+func (s *PutRegistryCredentialRequest) GetUsername() string {
+	return s.Username
+}
+
+// GetPassword returns the value of Password.
+func (s *PutRegistryCredentialRequest) GetPassword() string {
+	return s.Password
+}
+
+// SetUsername sets the value of Username.
+func (s *PutRegistryCredentialRequest) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetPassword sets the value of Password.
+func (s *PutRegistryCredentialRequest) SetPassword(val string) {
+	s.Password = val
+}
+
 // One file a rebalance or evacuation plan moves (doc 09 §3-4).
 // Ref: #/components/schemas/RebalanceMove
 type RebalanceMove struct {
@@ -14262,6 +14296,22 @@ func (s *RegisterExternalDiskRequest) SetLabel(val ExternalDiskLabel) {
 // SetBackupDestination sets the value of BackupDestination.
 func (s *RegisterExternalDiskRequest) SetBackupDestination(val OptBool) {
 	s.BackupDestination = val
+}
+
+// Ref: #/components/schemas/RegistryCredentialList
+type RegistryCredentialList struct {
+	// Registry hosts that have a saved credential, sorted.
+	Registries []string `json:"registries"`
+}
+
+// GetRegistries returns the value of Registries.
+func (s *RegistryCredentialList) GetRegistries() []string {
+	return s.Registries
+}
+
+// SetRegistries sets the value of Registries.
+func (s *RegistryCredentialList) SetRegistries(val []string) {
+	s.Registries = val
 }
 
 // Ref: #/components/schemas/RemoveAppResult

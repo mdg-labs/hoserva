@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>flagged-paths</Name>
+  <Repository>registry.example.com/team/paths:1.0.0</Repository>
+  <Network>bridge</Network>
+  <Config Name="Flash" Target="/flash" Default="/boot/config" Mode="ro" Description="Boot flash" Type="Path" Display="advanced" Required="false" Mask="false">/boot/config</Config>
+  <Config Name="Unassigned" Target="/ud" Default="/mnt/disks/backup" Mode="rw" Description="Unassigned Devices mount" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/disks/backup</Config>
+  <Config Name="Array only" Target="/array" Default="/mnt/user0/archive" Mode="rw" Description="Array-only view" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user0/archive</Config>
+  <Config Name="Single disk" Target="/disk1" Default="/mnt/disk1/media" Mode="rw" Description="One array disk" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/disk1/media</Config>
+  <Config Name="Named pool" Target="/fast" Default="/mnt/fastpool/data" Mode="rw" Description="Another pool" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/fastpool/data</Config>
+  <Config Name="Elsewhere" Target="/elsewhere" Default="/opt/data" Mode="rw" Description="Outside the pool" Type="Path" Display="advanced" Required="false" Mask="false">/opt/data</Config>
+  <Config Name="Pool data" Target="/data" Default="/mnt/user/appdata/paths" Mode="rw" Description="Fine" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/paths</Config>
+</Container>

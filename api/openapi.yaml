@@ -3575,11 +3575,13 @@ paths:
         `availableTag`). The check asks each registry for manifests and tag
         names only, never a pull. `skipped` means the registry was rate
         limiting requests and is asked again at the next check, `failed`
-        that the check could not tell, and `not_checked` that no check has
-        reached the image yet or that it could not look: the registry wants a
-        login (registries are checked anonymously only) or the container is
-        pinned to an image digest, so there is no tag to update. The
-        `message` says which. None of them means up to date. available is
+        that the check could not tell (including a registry whose saved
+        credential cannot be used or was refused: it is never asked
+        anonymously instead), and `not_checked` that no check has reached the
+        image yet or that it could not look: the registry wants a login and
+        no credential is saved for it (`putRegistryCredential`) or the
+        container is pinned to an image digest, so there is no tag to update.
+        The `message` says which. None of them means up to date. available is
         false, with no error, whenever Docker itself is not reachable.
       tags: [apps]
       x-hoserva-role: viewer
@@ -3654,6 +3656,87 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListAppUpdateHistoryOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /registry-credentials:
+    get:
+      operationId: listRegistryCredentials
+      summary: List the registries that have a saved credential
+      description: >-
+        The registry hosts the daily update check (doc 04 §6, Q81) has a
+        credential for, sorted, as image references name them (`docker.io`,
+        `ghcr.io`, `registry.example.com:5000`). A credential is never
+        returned: only the host is. A host listed here whose credential was
+        cleared by a restore without the backup passphrase makes the update
+        check report its images as `failed` until `putRegistryCredential`
+        saves it again.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The registry hosts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistryCredentialList'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /registry-credentials/{registry}:
+    parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >-
+          The registry host as an image reference names it, with its port if
+          it has one: `ghcr.io`, `registry.example.com:5000`. `index.docker.io`
+          and `registry-1.docker.io` are `docker.io`.
+    put:
+      operationId: putRegistryCredential
+      summary: Save a registry's credential
+      description: >-
+        Saves the username and password the update check logs in to this
+        registry with, replacing any it already has, sealed under the machine
+        key (Q28). The password is write-only: no operation returns it and it
+        is never logged. The credential is sent only to this registry's own
+        host (and, for Docker Hub, its token service `auth.docker.io`), only
+        over https, and never follows a redirect to another host or scheme; a
+        registry whose address would send it in plain HTTP, or whose token
+        service is on another host, is not logged in to and its images are
+        reported `failed`. It is carried in a config archive's `secrets.age`,
+        so a restore with the backup passphrase brings it back; without it the
+        credential is cleared and the restore report names it. A host that is
+        not a registry host name, or an empty username or password, a
+        username with a colon, or a value with control characters is 400
+        `invalid_registry_credential`.
+      tags: [apps]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutRegistryCredentialRequest'
+      responses:
+        "204":
+          description: The credential was saved.
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteRegistryCredential
+      summary: Delete a registry's credential
+      description: >-
+        Deletes the credential saved for this registry; the update check asks
+        it anonymously again. A registry with none is 404
+        `registry_credential_not_found`.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: The credential was deleted.
         default:
           $ref: '#/components/responses/Error'
 
@@ -7708,6 +7791,35 @@ components:
           description: The container's name.
         bulkExcluded:
           type: boolean
+
+    RegistryCredentialList:
+      type: object
+      required: [registries]
+      properties:
+        registries:
+          type: array
+          items:
+            type: string
+          description: Registry hosts that have a saved credential, sorted.
+
+    PutRegistryCredentialRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: The account name; it cannot contain a colon.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 1024
+          description: >-
+            The password or access token. Write-only: it is stored sealed and
+            no operation returns it.
 
     AppSettings:
       type: object

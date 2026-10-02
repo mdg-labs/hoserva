@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>health</Name>
+  <Repository>registry.example.com/team/health:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--health-cmd='curl -fsS http://localhost:8080/health || exit 1' --health-interval 30s --health-timeout=5s --health-retries 3 --health-start-period 1m</ExtraParams>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+</Container>

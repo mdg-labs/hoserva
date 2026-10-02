@@ -594,6 +594,20 @@ func encodePreviewTemplateInstallRequest(
 	return nil
 }
 
+func encodePutRegistryCredentialRequest(
+	req *PutRegistryCredentialRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeRebootHostRequest(
 	req *ConfirmUpdateRequest,
 	r *http.Request,

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>untranslated</Name>
+  <Repository>registry.example.com/team/untranslated:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--label com.example.tier=web --env-file /boot/config/app.env --privileged --cpu-shares 512 --stop-signal SIGINT --memory --some-exotic-flag=value -Z --env HOST_ONLY -e ALSO_HOST_ONLY</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/untranslated" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/untranslated</Config>
+</Container>

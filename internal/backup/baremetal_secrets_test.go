@@ -21,11 +21,12 @@ import (
 // The secrets of the archive the tests below restore, by the (table, column,
 // row) secrets.age names them with.
 var archivedPlain = map[secretKey]string{
-	{"acme_config", "dns_secret", "1"}:       "dns-token",
-	{"acme_config", "account_key", "1"}:      "account-key",
-	{"ups_config", "monitor_password", "1"}:  "ups-monitor",
-	{"backup_destinations", "secrets", "d1"}: `{"access_key":"s3-secret"}`,
-	{"notify_channels", "secret", "c1"}:      "gotify-token",
+	{"acme_config", "dns_secret", "1"}:                "dns-token",
+	{"acme_config", "account_key", "1"}:               "account-key",
+	{"ups_config", "monitor_password", "1"}:           "ups-monitor",
+	{"backup_destinations", "secrets", "d1"}:          `{"access_key":"s3-secret"}`,
+	{"notify_channels", "secret", "c1"}:               "gotify-token",
+	{"registry_credentials", "credential", "ghcr.io"}: `{"username":"me","password":"registry-password"}`,
 }
 
 const (
@@ -42,7 +43,8 @@ type secretsArchive struct {
 // manifest, its secrets.age holding archivedPlain and a stack .env sealed
 // under secretsPass, and its identity.age sealed under identityPass (no file
 // when empty). A second notification channel, c2, holds a sealed credential
-// secrets.age carries nothing for. The stack web holds a sealed env that
+// secrets.age carries nothing for, and a second registry credential, quay.io.
+// The stack web holds a sealed env that
 // secrets.age carries the .env of, and the stack bare one it carries none for.
 func archiveWithSecrets(t *testing.T, secretsPass, identityPass string) secretsArchive {
 	t.Helper()
@@ -52,6 +54,7 @@ func archiveWithSecrets(t *testing.T, secretsPass, identityPass string) secretsA
 		t.Fatal(err)
 	}
 	mustExec(t, db, `INSERT INTO notify_channels (id, name, type, enabled, config, secret, created_at, updated_at) VALUES ('c2', 'ops2', 'gotify', 1, '{}', X'cd', 't', 't')`)
+	mustExec(t, db, `INSERT INTO registry_credentials (registry, credential, updated_at) VALUES ('ghcr.io', X'12', 't'), ('quay.io', X'34', 't')`)
 	mustExec(t, db, `INSERT INTO stacks (name, template_source, template_id, template_revision, compose, env, installed_at) VALUES ('web', '', '', '', 'services: {}', X'ef', 't')`)
 	mustExec(t, db, `INSERT INTO stacks (name, template_source, template_id, template_revision, compose, env, installed_at) VALUES ('bare', '', '', '', 'services: {}', X'ef', 't')`)
 	_ = db.Close()
@@ -152,7 +155,7 @@ func TestBareMetalApply_WithThePassphraseSealsEverySecretUnderThisInstallationsK
 	staged := openStagedRO(t, b.Path())
 
 	for k, want := range archivedPlain {
-		col := stagedBlob(t, staged, fmt.Sprintf(`SELECT %s FROM %s WHERE CAST(id AS TEXT) = ?`, k.column, k.table), k.rowID)
+		col := stagedBlob(t, staged, fmt.Sprintf(`SELECT %s FROM %s WHERE CAST(%s AS TEXT) = ?`, k.column, k.table, rowKey(k.table)), k.rowID)
 		got, err := FakeSecretCipher{}.Decrypt(col)
 		if err != nil || string(got) != want {
 			t.Errorf("%s.%s row %s = %q (%v), want %q sealed under this installation's key", k.table, k.column, k.rowID, got, err, want)
@@ -193,6 +196,7 @@ func TestBareMetalApply_WithThePassphraseSealsEverySecretUnderThisInstallationsK
 		"database_secret users.totp_pending_secret (alice) sealed_under_other_key",
 		"database_secret notify_channels.secret (ops2) sealed_under_other_key",
 		"database_secret stacks.env (bare) sealed_under_other_key",
+		"database_secret registry_credentials.credential (quay.io) sealed_under_other_key",
 		"disk parity disk 1 (/mnt/parity1, WWN wwn-p1) disk_absent",
 	} {
 		if !slices.Contains(names, w) {
@@ -212,7 +216,7 @@ func TestBareMetalApply_WithThePassphraseSealsEverySecretUnderThisInstallationsK
 		}
 	}
 	for _, n := range names {
-		for _, restored := range []string{"acme_config", "ups_config", "backup_destinations", "notify_channels.secret (ops)", "stacks.env (web)", "backup_passphrase", NotRestoredRecipient} {
+		for _, restored := range []string{"acme_config", "ups_config", "backup_destinations", "notify_channels.secret (ops)", "stacks.env (web)", "registry_credentials.credential (ghcr.io)", "backup_passphrase", NotRestoredRecipient} {
 			if strings.Contains(n, restored) {
 				t.Errorf("notRestored lists %q, which was restored", n)
 			}
@@ -223,6 +227,12 @@ func TestBareMetalApply_WithThePassphraseSealsEverySecretUnderThisInstallationsK
 	}
 	if n := queryString(t, staged, `SELECT COUNT(*) FROM notify_channels WHERE id = 'c2' AND secret IS NOT NULL`); n != "0" {
 		t.Error("a channel credential the archive carries nothing for was left sealed under the archive's key")
+	}
+	if n := queryString(t, staged, `SELECT COUNT(*) FROM registry_credentials WHERE registry = 'quay.io' AND length(credential) > 0`); n != "0" {
+		t.Error("a registry credential the archive carries nothing for was left sealed under the archive's key")
+	}
+	if n := queryString(t, staged, `SELECT COUNT(*) FROM registry_credentials`); n != "2" {
+		t.Errorf("registry_credentials has %s rows, want both registries kept so they still list", n)
 	}
 }
 
@@ -255,6 +265,7 @@ func TestBareMetalApply_WithoutAPassphraseClearsEverySecretAndKeepsTheOwnRecipie
 				`SELECT COUNT(*) FROM ups_config WHERE length(monitor_password) > 0`,
 				`SELECT COUNT(*) FROM backup_destinations WHERE length(secrets) > 0`,
 				`SELECT COUNT(*) FROM stacks WHERE length(env) > 0`,
+				`SELECT COUNT(*) FROM registry_credentials WHERE length(credential) > 0`,
 				`SELECT COUNT(*) FROM schema_info WHERE backup_passphrase IS NOT NULL`,
 			} {
 				if got := queryString(t, staged, q); got != "0" {
@@ -286,6 +297,20 @@ func TestBareMetalApply_WithoutAPassphraseClearsEverySecretAndKeepsTheOwnRecipie
 			}
 			if stacksReported != 2 {
 				t.Errorf("notRestored = %v, want both stacks' cleared env reported", notRestoredNames(notRestored))
+			}
+			if n := queryString(t, staged, `SELECT COUNT(*) FROM registry_credentials`); n != "2" {
+				t.Errorf("registry_credentials has %s rows, want both registries kept so they still list", n)
+			}
+			for _, host := range []string{"ghcr.io", "quay.io"} {
+				var msg string
+				for _, n := range notRestored {
+					if n.Kind == NotRestoredDatabaseSecret && n.Name == "registry_credentials.credential ("+host+")" {
+						msg = n.Message
+					}
+				}
+				if !strings.Contains(msg, "registry-credential-set "+host) || !strings.Contains(msg, "putRegistryCredential") {
+					t.Errorf("the report for the cleared %s credential = %q, want wording that names the operation that saves it again", host, msg)
+				}
 			}
 		})
 	}

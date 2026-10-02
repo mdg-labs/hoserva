@@ -23,6 +23,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
@@ -86,6 +87,11 @@ func newSourceWithSecrets(t *testing.T, stacks []string) (*wiredInstall, []byte,
 		t.Fatal(err)
 	}
 	plain["notify_channels.secret."+channel.ID] = "webhook-credential"
+	if err := (&container.RegistryCredentials{Store: store.NewRegistryCredentialStore(src.db), Cipher: src.key}).
+		PutCredential(ctx, "ghcr.io", container.Credential{Username: "me", Password: "registry-password"}); err != nil {
+		t.Fatal(err)
+	}
+	plain["registry_credentials.credential.ghcr.io"] = `{"username":"me","password":"registry-password"}`
 	if _, err := src.db.ExecContext(ctx, `UPDATE users SET totp_secret = ?, totp_pending_secret = ?, totp_confirmed_at = '2026-09-01T00:00:00Z', totp_last_step = 5 WHERE username = 'alice'`,
 		sealedRow(t, src.key, "JBSWY3DPEHPK3PXP"), sealedRow(t, src.key, "PENDINGPENDING")); err != nil {
 		t.Fatal(err)
@@ -175,7 +181,7 @@ func restart(t *testing.T, box *wiredInstall) (*sql.DB, *auth.MachineKey, *backu
 // sealed under key is a failure.
 func secretsOf(t *testing.T, db *sql.DB, key *auth.MachineKey) sourceSecrets {
 	t.Helper()
-	src := backupSecretSource(api.NewSettingsService(api.NewSettingsStore(db), key), acme.NewStore(db), api.NewUPSStore(db), api.NewBackupDestinationStore(db), notify.NewStore(db))
+	src := backupSecretSource(api.NewSettingsService(api.NewSettingsStore(db), key), acme.NewStore(db), api.NewUPSStore(db), api.NewBackupDestinationStore(db), notify.NewStore(db), store.NewRegistryCredentialStore(db))
 	secrets, err := src.DatabaseSecrets(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +296,11 @@ func TestBareMetalRestore_TheArchivesPassphraseRestoresItsSecretsUnderThisBoxsKe
 				var ct []byte
 				table, rest, _ := strings.Cut(k, ".")
 				column, row, _ := strings.Cut(rest, ".")
-				if err := db2.QueryRow(`SELECT `+column+` FROM `+table+` WHERE CAST(id AS TEXT) = ?`, row).Scan(&ct); err != nil {
+				keyColumn := "id"
+				if table == "registry_credentials" {
+					keyColumn = "registry"
+				}
+				if err := db2.QueryRow(`SELECT `+column+` FROM `+table+` WHERE CAST(`+keyColumn+` AS TEXT) = ?`, row).Scan(&ct); err != nil {
 					t.Fatalf("%s: %v", k, err)
 				}
 				if _, err := src.key.Decrypt(ct); err == nil {
@@ -444,11 +454,22 @@ func TestBareMetalRestore_NeverLeavesADatabaseTheNextStartRefuses(t *testing.T) 
 				if b, _ := os.ReadFile(filepath.Join(box.stateDir, "stacks", "web", ".env")); len(b) != 0 {
 					t.Errorf(".env = %q, want none restored", b)
 				}
-				for _, k := range []string{"acme_config.dns_secret", "ups_config.monitor_password", "notify_channels.secret", "backup_destinations.secrets"} {
+				for _, k := range []string{"acme_config.dns_secret", "ups_config.monitor_password", "notify_channels.secret", "backup_destinations.secrets", "registry_credentials.credential"} {
 					table, column, _ := strings.Cut(k, ".")
 					if !notRestoredHas(report, apiv1.ConfigImportNotRestoredKindDatabaseSecret, table+"."+column) {
 						t.Errorf("the report does not list %s: %+v", k, report.NotRestored)
 					}
+				}
+			}
+			if tc.want.recipientKept {
+				// The registry stays listed, and the update check fails its
+				// images with a reason rather than asking it anonymously.
+				service := &container.RegistryCredentials{Store: store.NewRegistryCredentialStore(db2), Cipher: key2}
+				if hosts, err := service.ListCredentialRegistries(ctx); err != nil || len(hosts) != 1 || hosts[0] != "ghcr.io" {
+					t.Errorf("registries with a credential after the restore = %v, %v, want ghcr.io still listed", hosts, err)
+				}
+				if _, found, err := service.Credential(ctx, "ghcr.io"); found || !errors.Is(err, container.ErrCredentialUnusable) {
+					t.Errorf("the cleared credential = found %v, %v, want container.ErrCredentialUnusable", found, err)
 				}
 			}
 			if !tc.want.refused {

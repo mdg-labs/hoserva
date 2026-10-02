@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>limits</Name>
+  <Repository>registry.example.com/team/limits:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--restart unless-stopped --memory 2g --memory-swap=3g --cpus 1.5 --pids-limit 200 --user 99:100 --workdir /srv/app --hostname limits-host --shm-size 256m --stop-timeout 30</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/limits" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/limits</Config>
+</Container>

@@ -15,6 +15,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 const notifyCredential = "webhook-credential-for-the-archive-test"
@@ -32,7 +33,7 @@ func useProductionSecretSource(rig *backupRig) *notify.Service {
 	rig.svc.PoolMounted = func(string) (bool, error) { return false, nil }
 	rig.svc.Log = func(string, ...any) {}
 	notifyStore := notify.NewStore(rig.db)
-	rig.svc.Secrets = backupSecretSource(rig.settings, acme.NewStore(rig.db), api.NewUPSStore(rig.db), api.NewBackupDestinationStore(rig.db), notifyStore)
+	rig.svc.Secrets = backupSecretSource(rig.settings, acme.NewStore(rig.db), api.NewUPSStore(rig.db), api.NewBackupDestinationStore(rig.db), notifyStore, store.NewRegistryCredentialStore(rig.db))
 	return notify.NewService(notifyStore, rig.svc.Cipher.(notify.SecretCipher), nil)
 }
 

@@ -1618,9 +1618,16 @@ func mapAPIErr(err error) error {
 }
 
 func readNewPassword() (string, error) {
+	return readSecret("New password: ")
+}
+
+// readSecret reads a secret from a terminal without echoing it, or, with
+// stdin redirected, from the first 4096 bytes of stdin without their trailing
+// newlines.
+func readSecret(prompt string) (string, error) {
 	fd := int(os.Stdin.Fd())
 	if term.IsTerminal(fd) {
-		fmt.Fprint(os.Stderr, "New password: ")
+		fmt.Fprint(os.Stderr, prompt)
 		b, err := term.ReadPassword(fd)
 		fmt.Fprintln(os.Stderr)
 		if err != nil {

@@ -464,6 +464,7 @@ func run(cfg config) error {
 		parityReg.register(parityEngine)
 	}
 	backupDestinations := api.NewBackupDestinationStore(db)
+	registryCredentialStore := store.NewRegistryCredentialStore(db)
 	backupService, err := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec, backupDestinations)
 	if err != nil {
 		return err
@@ -480,7 +481,7 @@ func run(cfg config) error {
 		Client:    &acme.ProductionClient{},
 		Publisher: &acmeNotify{svc: notifyService},
 	}
-	backupService.Secrets = backupSecretSource(settingsService, acmeStore, upsStore, backupDestinations, notifyStore)
+	backupService.Secrets = backupSecretSource(settingsService, acmeStore, upsStore, backupDestinations, notifyStore, registryCredentialStore)
 	// wireTopologyBackup (#406, #408, doc 10 §1) must run before any of
 	// the registry.Register(job.TypeDiskFormat/DiskAdd/... calls below
 	// could admit a Submit for one of them: both Scheduler.Submit, for one
@@ -557,7 +558,7 @@ func run(cfg config) error {
 	}
 	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready, arrayActionAdmit(scheduler))
 	wireStacks(handler, registry, store.NewStackStore(db), machineKey, container.CommandRunner{}, absStateDir, apps, arrayActionAdmit(scheduler))
-	updateChecker := newUpdateChecker(apps, store.NewUpdateStore(db), &container.HTTPRegistry{})
+	updateChecker := newUpdateChecker(apps, store.NewUpdateStore(db), wireRegistryCredentials(handler, registryCredentialStore, machineKey))
 	if apps != nil {
 		go apps.Watcher.Run(ctx)
 		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)

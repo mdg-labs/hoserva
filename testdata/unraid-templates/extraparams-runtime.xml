@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>runtime</Name>
+  <Repository>registry.example.com/team/runtime:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--device=/dev/dri:/dev/dri --sysctl net.core.somaxconn=1024 --ulimit nofile=65536:65536 --dns 192.0.2.53 --add-host build.example.test:192.0.2.10 --tmpfs /run/cache --runtime=nvidia --gpus all --log-opt max-size=10m --log-opt max-file=3 --entrypoint /usr/local/bin/start --interactive --tty --no-healthcheck --volume /mnt/user/appdata/runtime-extra:/extra:ro --publish 127.0.0.1:9091:9091/udp</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/runtime" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/runtime</Config>
+</Container>

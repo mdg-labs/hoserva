@@ -97,7 +97,8 @@ existing line by adding its PR number.
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
 - **doc-drift** — a command example in a skill or prompt drops a required operand (`issue-edit --body-file` with no issue number or file), so an agent following it literally fails — PR 412
 - **doc-drift** — a design doc states an external source's conditions more broadly than the source does (an advisory's exploit trigger), so a reader misjudges the exposure — PR 433
-- **doc-drift** — a dispatch prompt tells an agent to do what its agent definition forbids (run scripts outside its workspace), so the agent cannot obey both — PR 491
+- **doc-drift** — a dispatch prompt tells an agent to do what its agent definition forbids (run scripts outside its workspace), so the agent cannot obey both — PR 491, 546
+- **doc-drift** — a skill adopts another skill's rule (hold back a commit on a fresh `blockedBy`) without the check that makes it hold (`git log origin/dev..dev` before every push), so the next push publishes what was held — PR 546
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
@@ -114,6 +115,7 @@ existing line by adding its PR number.
 - **security** — a "safe location" rule admits a whole root by prefix, including a sensitive subtree it holds (the cache and Docker's data-root on it), so a mount of that subtree is classified as harmless — PR 510
 - **security** — destructive CLI command that sends `confirm: true` itself — PR 193, 201
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
+- **security** — a CI job that runs pull-request code checks out with the default `persist-credentials`, leaving `GITHUB_TOKEN` in `.git/config` for the code under test to read — PR 546
 - **security** — user or state values written into a config format without escaping control characters — PR 254
 
 ## Tests

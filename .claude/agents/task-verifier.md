@@ -52,3 +52,12 @@ evidence of tampering, not a verdict. A loosened threshold-guard test, a
 regenerated golden file with no explanation, or a delete that runs before the
 sync covering its copy is a FAIL however reasonable the surrounding prose
 sounds.
+
+A dispatch may instead name **review findings** (`F1`, `F2`, …) from
+`cr-review`'s delegated path, in the shape
+`.claude/skills/cr-review/templates/finding-dispatch.md` describes. A finding
+is judged like an issue — its acceptance is the fix the dispatch states —
+but there is no issue to comment on or label: post nothing, move no
+`status:*` label, and return `F<i>: PASS` or `F<i>: FAIL` with the blocking
+findings as your final message, which is the whole verdict. A finding marked
+safety-critical gets layer 5 in full and the before/after test run.

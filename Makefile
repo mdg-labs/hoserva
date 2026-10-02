@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -359,6 +359,15 @@ test-go: catalog-snapshot-test
 
 test-unit: test-go
 	$(MAKE) web-test
+
+# The Unraid template converter's release metric (Q36, doc 06 §2): converts
+# every project-authored template in testdata/unraid-templates/, prints the
+# clean-conversion rate and fails when it is below the rate recorded in that
+# directory's manifest.txt. It needs neither the catalog snapshot nor a
+# built web UI, so it has no prerequisites; `make test-go` runs the same
+# test as part of ./... .
+test-corpus:
+	CGO_ENABLED=0 $(GO) test -count=1 -v -run '^(TestUnraidCorpus|TestCorpus)' ./internal/template
 
 # The .deb's own safety-critical regression tests (issue #42): each script
 # runs the real maintainer script (postinst/postrm) or lib.sh function

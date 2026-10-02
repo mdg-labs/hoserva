@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>shell-syntax</Name>
+  <Repository>registry.example.com/team/shell:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--cap-add=SYS_ADMIN; touch /tmp/not-run $(id)</ExtraParams>
+  <PostArgs>--config "$HOME/app.conf" | tee /tmp/out</PostArgs>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/shell" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shell</Config>
+</Container>

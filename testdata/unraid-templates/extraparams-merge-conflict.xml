@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>conflicts</Name>
+  <Repository>registry.example.com/team/conflicts:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>-v /mnt/user/appdata/conflicts:/data:ro -p 127.0.0.1:8080:8080 -e MODE=slow</ExtraParams>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/conflicts" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/conflicts</Config>
+  <Config Name="Mode" Target="MODE" Default="fast" Mode="" Description="Run mode" Type="Variable" Display="always" Required="false" Mask="false">fast</Config>
+</Container>

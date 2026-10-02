@@ -53,3 +53,14 @@ issue is still tracked on `mdg-labs/hoserva`, and the `CLAUDE.md` and the
 design docs are read from — and the status scripts are run from — the
 `HOSERVA_ROOT` path the dispatch gives you, which you never write to. Use the `Fixes` trailer and the `-s`
 sign-off flag exactly as the dispatch's commit block shows.
+
+A dispatch may instead name **review findings** (`F1`, `F2`, …) from
+`cr-review`'s delegated path rather than issues, in the shape
+`.claude/skills/cr-review/templates/finding-dispatch.md` describes. Then
+there is no issue to claim and no label to move: you make no GitHub write at
+all and add no `Fixes` trailer, you commit each finding separately in the message shape that file gives
+(no `Fixes` trailer) — findings that cannot be separated share one commit that
+names every one of them — and you report a drafted reply per
+finding instead of posting one. Whether a finding is real was decided before
+you were dispatched; if the code shows otherwise, change nothing for it and
+report the evidence. Everything else above applies unchanged.

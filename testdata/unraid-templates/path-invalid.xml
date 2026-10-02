@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>invalid-paths</Name>
+  <Repository>registry.example.com/team/badpaths:1.0.0</Repository>
+  <Network>bridge</Network>
+  <Config Name="Relative host" Target="/relative" Default="appdata/relative" Mode="rw" Description="Host path not absolute" Type="Path" Display="advanced" Required="false" Mask="false">appdata/relative</Config>
+  <Config Name="Relative target" Target="relative" Default="/mnt/user/appdata/x" Mode="rw" Description="Container path not absolute" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/x</Config>
+  <Config Name="Colon" Target="/colon" Default="/mnt/user/app:data" Mode="rw" Description="Colon in a path" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/app:data</Config>
+  <Config Name="Odd mode" Target="/odd" Default="/mnt/user/appdata/odd" Mode="writable" Description="Unknown access mode" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/odd</Config>
+  <Config Name="Bad port" Target="http" Default="80" Mode="tcp" Description="Port that is not a number" Type="Port" Display="advanced" Required="false" Mask="false">80</Config>
+</Container>

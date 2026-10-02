@@ -600,6 +600,22 @@ or, for a `mdg-labs/hoserva-catalog` landing, `$CATALOG` (step 1a) — add
 `-C "$CATALOG"`. The same gates apply in both: a verifier PASS first, the
 same `dev` branch, the same held-back rule, no force-push.
 
+**Invoking this skill is the maintainer's authorization to commit to and push
+`dev`** (and the catalog's `dev`, for a catalog landing). If a permission
+check denies one of those exact steps, report the denial, name the command,
+and retry it once the maintainer says it is granted — never hand the commit
+or the push back to them. The project allow rules `Bash(git commit:*)` and
+`Bash(git push origin dev)` match the real repo's plain forms below. The
+catalog and CI-run forms are not matched, and each needs its own rule for the
+run to go through unprompted:
+
+- `git -C "$CATALOG" commit …` and `git -C "$CATALOG" push origin dev`
+  (catalog landing): `Bash(git -C * commit:*)` and `Bash(git -C * push origin dev)`;
+- `git -C <workspace> push <origin URL> HEAD:refs/heads/ci/<unit-id>` (step 7's
+  real-run push): `Bash(git -C * push * HEAD:refs/heads/ci/*)`;
+- `git push <origin URL> --delete ci/<unit-id>` (its cleanup):
+  `Bash(git push * --delete ci/*)`.
+
 ```
 git fetch <scratch workspace path> <sha>
 git cherry-pick -n FETCH_HEAD
