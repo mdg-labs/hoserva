@@ -1,0 +1,16 @@
+# Two parity disks (Q19): parity holds the bytewise XOR of the data disks;
+# parity2 holds opaque bytes, standing in for the second, differently
+# computed parity. Four XFS data disks, so the XOR parity disk carries no
+# valid XFS superblock here.
+unraid_version=6.12.15
+unraid_release=2025-03-25
+expect_parity_signature=none
+disk parity  kind=parity fs=none  size=384M target=parity1
+disk parity2 kind=parity fs=none  size=384M target=disk5
+disk disk1   kind=data   fs=xfs   size=320M target=disk1
+disk disk2   kind=data   fs=xfs   size=320M target=disk2
+disk disk3   kind=data   fs=xfs   size=320M target=disk3
+disk disk4   kind=data   fs=xfs   size=320M target=disk4
+disk cache   kind=pool   fs=btrfs size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-dual-parity
+include ../common/spec-flash

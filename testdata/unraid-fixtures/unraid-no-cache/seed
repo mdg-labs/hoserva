@@ -1,0 +1,4 @@
+include|../common/seed-array
+include|../common/seed-array-system
+text|disk1|documents/todo.txt|content=files the mover has not moved yet\n
+file|disk1|documents/new-scan.bin|size=45000

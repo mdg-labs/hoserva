@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>notes</Name>
+  <Repository>fixture/notes:1.0</Repository>
+  <Registry>https://registry.example.invalid/fixture/notes</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>False</Privileged>
+  <Support>https://example.invalid/fixture/notes</Support>
+  <Project>https://example.invalid/fixture</Project>
+  <Overview>A note-taking web app written for Hoserva migration fixtures.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://example.invalid/fixture/notes.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1757937600</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <TailscaleStateDir>/mnt/user/appdata/notes/tailscale</TailscaleStateDir>
+  <Config Name="Web port" Target="80" Default="8080" Mode="tcp" Description="" Type="Port" Display="always" Required="True" Mask="False">8080</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/notes" Mode="rw" Description="" Type="Path" Display="advanced-hide" Required="True" Mask="False">/mnt/user/appdata/notes</Config>
+  <Config Name="Documents" Target="/data" Default="" Mode="ro" Description="" Type="Path" Display="always" Required="False" Mask="False">/mnt/user/documents</Config>
+  <Config Name="TZ" Target="TZ" Default="UTC" Mode="" Description="" Type="Variable" Display="advanced" Required="False" Mask="False">UTC</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="" Type="Variable" Display="advanced" Required="False" Mask="False">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="" Type="Variable" Display="advanced" Required="False" Mask="False">100</Config>
+  <Config Name="API token" Target="FIXTURE_API_TOKEN" Default="" Mode="" Description="" Type="Variable" Display="always" Required="False" Mask="True">fixture-not-a-secret</Config>
+</Container>

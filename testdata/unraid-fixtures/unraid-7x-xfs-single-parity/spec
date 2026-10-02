@@ -1,0 +1,14 @@
+# Unraid 7.x, single parity, three XFS data disks. disk2 is formatted by a
+# newer mkfs (rmapbt and nrext64 on), beside two with the default features.
+# disk3 and the parity disk are larger than 2 TiB, so they get the GPT layout
+# (one partition from sector 64, ending 33 sectors before the end of the
+# disk); disk1 and disk2 are smaller and get the MBR layout.
+unraid_version=7.3.2
+unraid_release=2026-09-10
+disk parity kind=parity fs=none  size=2400G target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2 xfs=rmapbt-nrext64
+disk disk3  kind=data   fs=xfs   size=2300G target=disk3
+disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-7x-xfs-single-parity
+include ../common/spec-flash

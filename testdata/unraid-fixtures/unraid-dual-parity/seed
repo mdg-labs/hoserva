@@ -1,0 +1,5 @@
+include|../common/seed-array
+include|../common/seed-cache-system
+include|../common/seed-cache-appdata
+file|disk4|media/movies/late-addition.bin|size=200000
+file|disk4|documents/tax-2024.bin|size=60000
