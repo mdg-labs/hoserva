@@ -59,7 +59,7 @@ These properties hold for a standard single-parity XFS Unraid array. Each of the
 
 Runs on the freshly installed Hoserva, after the Debian install and **before any import** — still well inside the fully reversible part of the sequence (rollback is clean through step 16, §5). There is no live environment before the Phase 4 ISO, and none is needed. Also available in the UI at `/tools/migrate`.
 
-**Where Unraid's configuration comes from** (Q25): the **Flash Backup zip** produced in Phase A step 1 — uploaded through the UI or given as `--flash-backup <path>` — or the Unraid USB stick itself, mounted **read-only**. Hoserva never writes to the stick. Everything the scan and import read from Unraid's config (shares, users, Docker templates, disk assignments, parity-check history) comes from this one source.
+**Where Unraid's configuration comes from** (Q25): the **Flash Backup zip** produced in Phase A step 1 (which contains the prepare script's capture under `config/hoserva/`, Q89) — uploaded through the UI or given as `--flash-backup <path>` — or the Unraid USB stick itself, mounted **read-only**. Hoserva never writes to the stick. Everything the scan and import read from Unraid's config (shares, users, Docker templates, the container list, disk assignments, parity-check history) comes from this one source.
 
 ### What it checks
 
@@ -76,10 +76,13 @@ Runs on the freshly installed Hoserva, after the Debian install and **before any
 | Free space for content files | Placement per doc 02 §2 possible (Q18) | Flag |
 | appdata location | Identified | Report size and current disk |
 | File ownership | UID/GID distribution recorded; UID 99 free for `hoserva-apps` (Q26) | Flag if UID 99 is taken on the new host |
-| Docker templates | Found and parsed | Report count, and how many convert cleanly vs. with warnings (clean per Q36) |
+| Docker templates | Every template in `templates-user/` found and parsed | Report how many templates exist, and how many convert cleanly vs. with warnings (clean per Q36). The two conversion counts cover **installed** templates (those with a running or stopped container) only; template-only ones stay previewable but are not counted, because a template is a record of every app ever installed, not of the containers that exist |
+| Container list (from the capture) | Each container is classed by origin: dockerMan (label `net.unraid.docker.managed=dockerman`), Compose Manager (label `com.docker.compose.project`), or created by hand (neither). Each dockerMan container is matched to a template on the template's XML `<Name>` element, case-sensitive and never on its file name, and classed **autostart** (on Unraid's autostart list), **running**, **stopped**, or **template only** (a template with no container) | Never fails the scan; the classification is the report |
+| Containers that cannot convert | Every dockerMan container has a template with its `<Name>`; none was created by hand | A dockerMan container with no such template, and a container created by hand, are **flagged by name** — doc 05 §4 step 2's case, now detectable. Neither converts; hand-made ones are listed so the user knows there is nothing to convert |
+| Capture present | `config/hoserva/` is in the source and was written no earlier than the newest template in it | A missing capture **warns**, and the scan falls back to listing every template with none pre-selected. A capture older than the newest template **warns** that it may be stale |
 | Share configuration | Parsed from the flash `config/shares/` | Report count, and each share's allocation method → create policy mapping (Q11) |
 | User Scripts (plugin) | Found and parsed | Report each script, its schedule and its enabled state — never executed or auto-translated (Q83) |
-| Disk serial mapping | All disks readable | Report the serial → Unraid disk-number table |
+| Disk serial mapping | All disks readable, and the capture's `disks.ini` gives each serial its slot | Report the serial → Unraid disk-number table. Without `disks.ini` the mapping comes only from the user's step 7 table, and the report flags that |
 | File counts, sizes and sample checksums per disk and share | Recorded | Baseline for the verify phase (§4 step 16) |
 | Estimated initial sync duration | Computed from array size | Informational, but it sets expectations for a multi-hour job |
 
@@ -95,8 +98,27 @@ A written go / no-go report, downloadable, that the user reads **before** commit
 
 ### Phase A — Preparation (Unraid still running, fully reversible)
 
-1. **Back up the Unraid flash drive, and copy the zip off the server.** The zip is both the rollback artifact and the migrator's input (Q25). The default is the prepare script's `--zip` option, which streams the zip over SSH straight to the user's own computer, so no copy is left on the server. The alternative is Main → Flash → Flash Backup in the Unraid UI. **Do not use that page's "save to server" option**: it asks for a cache pool first, and the cache is about to be wiped. The zip contains the Docker templates (`config/plugins/dockerMan/templates-user/`), share configuration (`config/shares/` — names, cache settings, export flags, allocation method), user accounts, disk assignments, and the User Scripts plugin's scripts and schedules (`config/plugins/user.scripts/scripts/<name>/{script,name,description}` and `config/plugins/user.scripts/customSchedule.cron`; Q83). Disk assignments and per-slot filesystem type live in `config/disk.cfg`, global share defaults in `config/share.cfg`, named-pool (cache pool) assignments in `config/pools/*.cfg`, and — when VMs are present — VM Manager settings including the `libvirt.img` path in `config/domain.cfg` (spike S2, doc 08 §2, sourced from `unraid/webgui`, identical in the `6.12.15` and `7.3.2` tags).
-2. **Confirm the templates are in the backup.** The migration docs show where to look; a container installed without a saved template will not convert.
+0. **Run the prepare script on the Unraid server.** From the user's own computer, over SSH, against the still-running server:
+
+   ```
+   ssh root@<server> 'curl -fsSL https://github.com/mdg-labs/hoserva/releases/download/<tag>/prepare-migration.sh | bash -s -- --zip' > <server>-boot.zip
+   ```
+
+   `<tag>` is a Hoserva release tag, so the script the user runs is the one that release shipped. Users who prefer to read it first download it, check it and pipe it in:
+
+   ```
+   curl -fsSLO https://github.com/mdg-labs/hoserva/releases/download/<tag>/prepare-migration.sh
+   curl -fsSLO https://github.com/mdg-labs/hoserva/releases/download/<tag>/prepare-migration.sh.sha256
+   sha256sum -c prepare-migration.sh.sha256
+   less prepare-migration.sh
+   ssh root@<server> 'bash -s -- --zip' < prepare-migration.sh > <server>-boot.zip
+   ```
+
+   The script is read-only apart from one directory. It reads the Docker daemon (`docker ps`, `docker inspect`, `docker network inspect`), Unraid's runtime state under `/var/local/emhttp/`, Docker's autostart list, and the boot mode, and it writes **only** `/boot/config/hoserva/` on the flash: `containers.json`, `networks.json`, `disks.ini`, `autostart`, the parity-check fields of `var.ini`, `smart/`, and `capture.json` (Q89). It then prints the Phase A report on the terminal (and saves it as `report.txt` beside the capture): containers by origin and state, those with no template, the autostart order, what is still on the cache and whether it fits on the array, the last parity check, the serial → slot table, and the boot mode with its rollback consequence (§5). Fix what the report shows while Unraid is still running. With `--zip` it also streams the Flash Backup zip to the user's computer (step 1).
+
+   **It runs before the Flash Backup** because the backup must contain the capture; the one-liner with `--zip` captures first and zips second, so steps 0 and 1 are one command. **The capture contains the containers' environment variables, secrets included**, just like the templates on the same flash, so the zip is as sensitive as the flash itself and is stored like it.
+1. **Back up the Unraid flash drive, and copy the zip off the server.** The zip is both the rollback artifact and the migrator's input (Q25). The default is step 0's `--zip` stream: it is made by the script, its root is `/boot` like Unraid's own Flash Backup (so `config/` is a path inside it), and it reaches the user's computer without a copy on the server. The alternative is Main → Flash → Flash Backup in the Unraid UI, run **after** step 0 so the backup contains the capture; its layout and exclusions vary with the Unraid version, which is why the script makes the zip itself. **Do not use that page's "save to server" option**: it asks for a cache pool first, and the zip may land on the cache that is about to be wiped. The zip contains the Docker templates (`config/plugins/dockerMan/templates-user/`), share configuration (`config/shares/` — names, cache settings, export flags, allocation method), user accounts, disk assignments, the capture (`config/hoserva/`), and the User Scripts plugin's scripts and schedules (`config/plugins/user.scripts/scripts/<name>/{script,name,description}` and `config/plugins/user.scripts/customSchedule.cron`; Q83). Disk assignments and per-slot filesystem type live in `config/disk.cfg`, global share defaults in `config/share.cfg`, named-pool (cache pool) assignments in `config/pools/*.cfg`, and — when VMs are present — VM Manager settings including the `libvirt.img` path in `config/domain.cfg` (spike S2, doc 08 §2, sourced from `unraid/webgui`, identical in the `6.12.15` and `7.3.2` tags).
+2. **Confirm the templates are in the backup.** The migration docs show where to look; a container installed without a saved template will not convert, and the scan names each one (§3), so this is also where the user fixes it while Unraid still runs.
 3. **Note the share list.** Shares are pre-seeded from the backup so the user doesn't recreate twelve shares by hand; this note is the user's own cross-check.
 4. **Tell everyone who uses SMB that passwords are being reset.** User accounts are recreated from the backup, but passwords cannot be migrated (hashes differ); the user sets new ones in step 15 and must plan the client-side reconnections in advance.
 5. **Move everything off the cache onto the array.** The cache device is about to be wiped or repartitioned (see "The cache device through the sequence" below), and appdata is only part of what a real server keeps there. Move:
@@ -143,7 +165,8 @@ In both layouts Hoserva records the cache role at step 15 and creates nothing on
 
 18. Move appdata back onto the cache: a **share relocation** job moves the `appdata` share to cache-only (doc 09 §2), with the same copy-verify-delete guarantees as the mover.
 19. Convert Docker templates (doc 04). Review the generated Compose files and all warnings, including each container's writable-layer warning (doc 04 §5) — this is the last point in the sequence where the user can act on it before recreating a container. Whether the state it names is still recoverable depends on where the source container's Docker storage sat, not on this step. On an **array** disk, `docker.img` was adopted unformatted in step 14 and is still an ordinary file on the pool. On the **cache** device it is lost at the reformat: in step 12 on a shared NVMe, in step 17 on a separate cache device. A Docker directory on the cache is lost the same way, and step 5 deliberately does not move it. Hoserva has no way to read either afterwards, so state that needs recovering has to be recovered from the still-running Unraid system, before step 10.
-20. Start containers one at a time, not all at once. Verify each sees its data before starting the next.
+    Selection comes from the capture. Containers on Unraid's autostart list are **pre-selected**; other installed containers are listed but not pre-selected; template-only entries are previewable and not offered by default. Compose Manager projects are offered as their own `compose.yaml`, not converted from a template.
+20. Start containers one at a time, not all at once, with the pre-selected ones in Unraid's autostart order (waiting the seconds the list gives where it does). Verify each sees its data before starting the next.
 21. Reconnect SMB clients with the new credentials.
 22. Once the initial sync completes, run a **full scrub** to confirm parity is consistent.
 23. Configure notification channels and send a test through each.

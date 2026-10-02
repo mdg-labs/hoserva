@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88, Q89 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -351,7 +351,7 @@ R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against
 
 **The contradiction:** Phase B step 11 removes the Unraid USB stick. Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
 
-**Default: the migrator reads Unraid configuration from the Flash Backup zip that step 1 already produces, uploaded through the UI or given as a path. Alternatively it reads from the stick itself, mounted read-only.** It never writes to the stick. The scan runs on the freshly installed Hoserva, before any import. That is still well before the point of no return (step 17), so it keeps the rollback guarantee without needing a live environment. Unraid-side checks that need a running Unraid (the final parity check) become a printable pre-cutover checklist.
+**Default: the migrator reads Unraid configuration from the Flash Backup zip that step 1 already produces, uploaded through the UI or given as a path. Alternatively it reads from the stick itself, mounted read-only.** It never writes to the stick. Phase A's prepare script adds its capture files under `config/hoserva/` of the same flash, so they are part of this single source (Q89). The scan runs on the freshly installed Hoserva, before any import. That is still well before the point of no return (step 17), so it keeps the rollback guarantee without needing a live environment. Unraid-side checks that need a running Unraid (the final parity check) become a printable pre-cutover checklist.
 
 ### Q83 — Unraid User Scripts *(gap)*
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4
@@ -362,6 +362,41 @@ R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against
 This fits the scan's existing role: it already reports things it does not migrate (appdata location, UID/GID distribution, disk serial mapping). Executing or auto-translating arbitrary third-party shell would violate `CLAUDE.md`'s "never interpolate user or template input into a shell" and has unbounded scope. It mirrors the converter's "never silently drop" principle (doc 04 §5) — the user is told what existed rather than discovering the absence later.
 
 **Confirmed (2026-10-02, against a real 7.3.2 config tree):** the plugin stores each script at `config/plugins/user.scripts/scripts/<name>/{script,name,description}` and the schedules in `config/plugins/user.scripts/customSchedule.cron`, both under the flash's `config/` and so inside the Flash Backup zip the scan already reads (Q25). The scan reads those two paths. The `user.scripts.enhanced` plugin keeps only `categories.json` beside its package, nothing the scan needs. State a plugin keeps anywhere else was not part of the confirmation, so the report lists each script with the schedule these files give, and an enabled state only where they show one.
+
+### Q89 — What Phase A captures from the running Unraid server
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, doc 08 §2, Q25, Q37
+
+**Default: Phase A starts with a read-only prepare script, run on the still-running Unraid server before the Flash Backup, from the user's own computer over SSH. It writes its capture to `/boot/config/hoserva/`, prints the Phase A report, and with `--zip` streams the Flash Backup zip to the user's machine. The scan reads the capture from the zip or the read-only stick, like the rest of Unraid's config.**
+- **Written to the flash, not the array.** `/boot/config/hoserva/` lands in both of Q25's sources and keeps one config source. A path under `/mnt/user/…` can land on the cache when a share prefers it, the cache is re-created during migration, and Unraid 7 allows servers without an array. The script writes there while Unraid runs; Hoserva itself still never writes to the stick.
+- **Captured files:**
+  - `containers.json` — `docker inspect` over every container (`docker ps -aq`, exited ones included); `[]` when there are none
+  - `networks.json` — `docker network inspect` over every network
+  - `disks.ini` — a copy of `/var/local/emhttp/disks.ini`, the slot → disk identity table
+  - `autostart` — a copy of `/var/lib/docker/unraid-autostart` when it exists
+  - `var.ini` subset — the parity-check fields (`sbSynced`, `sbSyncExit`, `sbSyncErrs`, `mdResync`) and no other key
+  - `smart/` — a copy of `/var/local/emhttp/smart/`
+  - `capture.json` — capture time, Unraid version (`/etc/unraid-version`), script version, boot mode, boot device identities, whether the boot pool is mirrored or shares its device with a data pool, the location class (cache, array or boot pool) of the Docker directory and of `libvirt.img`, and the writable-layer size per container (`docker ps -as`)
+- **Docker's own inspect format, unwrapped,** so fixtures can be produced in the lab without Unraid (D20).
+- **The zip comes from the script,** streamed to stdout after the capture is written. Its root is `/boot`, like Unraid's own Flash Backup, and top-level `previous/` is left out. Unraid's own Flash Backup behaves differently between versions (it writes into RAM or onto a user share, or streams; newer releases add a "save to server" option that picks a cache pool first), so the script makes the zip itself. The GUI Flash Backup stays a documented alternative, with a warning against "save to server".
+- **Container origin:** dockerMan (template matched on its `<Name>`), Compose Manager (its `compose.yaml`), or created by hand (flagged; nothing to convert).
+- **The capture holds the containers' environment variables, secrets included,** the same as the templates on the same flash.
+
+**Evidence** (the maintainer's own measurement on their server, and a read-only calibration session they opened on the same 7.3.2 server on 2026-10-02; general facts and counts only, no values):
+- 367 templates in `config/plugins/dockerMan/templates-user/`, but only 35 containers (`docker ps -a`), 32 running and 3 exited: about 90% of the templates had no container behind them. `templates-user/` records every template ever installed, not the containers that exist.
+- `config/plugins/dockerMan/userprefs.cfg` is not usable: of its 40 container names, 11 had no container and 6 real containers were missing; it also holds `folder-*` entries from a folder-grouping plugin.
+- The join key is the template's `<Name>` element, not its file name: a template file and its `<Name>` can differ, and `userprefs.cfg` can hold a third spelling. Docker names are case-sensitive. Matched on `<Name>`, all 35 containers had a template.
+- Every dockerMan container carries the label `net.unraid.docker.managed=dockerman` (35 of 35). A Compose Manager container carries `com.docker.compose.project` instead (its files are `config/plugins/compose.manager/projects/<name>/compose.yaml`), and a container made with `docker run` carries neither.
+- Running is not autostart: 31 of 35 containers have restart policy `no`; Unraid starts containers itself from `/var/lib/docker/unraid-autostart` (one name per line, an optional second field the wait in seconds; 28 entries). That file sits in the Docker directory, usually on the cache, and is lost with it.
+- The array's slot → disk identity is not in a text file on the flash: `config/disk.cfg` carries `diskIdSlot.N="-"` for every slot and the assignment is in `config/super.dat` (4 KiB, Unraid's own binary format). `/var/local/emhttp/disks.ini` has it as text, one section per slot (`id`, `device`, `type`, `status`, `fsType`, `rotational` and more). Pools differ: `config/pools/<name>.cfg` has a text `diskId`.
+- The boot mode is visible only at runtime: `findmnt -no FSTYPE /boot` is `vfat` for a USB stick and `zfs` for Unraid 7.3's internal boot pool, while `diskBootSize="0"` also appears on an ordinary pool of a USB-boot server.
+- The parity-check result is in `/var/local/emhttp/var.ini`, and Unraid's cached SMART output per slot in `/var/local/emhttp/smart/<slot>`.
+
+**Rejected sources:**
+- *`userprefs.cfg`* — incomplete in one direction and stale in the other (evidence above).
+- *Reading `docker.img` or the Docker directory after adoption* — its layout differs between servers (btrfs image, XFS image or directory mode), it is Docker's internal on-disk format, not an API, and on the cache it is gone once the cache is re-created (doc 05 §2).
+- *Parsing `config/super.dat`* — an undocumented binary format; `disks.ini` gives the same table as text.
+
+**Deferred:** a per-container `docker diff` capture (it would let doc 04 §5's writable-layer warning name paths), and drift detection between a container's inspect output and its template. On the calibration server image, network, ports and variables matched their templates for all 35 containers.
 
 ### Q26 — Share ownership and UID/GID model *(gap)*
 **Status:** Default (verify on fixture) · **Gate:** Phase 2 · **Affects:** doc 03 §4.2, §7, doc 04 §5, §7, doc 05 §4
@@ -522,6 +557,7 @@ The catalog repository (`mdg-labs/hoserva-catalog`, Q39) is licensed **MIT**, no
 
 **Default: the install flow lists the *existing* Docker networks and offers bridge, host, or any of them (macvlan/ipvlan included); it never creates one. v1 has no network-creation UI. When a template needs a network that doesn't exist, the converter's warning includes the exact `docker network create` command. A network chosen at install that doesn't exist is reported in the install plan with the same exact command, and the install is refused until the network exists.**
 Doc 03 said "custom", doc 04 said "beyond bridge/host/macvlan selection", and doc 04 §5 said "requires a pre-existing network". This default reconciles the three while staying inside D6. The command appears on both paths, in the converter's warning and in the install plan, so the user can create the network themselves and come back to the same install; refusing until it exists keeps a missing network from becoming a failed start, and nothing is ever created on the user's behalf.
+When the migration capture's `networks.json` is present (Q89), the command for a macvlan, ipvlan or custom bridge network can be given exactly (driver, subnet, gateway, parent interface). Without it, the converter gives the command with placeholders and says so.
 
 ### Q38 — Minimum Docker version
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §3
