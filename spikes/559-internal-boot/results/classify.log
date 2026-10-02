@@ -1,0 +1,5 @@
+array-gpt-1.img                          other          (expected other         ) ok
+internal-boot-dedicated-1.img            internal-boot  (expected internal-boot ) ok
+internal-boot-shared-1.img               internal-boot  (expected internal-boot ) ok
+internal-boot-shared-2.img               internal-boot  (expected internal-boot ) ok
+internal-boot-shared-renamed-1.img       other          (expected other         ) ok

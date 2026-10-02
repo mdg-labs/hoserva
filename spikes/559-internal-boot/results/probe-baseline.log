@@ -1,0 +1,131 @@
+##### array-gpt-1.img
+--- blkid -p -o export (whole image)
+DEVNAME=/lab/559-a1/ib/array-gpt-1.img
+PTUUID=a31e41df-0be4-4b61-bf91-3aa555a9b42a
+PTTYPE=gpt
+--- partx --show
+NR START     END SECTORS                                 TYPE NAME
+ 1    64 4194270 4194207 0fc63daf-8483-4772-8e79-3d69d8477de4 
+--- partition 1 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name '') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+##### internal-boot-dedicated-1.img
+--- blkid -p -o export (whole image)
+DEVNAME=/lab/559-a1/ib/internal-boot-dedicated-1.img
+PTUUID=787832bf-83f1-4a20-b270-77cba30b5cd7
+PTTYPE=gpt
+--- partx --show
+NR   START     END SECTORS                                 TYPE NAME
+ 1    2048    4095    2048 21686148-6449-6e6f-744e-656564454649 BIOS Boot Partition
+ 2    4096 1048575 1044480 c12a7328-f81f-11d2-ba4b-00a0c93ec93b EFI System Partition
+ 3 1048576 4192255 3143680 0fc63daf-8483-4772-8e79-3d69d8477de4 Unraid Boot Partition
+ 4 4192256 4194270    2015 0fc63daf-8483-4772-8e79-3d69d8477de4 
+--- partition 1 (type 21686148-6449-6e6f-744e-656564454649, name 'BIOS Boot Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 2 (type c12a7328-f81f-11d2-ba4b-00a0c93ec93b, name 'EFI System Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 3 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name 'Unraid Boot Partition') blkid -p -o udev
+ID_FS_VERSION=5000
+ID_FS_LABEL=flash
+ID_FS_LABEL_ENC=flash
+ID_FS_UUID=7329649480235144358
+ID_FS_UUID_ENC=7329649480235144358
+ID_FS_UUID_SUB=5853838909075999356
+ID_FS_UUID_SUB_ENC=5853838909075999356
+ID_FS_FSBLOCKSIZE=4096
+ID_FS_BLOCK_SIZE=4096
+ID_FS_ENDIANNESS=LITTLE
+ID_FS_TYPE=zfs_member
+ID_FS_USAGE=filesystem
+--- partition 4 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name '') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+##### internal-boot-shared-1.img
+--- blkid -p -o export (whole image)
+DEVNAME=/lab/559-a1/ib/internal-boot-shared-1.img
+PTUUID=ca1e86f8-01f2-4d8b-93dc-90598cb5a64a
+PTTYPE=gpt
+--- partx --show
+NR   START     END SECTORS                                 TYPE NAME
+ 1    2048    4095    2048 21686148-6449-6e6f-744e-656564454649 BIOS Boot Partition
+ 2    4096 1048575 1044480 c12a7328-f81f-11d2-ba4b-00a0c93ec93b EFI System Partition
+ 3 1048576 2097151 1048576 0fc63daf-8483-4772-8e79-3d69d8477de4 Unraid Boot Partition
+ 4 2097152 4194270 2097119 0fc63daf-8483-4772-8e79-3d69d8477de4 
+--- partition 1 (type 21686148-6449-6e6f-744e-656564454649, name 'BIOS Boot Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 2 (type c12a7328-f81f-11d2-ba4b-00a0c93ec93b, name 'EFI System Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 3 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name 'Unraid Boot Partition') blkid -p -o udev
+ID_FS_VERSION=5000
+ID_FS_LABEL=flash
+ID_FS_LABEL_ENC=flash
+ID_FS_UUID=6895916408931496298
+ID_FS_UUID_ENC=6895916408931496298
+ID_FS_UUID_SUB=7265743939272943903
+ID_FS_UUID_SUB_ENC=7265743939272943903
+ID_FS_FSBLOCKSIZE=4096
+ID_FS_BLOCK_SIZE=4096
+ID_FS_ENDIANNESS=LITTLE
+ID_FS_TYPE=zfs_member
+ID_FS_USAGE=filesystem
+--- partition 4 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name '') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+##### internal-boot-shared-2.img
+--- blkid -p -o export (whole image)
+DEVNAME=/lab/559-a1/ib/internal-boot-shared-2.img
+PTUUID=b63abe0c-79a4-4f68-aa4b-279751ee2911
+PTTYPE=gpt
+--- partx --show
+NR   START     END SECTORS                                 TYPE NAME
+ 1    2048    4095    2048 21686148-6449-6e6f-744e-656564454649 BIOS Boot Partition
+ 2    4096 1048575 1044480 c12a7328-f81f-11d2-ba4b-00a0c93ec93b EFI System Partition
+ 3 1048576 2097151 1048576 0fc63daf-8483-4772-8e79-3d69d8477de4 Unraid Boot Partition
+ 4 2097152 4194270 2097119 0fc63daf-8483-4772-8e79-3d69d8477de4 
+--- partition 1 (type 21686148-6449-6e6f-744e-656564454649, name 'BIOS Boot Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 2 (type c12a7328-f81f-11d2-ba4b-00a0c93ec93b, name 'EFI System Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 3 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name 'Unraid Boot Partition') blkid -p -o udev
+ID_FS_VERSION=5000
+ID_FS_LABEL=flash
+ID_FS_LABEL_ENC=flash
+ID_FS_UUID=6895916408931496298
+ID_FS_UUID_ENC=6895916408931496298
+ID_FS_UUID_SUB=6619808012152237729
+ID_FS_UUID_SUB_ENC=6619808012152237729
+ID_FS_FSBLOCKSIZE=4096
+ID_FS_BLOCK_SIZE=4096
+ID_FS_ENDIANNESS=LITTLE
+ID_FS_TYPE=zfs_member
+ID_FS_USAGE=filesystem
+--- partition 4 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name '') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+##### internal-boot-shared-renamed-1.img
+--- blkid -p -o export (whole image)
+DEVNAME=/lab/559-a1/ib/internal-boot-shared-renamed-1.img
+PTUUID=93758aaf-ba91-431d-9f28-f81f98d85322
+PTTYPE=gpt
+--- partx --show
+NR   START     END SECTORS                                 TYPE NAME
+ 1    2048    4095    2048 21686148-6449-6e6f-744e-656564454649 BIOS Boot Partition
+ 2    4096 1048575 1044480 c12a7328-f81f-11d2-ba4b-00a0c93ec93b EFI System Partition
+ 3 1048576 2097151 1048576 0fc63daf-8483-4772-8e79-3d69d8477de4 Hoserva Boot Partition
+ 4 2097152 4194270 2097119 0fc63daf-8483-4772-8e79-3d69d8477de4 
+--- partition 1 (type 21686148-6449-6e6f-744e-656564454649, name 'BIOS Boot Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 2 (type c12a7328-f81f-11d2-ba4b-00a0c93ec93b, name 'EFI System Partition') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+--- partition 3 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name 'Hoserva Boot Partition') blkid -p -o udev
+ID_FS_VERSION=5000
+ID_FS_LABEL=flash
+ID_FS_LABEL_ENC=flash
+ID_FS_UUID=8953267694897876691
+ID_FS_UUID_ENC=8953267694897876691
+ID_FS_UUID_SUB=7508701949484645474
+ID_FS_UUID_SUB_ENC=7508701949484645474
+ID_FS_FSBLOCKSIZE=4096
+ID_FS_BLOCK_SIZE=4096
+ID_FS_ENDIANNESS=LITTLE
+ID_FS_TYPE=zfs_member
+ID_FS_USAGE=filesystem
+--- partition 4 (type 0fc63daf-8483-4772-8e79-3d69d8477de4, name '') blkid -p -o udev
+(blkid exit 2: no filesystem or other signature found)
+probe: done

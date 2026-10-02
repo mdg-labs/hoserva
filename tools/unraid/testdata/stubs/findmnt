@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Test stand-in for findmnt: answers only the two lookups the script makes.
+# STUB_MUTATE makes it write outside the capture directory, the control arm
+# of the "nothing else changed" test.
+set -euo pipefail
+
+: "${STUB_VIOLATIONS:?}"
+case "${STUB_MUTATE:-}" in
+  append) printf 'x' >>"${HOSERVA_UNRAID_ROOT:?}/boot/config/share.cfg" ;;
+  create) printf 'x' >"${HOSERVA_UNRAID_ROOT:?}/mnt/stray-file" ;;
+  delete) rm -f -- "${HOSERVA_UNRAID_ROOT:?}/boot/bzroot" ;;
+  mode) chmod 600 "${HOSERVA_UNRAID_ROOT:?}/boot/bzimage" ;;
+esac
+
+case "$*" in
+  "-no FSTYPE "*)
+    [ "${STUB_FSTYPE-vfat}" != none ] || exit 1
+    printf '%s\n' "${STUB_FSTYPE-vfat}"
+    ;;
+  "-no SOURCE "*)
+    [ "${STUB_FSTYPE-vfat}" != none ] || exit 1
+    printf '%s\n' "${STUB_SOURCE-/dev/sda1}"
+    ;;
+  *)
+    printf 'findmnt %s\n' "$*" >>"$STUB_VIOLATIONS"
+    exit 99
+    ;;
+esac

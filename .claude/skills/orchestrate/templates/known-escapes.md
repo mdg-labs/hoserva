@@ -133,6 +133,7 @@ existing line by adding its PR number.
 - **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
 - **tests** — a check's cleanup runs after a later step shadows what it must remove (a mount over the directory holding a stray probe), so the leftover survives into later steps — PR 395
 - **tests** — a test swaps process-global state (the `log` output) and its cleanup restores a hard-coded default rather than the value it saved, clobbering whatever an earlier caller set — PR 527
+- **docs** — a design doc or spike verdict says a behaviour is verified (by fixtures, the lab or the scan) when the check that would verify it has not been built yet — PR 562
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156
@@ -149,3 +150,5 @@ existing line by adding its PR number.
 - **platform** — `git merge --ff-only origin/<b>` as a sync check also succeeds when the local branch is ahead; compare `HEAD` to the remote ref — PR 491
 - **platform** — `git check-ignore` skips tracked paths unless given `--no-index`, so a "this source file is not ignored" check always passes even when a rule hides the directory — PR 527
 - **platform** — GitHub Actions: a job `timeout-minutes` at or below a step timeout it contains, so the job backstop cancels a step still inside its own bound — PR 403
+- **platform** — a command's stdout parsed as data while captured with `2>&1`, so a warning the tool prints on stderr with exit 0 becomes a bogus record — PR 562
+- **platform** — Unraid mover direction comes from each share's Primary/Secondary storage and Mover action: a `prefer` share moves onto the cache and an `only` share never moves, so "run the mover" does not empty the cache — PR 562

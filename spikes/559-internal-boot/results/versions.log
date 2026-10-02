@@ -1,0 +1,5 @@
+blkid from util-linux 2.41.5  (libblkid 2.41.5, 16-Jun-2026)
+partx from util-linux 2.41.5
+mkfs.btrfs, part of btrfs-progs v6.14
+-EXPERIMENTAL -INJECT -STATIC +LZO +ZSTD +UDEV +FSVERITY +ZONED CRYPTO=builtin
+mkfs.xfs version 6.13.0

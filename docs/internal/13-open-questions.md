@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88, Q89 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -335,23 +335,29 @@ Serial matching is validated by Unraid's own model (doc 08). Enclosures that mas
 Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse matches the ZFS stance, keeps the fixture (it tests the refusal), and costs no support burden. Implementation note from S2 (doc 08 §2, sourced from `unraid/webgui`'s `DiskSettings.page`): Unraid's own `defaultFsType` setting encodes encryption as a `luks:<fs>` value (e.g. `luks:xfs`) rather than a separate flag — detection must parse that prefix, not assume a distinct boolean field.
 
 ### Q23 — Non-XFS Unraid data disks
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 08 §2
 
 **Default: adopt any single-device XFS, btrfs or ext4 data disk, each after its own read-only check (`xfs_repair -n`, `btrfs check --readonly` on the unmounted device, `e2fsck -n`). A disk that fails its check is refused. ZFS-formatted array disks and multi-device btrfs members are refused.**
 mergerfs and SnapRAID are filesystem-agnostic, so a single-device btrfs or ext4 disk costs one fixture each. ZFS needs OpenZFS as a dependency, which is out of scope (doc 00 §4). Doc 08's "refuse a filesystem that reports errors" extends to every filesystem, not just XFS.
 
+**Unraid 7.3 internal boot devices are not data disks (doc 08 §2, "Unraid 7.3 internal boot").** The ZFS refusal above is for array and pool data disks. A device whose GPT partitions 1 to 4 carry Unraid's internal-boot names and types (`BIOS Boot Partition`, `EFI System Partition`, `Unraid Boot Partition`, and a Linux data partition) is classed as Unraid's boot device before any filesystem check, read from the partition table in the udev database without opening a partition. Its partition 3 is a `zfs_member` by design, so such a device is **never refused as a ZFS data disk and never adopted**, whether it is a dedicated device, one half of a mirrored pair, or a boot + data device; partition 4 of a boot + data device is Unraid's cache, re-created like every cache. A device that matches only part of the layout is not classed this way, and its ZFS partition is refused here like any other. After migration the device is offered like an unassigned disk, labelled as holding Unraid's boot pool: a dedicated or mirrored boot device needs the usual whole-device wipe confirmation, and for a boot + data device step 17 formats partition 4 only, leaving partitions 1 to 3 until the user asks to erase them. Hoserva never installs or writes its own boot device (doc 01 §6), so the recommended default's third clause, "offered as a target for Hoserva's boot device", does not apply; the rest is confirmed. The rule is Unraid's own detector (`unraid/api`, `disks.service.ts`), checked in the lab against synthetic images including two negative controls; no real internal-boot server was available (D20).
+
 ### Q24 — Supported Unraid versions for migration
-**Status:** Default (confirmed in S2 — agent-run in the lab against a synthetic XFS fixture, plus a source diff of `unraid/webgui` across its `6.12.15` and `7.3.2` tags found no version difference in the data-disk partition-format default or the `/boot/config/` flash layout; doc 08 §2) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
+**Status:** Default (confirmed in S2 — agent-run in the lab against a synthetic XFS fixture, plus a source diff of `unraid/webgui` across its `6.12.15` and `7.3.2` tags found no version difference in the data-disk partition-format default or the `/boot/config/` flash layout; doc 08 §2. The 7.3 internal-boot layout is documented from public source and a lab check on synthetic images, not yet fixture-verified — see below) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
 
 **Default: Unraid 6.12.x and 7.x, each backed by a fixture. The scan refuses any version or config layout it doesn't recognise. `--unverified-layout` overrides that refusal with a full-screen warning and records the override in the report.**
-R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against. Residual: only the ≤2TB MBR/4K-aligned partition layout and the primary XFS path are fixture-verified so far; GPT (>2TB) disks, ext4/btrfs disks and a VM/`libvirt.img` fixture remain (doc 08 §2).
+R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against. Residual: only the ≤2TB MBR/4K-aligned partition layout and the primary XFS path are fixture-verified so far. For GPT (>2TB) disks, a real 7.3.2 server showed one partition starting at sector 64 and ending 33 sectors before the end of the disk (doc 08 §2); that is calibration, and a GPT fixture with those values is still needed, as are ext4/btrfs disks and a VM/`libvirt.img` fixture.
+
+**Unraid 7.3 internal boot is its own layout and needs its own fixture-verified entry.** Its flash tree lives on the ZFS dataset `flash/boot` of a GPT device (partitions: BIOS boot, FAT EFI system partition, ZFS boot partition, data partition), the Flash Backup zip has the same root as a USB stick's (`config/` and `bzimage` inside it) but derived differences (`grub/` in place of `syslinux/` and `EFI/`), and no stick is involved (doc 08 §2). The allowlist therefore recognises the zip by `config/` and `bzimage`, not by `syslinux/` or `EFI/`, and the device by its partition fingerprint (Q23). The layout counts as supported-and-verified only once `unraid-internal-boot` and `unraid-internal-boot-shared` are built and the scan passes against them; until then it is recognised from public source only, and doc 05 §2 says so.
 
 ### Q25 — Where migration reads Unraid config from *(contradiction)*
-**Status:** Default (flash config tree confirmed via `unraid/webgui` source, doc 08 §2 — every path Q25 depends on lives under `/boot/config/`, exactly the Flash Backup zip's own root) · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
+**Status:** Default (flash config tree confirmed via `unraid/webgui` source, doc 08 §2 — every path Q25 depends on lives under `/boot/config/`, which is `config/` inside the Flash Backup zip, whose root is `/boot`) · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
 
-**The contradiction:** Phase B step 11 removes the Unraid USB stick. Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
+**The contradiction:** Phase B step 11 removes the Unraid USB stick (for a server that boots from one). Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
 
-**Default: the migrator reads Unraid configuration from the Flash Backup zip that step 1 already produces, uploaded through the UI or given as a path. Alternatively it reads from the stick itself, mounted read-only.** It never writes to the stick. The scan runs on the freshly installed Hoserva, before any import. That is still well before the point of no return (step 17), so it keeps the rollback guarantee without needing a live environment. Unraid-side checks that need a running Unraid (the final parity check) become a printable pre-cutover checklist.
+**Default: the migrator reads Unraid configuration from the Flash Backup zip that step 1 already produces, uploaded through the UI or given as a path. Alternatively it reads from the stick itself, mounted read-only.** It never writes to the stick. Phase A's prepare script adds its capture files under `config/hoserva/` of the same flash, so they are part of this single source (Q89). The scan runs on the freshly installed Hoserva, before any import. That is still well before the point of no return (step 17), so it keeps the rollback guarantee without needing a live environment. Unraid-side checks that need a running Unraid (the final parity check) become a printable pre-cutover checklist.
+
+**For Unraid 7.3 internal boot the zip is the only source (doc 08 §2).** The boot pool is ZFS, and reading it would need OpenZFS, which is out of scope (doc 00 §4). A USB stick that may still be attached for licensing is a copy Unraid no longer writes once it mounts the internal pool on `/boot`, so the scan never reads configuration from it. The zip's root is the same as a stick's (`config/` inside it), because Unraid's Flash Backup and the prepare script both zip `/boot`.
 
 ### Q83 — Unraid User Scripts *(gap)*
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4
@@ -361,7 +367,42 @@ R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against
 **Default: inventory and report, never execute or auto-translate.** The pre-flight scan lists every User Scripts entry it finds — name, schedule and enabled state — in the go/no-go report, and the user decides what to do with each one. Hoserva never runs a migrated script and never translates one into a job automatically.
 This fits the scan's existing role: it already reports things it does not migrate (appdata location, UID/GID distribution, disk serial mapping). Executing or auto-translating arbitrary third-party shell would violate `CLAUDE.md`'s "never interpolate user or template input into a shell" and has unbounded scope. It mirrors the converter's "never silently drop" principle (doc 04 §5) — the user is told what existed rather than discovering the absence later.
 
-**Unconfirmed:** where the plugin stores scripts and schedules, and whether they are inside the Flash Backup zip the scan already reads (Q25), has not been verified — there is no Unraid system or flash source available to check it against. The plugin is conventionally understood to write under `/boot/config/plugins/` on the flash drive, which would put it inside the same tree Q25 already relies on, but this doc treats that as an assumption, not a fact, until it is verified against the plugin's own source or a real config tree. If it turns out the scripts live somewhere the Flash Backup doesn't reach, the fallback is to read them from the adopted pool in Phase D instead, without widening what the pre-flight scan touches.
+**Confirmed (2026-10-02, against a real 7.3.2 config tree):** the plugin stores each script at `config/plugins/user.scripts/scripts/<name>/{script,name,description}` and the schedules in `config/plugins/user.scripts/customSchedule.cron`, both under the flash's `config/` and so inside the Flash Backup zip the scan already reads (Q25). The scan reads those two paths. The `user.scripts.enhanced` plugin keeps only `categories.json` beside its package, nothing the scan needs. State a plugin keeps anywhere else was not part of the confirmation, so the report lists each script with the schedule these files give, and an enabled state only where they show one.
+
+### Q89 — What Phase A captures from the running Unraid server
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, doc 08 §2, Q25, Q37
+
+**Default: Phase A starts with a read-only prepare script, run on the still-running Unraid server before the Flash Backup, from the user's own computer over SSH. It writes its capture to `/boot/config/hoserva/`, prints the Phase A report, and with `--zip` streams the Flash Backup zip to the user's machine. The scan reads the capture from the zip or the read-only stick, like the rest of Unraid's config.**
+- **Written to the flash, not the array.** `/boot/config/hoserva/` lands in both of Q25's sources and keeps one config source. A path under `/mnt/user/…` can land on the cache when a share prefers it, the cache is re-created during migration, and Unraid 7 allows servers without an array. The script writes there while Unraid runs; Hoserva itself still never writes to the stick.
+- **Captured files:**
+  - `containers.json` — `docker inspect` over every container (`docker ps -aq`, exited ones included); `[]` when there are none
+  - `networks.json` — `docker network inspect` over every network
+  - `disks.ini` — a copy of `/var/local/emhttp/disks.ini`, the slot → disk identity table
+  - `autostart` — a copy of `/var/lib/docker/unraid-autostart` when it exists
+  - `var.ini` subset — the parity-check fields (`sbSynced`, `sbSyncExit`, `sbSyncErrs`, `mdResync`) and no other key
+  - `smart/` — a copy of `/var/local/emhttp/smart/`
+  - `capture.json` — capture time, Unraid version (`/etc/unraid-version`), script version, boot mode, boot device identities, whether the boot pool is mirrored or shares its device with a data pool, the location class (cache, array or boot pool) of the Docker directory and of `libvirt.img`, and the writable-layer size per container (`docker ps -as`)
+- **Docker's own inspect format, unwrapped,** so fixtures can be produced in the lab without Unraid (D20).
+- **The zip comes from the script,** streamed to stdout after the capture is written. Its root is `/boot`, like Unraid's own Flash Backup, and top-level `previous/` is left out. Unraid's own Flash Backup behaves differently between versions (it writes into RAM or onto a user share, or streams; newer releases add a "save to server" option that picks a cache pool first), so the script makes the zip itself. The GUI Flash Backup stays a documented alternative, with a warning against "save to server".
+- **Container origin:** dockerMan (template matched on its `<Name>`), Compose Manager (its `compose.yaml`), or created by hand (flagged; nothing to convert).
+- **The capture holds the containers' environment variables, secrets included,** the same as the templates on the same flash.
+
+**Evidence** (the maintainer's own measurement on their server, and a read-only calibration session they opened on the same 7.3.2 server on 2026-10-02; general facts and counts only, no values):
+- 367 templates in `config/plugins/dockerMan/templates-user/`, but only 35 containers (`docker ps -a`), 32 running and 3 exited: about 90% of the templates had no container behind them. `templates-user/` records every template ever installed, not the containers that exist.
+- `config/plugins/dockerMan/userprefs.cfg` is not usable: of its 40 container names, 11 had no container and 6 real containers were missing; it also holds `folder-*` entries from a folder-grouping plugin.
+- The join key is the template's `<Name>` element, not its file name: a template file and its `<Name>` can differ, and `userprefs.cfg` can hold a third spelling. Docker names are case-sensitive. Matched on `<Name>`, all 35 containers had a template.
+- Every dockerMan container carries the label `net.unraid.docker.managed=dockerman` (35 of 35). A Compose Manager container carries `com.docker.compose.project` instead (its files are `config/plugins/compose.manager/projects/<name>/compose.yaml`), and a container made with `docker run` carries neither.
+- Running is not autostart: 31 of 35 containers have restart policy `no`; Unraid starts containers itself from `/var/lib/docker/unraid-autostart` (one name per line, an optional second field the wait in seconds; 28 entries). That file sits in the Docker directory, usually on the cache, and is lost with it.
+- The array's slot → disk identity is not in a text file on the flash: `config/disk.cfg` carries `diskIdSlot.N="-"` for every slot and the assignment is in `config/super.dat` (4 KiB, Unraid's own binary format). `/var/local/emhttp/disks.ini` has it as text, one section per slot (`id`, `device`, `type`, `status`, `fsType`, `rotational` and more). Pools differ: `config/pools/<name>.cfg` has a text `diskId`.
+- The boot mode is visible only at runtime: `findmnt -no FSTYPE /boot` is `vfat` for a USB stick and `zfs` for Unraid 7.3's internal boot pool, while `diskBootSize="0"` also appears on an ordinary pool of a USB-boot server.
+- The parity-check result is in `/var/local/emhttp/var.ini`, and Unraid's cached SMART output per slot in `/var/local/emhttp/smart/<slot>`.
+
+**Rejected sources:**
+- *`userprefs.cfg`* — incomplete in one direction and stale in the other (evidence above).
+- *Reading `docker.img` or the Docker directory after adoption* — its layout differs between servers (btrfs image, XFS image or directory mode), it is Docker's internal on-disk format, not an API, and on the cache it is gone once the cache is re-created (doc 05 §2).
+- *Parsing `config/super.dat`* — an undocumented binary format; `disks.ini` gives the same table as text.
+
+**Deferred:** a per-container `docker diff` capture (it would let doc 04 §5's writable-layer warning name paths), and drift detection between a container's inspect output and its template. On the calibration server image, network, ports and variables matched their templates for all 35 containers.
 
 ### Q26 — Share ownership and UID/GID model *(gap)*
 **Status:** Default (verify on fixture) · **Gate:** Phase 2 · **Affects:** doc 03 §4.2, §7, doc 04 §5, §7, doc 05 §4
@@ -522,6 +563,7 @@ The catalog repository (`mdg-labs/hoserva-catalog`, Q39) is licensed **MIT**, no
 
 **Default: the install flow lists the *existing* Docker networks and offers bridge, host, or any of them (macvlan/ipvlan included); it never creates one. v1 has no network-creation UI. When a template needs a network that doesn't exist, the converter's warning includes the exact `docker network create` command. A network chosen at install that doesn't exist is reported in the install plan with the same exact command, and the install is refused until the network exists.**
 Doc 03 said "custom", doc 04 said "beyond bridge/host/macvlan selection", and doc 04 §5 said "requires a pre-existing network". This default reconciles the three while staying inside D6. The command appears on both paths, in the converter's warning and in the install plan, so the user can create the network themselves and come back to the same install; refusing until it exists keeps a missing network from becoming a failed start, and nothing is ever created on the user's behalf.
+When the migration capture's `networks.json` is present (Q89), the command for a macvlan, ipvlan or custom bridge network can be given exactly (driver, subnet, gateway, parent interface). Without it, the converter gives the command with placeholders and says so.
 
 ### Q38 — Minimum Docker version
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §3

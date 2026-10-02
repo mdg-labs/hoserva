@@ -1,0 +1,164 @@
+[
+  {
+    "Id": "0000000000000000000000000000000000000000000000000000000000000001",
+    "Name": "/plex",
+    "State": {
+      "Status": "running",
+      "Running": true
+    },
+    "Config": {
+      "Image": "example/plex",
+      "Env": [
+        "PUID=99",
+        "PLEX_CLAIM=claim-FIXTURE-SECRET-VALUE"
+      ],
+      "Labels": {
+        "net.unraid.docker.managed": "dockerman"
+      }
+    },
+    "HostConfig": {
+      "RestartPolicy": {
+        "Name": "no"
+      }
+    },
+    "NetworkSettings": {
+      "Networks": {
+        "bridge": {}
+      }
+    }
+  },
+  {
+    "Id": "0000000000000000000000000000000000000000000000000000000000000002",
+    "Name": "/sonarr",
+    "State": {
+      "Status": "running",
+      "Running": true
+    },
+    "Config": {
+      "Image": "example/sonarr",
+      "Env": [
+        "API_KEY=FIXTURE-API-KEY-VALUE"
+      ],
+      "Labels": {
+        "net.unraid.docker.managed": "dockerman"
+      }
+    },
+    "HostConfig": {
+      "RestartPolicy": {
+        "Name": "no"
+      }
+    },
+    "NetworkSettings": {
+      "Networks": {
+        "bridge": {}
+      }
+    }
+  },
+  {
+    "Id": "0000000000000000000000000000000000000000000000000000000000000003",
+    "Name": "/Radarr",
+    "State": {
+      "Status": "running",
+      "Running": true
+    },
+    "Config": {
+      "Image": "example/Radarr",
+      "Env": [
+        "TZ=UTC"
+      ],
+      "Labels": {
+        "net.unraid.docker.managed": "dockerman"
+      }
+    },
+    "HostConfig": {
+      "RestartPolicy": {
+        "Name": "no"
+      }
+    },
+    "NetworkSettings": {
+      "Networks": {
+        "bridge": {}
+      }
+    }
+  },
+  {
+    "Id": "0000000000000000000000000000000000000000000000000000000000000004",
+    "Name": "/orphan",
+    "State": {
+      "Status": "exited",
+      "Running": false
+    },
+    "Config": {
+      "Image": "example/orphan",
+      "Env": [
+        "TZ=UTC"
+      ],
+      "Labels": {
+        "net.unraid.docker.managed": "dockerman"
+      }
+    },
+    "HostConfig": {
+      "RestartPolicy": {
+        "Name": "no"
+      }
+    },
+    "NetworkSettings": {
+      "Networks": {
+        "bridge": {}
+      }
+    }
+  },
+  {
+    "Id": "0000000000000000000000000000000000000000000000000000000000000005",
+    "Name": "/stack-web",
+    "State": {
+      "Status": "running",
+      "Running": true
+    },
+    "Config": {
+      "Image": "example/stack-web",
+      "Env": [
+        "DB_PASSWORD=FIXTURE-DB-PASSWORD"
+      ],
+      "Labels": {
+        "com.docker.compose.project": "media-stack",
+        "com.docker.compose.service": "web"
+      }
+    },
+    "HostConfig": {
+      "RestartPolicy": {
+        "Name": "no"
+      }
+    },
+    "NetworkSettings": {
+      "Networks": {
+        "bridge": {}
+      }
+    }
+  },
+  {
+    "Id": "0000000000000000000000000000000000000000000000000000000000000006",
+    "Name": "/handmade",
+    "State": {
+      "Status": "exited",
+      "Running": false
+    },
+    "Config": {
+      "Image": "example/handmade",
+      "Env": [
+        "TZ=UTC"
+      ],
+      "Labels": null
+    },
+    "HostConfig": {
+      "RestartPolicy": {
+        "Name": "no"
+      }
+    },
+    "NetworkSettings": {
+      "Networks": {
+        "bridge": {}
+      }
+    }
+  }
+]

@@ -1,0 +1,5 @@
+NAME="nvme0n1" TYPE="disk" PKNAME="" SERIAL="FIXTURE-NVME-A" MODEL="Fixture\x20NVMe\x20A" FSTYPE="" LABEL="" SIZE="238.5G"
+NAME="nvme0n1p1" TYPE="part" PKNAME="nvme0n1" SERIAL="" MODEL="" FSTYPE="vfat" LABEL="EFI" SIZE="512M"
+NAME="nvme0n1p2" TYPE="part" PKNAME="nvme0n1" SERIAL="" MODEL="" FSTYPE="zfs_member" LABEL="fixturepool" SIZE="16G"
+NAME="sdc" TYPE="disk" PKNAME="" SERIAL="FIXTURE-DATA-SERIAL" MODEL="Fixture\x20HDD" FSTYPE="" LABEL="" SIZE="3.6T"
+NAME="sdc1" TYPE="part" PKNAME="sdc" SERIAL="" MODEL="" FSTYPE="xfs" LABEL="" SIZE="3.6T"

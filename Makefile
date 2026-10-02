@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -340,7 +340,7 @@ web-test:
 	@echo "web test"
 	cd web && $(NPM) run test
 
-test: test-unit packaging-test test-gh web-outbound-test
+test: test-unit packaging-test test-unraid-tools test-gh web-outbound-test
 
 # Go's own "./..." wildcard skips "vendor", "testdata" and dot/underscore
 # directories, but not "node_modules" (`go help packages`) — once web/'s
@@ -379,6 +379,8 @@ packaging-test:
 	scripts/release/test-postinst.sh
 	scripts/release/test-postrm-purge.sh
 	scripts/release/test-build-deb.sh
+	scripts/release/test-stamp-prepare-script.sh
+	scripts/release/test-publish-release.sh
 	packaging/test-control-depends.sh
 	packaging/test-unattended-upgrades.sh
 	packaging/test-preinst-smartd-dropin.sh
@@ -386,6 +388,13 @@ packaging-test:
 	packaging/test-postinst-smartd-survives-upgrade.sh
 	packaging/test-postinst-hoserva-apps.sh
 	packaging/test-udev-storage-rule-ordering.sh
+
+# The Unraid prepare script (issue #556, doc 05 §4 Phase A step 0): run
+# against hand-written fixture roots under tools/unraid/testdata/ with
+# stand-ins for docker, findmnt, lsblk, df and zip, never an Unraid server
+# (D20). Needs jq, python3 and unzip.
+test-unraid-tools:
+	tools/unraid/test-prepare-migration.sh
 
 # The agent workflow's GitHub client (issue #410): scripts/gh-rest.sh's own
 # contract tests against a fake `gh`, plus the fake-gh tests for the
@@ -435,7 +444,28 @@ lint-go:
 lint-gh:
 	scripts/check-gh-rest.sh
 
-lint: lint-go lint-gh
+# shellcheck over the user-run Unraid script and its tests, and over the
+# release helpers that publish it. In CI a missing shellcheck is a failure,
+# as for golangci-lint above.
+SHELL_LINT_FILES = tools/unraid/prepare-migration.sh tools/unraid/test-prepare-migration.sh \
+	scripts/release/stamp-prepare-script.sh scripts/release/test-stamp-prepare-script.sh \
+	scripts/release/test-publish-release.sh \
+	tools/unraid/testdata/stubs/docker tools/unraid/testdata/stubs/findmnt tools/unraid/testdata/stubs/lsblk \
+	tools/unraid/testdata/stubs/df tools/unraid/testdata/stubs/emcmd tools/unraid/testdata/stubs/mdcmd \
+	tools/unraid/testdata/stubs/efibootmgr tools/unraid/testdata/stubs/mover
+
+lint-sh:
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		echo "shellcheck"; \
+		shellcheck -x $(SHELL_LINT_FILES); \
+	elif [ -n "$$CI" ]; then \
+		echo "shellcheck: not installed, and CI is set" >&2; \
+		exit 1; \
+	else \
+		echo "shellcheck not installed, skipping"; \
+	fi
+
+lint: lint-go lint-gh lint-sh
 	$(MAKE) web-lint
 	$(MAKE) web-typecheck
 

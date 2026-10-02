@@ -12,6 +12,11 @@
 # past release (scripts/release/fetch-release-index-entries.sh) and
 # assembles into the permanent URL
 # https://hoserva.dev/releases/index.json.
+#
+# The Unraid prepare script (doc 05 §4 Phase A step 0) is published as
+# prepare-migration.sh with its prepare-migration.sh.sha256, stamped with
+# the tag by scripts/release/stamp-prepare-script.sh, so the one-liner in
+# the migration guide can pin a tag and the checksum can be verified.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,8 +65,11 @@ cat >"$artifacts_dir/release-index-entry.json" <<JSON
 }
 JSON
 
+"$script_dir/stamp-prepare-script.sh" "$tag" "$artifacts_dir"
+
 gh_args=(release create "$tag"
   "$amd64_deb" "$arm64_deb"
+  "$artifacts_dir/prepare-migration.sh" "$artifacts_dir/prepare-migration.sh.sha256"
   "$artifacts_dir/SHA256SUMS" "$artifacts_dir/SHA256SUMS.sig" "$artifacts_dir/release-index-entry.json"
   --repo "$repo"
   --title "hoserva $version"

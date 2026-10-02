@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Test stand-in for lsblk: replays a fixture listing in -P format.
+set -euo pipefail
+
+: "${STUB_VIOLATIONS:?}"
+if [ "$*" != "-P -o NAME,TYPE,PKNAME,SERIAL,MODEL,FSTYPE,LABEL,SIZE" ]; then
+  printf 'lsblk %s\n' "$*" >>"$STUB_VIOLATIONS"
+  exit 99
+fi
+# Reads stdin on purpose: a script piped into bash must not lose its text.
+cat >/dev/null
+cat "${STUB_LSBLK:?}"

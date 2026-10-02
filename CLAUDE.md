@@ -117,7 +117,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 | `area:shares` | `internal/share/` |
 | `area:containers` | `internal/container/`, `internal/template/`, `testdata/unraid-templates/` |
 | `area:vm` | `internal/vm/` (Hoserva's own VM-management feature, doc 14 — not `scripts/vm/`, which is the L3 test harness) |
-| `area:migration` | `internal/migrate/` |
+| `area:migration` | `internal/migrate/`, `tools/unraid/` (the user-run Phase A prepare script and its fixtures — not `scripts/`, which is development tooling) |
 | `area:backup` | `internal/backup/` |
 | `area:packaging` | `packaging/`, `scripts/release/` |
 | `area:devenv` | `scripts/devenv/`, `scripts/vm/`, `testdata/parsers/`, `.github/workflows/`, `docker-compose.dev.yml` |
