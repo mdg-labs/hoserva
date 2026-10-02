@@ -20,8 +20,8 @@ function ok<T>(data: T): Answer {
   return Promise.resolve({ data, response: { ok: true } });
 }
 
-function fail(code: string, message: string): Answer {
-  return Promise.resolve({ error: { code, message }, response: { ok: false } });
+function fail(code: string, message: string, details?: Record<string, unknown>): Answer {
+  return Promise.resolve({ error: { code, message, ...(details ? { details } : {}) }, response: { ok: false } });
 }
 
 const COMPOSE = "services:\n  jellyfin:\n    image: example/jellyfin:10\n    ports:\n      - ${WEBUI_PORT}:8096\n";
@@ -42,7 +42,7 @@ function catalogTemplate(extra: Record<string, unknown> = {}) {
   };
 }
 
-const PORT_INPUT = { name: "WEBUI_PORT", kind: "port", label: "Web interface port", value: "8096", generated: false };
+const PORT_INPUT = { name: "WEBUI_PORT", kind: "port", label: "Web interface port", value: "8096", generated: false, required: true };
 const APPDATA_INPUT = {
   name: "APPDATA",
   kind: "path",
@@ -51,6 +51,7 @@ const APPDATA_INPUT = {
   description: "Where the app keeps its settings.",
   value: "/mnt/cache/appdata",
   generated: false,
+  required: true,
 };
 const MEDIA_INPUT = {
   name: "MEDIA",
@@ -60,8 +61,19 @@ const MEDIA_INPUT = {
   value: "/mnt/user/media",
   suggestions: ["/mnt/user/media", "/mnt/user/photos"],
   generated: false,
+  required: true,
 };
-const SECRET_INPUT = { name: "DB_PASSWORD", kind: "secret", label: "Database password", generated: true };
+const SECRET_INPUT = { name: "DB_PASSWORD", kind: "secret", label: "Database password", generated: true, required: false };
+const NAME_INPUT = { name: "SITE_NAME", kind: "string", label: "Site name", value: "", generated: false, required: true, error: "SITE_NAME needs a value" };
+const NETWORKS = {
+  available: true,
+  networks: [
+    { name: "bridge", driver: "bridge" },
+    { name: "host", driver: "host" },
+    { name: "lan", driver: "macvlan" },
+    { name: "none", driver: "null" },
+  ],
+};
 
 function plan(inputs: unknown[], extra: Record<string, unknown> = {}) {
   return {
@@ -70,6 +82,8 @@ function plan(inputs: unknown[], extra: Record<string, unknown> = {}) {
     name: "jellyfin",
     inputs,
     privileges: [],
+    warnings: [],
+    advancedAvailable: true,
     compose: "# written by the install\n" + COMPOSE,
     ...extra,
   };
@@ -104,6 +118,7 @@ type PostHandlers = {
   preview?: (body: unknown) => Answer;
   install?: (body: unknown) => Answer;
   start?: () => Answer;
+  networks?: () => Answer;
 };
 
 function setup(handlers: PostHandlers, template: Answer = ok(catalogTemplate())) {
@@ -111,6 +126,8 @@ function setup(handlers: PostHandlers, template: Answer = ok(catalogTemplate()))
     switch (path) {
       case "/catalog/{id}":
         return template;
+      case "/apps/networks":
+        return (handlers.networks ?? (() => ok(NETWORKS)))();
       case "/jobs/{jobId}":
         return ok(job("succeeded"));
       case "/jobs/{jobId}/log":
@@ -228,12 +245,12 @@ describe("InstallPage", () => {
     );
   });
 
-  it("shows the server's message on the field it names", async () => {
+  it("shows the server's message on the field named in the error's details", async () => {
     setup({
       preview: (body) => {
         const values = (body as { values?: Record<string, string> }).values ?? {};
         return values.APPDATA === "relative"
-          ? fail("invalid_template_input", 'template: invalid install input: APPDATA must be an absolute path, got "relative"')
+          ? fail("invalid_template_input", 'template: invalid install input: APPDATA must be an absolute path, got "relative"', { input: "APPDATA" })
           : ok(plan([PORT_INPUT, APPDATA_INPUT]));
       },
     });
@@ -485,5 +502,266 @@ describe("InstallPage", () => {
     expect(await screen.findByText("The catalog is not installed.")).toBeInTheDocument();
     expect(within(document.body).getByRole("button", { name: "Try again" })).toBeInTheDocument();
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("does not read a field out of the words of an error that names no input", async () => {
+    setup({
+      preview: (body) => {
+        const values = (body as { values?: Record<string, string> }).values ?? {};
+        return values.APPDATA === "relative"
+          ? fail("invalid_template_input", "template: invalid install input: APPDATA must be an absolute path")
+          : ok(plan([PORT_INPUT, APPDATA_INPUT]));
+      },
+    });
+    renderPage();
+
+    const appdata = await screen.findByLabelText("App data folder");
+    fireEvent.change(appdata, { target: { value: "relative" } });
+
+    expect(await screen.findByText(/APPDATA must be an absolute path/)).toBeInTheDocument();
+    expect(appdata).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", INSTALL_BUTTON)).toBeDisabled();
+  });
+
+  it("lists an input that needs a value, blocks the install and marks it only once it was touched", async () => {
+    setup({
+      preview: (body) => {
+        const values = (body as { values?: Record<string, string> }).values ?? {};
+        return ok(plan([PORT_INPUT, values.SITE_NAME ? { ...NAME_INPUT, value: values.SITE_NAME, error: undefined } : NAME_INPUT]));
+      },
+    });
+    renderPage();
+
+    const site = await screen.findByLabelText("Site name");
+    expect(screen.getByLabelText("Web interface port")).toHaveValue(8096);
+    expect(screen.queryByText("Optional")).not.toBeInTheDocument();
+    expect(screen.queryByText("SITE_NAME needs a value")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", INSTALL_BUTTON)).toBeDisabled();
+    expect(screen.getByText("Fill in the settings that still need a value before installing.")).toBeInTheDocument();
+
+    fireEvent.change(site, { target: { value: "x" } });
+    fireEvent.change(site, { target: { value: "" } });
+    expect(await screen.findByText("SITE_NAME needs a value")).toHaveAttribute("role", "alert");
+    expect(site).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(site, { target: { value: "My site" } });
+    await waitFor(() => expect(screen.queryByText("SITE_NAME needs a value")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", INSTALL_BUTTON)).toBeEnabled());
+  });
+
+  it("offers bridge, the server's network and every existing network as choice cards", async () => {
+    setup({});
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    expect(await screen.findByRole("radio", { name: /As the app is set up/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Bridge/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /The server's network/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^lan/ })).toBeInTheDocument();
+    expect(screen.getByText("An existing network (macvlan).")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Another network/ })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^none/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: /^lan/ }));
+    await waitFor(() =>
+      expect(callsTo("/templates/{id}/preview").at(-1)?.[1]).toEqual(expect.objectContaining({ body: { networkMode: "lan" } })),
+    );
+  });
+
+  it("warns before the server's own network is chosen and sends it", async () => {
+    setup({});
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    expect(screen.queryByText("The app will share the server's network")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("radio", { name: /The server's network/ }));
+
+    expect(screen.getByText("The app will share the server's network")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(callsTo("/templates/{id}/preview").at(-1)?.[1]).toEqual(expect.objectContaining({ body: { networkMode: "host" } })),
+    );
+  });
+
+  it("does not show a failed network list as no networks, and loads it again on request", async () => {
+    let answers = 0;
+    setup({ networks: () => (answers++ === 0 ? fail("internal", "the Engine did not answer") : ok(NETWORKS)) });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    expect(await screen.findByText("Could not load the existing networks.")).toBeInTheDocument();
+    expect(screen.getByText("the Engine did not answer")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^lan/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("radio", { name: /^lan/ })).toBeInTheDocument();
+    expect(screen.queryByText("Could not load the existing networks.")).not.toBeInTheDocument();
+  });
+
+  it("says why the networks are unknown when Docker is not reachable", async () => {
+    setup({ networks: () => ok({ available: false, networks: [], message: "Docker is not running." }) });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    expect(await screen.findByText("Docker is not running.")).toBeInTheDocument();
+    expect(screen.getByText("Could not load the existing networks.")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^lan/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the command that creates a missing network, lists the warning in the review and blocks the install", async () => {
+    const command = "docker network create iot";
+    setup({
+      preview: (body) =>
+        (body as { networkMode?: string }).networkMode === "iot"
+          ? ok(
+              plan([PORT_INPUT, APPDATA_INPUT], {
+                warnings: [{ class: "missing_network", message: "The network iot does not exist.", detail: "iot", command }],
+              }),
+            )
+          : ok(plan([PORT_INPUT, APPDATA_INPUT])),
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /Another network/ }));
+    fireEvent.change(screen.getByLabelText("Network name"), { target: { value: "iot" } });
+
+    expect(await screen.findByText("The network iot does not exist yet. Create it with this command, then check again:")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue(command)).toHaveLength(2);
+    expect(screen.getByText("The network iot does not exist.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", INSTALL_BUTTON)).toBeDisabled());
+    expect(screen.getByText(/Create the network first/)).toBeInTheDocument();
+  });
+
+  it("marks the network field when the install is refused because the network is missing", async () => {
+    setup({ install: () => fail("network_missing", "the network iot does not exist and Hoserva does not create networks") });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /^lan/ }));
+    await waitFor(() => expect(screen.getByRole("button", INSTALL_BUTTON)).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", INSTALL_BUTTON));
+
+    expect((await screen.findAllByText(/the network iot does not exist and Hoserva does not create networks/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("alert").some((node) => node.textContent?.includes("does not create networks"))).toBe(true);
+    expect(callsTo("/stacks/{name}/start")).toHaveLength(0);
+  });
+
+  it("sends the restart rule that was chosen", async () => {
+    setup({});
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    fireEvent.click(await screen.findByRole("combobox", { name: "Restart rule" }));
+    const option = await screen.findByRole("option", { name: "Always restart" });
+    fireEvent.pointerDown(option, { pointerType: "mouse" });
+    fireEvent.pointerUp(option, { pointerType: "mouse" });
+    fireEvent.click(option);
+
+    await waitFor(() =>
+      expect(callsTo("/templates/{id}/preview").at(-1)?.[1]).toEqual(expect.objectContaining({ body: { restart: "always" } })),
+    );
+    await waitFor(() => expect(screen.getByRole("button", INSTALL_BUTTON)).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", INSTALL_BUTTON));
+    await waitFor(() => expect(callsTo("/templates/{id}/install")).toHaveLength(1));
+    expect(callsTo("/templates/{id}/install")[0][1]).toEqual(expect.objectContaining({ body: { restart: "always" } }));
+  });
+
+  it("sends the resource limits and the extra parameters", async () => {
+    setup({});
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    fireEvent.change(await screen.findByLabelText("CPU limit"), { target: { value: "1.5" } });
+    fireEvent.change(screen.getByLabelText("Memory limit"), { target: { value: "512" } });
+    fireEvent.change(screen.getByLabelText("Extra parameters"), { target: { value: "--cap-add NET_ADMIN" } });
+
+    await waitFor(() =>
+      expect(callsTo("/templates/{id}/preview").at(-1)?.[1]).toEqual(
+        expect.objectContaining({ body: { cpus: 1.5, memoryMiB: 512, extraParams: "--cap-add NET_ADMIN" } }),
+      ),
+    );
+  });
+
+  it("marks a limit that is not a number, sends nothing for it and holds the install", async () => {
+    setup({});
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    const cpus = await screen.findByLabelText("CPU limit");
+    fireEvent.change(cpus, { target: { value: "lots" } });
+    fireEvent.change(screen.getByLabelText("Memory limit"), { target: { value: "1.5" } });
+
+    expect(screen.getByText("Enter a number such as 1.5, or leave it empty.")).toHaveAttribute("role", "alert");
+    expect(screen.getByText("Enter a whole number of MiB, or leave it empty.")).toHaveAttribute("role", "alert");
+    expect(cpus).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", INSTALL_BUTTON)).toBeDisabled();
+    expect(screen.getByText("Fix the resource limits under Advanced before installing.")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(callsTo("/templates/{id}/preview").at(-1)?.[1]).toEqual(expect.objectContaining({ body: {} }));
+  });
+
+  it.each([
+    ["cpus", "CPU limit", "the CPU limit must be from 0.01 to 1024", "5000"],
+    ["memoryMiB", "Memory limit", "the memory limit must be from 6 MiB to 16777216 MiB", "2"],
+    ["extraParams", "Extra parameters", "the extra parameters set restart, which the restart setting sets too", "--restart always"],
+    ["networkMode", "Network name", "\"my net\" is not a Docker network name", "my net"],
+  ])("shows the refusal of %s on its own field and holds the install", async (input, label, message, typed) => {
+    setup({
+      preview: (body) => {
+        const sent = body as Record<string, unknown>;
+        return sent[input] !== undefined ? fail("invalid_template_input", `template: invalid install input: ${message}`, { input }) : ok(plan([PORT_INPUT, APPDATA_INPUT]));
+      },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    if (input === "networkMode") {
+      fireEvent.click(await screen.findByRole("radio", { name: /Another network/ }));
+    }
+    const field = await screen.findByLabelText(label);
+    fireEvent.change(field, { target: { value: typed } });
+
+    const shown = await screen.findAllByText(new RegExp(message));
+    expect(shown.some((node) => node.getAttribute("role") === "alert")).toBe(true);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", INSTALL_BUTTON)).toBeDisabled();
+  });
+
+  it("lists the plan's warnings in the review before anything runs, with the privileges they widen", async () => {
+    setup({
+      preview: () =>
+        ok(
+          plan([PORT_INPUT, APPDATA_INPUT], {
+            warnings: [
+              { class: "untranslated_flag", message: "The ExtraParams flag --no-such-flag has no Compose equivalent the converter knows.", detail: "--no-such-flag" },
+              { class: "flagged_path", message: "The host path of the mount at /x is outside the pool.", detail: "/srv/x" },
+              { class: "note", message: "The container uses the server's network." },
+            ],
+            privileges: [{ kind: "added_capabilities", service: "jellyfin", detail: "NET_ADMIN", description: "Is given extra Linux capabilities." }],
+          }),
+        ),
+    });
+    renderPage();
+
+    expect(await screen.findByText("Not carried over: an extra parameter")).toBeInTheDocument();
+    expect(screen.getByText(/--no-such-flag has no Compose equivalent/)).toBeInTheDocument();
+    expect(screen.getByText("A folder outside the storage pool")).toBeInTheDocument();
+    expect(screen.getByText("Note")).toBeInTheDocument();
+    expect(screen.getByText("Is given extra Linux capabilities.")).toBeInTheDocument();
+    expect(screen.getByRole("button", INSTALL_BUTTON)).toBeEnabled();
+    expect(callsTo("/templates/{id}/install")).toHaveLength(0);
+  });
+
+  it("leaves out the controls that need one service when the app has several, and keeps the restart rule", async () => {
+    setup({ preview: () => ok(plan([PORT_INPUT, APPDATA_INPUT], { advancedAvailable: false })) });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+    expect(await screen.findByText(/This app is made of several parts/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Restart rule" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("CPU limit")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Memory limit")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Extra parameters")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^Bridge/ })).not.toBeInTheDocument();
   });
 });

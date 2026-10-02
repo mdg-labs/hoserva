@@ -1716,6 +1716,145 @@ func decodeGetCatalogTemplateIconParams(args [1]string, argsEscaped bool, r *htt
 	return params, nil
 }
 
+// GetCatalogTemplateScreenshotParams is parameters of getCatalogTemplateScreenshot operation.
+type GetCatalogTemplateScreenshotParams struct {
+	// The template's id.
+	ID string
+	// The screenshot's position in the template's list, from 0 to `screenshotCount` of
+	// `getCatalogTemplate` minus one.
+	Index int
+}
+
+func unpackGetCatalogTemplateScreenshotParams(packed middleware.Parameters) (params GetCatalogTemplateScreenshotParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "id",
+			In:   "path",
+		}
+		params.ID = packed[key].(string)
+	}
+	{
+		key := middleware.ParameterKey{
+			Name: "index",
+			In:   "path",
+		}
+		params.Index = packed[key].(int)
+	}
+	return params
+}
+
+func decodeGetCatalogTemplateScreenshotParams(args [2]string, argsEscaped bool, r *http.Request) (params GetCatalogTemplateScreenshotParams, _ error) {
+	// Decode path: id.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "id",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.ID = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	// Decode path: index.
+	if err := func() error {
+		param := args[1]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[1])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "index",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToInt(val)
+				if err != nil {
+					return err
+				}
+
+				params.Index = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.Int{
+					MinSet:        true,
+					Min:           0,
+					MaxSet:        true,
+					Max:           7,
+					MinExclusive:  false,
+					MaxExclusive:  false,
+					MultipleOfSet: false,
+					MultipleOf:    0,
+					Pattern:       nil,
+				}).Validate(int64(params.Index)); err != nil {
+					return errors.Wrap(err, "int")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "index",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	JobId uuid.UUID
@@ -2348,6 +2487,72 @@ func unpackGetStackParams(packed middleware.Parameters) (params GetStackParams) 
 }
 
 func decodeGetStackParams(args [1]string, argsEscaped bool, r *http.Request) (params GetStackParams, _ error) {
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// GetStackConfigParams is parameters of getStackConfig operation.
+type GetStackConfigParams struct {
+	// The stack's name.
+	Name string
+}
+
+func unpackGetStackConfigParams(packed middleware.Parameters) (params GetStackConfigParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetStackConfigParams(args [1]string, argsEscaped bool, r *http.Request) (params GetStackConfigParams, _ error) {
 	// Decode path: name.
 	if err := func() error {
 		param := args[0]
@@ -5496,6 +5701,72 @@ func decodeUpdateStackParams(args [1]string, argsEscaped bool, r *http.Request) 
 			Err:  err,
 		}
 	}
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// UpdateStackConfigParams is parameters of updateStackConfig operation.
+type UpdateStackConfigParams struct {
+	// The stack's name.
+	Name string
+}
+
+func unpackUpdateStackConfigParams(packed middleware.Parameters) (params UpdateStackConfigParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeUpdateStackConfigParams(args [1]string, argsEscaped bool, r *http.Request) (params UpdateStackConfigParams, _ error) {
 	// Decode path: name.
 	if err := func() error {
 		param := args[0]

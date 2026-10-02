@@ -251,3 +251,44 @@ func TestIsDigestPinned(t *testing.T) {
 		}
 	}
 }
+
+func TestEngineClient_Networks(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v1.51/networks" {
+			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+		}
+		body := `[{"Name":"lan","Driver":"macvlan"},{"Name":"bridge","Driver":"bridge"},{"Name":"host","Driver":"host"}]`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+	})
+	cli, err := dockerclient.New(dockerclient.WithHTTPClient(&http.Client{Transport: rt}), dockerclient.WithAPIVersion("1.51"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := (&EngineClient{cli: cli}).Networks(context.Background())
+	if err != nil {
+		t.Fatalf("Networks: %v", err)
+	}
+	want := []Network{{Name: "bridge", Driver: "bridge"}, {Name: "host", Driver: "host"}, {Name: "lan", Driver: "macvlan"}}
+	if len(got) != len(want) {
+		t.Fatalf("Networks() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Networks()[%d] = %v, want %v (sorted by name)", i, got[i], want[i])
+		}
+	}
+}
+
+func TestEngineClient_Networks_AFailureIsNeverAnEmptyList(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`{"message":"boom"}`)), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+	})
+	cli, err := dockerclient.New(dockerclient.WithHTTPClient(&http.Client{Transport: rt}), dockerclient.WithAPIVersion("1.51"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := (&EngineClient{cli: cli}).Networks(context.Background())
+	if err == nil || got != nil {
+		t.Fatalf("Networks() = %v, %v, want an error and no list", got, err)
+	}
+}

@@ -144,8 +144,31 @@ func mockApps() []apiv1.App {
 // never refused as an existing stack.
 const mockStack = "media-server"
 
-// mockStackCompose is the Compose text of the seeded stack.
-const mockStackCompose = "services:\n  jellyfin:\n    image: lscr.io/linuxserver/jellyfin:10.10.7\n    ports:\n      - \"8096:8096\"\n"
+// mockStackCompose is the Compose text of the seeded stack: the jellyfin
+// template with its x-hoserva block, as a stack that was installed from it
+// and later edited by hand. It has a port input and a secret one.
+const mockStackCompose = `services:
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:10.10.7
+    env_file: .env
+    ports:
+      - "${WEBUI_PORT}:8096"
+x-hoserva:
+  schema: 1
+  id: jellyfin
+  revision: 1
+  title: Jellyfin
+  categories: [media]
+  icon: icon.svg
+  docs: https://docs.linuxserver.io/images/docker-jellyfin/
+  inputs:
+    WEBUI_PORT:     { kind: port, default: 8096, label: Web interface port }
+    ADMIN_PASSWORD: { kind: secret, label: Admin password }
+`
+
+// mockStackEnv is the .env of the seeded stack. Its secret is a stand-in that
+// no response ever returns.
+const mockStackEnv = "WEBUI_PORT=8096\nADMIN_PASSWORD=mock-admin-password\n"
 
 // mockStacksFor is the stacks table that goes with apps: one stack for every
 // stack name an app reports, so GetStack answers for what listApps names.
@@ -553,6 +576,22 @@ func (h *handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, er
 		return &apiv1.ListAppImagesOK{Available: false, Images: []apiv1.AppImage{}, Message: apiv1.NewOptString(down)}, nil
 	}
 	return &apiv1.ListAppImagesOK{Available: true, Images: mockAppImages()}, nil
+}
+
+// ListDockerNetworks answers mockNetworkList, and reports Docker as
+// unreachable, with no list, while this mock's Docker is scripted down.
+func (h *handler) ListDockerNetworks(ctx context.Context) (*apiv1.ListDockerNetworksOK, error) {
+	h.appsMu.Lock()
+	down := h.appsDown
+	h.appsMu.Unlock()
+	if down != "" {
+		return &apiv1.ListDockerNetworksOK{Available: false, Networks: []apiv1.DockerNetwork{}, Message: apiv1.NewOptString(down)}, nil
+	}
+	out := make([]apiv1.DockerNetwork, len(mockNetworkList))
+	for i, n := range mockNetworkList {
+		out[i] = apiv1.DockerNetwork{Name: n.Name, Driver: n.Driver}
+	}
+	return &apiv1.ListDockerNetworksOK{Available: true, Networks: out}, nil
 }
 
 // ListAppUpdates answers a fixed mix of every status, so each label the UI

@@ -76,6 +76,8 @@ beforeEach(() => {
           name: "jellyfin",
           inputs: [],
           privileges: [],
+          warnings: [],
+          advancedAvailable: true,
           compose: "services: {}\n",
         })
       : Promise.resolve({ data: null, response: { ok: false } }),

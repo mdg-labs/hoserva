@@ -35,11 +35,58 @@ func (f fakeGPU) RenderGID(context.Context) (string, error)       { return f.gid
 // stacks the way Compose resolves them: each `ports` entry with the stack's
 // .env substituted. Nothing is ever started.
 type fakeStacks struct {
-	created  []container.NewStack
+	created []container.NewStack
+	// edited names the stacks Get reports as manually edited.
+	edited   map[string]bool
 	err      error
 	portsErr error
 	// existing are ports of stacks that were not created through this fake.
 	existing map[int]bool
+	// envErr fails UpdateEnv, and envWrites counts the calls that reached it.
+	envErr    error
+	envWrites int
+}
+
+func (f *fakeStacks) find(name string) (int, bool) {
+	for i, n := range f.created {
+		if n.Name == name {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (f *fakeStacks) Get(_ context.Context, name string) (container.Stack, error) {
+	i, ok := f.find(name)
+	if !ok {
+		return container.Stack{}, container.ErrStackNotFound
+	}
+	n := f.created[i]
+	return container.Stack{Name: n.Name, Compose: n.Compose, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision, ManuallyEdited: f.edited[name]}, nil
+}
+
+func (f *fakeStacks) Env(_ context.Context, name string) (string, error) {
+	i, ok := f.find(name)
+	if !ok {
+		return "", container.ErrStackNotFound
+	}
+	return f.created[i].Env, nil
+}
+
+func (f *fakeStacks) UpdateEnv(ctx context.Context, name, env string) (container.Stack, error) {
+	f.envWrites++
+	if f.envErr != nil {
+		return container.Stack{}, f.envErr
+	}
+	if names := container.ReservedEnvDefined(env); len(names) > 0 {
+		return container.Stack{}, container.ErrReservedEnvName
+	}
+	i, ok := f.find(name)
+	if !ok {
+		return container.Stack{}, container.ErrStackNotFound
+	}
+	f.created[i].Env = env
+	return f.Get(ctx, name)
 }
 
 func (f *fakeStacks) Create(_ context.Context, n container.NewStack) (container.Stack, error) {
@@ -911,8 +958,19 @@ func TestAnOptionalStringInputMayStayEmptyAndARequiredOneMayNot(t *testing.T) {
 			in, stacks := newInstaller(t)
 			in.Catalog = MapCatalog{Templates: map[string]string{"probe": compose}}
 			plan, err := run(in)
+			if tc.wantErr && call == "preview" {
+				if err != nil {
+					t.Errorf("%s preview: %v, want the input listed with its error", tc.name, err)
+					continue
+				}
+				if got := input(t, plan, "CLAIM"); !got.Required || !strings.Contains(got.Error, "CLAIM needs a value") || got.Value != "" {
+					t.Errorf("%s preview: CLAIM = %+v, want it required, empty and with an error", tc.name, got)
+				}
+				continue
+			}
 			if tc.wantErr {
-				if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "CLAIM needs a value") || len(stacks.created) != 0 {
+				var ie *InputError
+				if !errors.Is(err, ErrInvalidInput) || !errors.As(err, &ie) || ie.Input != "CLAIM" || !strings.Contains(err.Error(), "CLAIM needs a value") || len(stacks.created) != 0 {
 					t.Errorf("%s %s: err = %v, created = %d", tc.name, call, err, len(stacks.created))
 				}
 				continue

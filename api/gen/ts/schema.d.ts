@@ -2032,6 +2032,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps/networks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Docker networks
+         * @description Every network the Docker Engine holds, sorted by name: the built-in `bridge`, `host` and `none` and the networks the user created (macvlan and ipvlan included). The install wizard offers the existing ones as network modes (Q37, doc 03 §5.4); Hoserva never creates a network. `available` is false, with no error, whenever Docker itself is not reachable (doc 04 §3), and then `networks` is empty without meaning there are none: a caller that needs the list must treat it as unknown. Any other failure to read the list is an error, never an empty list.
+         */
+        get: operations["listDockerNetworks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apps/updates": {
         parameters: {
             query?: never;
@@ -2412,6 +2432,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read an installed stack's template inputs
+         * @description The inputs of the template a stack was installed from, with the value each has now. The inputs are read from the `x-hoserva` block of the stack's stored `docker-compose.yml` text, so the catalog is not needed and a stack whose Compose file was edited by hand is read as it runs (`manuallyEdited` says so), and the values from the stack's `.env`. A secret is never returned: `set` says whether the `.env` gives it a value. A `device` input is `readOnly`: its device mapping is part of the Compose file, which the form never writes. A `path` input that is not appdata lists the existing shares' paths as suggestions, as `previewTemplateInstall` does. A stack whose Compose file has no `x-hoserva` block (one made with `createStack` without a template) is refused with 409 `stack_has_no_template`; one whose block is not valid with 422 `template_invalid`; an unknown stack with 404 `stack_not_found` and a name that is not a valid stack name with 400 `invalid_stack_name`. A stack whose `.env` cannot be opened (a restore without the backup passphrase) is a plain failure.
+         */
+        get: operations["getStackConfig"];
+        /**
+         * Change an installed stack's template inputs
+         * @description Changes the values of some of the stack's template inputs. Every value is checked with the rules `previewTemplateInstall` uses, before anything is stored: a value that does not fit its kind, a path that is not absolute, a `string` input emptied that is not optional, or a `device` input given a different value (its mapping is in the Compose file, so it is changed there) is refused with 400 `invalid_template_input`, whose `details.input` names the input; a `port` input changed to a port that a container publishes or is configured to publish, that another stack's Compose file publishes, or that the host listens on, is refused with 409 `no_free_port` and is never moved to another port (the stack's own ports are not taken); a `.env` that would define a variable Docker takes from the daemon's environment is refused with 400 `invalid_stack_env`. A refusal changes nothing. Otherwise the new `.env` is sealed into the stack's row and the stack's `.env` file is regenerated from it: only the lines of the inputs that changed are rewritten and every other line is kept. If writing the file fails the row is put back as it was. `docker-compose.yml` is never regenerated from the template, so a manual edit of it stays, and nothing is restarted: `startStack` makes the change take effect. An input without an entry keeps its value. An empty entry takes the input's default, as in an install, and so clears an optional `string` input. A secret with no entry or an empty one keeps the sealed value; a non-empty one replaces it; one named in `generate` gets a newly generated value (48 hexadecimal characters), and naming one that is not a secret, or that also has a value, is refused with 400 `invalid_template_input`. The answer is `getStackConfig`'s, with the values as they are now. The other errors of `getStackConfig` apply; 503 `docker_unavailable` is answered only when a port was changed, since the check needs Docker.
+         */
+        put: operations["updateStackConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/template-update": {
         parameters: {
             query?: never;
@@ -2638,6 +2685,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/catalog/{id}/screenshots/{index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+                /** @description The screenshot's position in the template's list, from 0 to `screenshotCount` of `getCatalogTemplate` minus one. */
+                index: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one of a catalog template's screenshots
+         * @description The screenshot at that position of the template's `screenshots` list, with a content type from an allow-list (PNG, WebP or JPEG) chosen by the file's extension, never by its content. It is addressed by position, so no file path ever appears in a request. A file that is not a plain file inside the template's own directory (a symlink in the path or as the file, however it points), has another extension, or is larger than 4 MiB is not served, and neither is a position past the end of the list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and anything but the image itself.
+         */
+        get: operations["getCatalogTemplateScreenshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/templates/{id}/preview": {
         parameters: {
             query?: never;
@@ -2652,7 +2724,7 @@ export interface paths {
         put?: never;
         /**
          * Preview installing a catalog template
-         * @description Resolves the template's inputs the way an install would, without creating a stack or writing any file of the template: paths default to the template's own default or, with none, to the existing share of the input's role (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a container publishes or is configured to publish, running or stopped, that an existing stack's Compose file publishes (resolved with its `.env`, whether or not the stack was started), or that the host listens on resolves to the next free port above it, with the port asked for in `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value here: it is marked `generated` and is generated by the install. The privilege summary is computed from the Compose content with these values substituted — privileged mode, host networking, the host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced confinement, extra groups, the Docker socket and host paths outside the pool and cache (the cache itself and Docker's data-root on it count as outside) — never from anything the template declares. `compose` is the file an install would write. An input that is not the template's, a value that does not fit its kind, a path input with no value, no default and no existing share to default to, or a `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string` input the template marks `optional` may be left empty and is written to `.env` with an empty value); a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404 `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503 `docker_unavailable`. The check also reads the ports of every existing stack with `docker compose config`; a stack whose ports cannot be read refuses the request (`stack_action_failed`) instead of the port being assumed free. Reading a stack's ports also regenerates, from the stack's row, any of its `docker-compose.yml`, `.env` or `meta.json` that is missing from its directory; a file that exists is never changed, and a stack removed meanwhile is skipped. `installTemplate` does the same.
+         * @description Resolves the template's inputs the way an install would, without creating a stack or writing any file of the template: paths default to the template's own default or, with none, to the existing share of the input's role (`/mnt/user/<role>`) and list the existing shares as suggestions; a port that a container publishes or is configured to publish, running or stopped, that an existing stack's Compose file publishes (resolved with its `.env`, whether or not the stack was started), or that the host listens on resolves to the next free port above it, with the port asked for in `requestedValue`; a timezone with no value takes the host's; a `device` input with role `gpu` lists the host's render devices (`/dev/dri/renderD*`) as suggestions. A secret is never given a value here: it is marked `generated` and is generated by the install. The privilege summary is computed from the Compose content with these values substituted — privileged mode, host networking, the host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced confinement, extra groups, the Docker socket and host paths outside the pool and cache (the cache itself and Docker's data-root on it count as outside) — never from anything the template declares. `compose` is the file an install would write. A path input with no value, no default and no existing share to default to, a port input with neither value nor default, and a `string` input with no value and no default are listed with `required: true` and an `error`, so a form shows every field and `installTemplate` refuses them (a `string` input the template marks `optional` may be left empty and is written to `.env` with an empty value). An input that is not the template's or a value that does not fit its kind is refused with 400 `invalid_template_input`, and so is a setting that does not fit (`networkMode`, `cpus`, `memoryMiB`, `extraParams`); the error's `details.input` names the input or setting it is about. The container settings of the request (`networkMode`, `restart`, `cpus`, `memoryMiB`, `extraParams`) are written into `compose`, and `warnings` lists what they could not carry out; a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404 `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a conflicting one with 409 `no_free_port`, and the same code, never moving the port, for a host port `extraParams` publishes that is taken; Docker not reachable, which the port check needs, with 503 `docker_unavailable`. The check also reads the ports of every existing stack with `docker compose config`; a stack whose ports cannot be read refuses the request (`stack_action_failed`) instead of the port being assumed free. Reading a stack's ports also regenerates, from the stack's row, any of its `docker-compose.yml`, `.env` or `meta.json` that is missing from its directory; a file that exists is never changed, and a stack removed meanwhile is skipped. `installTemplate` does the same.
          */
         post: operations["previewTemplateInstall"];
         delete?: never;
@@ -2675,7 +2747,7 @@ export interface paths {
         put?: never;
         /**
          * Install a catalog template as a stack
-         * @description Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port and reported in the result's `requestedValue`, never refused. Taken means what `previewTemplateInstall` lists, including the ports of stacks installed earlier that were never started, so two installs in a row are given different ports; installs run one at a time. Reading the ports of existing stacks regenerates their missing generated files from their rows, as `previewTemplateInstall` describes. A port that something other than Hoserva takes after the install is not checked. Then it creates the stack as `createStack` does: the stack's row records the template's source, id and revision, and `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
+         * @description Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no value of its own (48 hexadecimal characters). A port that is taken is moved to the next free port and reported in the result's `requestedValue`, never refused. Taken means what `previewTemplateInstall` lists, including the ports of stacks installed earlier that were never started, so two installs in a row are given different ports; installs run one at a time. Reading the ports of existing stacks regenerates their missing generated files from their rows, as `previewTemplateInstall` describes. A port that something other than Hoserva takes after the install is not checked. Then it creates the stack as `createStack` does: the stack's row records the template's source, id and revision, and `docker-compose.yml` (the template with its `x-hoserva` block kept, plus the `/dev/dri` device and the host's `render` group for a GPU that was chosen), `.env` (every input; secrets only here) and `meta.json` are generated and checked with `docker compose config`. Nothing is started. The result carries the privilege summary, so a template that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409 `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`. An input that needs a value and has none is refused with 400 `invalid_template_input` whose `details.input` names it, and a `networkMode` that names a network that does not exist with 409 `network_missing` (the message holds the `docker network create` command); nothing is written in either case.
          */
         post: operations["installTemplate"];
         delete?: never;
@@ -3780,6 +3852,10 @@ export interface components {
             categories: string[];
             /** @description The upstream documentation the template was written from. */
             docs: string;
+            /** @description Who maintains the template or the app, as the catalog's index lists it. Absent when the template names none. */
+            maintainer?: string;
+            /** @description The template's description as the catalog's index lists it; the catalog card shows an excerpt. Plain text, never markup. Absent when the template has none. */
+            description?: string;
             /** @description Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
             sourceKind: components["schemas"]["CatalogSourceKind"];
@@ -3904,6 +3980,13 @@ export interface components {
             title: string;
             categories: string[];
             docs: string;
+            /** @description Who maintains the template or the app. Absent when the template names none. */
+            maintainer?: string;
+            /** @description Longer plain text for the template's page. Line breaks are meaningful; it is never markup. Absent when the template has none. */
+            description?: string;
+            links?: components["schemas"]["CatalogTemplateLinks"];
+            /** @description How many screenshots the template lists. Screenshot `i` of `0..screenshotCount-1` is `getCatalogTemplateScreenshot`. */
+            screenshotCount: number;
             /** @description Where the template came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
             sourceKind: components["schemas"]["CatalogSourceKind"];
@@ -3914,6 +3997,15 @@ export interface components {
             /** @description Empty when the template asks for nothing beyond an ordinary container. */
             privileges: components["schemas"]["TemplatePrivilege"][];
         };
+        /** @description The addresses the template's page offers, each absolute `https` with a host and no credentials. A link the template does not set is absent. */
+        CatalogTemplateLinks: {
+            /** @description The app's project page. */
+            project?: string;
+            /** @description Where to get help with the app. */
+            support?: string;
+            /** @description Where to support the app's development. */
+            donate?: string;
+        };
         TemplateInstallRequest: {
             /** @description The stack's name, under the rules of `createStack`. Absent means the template's id. */
             name?: string;
@@ -3921,6 +4013,22 @@ export interface components {
             values?: {
                 [key: string]: string;
             };
+            /** @description `bridge`, `host` or the name of an existing Docker network (Q37). It replaces the service's own `network_mode` and `networks` in the generated Compose file. A name that is not a Docker network name, or is `none`, is refused with 400 `invalid_template_input` (`details.input` is `networkMode`). A network that does not exist is a `missing_network` warning in the plan, with the exact `docker network create <name>` command, and `installTemplate` refuses it with 409 `network_missing`: Hoserva never creates networks. A failure to list the networks is an error (503 `docker_unavailable` when Docker is not reachable), never read as the network existing. Absent leaves the template's network settings as they are, and so does an empty string. Refused for a template with several services, like `cpus`, `memoryMiB` and `extraParams` (`advancedAvailable` is false). */
+            networkMode?: string;
+            /**
+             * @description The restart policy of every service. Absent leaves the template's.
+             * @enum {string}
+             */
+            restart?: "no" | "always" | "unless-stopped" | "on-failure";
+            /**
+             * Format: double
+             * @description CPU limit of the service (Compose `cpus`), from 0.01 to 1024. Absent is no limit, and 0 is not a limit but a value outside the range: 400 `invalid_template_input` (`details.input` is `cpus`).
+             */
+            cpus?: number;
+            /** @description Memory limit of the service in MiB (Compose `mem_limit`), from 6 to 16777216. Absent is no limit, and 0 is not a limit but a value outside the range: 400 `invalid_template_input` (`details.input` is `memoryMiB`). */
+            memoryMiB?: number;
+            /** @description At most 4096 bytes; longer is 400 `invalid_template_input`. Absent or empty adds nothing. Raw `docker run` flags, read by the parser doc 04 §5 describes for an Unraid template's `ExtraParams`: parsed into Compose fields and merged into the service, never passed to a shell. A flag outside the translate table, a word that is not a flag, or a string with shell syntax is a `untranslated_flag` warning in the plan and a comment above the service in the Compose file, never dropped silently. A flag that widens privileges (`--cap-add`, `--device`, `--pid=host`, `--security-opt`, a mount of a host path or of the Docker socket) is applied and shows in the plan's `privileges`. An entry that clashes with the template's own (a variable, label or mount at the same target with another value) is a `conflict` warning and the template's is kept. `--restart`, `--cpus` and `--memory` are refused with 400 `invalid_template_input` (`details.input` is `extraParams`) only when the request also gives `restart`, `cpus` or `memoryMiB` respectively; otherwise they translate like any other flag. A named volume a mount refers to is declared under the top-level `volumes` of the Compose file (one the template declares stays as declared). A host port a `-p` flag publishes is checked as a port input is: one the template's own ports, another flag, a container, a stack or the host already holds is refused with 409 `no_free_port` (`details.input` is `extraParams`) and is never moved, and a port that cannot be checked is refused too. Under host networking Docker ignores published ports, so none is checked. */
+            extraParams?: string;
         };
         TemplateInput: {
             name: string;
@@ -3936,8 +4044,42 @@ export interface components {
             requestedValue?: string;
             /** @description A secret that the install generates. */
             generated: boolean;
+            /** @description True for an input that may not be left empty: a `path`, a `port`, or a `string` input the template does not mark `optional`. */
+            required: boolean;
+            /** @description Present on a `required` input that has no value and no default: what is missing. `previewTemplateInstall` lists the input with this instead of refusing the request, so a form can show every field; `installTemplate` refuses the same input with 400 `invalid_template_input`. */
+            error?: string;
             /** @description The existing shares' paths for a `path` input that is not appdata; the host's `/dev/dri` render devices for a `device` input. */
             suggestions?: string[];
+        };
+        StackConfigInput: {
+            name: string;
+            /** @enum {string} */
+            kind: "path" | "port" | "string" | "secret" | "timezone" | "device";
+            /** @enum {string} */
+            role?: "appdata" | "share" | "media" | "downloads" | "gpu";
+            label?: string;
+            description?: string;
+            /** @description The value the stack's `.env` gives the input; empty when it gives none. Absent for a secret. */
+            value?: string;
+            /** @description Present on a `secret` input only: whether the stack's `.env` gives it a value. The value itself is never returned. */
+            set?: boolean;
+            /** @description True for a `device` input, which `updateStackConfig` refuses to change. */
+            readOnly: boolean;
+            /** @description The existing shares' paths for a `path` input that is not appdata. */
+            suggestions?: string[];
+        };
+        StackConfig: {
+            stack: components["schemas"]["Stack"];
+            /** @description The template's inputs, sorted by name. */
+            inputs: components["schemas"]["StackConfigInput"][];
+        };
+        UpdateStackConfigRequest: {
+            /** @description Input name to its new value. An input with no entry keeps its value; an empty entry takes the input's default. An entry for a name that is not one of the stack's inputs is refused. */
+            values?: {
+                [key: string]: string;
+            };
+            /** @description Names of secret inputs to give a newly generated value. */
+            generate?: string[];
         };
         TemplatePrivilege: {
             /** @enum {string} */
@@ -3955,8 +4097,12 @@ export interface components {
             /** @description The stack's name. */
             name: string;
             inputs: components["schemas"]["TemplateInput"][];
-            /** @description Empty when the template asks for nothing beyond an ordinary container. */
+            /** @description Computed from the generated Compose content, so it includes what `networkMode` and `extraParams` add. Empty when the template asks for nothing beyond an ordinary container. */
             privileges: components["schemas"]["TemplatePrivilege"][];
+            /** @description What the network mode and the extra parameters could not carry out or need a decision on, to read before installing: untranslated flags, host paths outside the pool and the cache, clashes with the template's own entries, a network that does not exist (with its command) and notes. Empty with no such setting. */
+            warnings: components["schemas"]["ConversionWarning"][];
+            /** @description False for a template with several services, where `networkMode`, `cpus`, `memoryMiB` and `extraParams` are refused because no input says which service they mean; `restart` still applies to every service. */
+            advancedAvailable: boolean;
             /** @description The `docker-compose.yml` text that an install writes. */
             compose: string;
         };
@@ -3990,7 +4136,7 @@ export interface components {
             message: string;
             /** @description The flag, path, network name or entry concerned. */
             detail?: string;
-            /** @description Only on `missing_network`: the `docker network create` command. It holds `<PLACEHOLDER>` values for what the template does not say. */
+            /** @description Only on `missing_network`: the `docker network create` command. In a conversion it holds `<PLACEHOLDER>` values for what the template does not say; in an install plan it is the exact `docker network create <name>` for the network that was chosen. */
             command?: string;
         };
         UnraidTemplateMetadata: {
@@ -4197,6 +4343,18 @@ export interface components {
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
             images: components["schemas"]["AppImage"][];
+        };
+        DockerNetwork: {
+            name: string;
+            /** @description The network's driver, such as `bridge`, `host`, `macvlan` or `ipvlan`. */
+            driver: string;
+        };
+        ListDockerNetworksOK: {
+            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            available: boolean;
+            /** @description Set alongside available=false with the reason and a remediation. */
+            message?: string;
+            networks: components["schemas"]["DockerNetwork"][];
         };
         /**
          * @description Q74 retention tier used for this response.
@@ -8057,6 +8215,27 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listDockerNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Network inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListDockerNetworksOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listAppUpdates: {
         parameters: {
             query?: never;
@@ -8596,6 +8775,58 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getStackConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stack's inputs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackConfig"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateStackConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStackConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description The stack's inputs after the change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackConfig"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getStackTemplateUpdate: {
         parameters: {
             query?: never;
@@ -8869,6 +9100,36 @@ export interface operations {
                 };
                 content: {
                     "image/svg+xml": string;
+                    "image/png": string;
+                    "image/webp": string;
+                    "image/jpeg": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCatalogTemplateScreenshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+                /** @description The screenshot's position in the template's list, from 0 to `screenshotCount` of `getCatalogTemplate` minus one. */
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The screenshot. */
+            200: {
+                headers: {
+                    "Content-Security-Policy": string;
+                    "X-Content-Type-Options": string;
+                    [name: string]: unknown;
+                };
+                content: {
                     "image/png": string;
                     "image/webp": string;
                     "image/jpeg": string;

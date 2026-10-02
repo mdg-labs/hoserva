@@ -36,6 +36,10 @@ var (
 	// served: no such file, not a plain file inside the template's
 	// directory, an extension outside the allow-list, or too large.
 	ErrIconNotFound = errors.New("template: the template has no icon that can be served")
+	// ErrScreenshotNotFound is returned when a template has no screenshot
+	// with that number, or the file cannot be served: no such file, not a
+	// plain file inside the template's directory, or too large.
+	ErrScreenshotNotFound = errors.New("template: the template has no screenshot that can be served")
 	// ErrInvalidInput is returned for an install value the template does
 	// not accept.
 	ErrInvalidInput = errors.New("template: invalid install input")
@@ -45,6 +49,15 @@ var (
 	// ErrNoFreePort is returned when no port above the requested one is
 	// free.
 	ErrNoFreePort = errors.New("template: no free port is left above the requested one")
+	// ErrPortTaken is returned when a stack's port input is changed to a
+	// port that a container, another stack or the host already uses.
+	ErrPortTaken = errors.New("template: the port is already in use")
+	// ErrNetworkMissing is returned by an install that names a Docker network
+	// that does not exist. Hoserva never creates networks (Q37).
+	ErrNetworkMissing = errors.New("template: the network does not exist")
+	// ErrStackHasNoTemplate is returned for a stack whose Compose file has
+	// no x-hoserva block, so it has no inputs to show or change.
+	ErrStackHasNoTemplate = errors.New("template: the stack has no x-hoserva block")
 )
 
 // Entry is one template as a catalog holds it: the compose.yaml bytes and
@@ -66,6 +79,10 @@ type IndexEntry struct {
 	Title      string
 	Categories []string
 	Docs       string
+	// Maintainer is empty when the template names none.
+	Maintainer string
+	// Description is empty when the template names none.
+	Description string
 	// Source, Kind and Signed are the entry's source and its badge, as on
 	// Entry.
 	Source string
@@ -88,6 +105,13 @@ type Icon struct {
 	Data        []byte
 }
 
+// Screenshot is one of a template's screenshots with the content type its
+// extension is allowed to be served as.
+type Screenshot struct {
+	ContentType string
+	Data        []byte
+}
+
 // Catalog is a source of templates (doc 04 §4): the one interface the
 // curated catalog sits behind, so another source changes what is registered,
 // not the code that lists, shows and installs templates.
@@ -101,9 +125,17 @@ type Catalog interface {
 	// Icon returns one template's icon, ErrTemplateNotFound for an unknown
 	// template or ErrIconNotFound for one with no servable icon.
 	Icon(ctx context.Context, id string) (Icon, error)
+	// Screenshot returns the template's screenshot at that position in its
+	// x-hoserva screenshots list, ErrTemplateNotFound for an unknown
+	// template or ErrScreenshotNotFound for a position the template has no
+	// servable screenshot at.
+	Screenshot(ctx context.Context, id string, index int) (Screenshot, error)
 }
 
-const maxIconBytes = 1 << 20
+const (
+	maxIconBytes       = 1 << 20
+	maxScreenshotBytes = 4 << 20
+)
 
 var iconTypes = map[string]string{
 	".svg":  "image/svg+xml",
@@ -125,6 +157,24 @@ func iconFile(id string, entry Entry) (name, contentType string, err error) {
 		return "", "", fmt.Errorf("%w: %q has the extension of no allowed image type", ErrIconNotFound, t.Block.Icon)
 	}
 	return t.Block.Icon, ct, nil
+}
+
+// screenshotFile returns the file name and content type of the screenshot at
+// index in the template the entry holds.
+func screenshotFile(id string, entry Entry, index int) (name, contentType string, err error) {
+	t, issues := Parse(entry.Data)
+	if t == nil {
+		return "", "", invalidTemplate(id, issues)
+	}
+	if index < 0 || index >= len(t.Block.Screenshots) {
+		return "", "", fmt.Errorf("%w: template %q has %d screenshots", ErrScreenshotNotFound, id, len(t.Block.Screenshots))
+	}
+	name = t.Block.Screenshots[index]
+	ct, ok := iconTypes[strings.ToLower(filepath.Ext(name))]
+	if !ok || ct == "image/svg+xml" {
+		return "", "", fmt.Errorf("%w: %q has the extension of no allowed image type", ErrScreenshotNotFound, name)
+	}
+	return name, ct, nil
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -164,17 +214,43 @@ func openPlain(file string) (*os.File, error) {
 	return f, nil
 }
 
+// plainFileUnder checks that rel names a regular file under root without any
+// symlink on the way: every directory component and the file itself are
+// looked at without following links. It returns the file's info.
+func plainFileUnder(root, rel string) (os.FileInfo, error) {
+	parts := strings.Split(rel, "/")
+	p := root
+	var info os.FileInfo
+	for i, part := range parts {
+		p = filepath.Join(p, part)
+		var err error
+		info, err = os.Lstat(p)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%w: %s is a symlink", errNotPlain, p)
+		}
+		if last := i == len(parts)-1; last != info.Mode().IsRegular() || (!last && !info.IsDir()) {
+			return nil, fmt.Errorf("%w: %s", errNotPlain, p)
+		}
+	}
+	return info, nil
+}
+
 func (d DirCatalog) Name() string { return d.Source }
 
 type indexDoc struct {
 	Serial      int64     `json:"serial"`
 	GeneratedAt time.Time `json:"generatedAt"`
 	Templates   []struct {
-		ID         string   `json:"id"`
-		Revision   int      `json:"revision"`
-		Title      string   `json:"title"`
-		Categories []string `json:"categories"`
-		Docs       string   `json:"docs"`
+		ID          string   `json:"id"`
+		Revision    int      `json:"revision"`
+		Title       string   `json:"title"`
+		Categories  []string `json:"categories"`
+		Docs        string   `json:"docs"`
+		Maintainer  string   `json:"maintainer"`
+		Description string   `json:"description"`
 	} `json:"templates"`
 }
 
@@ -223,7 +299,13 @@ func parseIndex(data []byte) (Index, error) {
 		if cats == nil {
 			cats = []string{}
 		}
-		out.Templates[i] = IndexEntry{ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: cats, Docs: t.Docs}
+		if err := validateMaintainer(t.Maintainer); err != nil {
+			return Index{}, fmt.Errorf("lists template %q with a maintainer that %v", t.ID, err)
+		}
+		if err := validateDescription(t.Description); err != nil {
+			return Index{}, fmt.Errorf("lists template %q with a description that %v", t.ID, err)
+		}
+		out.Templates[i] = IndexEntry{ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: cats, Docs: t.Docs, Maintainer: t.Maintainer, Description: t.Description}
 	}
 	return out, nil
 }
@@ -254,6 +336,39 @@ func (d DirCatalog) Icon(ctx context.Context, id string) (Icon, error) {
 		return Icon{}, fmt.Errorf("%w: %q is larger than %d bytes", ErrIconNotFound, name, maxIconBytes)
 	}
 	return Icon{ContentType: contentType, Data: data}, nil
+}
+
+func (d DirCatalog) Screenshot(ctx context.Context, id string, index int) (Screenshot, error) {
+	entry, err := d.Entry(ctx, id)
+	if err != nil {
+		return Screenshot{}, err
+	}
+	name, contentType, err := screenshotFile(id, entry, index)
+	if err != nil {
+		return Screenshot{}, err
+	}
+	dir := filepath.Join(d.Root, id)
+	if _, err := plainFileUnder(dir, name); errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotPlain) {
+		return Screenshot{}, fmt.Errorf("%w: %q is not a plain file of template %q", ErrScreenshotNotFound, name, id)
+	} else if err != nil {
+		return Screenshot{}, fmt.Errorf("reading screenshot %d of template %q: %w", index, id, err)
+	}
+	f, err := openPlain(filepath.Join(dir, filepath.FromSlash(name)))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotPlain) {
+		return Screenshot{}, fmt.Errorf("%w: %q is not a plain file of template %q", ErrScreenshotNotFound, name, id)
+	}
+	if err != nil {
+		return Screenshot{}, fmt.Errorf("reading screenshot %d of template %q: %w", index, id, err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxScreenshotBytes+1))
+	if err != nil {
+		return Screenshot{}, fmt.Errorf("reading screenshot %d of template %q: %w", index, id, err)
+	}
+	if len(data) > maxScreenshotBytes {
+		return Screenshot{}, fmt.Errorf("%w: %q is larger than %d bytes", ErrScreenshotNotFound, name, maxScreenshotBytes)
+	}
+	return Screenshot{ContentType: contentType, Data: data}, nil
 }
 
 func (d DirCatalog) Entry(_ context.Context, id string) (Entry, error) {
@@ -292,6 +407,9 @@ type MapCatalog struct {
 	GeneratedAt time.Time
 	Templates   map[string]string
 	Icons       map[string][]byte
+	// Screenshots holds each template's screenshot files by template id, in
+	// the order its compose.yaml lists them.
+	Screenshots map[string][][]byte
 }
 
 func (m MapCatalog) Name() string { return m.Source }
@@ -302,7 +420,7 @@ func (m MapCatalog) Index(_ context.Context) (Index, error) {
 	for i, id := range ids {
 		e := IndexEntry{ID: id, Title: id, Categories: []string{}}
 		if t, _ := Parse([]byte(m.Templates[id])); t != nil {
-			e = IndexEntry{ID: id, Revision: t.Block.Revision, Title: t.Block.Title, Categories: t.Block.Categories, Docs: t.Block.Docs}
+			e = IndexEntry{ID: id, Revision: t.Block.Revision, Title: t.Block.Title, Categories: t.Block.Categories, Docs: t.Block.Docs, Maintainer: t.Block.Maintainer, Description: t.Block.Description}
 		}
 		e.Source, e.Kind, e.Signed = m.Source, m.Kind, m.Signed
 		out.Templates[i] = e
@@ -332,4 +450,20 @@ func (m MapCatalog) Icon(ctx context.Context, id string) (Icon, error) {
 		return Icon{}, fmt.Errorf("%w: template %q", ErrIconNotFound, id)
 	}
 	return Icon{ContentType: contentType, Data: data}, nil
+}
+
+func (m MapCatalog) Screenshot(ctx context.Context, id string, index int) (Screenshot, error) {
+	entry, err := m.Entry(ctx, id)
+	if err != nil {
+		return Screenshot{}, err
+	}
+	_, contentType, err := screenshotFile(id, entry, index)
+	if err != nil {
+		return Screenshot{}, err
+	}
+	files := m.Screenshots[id]
+	if index >= len(files) || len(files[index]) > maxScreenshotBytes {
+		return Screenshot{}, fmt.Errorf("%w: template %q", ErrScreenshotNotFound, id)
+	}
+	return Screenshot{ContentType: contentType, Data: files[index]}, nil
 }

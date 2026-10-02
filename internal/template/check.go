@@ -1,10 +1,14 @@
 package template
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mdg-labs/hoserva/internal/container"
 )
@@ -32,6 +36,7 @@ var checks = []Check{
 	checkBindSources,
 	checkSelfContained,
 	checkUserIDs,
+	checkMetadata,
 }
 
 // Check runs every rule beyond the schema and returns what it found, in a
@@ -394,4 +399,105 @@ func environment(v any) map[string]string {
 		}
 	}
 	return out
+}
+
+const (
+	maxMaintainerRunes  = 100
+	maxDescriptionRunes = 2000
+	maxLinkBytes        = 2048
+)
+
+// checkMetadata holds the catalog page's optional text and links to what the
+// page can show safely: no control characters in text, and links that are
+// absolute https addresses with a host and no embedded credentials.
+func checkMetadata(t *Template) []Issue {
+	var out []Issue
+	if err := validateMaintainer(t.Block.Maintainer); err != nil {
+		out = append(out, Issue{Path: []string{BlockKey, "maintainer"}, Message: err.Error()})
+	}
+	if err := validateDescription(t.Block.Description); err != nil {
+		out = append(out, Issue{Path: []string{BlockKey, "description"}, Message: err.Error()})
+	}
+	links := []struct{ key, value string }{
+		{"project", t.Block.Links.Project},
+		{"support", t.Block.Links.Support},
+		{"donate", t.Block.Links.Donate},
+	}
+	for _, l := range links {
+		if l.value == "" {
+			continue
+		}
+		if err := validateLink(l.value); err != nil {
+			out = append(out, Issue{Path: []string{BlockKey, "links", l.key}, Message: err.Error()})
+		}
+	}
+	return out
+}
+
+// validateMaintainer accepts an empty value (no maintainer) or a single line
+// of at most maxMaintainerRunes characters with something visible in it.
+func validateMaintainer(s string) error {
+	switch {
+	case s == "":
+		return nil
+	case utf8.RuneCountInString(s) > maxMaintainerRunes:
+		return fmt.Errorf("is longer than %d characters", maxMaintainerRunes)
+	case hasControl(s, false):
+		return errors.New("holds a control character")
+	case strings.TrimSpace(s) == "":
+		return errors.New("is blank")
+	}
+	return nil
+}
+
+// validateDescription accepts an empty value (no description) or plain text
+// of at most maxDescriptionRunes characters with something visible in it;
+// line breaks and tabs are the only control characters allowed.
+func validateDescription(s string) error {
+	switch {
+	case s == "":
+		return nil
+	case utf8.RuneCountInString(s) > maxDescriptionRunes:
+		return fmt.Errorf("is longer than %d characters", maxDescriptionRunes)
+	case hasControl(s, true):
+		return errors.New("holds a control character; only line breaks and tabs are allowed")
+	case strings.TrimSpace(s) == "":
+		return errors.New("is blank")
+	}
+	return nil
+}
+
+// validateLink accepts an absolute https address with a host, no embedded
+// credentials, no whitespace or control characters and at most maxLinkBytes.
+func validateLink(s string) error {
+	if len(s) > maxLinkBytes {
+		return fmt.Errorf("is longer than %d bytes", maxLinkBytes)
+	}
+	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return errors.New("holds whitespace or a control character")
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("is not a valid address: %v", err)
+	}
+	switch {
+	case u.Scheme != "https":
+		return errors.New("must be an https address")
+	case u.Hostname() == "":
+		return errors.New("has no host")
+	case u.User != nil:
+		return errors.New("must not carry a user name or password")
+	}
+	return nil
+}
+
+// hasControl reports a control character in s; with allowBreaks, a line
+// break or tab is not one.
+func hasControl(s string, allowBreaks bool) bool {
+	return strings.IndexFunc(s, func(r rune) bool {
+		if allowBreaks && (r == '\n' || r == '\t' || r == '\r') {
+			return false
+		}
+		return unicode.IsControl(r)
+	}) >= 0
 }

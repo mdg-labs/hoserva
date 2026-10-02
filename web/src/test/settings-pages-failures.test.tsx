@@ -759,7 +759,9 @@ describe("Appdata backup failures", () => {
     appdataApi({ post: { "/appdata/backup": () => fail(code, `backup says ${code}`, status) } });
 
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+    const backUp = await screen.findByRole("button", { name: "Back up now" });
+    await waitFor(() => expect(backUp).toBeEnabled());
+    fireEvent.click(backUp);
 
     expect(await screen.findByText(title)).toBeInTheDocument();
     expect(screen.getByText(`backup says ${code}`)).toBeInTheDocument();
@@ -771,7 +773,9 @@ describe("Appdata backup failures", () => {
     appdataApi({ post: { "/appdata/backup": () => Promise.reject(new Error("network down")) } });
 
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+    const backUp = await screen.findByRole("button", { name: "Back up now" });
+    await waitFor(() => expect(backUp).toBeEnabled());
+    fireEvent.click(backUp);
 
     expect(await screen.findByText("Could not start the appdata backup")).toBeInTheDocument();
     expect(screen.getByText("network down")).toBeInTheDocument();
@@ -781,7 +785,9 @@ describe("Appdata backup failures", () => {
     appdataApi({ job: () => fail("internal", "job store unavailable", 500) });
 
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+    const backUp = await screen.findByRole("button", { name: "Back up now" });
+    await waitFor(() => expect(backUp).toBeEnabled());
+    fireEvent.click(backUp);
 
     expect(await screen.findByText("Could not follow the job")).toBeInTheDocument();
     expect(screen.getByText("job store unavailable")).toBeInTheDocument();
@@ -792,7 +798,9 @@ describe("Appdata backup failures", () => {
     appdataApi({ job: () => ok(job("appdata_backup", "cancelled")) });
 
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Back up now" }));
+    const backUp = await screen.findByRole("button", { name: "Back up now" });
+    await waitFor(() => expect(backUp).toBeEnabled());
+    fireEvent.click(backUp);
 
     expect(await screen.findByText("The appdata backup failed")).toBeInTheDocument();
     expect(screen.getByText("Job status: Cancelled.")).toBeInTheDocument();

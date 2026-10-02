@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -14,9 +15,20 @@ func errTemplatesNotConfigured() error {
 }
 
 // mapTemplateError reports the template-side errors as such and leaves
-// everything else, the stack and Docker errors an install can run into, to
-// mapStackError.
-func mapTemplateError(name string, err error) error {
+// everything else, the stack and Docker errors an install or a change of an
+// installed stack's inputs can run into, to mapStackError. verb names what
+// was attempted, for the message of a failure it cannot classify.
+func mapTemplateError(name string, err error, verb string) error {
+	mapped := mapTemplateErrorKind(name, err, verb)
+	var ie *template.InputError
+	var ae *apiError
+	if errors.As(err, &ie) && errors.As(mapped, &ae) {
+		ae.input = ie.Input
+	}
+	return mapped
+}
+
+func mapTemplateErrorKind(name string, err error, verb string) error {
 	switch {
 	case errors.Is(err, template.ErrTemplateNotFound):
 		return &apiError{code: "template_not_found", statusCode: 404, message: err.Error()}
@@ -24,16 +36,31 @@ func mapTemplateError(name string, err error) error {
 		return &apiError{code: "template_invalid", statusCode: 422, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidInput):
 		return &apiError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
+	case errors.Is(err, template.ErrNetworkMissing):
+		return &apiError{code: "network_missing", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrGPUUnavailable):
 		return &apiError{code: "gpu_unavailable", statusCode: 409, message: err.Error()}
-	case errors.Is(err, template.ErrNoFreePort):
+	case errors.Is(err, template.ErrNoFreePort), errors.Is(err, template.ErrPortTaken):
 		return &apiError{code: "no_free_port", statusCode: 409, message: err.Error()}
+	case errors.Is(err, template.ErrStackHasNoTemplate):
+		return &apiError{code: "stack_has_no_template", statusCode: 409, message: fmt.Sprintf("stack %q was not installed from a template and has no inputs to change; edit its Compose file instead", name)}
 	}
-	return mapStackError(name, err, "installing")
+	return mapStackError(name, err, verb)
 }
 
 func planRequest(id string, req *apiv1.TemplateInstallRequest) template.PlanRequest {
-	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil)}
+	return template.PlanRequest{
+		ID:     id,
+		Name:   req.Name.Or(""),
+		Values: req.Values.Or(nil),
+		Advanced: template.Advanced{
+			NetworkMode: req.NetworkMode.Or(""),
+			Restart:     string(req.Restart.Or("")),
+			CPUs:        optFloat(req.Cpus),
+			MemoryMiB:   optInt(req.MemoryMiB),
+			ExtraParams: req.ExtraParams.Or(""),
+		},
+	}
 }
 
 func (h *Handler) PreviewTemplateInstall(ctx context.Context, req *apiv1.TemplateInstallRequest, params apiv1.PreviewTemplateInstallParams) (*apiv1.TemplateInstallPlan, error) {
@@ -42,7 +69,7 @@ func (h *Handler) PreviewTemplateInstall(ctx context.Context, req *apiv1.Templat
 	}
 	plan, err := h.TemplateInstall.Preview(ctx, planRequest(params.ID, req))
 	if err != nil {
-		return nil, mapTemplateError(req.Name.Or(params.ID), err)
+		return nil, mapTemplateError(req.Name.Or(params.ID), err, "installing")
 	}
 	out := planToAPI(plan)
 	return &out, nil
@@ -54,9 +81,64 @@ func (h *Handler) InstallTemplate(ctx context.Context, req *apiv1.TemplateInstal
 	}
 	plan, st, err := h.TemplateInstall.Install(ctx, planRequest(params.ID, req))
 	if err != nil {
-		return nil, mapTemplateError(req.Name.Or(params.ID), err)
+		return nil, mapTemplateError(req.Name.Or(params.ID), err, "installing")
 	}
 	return &apiv1.TemplateInstallResult{Stack: stackToAPI(st), Plan: planToAPI(plan)}, nil
+}
+
+func (h *Handler) GetStackConfig(ctx context.Context, params apiv1.GetStackConfigParams) (*apiv1.StackConfig, error) {
+	if h.TemplateInstall == nil {
+		return nil, errTemplatesNotConfigured()
+	}
+	cfg, err := h.TemplateInstall.Config(ctx, params.Name)
+	if err != nil {
+		return nil, mapTemplateError(params.Name, err, "reading")
+	}
+	out := stackConfigToAPI(cfg)
+	return &out, nil
+}
+
+func (h *Handler) UpdateStackConfig(ctx context.Context, req *apiv1.UpdateStackConfigRequest, params apiv1.UpdateStackConfigParams) (*apiv1.StackConfig, error) {
+	if h.TemplateInstall == nil {
+		return nil, errTemplatesNotConfigured()
+	}
+	cfg, err := h.TemplateInstall.UpdateConfig(ctx, params.Name, template.ConfigUpdate{
+		Values:   req.Values.Or(nil),
+		Generate: req.Generate,
+	})
+	if err != nil {
+		return nil, mapTemplateError(params.Name, err, "configuring")
+	}
+	out := stackConfigToAPI(cfg)
+	return &out, nil
+}
+
+func stackConfigToAPI(c *template.StackConfig) apiv1.StackConfig {
+	out := apiv1.StackConfig{Stack: stackToAPI(c.Stack), Inputs: make([]apiv1.StackConfigInput, len(c.Inputs))}
+	for i, in := range c.Inputs {
+		ci := apiv1.StackConfigInput{
+			Name:        in.Name,
+			Kind:        apiv1.StackConfigInputKind(in.Kind),
+			ReadOnly:    in.ReadOnly,
+			Suggestions: in.Suggestions,
+		}
+		if in.Role != "" {
+			ci.Role = apiv1.NewOptStackConfigInputRole(apiv1.StackConfigInputRole(in.Role))
+		}
+		if in.Label != "" {
+			ci.Label = apiv1.NewOptString(in.Label)
+		}
+		if in.Description != "" {
+			ci.Description = apiv1.NewOptString(in.Description)
+		}
+		if in.Kind == template.KindSecret {
+			ci.Set = apiv1.NewOptBool(in.Set)
+		} else {
+			ci.Value = apiv1.NewOptString(in.Value)
+		}
+		out.Inputs[i] = ci
+	}
+	return out
 }
 
 func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
@@ -66,14 +148,19 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 		Name:       p.Name,
 		Inputs:     make([]apiv1.TemplateInput, len(p.Inputs)),
 		Privileges: make([]apiv1.TemplatePrivilege, len(p.Privileges)),
-		Compose:    p.Compose,
+		Warnings:   make([]apiv1.ConversionWarning, len(p.Warnings)),
+
+		AdvancedAvailable: p.AdvancedAvailable,
+		Compose:           p.Compose,
 	}
 	for i, in := range p.Inputs {
 		ti := apiv1.TemplateInput{
 			Name:        in.Name,
 			Kind:        apiv1.TemplateInputKind(in.Kind),
 			Generated:   in.Generated,
+			Required:    in.Required,
 			Suggestions: in.Suggestions,
+			Error:       optString(in.Error),
 		}
 		if in.Role != "" {
 			ti.Role = apiv1.NewOptTemplateInputRole(apiv1.TemplateInputRole(in.Role))
@@ -95,7 +182,33 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 	for i, pr := range p.Privileges {
 		out.Privileges[i] = privilegeToAPI(pr)
 	}
+	for i, w := range p.Warnings {
+		out.Warnings[i] = warningToAPI(w)
+	}
 	return out
+}
+
+func optFloat(o apiv1.OptFloat64) *float64 {
+	if v, ok := o.Get(); ok {
+		return &v
+	}
+	return nil
+}
+
+func optInt(o apiv1.OptInt) *int {
+	if v, ok := o.Get(); ok {
+		return &v
+	}
+	return nil
+}
+
+func warningToAPI(w template.Warning) apiv1.ConversionWarning {
+	return apiv1.ConversionWarning{
+		Class:   apiv1.ConversionWarningClass(w.Class),
+		Message: w.Message,
+		Detail:  optString(w.Detail),
+		Command: optString(w.Command),
+	}
 }
 
 func privilegeToAPI(pr template.Privilege) apiv1.TemplatePrivilege {
@@ -142,12 +255,7 @@ func conversionToAPI(c *template.Conversion) apiv1.UnraidConversion {
 		},
 	}
 	for i, w := range c.Warnings {
-		out.Warnings[i] = apiv1.ConversionWarning{
-			Class:   apiv1.ConversionWarningClass(w.Class),
-			Message: w.Message,
-			Detail:  optString(w.Detail),
-			Command: optString(w.Command),
-		}
+		out.Warnings[i] = warningToAPI(w)
 	}
 	for i, p := range c.Privileges {
 		out.Privileges[i] = privilegeToAPI(p)

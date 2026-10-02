@@ -518,10 +518,10 @@ The catalog repository (`mdg-labs/hoserva-catalog`, Q39) is licensed **MIT**, no
 **Default: "clean" means the generated Compose file needs no manual action. Informational warnings (`:latest` tag, a dropped `<Shell>`) are allowed; untranslated `ExtraParams`, unresolved networks, or paths flagged for review are not.** The converter's clean-conversion release metric, which must not regress, uses this definition.
 
 ### Q37 — Container networks
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.4, doc 04 §1, §5
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.4, doc 04 §1, §5, §7
 
-**Default: the install flow offers bridge, host, or any *existing* custom network (macvlan/ipvlan included). v1 has no network-creation UI. When a template needs a network that doesn't exist, the converter's warning includes the exact `docker network create` command.**
-Doc 03 said "custom", doc 04 said "beyond bridge/host/macvlan selection", and doc 04 §5 said "requires a pre-existing network". This default reconciles the three while staying inside D6.
+**Default: the install flow lists the *existing* Docker networks and offers bridge, host, or any of them (macvlan/ipvlan included); it never creates one. v1 has no network-creation UI. When a template needs a network that doesn't exist, the converter's warning includes the exact `docker network create` command. A network chosen at install that doesn't exist is reported in the install plan with the same exact command, and the install is refused until the network exists.**
+Doc 03 said "custom", doc 04 said "beyond bridge/host/macvlan selection", and doc 04 §5 said "requires a pre-existing network". This default reconciles the three while staying inside D6. The command appears on both paths, in the converter's warning and in the install plan, so the user can create the network themselves and come back to the same install; refusing until it exists keeps a missing network from becoming a failed start, and nothing is ever created on the user's behalf.
 
 ### Q38 — Minimum Docker version
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §3

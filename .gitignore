@@ -74,3 +74,6 @@ internal/template/snapshot/*
 
 # Editors and OS
 .DS_Store
+
+# Per-machine Claude Code settings
+/.claude/settings.json

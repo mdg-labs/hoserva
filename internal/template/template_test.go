@@ -367,3 +367,154 @@ func TestLintOfOnlyASymlinkedTemplateFails(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// withMetadata is the fixture with extra x-hoserva lines before its webui
+// line, written as a one-template catalog.
+func withMetadata(t *testing.T, extra string) string {
+	t.Helper()
+	return catalogWith(t, "  webui:", extra+"  webui:")
+}
+
+func writeShot(t *testing.T, dir, rel string, size int) {
+	t.Helper()
+	p := filepath.Join(dir, "jellyfin", filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, make([]byte, size), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLintAcceptsTheCatalogMetadata(t *testing.T) {
+	dir := withMetadata(t, `  maintainer: LinuxServer.io
+  description: |-
+    First paragraph.
+
+    Second paragraph.
+  screenshots: [screenshots/library.png, player.webp, a/b/c.JPG.jpeg]
+  links:
+    project: https://jellyfin.org/
+    support: https://jellyfin.org/docs/general/getting-help/?q=a
+    donate: https://opencollective.com/jellyfin
+`)
+	for _, rel := range []string{"screenshots/library.png", "player.webp", "a/b/c.JPG.jpeg"} {
+		writeShot(t, dir, rel, 10)
+	}
+	if got := lintStrings(t, dir); len(got) != 0 {
+		t.Fatalf("lint refused valid metadata:\n%s", strings.Join(got, "\n"))
+	}
+	tpl, _ := Parse([]byte(readFile(t, filepath.Join(dir, "jellyfin", ComposeFile))))
+	if tpl == nil || tpl.Block.Maintainer != "LinuxServer.io" || tpl.Block.Links.Donate != "https://opencollective.com/jellyfin" ||
+		len(tpl.Block.Screenshots) != 3 || !strings.Contains(tpl.Block.Description, "\n\nSecond") {
+		t.Fatalf("block = %+v", tpl)
+	}
+}
+
+func readFile(t *testing.T, p string) string {
+	t.Helper()
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestLintRefusesInvalidCatalogMetadata(t *testing.T) {
+	long := func(n int) string { return strings.Repeat("a", n) }
+	cases := []struct{ name, extra, want string }{
+		{"empty maintainer", "  maintainer: \"\"\n", "x-hoserva.maintainer"},
+		{"blank maintainer", "  maintainer: \"   \"\n", "x-hoserva.maintainer: is blank"},
+		{"long maintainer", "  maintainer: " + long(101) + "\n", "x-hoserva.maintainer"},
+		{"maintainer with a control character", "  maintainer: \"a\\x07b\"\n", "x-hoserva.maintainer: holds a control character"},
+		{"maintainer with a line break", "  maintainer: \"a\\nb\"\n", "x-hoserva.maintainer: holds a control character"},
+		{"long description", "  description: " + long(2001) + "\n", "x-hoserva.description"},
+		{"blank description", "  description: \"  \\n \"\n", "x-hoserva.description: is blank"},
+		{"description with a control character", "  description: \"a\\x1bb\"\n", "x-hoserva.description: holds a control character"},
+		{"http link", "  links: { project: http://example.com/ }\n", "x-hoserva.links.project"},
+		{"javascript link", "  links: { support: \"javascript:alert(1)\" }\n", "x-hoserva.links.support"},
+		{"data link", "  links: { donate: \"data:text/html,x\" }\n", "x-hoserva.links.donate"},
+		{"scheme-relative link", "  links: { project: //example.com/ }\n", "x-hoserva.links.project"},
+		{"link without a host", "  links: { project: \"https://\" }\n", "x-hoserva.links.project: has no host"},
+		{"link with only a port", "  links: { project: \"https://:443/x\" }\n", "x-hoserva.links.project: has no host"},
+		{"link with credentials", "  links: { project: \"https://user:pw@example.com/\" }\n", "x-hoserva.links.project: must not carry a user name or password"},
+		{"link with a space", "  links: { project: \"https://example.com/a b\" }\n", "x-hoserva.links.project: holds whitespace"},
+		{"link with a control character", "  links: { project: \"https://example.com/a\\x07\" }\n", "x-hoserva.links.project"},
+		{"long link", "  links: { project: \"https://example.com/" + long(2040) + "\" }\n", "x-hoserva.links.project"},
+		{"unknown link", "  links: { homepage: https://example.com/ }\n", "additional properties 'homepage' not allowed"},
+		{"no screenshots listed", "  screenshots: []\n", "x-hoserva.screenshots"},
+		{"parent directory", "  screenshots: [../x.png]\n", "x-hoserva.screenshots.0"},
+		{"parent directory in the middle", "  screenshots: [a/../b.png]\n", "x-hoserva.screenshots.0"},
+		{"absolute path", "  screenshots: [/etc/x.png]\n", "x-hoserva.screenshots.0"},
+		{"hidden file", "  screenshots: [.x.png]\n", "x-hoserva.screenshots.0"},
+		{"hidden directory", "  screenshots: [.git/x.png]\n", "x-hoserva.screenshots.0"},
+		{"empty segment", "  screenshots: [a//b.png]\n", "x-hoserva.screenshots.0"},
+		{"backslash", "  screenshots: ['a\\b.png']\n", "x-hoserva.screenshots.0"},
+		{"svg", "  screenshots: [x.svg]\n", "x-hoserva.screenshots.0"},
+		{"gif", "  screenshots: [x.gif]\n", "x-hoserva.screenshots.0"},
+		{"no extension", "  screenshots: [x]\n", "x-hoserva.screenshots.0"},
+		{"duplicates", "  screenshots: [x.png, x.png]\n", "x-hoserva.screenshots"},
+		{"nine", "  screenshots: [1.png, 2.png, 3.png, 4.png, 5.png, 6.png, 7.png, 8.png, 9.png]\n", "x-hoserva.screenshots"},
+		{"long path", "  screenshots: [" + long(201) + ".png]\n", "x-hoserva.screenshots.0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lintStrings(t, withMetadata(t, tc.extra))
+			if len(got) == 0 {
+				t.Fatal("lint passed invalid metadata")
+			}
+			if joined := strings.Join(got, "\n"); !strings.Contains(joined, tc.want) {
+				t.Fatalf("findings do not mention %q:\n%s", tc.want, joined)
+			}
+		})
+	}
+}
+
+func TestLintRefusesAScreenshotThatIsNotAPlainFileInTheTemplateDirectory(t *testing.T) {
+	outside := t.TempDir()
+	writeShotAt := func(t *testing.T, p string, size int) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := map[string]func(t *testing.T, tpl string){
+		"missing": func(t *testing.T, tpl string) {},
+		"a directory": func(t *testing.T, tpl string) {
+			if err := os.MkdirAll(filepath.Join(tpl, "shots", "x.png"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a symlink to a file": func(t *testing.T, tpl string) {
+			writeShotAt(t, filepath.Join(outside, "x.png"), 10)
+			if err := os.MkdirAll(filepath.Join(tpl, "shots"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(outside, "x.png"), filepath.Join(tpl, "shots", "x.png")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"inside a symlinked directory": func(t *testing.T, tpl string) {
+			writeShotAt(t, filepath.Join(outside, "x.png"), 10)
+			if err := os.Symlink(outside, filepath.Join(tpl, "shots")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"over the size cap": func(t *testing.T, tpl string) {
+			writeShotAt(t, filepath.Join(tpl, "shots", "x.png"), maxScreenshotBytes+1)
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := withMetadata(t, "  screenshots: [shots/x.png]\n")
+			setup(t, filepath.Join(dir, "jellyfin"))
+			got := lintStrings(t, dir)
+			if len(got) != 1 || !strings.Contains(got[0], "x-hoserva.screenshots.0: names \"shots/x.png\"") {
+				t.Fatalf("findings = %q, want one about the screenshot", got)
+			}
+		})
+	}
+}

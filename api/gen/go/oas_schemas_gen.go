@@ -2749,6 +2749,12 @@ type CatalogEntry struct {
 	Categories []string `json:"categories"`
 	// The upstream documentation the template was written from.
 	Docs string `json:"docs"`
+	// Who maintains the template or the app, as the catalog's index lists it. Absent when the template
+	// names none.
+	Maintainer OptString `json:"maintainer"`
+	// The template's description as the catalog's index lists it; the catalog card shows an excerpt. Plain
+	// text, never markup. Absent when the template has none.
+	Description OptString `json:"description"`
 	// Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source.
 	Source     string            `json:"source"`
 	SourceKind CatalogSourceKind `json:"sourceKind"`
@@ -2782,6 +2788,16 @@ func (s *CatalogEntry) GetCategories() []string {
 // GetDocs returns the value of Docs.
 func (s *CatalogEntry) GetDocs() string {
 	return s.Docs
+}
+
+// GetMaintainer returns the value of Maintainer.
+func (s *CatalogEntry) GetMaintainer() OptString {
+	return s.Maintainer
+}
+
+// GetDescription returns the value of Description.
+func (s *CatalogEntry) GetDescription() OptString {
+	return s.Description
 }
 
 // GetSource returns the value of Source.
@@ -2827,6 +2843,16 @@ func (s *CatalogEntry) SetCategories(val []string) {
 // SetDocs sets the value of Docs.
 func (s *CatalogEntry) SetDocs(val string) {
 	s.Docs = val
+}
+
+// SetMaintainer sets the value of Maintainer.
+func (s *CatalogEntry) SetMaintainer(val OptString) {
+	s.Maintainer = val
+}
+
+// SetDescription sets the value of Description.
+func (s *CatalogEntry) SetDescription(val OptString) {
+	s.Description = val
 }
 
 // SetSource sets the value of Source.
@@ -3320,6 +3346,15 @@ type CatalogTemplate struct {
 	Title      string   `json:"title"`
 	Categories []string `json:"categories"`
 	Docs       string   `json:"docs"`
+	// Who maintains the template or the app. Absent when the template names none.
+	Maintainer OptString `json:"maintainer"`
+	// Longer plain text for the template's page. Line breaks are meaningful; it is never markup. Absent
+	// when the template has none.
+	Description OptString               `json:"description"`
+	Links       OptCatalogTemplateLinks `json:"links"`
+	// How many screenshots the template lists. Screenshot `i` of `0..screenshotCount-1` is
+	// `getCatalogTemplateScreenshot`.
+	ScreenshotCount int `json:"screenshotCount"`
 	// Where the template came from: `hoserva` for the curated catalog, a source id for a user-added
 	// source.
 	Source     string            `json:"source"`
@@ -3356,6 +3391,26 @@ func (s *CatalogTemplate) GetCategories() []string {
 // GetDocs returns the value of Docs.
 func (s *CatalogTemplate) GetDocs() string {
 	return s.Docs
+}
+
+// GetMaintainer returns the value of Maintainer.
+func (s *CatalogTemplate) GetMaintainer() OptString {
+	return s.Maintainer
+}
+
+// GetDescription returns the value of Description.
+func (s *CatalogTemplate) GetDescription() OptString {
+	return s.Description
+}
+
+// GetLinks returns the value of Links.
+func (s *CatalogTemplate) GetLinks() OptCatalogTemplateLinks {
+	return s.Links
+}
+
+// GetScreenshotCount returns the value of ScreenshotCount.
+func (s *CatalogTemplate) GetScreenshotCount() int {
+	return s.ScreenshotCount
 }
 
 // GetSource returns the value of Source.
@@ -3408,6 +3463,26 @@ func (s *CatalogTemplate) SetDocs(val string) {
 	s.Docs = val
 }
 
+// SetMaintainer sets the value of Maintainer.
+func (s *CatalogTemplate) SetMaintainer(val OptString) {
+	s.Maintainer = val
+}
+
+// SetDescription sets the value of Description.
+func (s *CatalogTemplate) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetLinks sets the value of Links.
+func (s *CatalogTemplate) SetLinks(val OptCatalogTemplateLinks) {
+	s.Links = val
+}
+
+// SetScreenshotCount sets the value of ScreenshotCount.
+func (s *CatalogTemplate) SetScreenshotCount(val int) {
+	s.ScreenshotCount = val
+}
+
 // SetSource sets the value of Source.
 func (s *CatalogTemplate) SetSource(val string) {
 	s.Source = val
@@ -3431,6 +3506,48 @@ func (s *CatalogTemplate) SetCompose(val string) {
 // SetPrivileges sets the value of Privileges.
 func (s *CatalogTemplate) SetPrivileges(val []TemplatePrivilege) {
 	s.Privileges = val
+}
+
+// The addresses the template's page offers, each absolute `https` with a host and no credentials. A
+// link the template does not set is absent.
+// Ref: #/components/schemas/CatalogTemplateLinks
+type CatalogTemplateLinks struct {
+	// The app's project page.
+	Project OptString `json:"project"`
+	// Where to get help with the app.
+	Support OptString `json:"support"`
+	// Where to support the app's development.
+	Donate OptString `json:"donate"`
+}
+
+// GetProject returns the value of Project.
+func (s *CatalogTemplateLinks) GetProject() OptString {
+	return s.Project
+}
+
+// GetSupport returns the value of Support.
+func (s *CatalogTemplateLinks) GetSupport() OptString {
+	return s.Support
+}
+
+// GetDonate returns the value of Donate.
+func (s *CatalogTemplateLinks) GetDonate() OptString {
+	return s.Donate
+}
+
+// SetProject sets the value of Project.
+func (s *CatalogTemplateLinks) SetProject(val OptString) {
+	s.Project = val
+}
+
+// SetSupport sets the value of Support.
+func (s *CatalogTemplateLinks) SetSupport(val OptString) {
+	s.Support = val
+}
+
+// SetDonate sets the value of Donate.
+func (s *CatalogTemplateLinks) SetDonate(val OptString) {
+	s.Donate = val
 }
 
 // Ref: #/components/schemas/ConfigImportArchive
@@ -5165,8 +5282,9 @@ type ConversionWarning struct {
 	Message string `json:"message"`
 	// The flag, path, network name or entry concerned.
 	Detail OptString `json:"detail"`
-	// Only on `missing_network`: the `docker network create` command. It holds `<PLACEHOLDER>` values for
-	// what the template does not say.
+	// Only on `missing_network`: the `docker network create` command. In a conversion it holds
+	// `<PLACEHOLDER>` values for what the template does not say; in an install plan it is the exact
+	// `docker network create <name>` for the network that was chosen.
 	Command OptString `json:"command"`
 }
 
@@ -6589,6 +6707,33 @@ func (s *DiskUpgradePlanRequest) SetFilesystem(val OptArrayDiskFilesystem) {
 	s.Filesystem = val
 }
 
+// Ref: #/components/schemas/DockerNetwork
+type DockerNetwork struct {
+	Name string `json:"name"`
+	// The network's driver, such as `bridge`, `host`, `macvlan` or `ipvlan`.
+	Driver string `json:"driver"`
+}
+
+// GetName returns the value of Name.
+func (s *DockerNetwork) GetName() string {
+	return s.Name
+}
+
+// GetDriver returns the value of Driver.
+func (s *DockerNetwork) GetDriver() string {
+	return s.Driver
+}
+
+// SetName sets the value of Name.
+func (s *DockerNetwork) SetName(val string) {
+	s.Name = val
+}
+
+// SetDriver sets the value of Driver.
+func (s *DockerNetwork) SetDriver(val string) {
+	s.Driver = val
+}
+
 // Ref: #/components/schemas/DoctorCheck
 type DoctorCheck struct {
 	ID string `json:"id"`
@@ -7462,6 +7607,165 @@ func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetResponse(val GetCatalogTem
 }
 
 func (*GetCatalogTemplateIconOKImageWEBPHeaders) getCatalogTemplateIconRes() {}
+
+type GetCatalogTemplateScreenshotOKImageJpeg struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateScreenshotOKImageJpeg) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateScreenshotOKImageJpegHeaders wraps GetCatalogTemplateScreenshotOKImageJpeg with response headers.
+type GetCatalogTemplateScreenshotOKImageJpegHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateScreenshotOKImageJpeg
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) GetResponse() GetCatalogTemplateScreenshotOKImageJpeg {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) SetResponse(val GetCatalogTemplateScreenshotOKImageJpeg) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateScreenshotOKImageJpegHeaders) getCatalogTemplateScreenshotRes() {}
+
+type GetCatalogTemplateScreenshotOKImagePNG struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateScreenshotOKImagePNG) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateScreenshotOKImagePNGHeaders wraps GetCatalogTemplateScreenshotOKImagePNG with response headers.
+type GetCatalogTemplateScreenshotOKImagePNGHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateScreenshotOKImagePNG
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) GetResponse() GetCatalogTemplateScreenshotOKImagePNG {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) SetResponse(val GetCatalogTemplateScreenshotOKImagePNG) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateScreenshotOKImagePNGHeaders) getCatalogTemplateScreenshotRes() {}
+
+type GetCatalogTemplateScreenshotOKImageWEBP struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateScreenshotOKImageWEBP) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateScreenshotOKImageWEBPHeaders wraps GetCatalogTemplateScreenshotOKImageWEBP with response headers.
+type GetCatalogTemplateScreenshotOKImageWEBPHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateScreenshotOKImageWEBP
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) GetResponse() GetCatalogTemplateScreenshotOKImageWEBP {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) SetResponse(val GetCatalogTemplateScreenshotOKImageWEBP) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateScreenshotOKImageWEBPHeaders) getCatalogTemplateScreenshotRes() {}
 
 type GetJobLogOK struct {
 	Data io.Reader
@@ -8559,6 +8863,45 @@ func (s *ListDisksOK) GetDisks() []DiskInventoryEntry {
 // SetDisks sets the value of Disks.
 func (s *ListDisksOK) SetDisks(val []DiskInventoryEntry) {
 	s.Disks = val
+}
+
+// Ref: #/components/schemas/ListDockerNetworksOK
+type ListDockerNetworksOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message  OptString       `json:"message"`
+	Networks []DockerNetwork `json:"networks"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListDockerNetworksOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListDockerNetworksOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetNetworks returns the value of Networks.
+func (s *ListDockerNetworksOK) GetNetworks() []DockerNetwork {
+	return s.Networks
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListDockerNetworksOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListDockerNetworksOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetNetworks sets the value of Networks.
+func (s *ListDockerNetworksOK) SetNetworks(val []DockerNetwork) {
+	s.Networks = val
 }
 
 type ListExternalDisksOK struct {
@@ -11231,6 +11574,52 @@ func (o OptCatalogSourceKind) Or(d CatalogSourceKind) CatalogSourceKind {
 	return d
 }
 
+// NewOptCatalogTemplateLinks returns new OptCatalogTemplateLinks with value set to v.
+func NewOptCatalogTemplateLinks(v CatalogTemplateLinks) OptCatalogTemplateLinks {
+	return OptCatalogTemplateLinks{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogTemplateLinks is optional CatalogTemplateLinks.
+type OptCatalogTemplateLinks struct {
+	Value CatalogTemplateLinks
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogTemplateLinks was set.
+func (o OptCatalogTemplateLinks) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogTemplateLinks) Reset() {
+	var v CatalogTemplateLinks
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogTemplateLinks) SetTo(v CatalogTemplateLinks) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogTemplateLinks) Get() (v CatalogTemplateLinks, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogTemplateLinks) Or(d CatalogTemplateLinks) CatalogTemplateLinks {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptConfigImportBareMetal returns new OptConfigImportBareMetal with value set to v.
 func NewOptConfigImportBareMetal(v ConfigImportBareMetal) OptConfigImportBareMetal {
 	return OptConfigImportBareMetal{
@@ -11639,6 +12028,52 @@ func (o OptFloat32) Get() (v float32, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptFloat32) Or(d float32) float32 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptFloat64 returns new OptFloat64 with value set to v.
+func NewOptFloat64(v float64) OptFloat64 {
+	return OptFloat64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFloat64 is optional float64.
+type OptFloat64 struct {
+	Value float64
+	Set   bool
+}
+
+// IsSet returns true if OptFloat64 was set.
+func (o OptFloat64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFloat64) Reset() {
+	var v float64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFloat64) SetTo(v float64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFloat64) Get() (v float64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFloat64) Or(d float64) float64 {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -12789,6 +13224,52 @@ func (o OptShareSMB) Or(d ShareSMB) ShareSMB {
 	return d
 }
 
+// NewOptStackConfigInputRole returns new OptStackConfigInputRole with value set to v.
+func NewOptStackConfigInputRole(v StackConfigInputRole) OptStackConfigInputRole {
+	return OptStackConfigInputRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStackConfigInputRole is optional StackConfigInputRole.
+type OptStackConfigInputRole struct {
+	Value StackConfigInputRole
+	Set   bool
+}
+
+// IsSet returns true if OptStackConfigInputRole was set.
+func (o OptStackConfigInputRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStackConfigInputRole) Reset() {
+	var v StackConfigInputRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStackConfigInputRole) SetTo(v StackConfigInputRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStackConfigInputRole) Get() (v StackConfigInputRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStackConfigInputRole) Or(d StackConfigInputRole) StackConfigInputRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptStackTemplate returns new OptStackTemplate with value set to v.
 func NewOptStackTemplate(v StackTemplate) OptStackTemplate {
 	return OptStackTemplate{
@@ -13019,6 +13500,52 @@ func (o OptTemplateInputRole) Or(d TemplateInputRole) TemplateInputRole {
 	return d
 }
 
+// NewOptTemplateInstallRequestRestart returns new OptTemplateInstallRequestRestart with value set to v.
+func NewOptTemplateInstallRequestRestart(v TemplateInstallRequestRestart) OptTemplateInstallRequestRestart {
+	return OptTemplateInstallRequestRestart{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTemplateInstallRequestRestart is optional TemplateInstallRequestRestart.
+type OptTemplateInstallRequestRestart struct {
+	Value TemplateInstallRequestRestart
+	Set   bool
+}
+
+// IsSet returns true if OptTemplateInstallRequestRestart was set.
+func (o OptTemplateInstallRequestRestart) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTemplateInstallRequestRestart) Reset() {
+	var v TemplateInstallRequestRestart
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTemplateInstallRequestRestart) SetTo(v TemplateInstallRequestRestart) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTemplateInstallRequestRestart) Get() (v TemplateInstallRequestRestart, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTemplateInstallRequestRestart) Or(d TemplateInstallRequestRestart) TemplateInstallRequestRestart {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptTemplateInstallRequestValues returns new OptTemplateInstallRequestValues with value set to v.
 func NewOptTemplateInstallRequestValues(v TemplateInstallRequestValues) OptTemplateInstallRequestValues {
 	return OptTemplateInstallRequestValues{
@@ -13197,6 +13724,52 @@ func (o OptUpdateChannel) Get() (v UpdateChannel, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptUpdateChannel) Or(d UpdateChannel) UpdateChannel {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptUpdateStackConfigRequestValues returns new OptUpdateStackConfigRequestValues with value set to v.
+func NewOptUpdateStackConfigRequestValues(v UpdateStackConfigRequestValues) OptUpdateStackConfigRequestValues {
+	return OptUpdateStackConfigRequestValues{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUpdateStackConfigRequestValues is optional UpdateStackConfigRequestValues.
+type OptUpdateStackConfigRequestValues struct {
+	Value UpdateStackConfigRequestValues
+	Set   bool
+}
+
+// IsSet returns true if OptUpdateStackConfigRequestValues was set.
+func (o OptUpdateStackConfigRequestValues) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUpdateStackConfigRequestValues) Reset() {
+	var v UpdateStackConfigRequestValues
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUpdateStackConfigRequestValues) SetTo(v UpdateStackConfigRequestValues) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUpdateStackConfigRequestValues) Get() (v UpdateStackConfigRequestValues, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUpdateStackConfigRequestValues) Or(d UpdateStackConfigRequestValues) UpdateStackConfigRequestValues {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -15981,6 +16554,272 @@ func (s *Stack) SetCompose(val OptString) {
 	s.Compose = val
 }
 
+// Ref: #/components/schemas/StackConfig
+type StackConfig struct {
+	Stack Stack `json:"stack"`
+	// The template's inputs, sorted by name.
+	Inputs []StackConfigInput `json:"inputs"`
+}
+
+// GetStack returns the value of Stack.
+func (s *StackConfig) GetStack() Stack {
+	return s.Stack
+}
+
+// GetInputs returns the value of Inputs.
+func (s *StackConfig) GetInputs() []StackConfigInput {
+	return s.Inputs
+}
+
+// SetStack sets the value of Stack.
+func (s *StackConfig) SetStack(val Stack) {
+	s.Stack = val
+}
+
+// SetInputs sets the value of Inputs.
+func (s *StackConfig) SetInputs(val []StackConfigInput) {
+	s.Inputs = val
+}
+
+// Ref: #/components/schemas/StackConfigInput
+type StackConfigInput struct {
+	Name        string                  `json:"name"`
+	Kind        StackConfigInputKind    `json:"kind"`
+	Role        OptStackConfigInputRole `json:"role"`
+	Label       OptString               `json:"label"`
+	Description OptString               `json:"description"`
+	// The value the stack's `.env` gives the input; empty when it gives none. Absent for a secret.
+	Value OptString `json:"value"`
+	// Present on a `secret` input only: whether the stack's `.env` gives it a value. The value itself is
+	// never returned.
+	Set OptBool `json:"set"`
+	// True for a `device` input, which `updateStackConfig` refuses to change.
+	ReadOnly bool `json:"readOnly"`
+	// The existing shares' paths for a `path` input that is not appdata.
+	Suggestions []string `json:"suggestions"`
+}
+
+// GetName returns the value of Name.
+func (s *StackConfigInput) GetName() string {
+	return s.Name
+}
+
+// GetKind returns the value of Kind.
+func (s *StackConfigInput) GetKind() StackConfigInputKind {
+	return s.Kind
+}
+
+// GetRole returns the value of Role.
+func (s *StackConfigInput) GetRole() OptStackConfigInputRole {
+	return s.Role
+}
+
+// GetLabel returns the value of Label.
+func (s *StackConfigInput) GetLabel() OptString {
+	return s.Label
+}
+
+// GetDescription returns the value of Description.
+func (s *StackConfigInput) GetDescription() OptString {
+	return s.Description
+}
+
+// GetValue returns the value of Value.
+func (s *StackConfigInput) GetValue() OptString {
+	return s.Value
+}
+
+// GetSet returns the value of Set.
+func (s *StackConfigInput) GetSet() OptBool {
+	return s.Set
+}
+
+// GetReadOnly returns the value of ReadOnly.
+func (s *StackConfigInput) GetReadOnly() bool {
+	return s.ReadOnly
+}
+
+// GetSuggestions returns the value of Suggestions.
+func (s *StackConfigInput) GetSuggestions() []string {
+	return s.Suggestions
+}
+
+// SetName sets the value of Name.
+func (s *StackConfigInput) SetName(val string) {
+	s.Name = val
+}
+
+// SetKind sets the value of Kind.
+func (s *StackConfigInput) SetKind(val StackConfigInputKind) {
+	s.Kind = val
+}
+
+// SetRole sets the value of Role.
+func (s *StackConfigInput) SetRole(val OptStackConfigInputRole) {
+	s.Role = val
+}
+
+// SetLabel sets the value of Label.
+func (s *StackConfigInput) SetLabel(val OptString) {
+	s.Label = val
+}
+
+// SetDescription sets the value of Description.
+func (s *StackConfigInput) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetValue sets the value of Value.
+func (s *StackConfigInput) SetValue(val OptString) {
+	s.Value = val
+}
+
+// SetSet sets the value of Set.
+func (s *StackConfigInput) SetSet(val OptBool) {
+	s.Set = val
+}
+
+// SetReadOnly sets the value of ReadOnly.
+func (s *StackConfigInput) SetReadOnly(val bool) {
+	s.ReadOnly = val
+}
+
+// SetSuggestions sets the value of Suggestions.
+func (s *StackConfigInput) SetSuggestions(val []string) {
+	s.Suggestions = val
+}
+
+type StackConfigInputKind string
+
+const (
+	StackConfigInputKindPath     StackConfigInputKind = "path"
+	StackConfigInputKindPort     StackConfigInputKind = "port"
+	StackConfigInputKindString   StackConfigInputKind = "string"
+	StackConfigInputKindSecret   StackConfigInputKind = "secret"
+	StackConfigInputKindTimezone StackConfigInputKind = "timezone"
+	StackConfigInputKindDevice   StackConfigInputKind = "device"
+)
+
+// AllValues returns all StackConfigInputKind values.
+func (StackConfigInputKind) AllValues() []StackConfigInputKind {
+	return []StackConfigInputKind{
+		StackConfigInputKindPath,
+		StackConfigInputKindPort,
+		StackConfigInputKindString,
+		StackConfigInputKindSecret,
+		StackConfigInputKindTimezone,
+		StackConfigInputKindDevice,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StackConfigInputKind) MarshalText() ([]byte, error) {
+	switch s {
+	case StackConfigInputKindPath:
+		return []byte(s), nil
+	case StackConfigInputKindPort:
+		return []byte(s), nil
+	case StackConfigInputKindString:
+		return []byte(s), nil
+	case StackConfigInputKindSecret:
+		return []byte(s), nil
+	case StackConfigInputKindTimezone:
+		return []byte(s), nil
+	case StackConfigInputKindDevice:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StackConfigInputKind) UnmarshalText(data []byte) error {
+	switch StackConfigInputKind(data) {
+	case StackConfigInputKindPath:
+		*s = StackConfigInputKindPath
+		return nil
+	case StackConfigInputKindPort:
+		*s = StackConfigInputKindPort
+		return nil
+	case StackConfigInputKindString:
+		*s = StackConfigInputKindString
+		return nil
+	case StackConfigInputKindSecret:
+		*s = StackConfigInputKindSecret
+		return nil
+	case StackConfigInputKindTimezone:
+		*s = StackConfigInputKindTimezone
+		return nil
+	case StackConfigInputKindDevice:
+		*s = StackConfigInputKindDevice
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type StackConfigInputRole string
+
+const (
+	StackConfigInputRoleAppdata   StackConfigInputRole = "appdata"
+	StackConfigInputRoleShare     StackConfigInputRole = "share"
+	StackConfigInputRoleMedia     StackConfigInputRole = "media"
+	StackConfigInputRoleDownloads StackConfigInputRole = "downloads"
+	StackConfigInputRoleGpu       StackConfigInputRole = "gpu"
+)
+
+// AllValues returns all StackConfigInputRole values.
+func (StackConfigInputRole) AllValues() []StackConfigInputRole {
+	return []StackConfigInputRole{
+		StackConfigInputRoleAppdata,
+		StackConfigInputRoleShare,
+		StackConfigInputRoleMedia,
+		StackConfigInputRoleDownloads,
+		StackConfigInputRoleGpu,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StackConfigInputRole) MarshalText() ([]byte, error) {
+	switch s {
+	case StackConfigInputRoleAppdata:
+		return []byte(s), nil
+	case StackConfigInputRoleShare:
+		return []byte(s), nil
+	case StackConfigInputRoleMedia:
+		return []byte(s), nil
+	case StackConfigInputRoleDownloads:
+		return []byte(s), nil
+	case StackConfigInputRoleGpu:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StackConfigInputRole) UnmarshalText(data []byte) error {
+	switch StackConfigInputRole(data) {
+	case StackConfigInputRoleAppdata:
+		*s = StackConfigInputRoleAppdata
+		return nil
+	case StackConfigInputRoleShare:
+		*s = StackConfigInputRoleShare
+		return nil
+	case StackConfigInputRoleMedia:
+		*s = StackConfigInputRoleMedia
+		return nil
+	case StackConfigInputRoleDownloads:
+		*s = StackConfigInputRoleDownloads
+		return nil
+	case StackConfigInputRoleGpu:
+		*s = StackConfigInputRoleGpu
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/StackTemplate
 type StackTemplate struct {
 	// Where the template came from; empty for a stack no template installed.
@@ -16650,6 +17489,13 @@ type TemplateInput struct {
 	RequestedValue OptString `json:"requestedValue"`
 	// A secret that the install generates.
 	Generated bool `json:"generated"`
+	// True for an input that may not be left empty: a `path`, a `port`, or a `string` input the template
+	// does not mark `optional`.
+	Required bool `json:"required"`
+	// Present on a `required` input that has no value and no default: what is missing.
+	// `previewTemplateInstall` lists the input with this instead of refusing the request, so a form can
+	// show every field; `installTemplate` refuses the same input with 400 `invalid_template_input`.
+	Error OptString `json:"error"`
 	// The existing shares' paths for a `path` input that is not appdata; the host's `/dev/dri` render
 	// devices for a `device` input.
 	Suggestions []string `json:"suggestions"`
@@ -16695,6 +17541,16 @@ func (s *TemplateInput) GetGenerated() bool {
 	return s.Generated
 }
 
+// GetRequired returns the value of Required.
+func (s *TemplateInput) GetRequired() bool {
+	return s.Required
+}
+
+// GetError returns the value of Error.
+func (s *TemplateInput) GetError() OptString {
+	return s.Error
+}
+
 // GetSuggestions returns the value of Suggestions.
 func (s *TemplateInput) GetSuggestions() []string {
 	return s.Suggestions
@@ -16738,6 +17594,16 @@ func (s *TemplateInput) SetRequestedValue(val OptString) {
 // SetGenerated sets the value of Generated.
 func (s *TemplateInput) SetGenerated(val bool) {
 	s.Generated = val
+}
+
+// SetRequired sets the value of Required.
+func (s *TemplateInput) SetRequired(val bool) {
+	s.Required = val
+}
+
+// SetError sets the value of Error.
+func (s *TemplateInput) SetError(val OptString) {
+	s.Error = val
 }
 
 // SetSuggestions sets the value of Suggestions.
@@ -16883,8 +17749,18 @@ type TemplateInstallPlan struct {
 	// The stack's name.
 	Name   string          `json:"name"`
 	Inputs []TemplateInput `json:"inputs"`
-	// Empty when the template asks for nothing beyond an ordinary container.
+	// Computed from the generated Compose content, so it includes what `networkMode` and `extraParams`
+	// add. Empty when the template asks for nothing beyond an ordinary container.
 	Privileges []TemplatePrivilege `json:"privileges"`
+	// What the network mode and the extra parameters could not carry out or need a decision on, to read
+	// before installing: untranslated flags, host paths outside the pool and the cache, clashes with the
+	// template's own entries, a network that does not exist (with its command) and notes. Empty with no
+	// such setting.
+	Warnings []ConversionWarning `json:"warnings"`
+	// False for a template with several services, where `networkMode`, `cpus`, `memoryMiB` and
+	// `extraParams` are refused because no input says which service they mean; `restart` still applies to
+	// every service.
+	AdvancedAvailable bool `json:"advancedAvailable"`
 	// The `docker-compose.yml` text that an install writes.
 	Compose string `json:"compose"`
 }
@@ -16912,6 +17788,16 @@ func (s *TemplateInstallPlan) GetInputs() []TemplateInput {
 // GetPrivileges returns the value of Privileges.
 func (s *TemplateInstallPlan) GetPrivileges() []TemplatePrivilege {
 	return s.Privileges
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *TemplateInstallPlan) GetWarnings() []ConversionWarning {
+	return s.Warnings
+}
+
+// GetAdvancedAvailable returns the value of AdvancedAvailable.
+func (s *TemplateInstallPlan) GetAdvancedAvailable() bool {
+	return s.AdvancedAvailable
 }
 
 // GetCompose returns the value of Compose.
@@ -16944,6 +17830,16 @@ func (s *TemplateInstallPlan) SetPrivileges(val []TemplatePrivilege) {
 	s.Privileges = val
 }
 
+// SetWarnings sets the value of Warnings.
+func (s *TemplateInstallPlan) SetWarnings(val []ConversionWarning) {
+	s.Warnings = val
+}
+
+// SetAdvancedAvailable sets the value of AdvancedAvailable.
+func (s *TemplateInstallPlan) SetAdvancedAvailable(val bool) {
+	s.AdvancedAvailable = val
+}
+
 // SetCompose sets the value of Compose.
 func (s *TemplateInstallPlan) SetCompose(val string) {
 	s.Compose = val
@@ -16956,6 +17852,43 @@ type TemplateInstallRequest struct {
 	// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
 	// that is not one of the template's inputs is refused.
 	Values OptTemplateInstallRequestValues `json:"values"`
+	// `bridge`, `host` or the name of an existing Docker network (Q37). It replaces the service's own
+	// `network_mode` and `networks` in the generated Compose file. A name that is not a Docker network
+	// name, or is `none`, is refused with 400 `invalid_template_input` (`details.input` is `networkMode`).
+	// A network that does not exist is a `missing_network` warning in the plan, with the exact
+	// `docker network create <name>` command, and `installTemplate` refuses it with 409 `network_missing`:
+	// Hoserva never creates networks. A failure to list the networks is an error (503 `docker_unavailable`
+	// when Docker is not reachable), never read as the network existing. Absent leaves the template's
+	// network settings as they are, and so does an empty string. Refused for a template with several
+	// services, like `cpus`, `memoryMiB` and `extraParams` (`advancedAvailable` is false).
+	NetworkMode OptString `json:"networkMode"`
+	// The restart policy of every service. Absent leaves the template's.
+	Restart OptTemplateInstallRequestRestart `json:"restart"`
+	// CPU limit of the service (Compose `cpus`), from 0.01 to 1024. Absent is no limit, and 0 is not a
+	// limit but a value outside the range: 400 `invalid_template_input` (`details.input` is `cpus`).
+	Cpus OptFloat64 `json:"cpus"`
+	// Memory limit of the service in MiB (Compose `mem_limit`), from 6 to 16777216. Absent is no limit,
+	// and 0 is not a limit but a value outside the range: 400 `invalid_template_input` (`details.input` is
+	// `memoryMiB`).
+	MemoryMiB OptInt `json:"memoryMiB"`
+	// At most 4096 bytes; longer is 400 `invalid_template_input`. Absent or empty adds nothing. Raw
+	// `docker run` flags, read by the parser doc 04 §5 describes for an Unraid template's `ExtraParams`:
+	// parsed into Compose fields and merged into the service, never passed to a shell. A flag outside the
+	// translate table, a word that is not a flag, or a string with shell syntax is a `untranslated_flag`
+	// warning in the plan and a comment above the service in the Compose file, never dropped silently. A
+	// flag that widens privileges (`--cap-add`, `--device`, `--pid=host`, `--security-opt`, a mount of a
+	// host path or of the Docker socket) is applied and shows in the plan's `privileges`. An entry that
+	// clashes with the template's own (a variable, label or mount at the same target with another value)
+	// is a `conflict` warning and the template's is kept. `--restart`, `--cpus` and `--memory` are refused
+	// with 400 `invalid_template_input` (`details.input` is `extraParams`) only when the request also
+	// gives `restart`, `cpus` or `memoryMiB` respectively; otherwise they translate like any other flag. A
+	// named volume a mount refers to is declared under the top-level `volumes` of the Compose file (one
+	// the template declares stays as declared). A host port a `-p` flag publishes is checked as a port
+	// input is: one the template's own ports, another flag, a container, a stack or the host already holds
+	// is refused with 409 `no_free_port` (`details.input` is `extraParams`) and is never moved, and a port
+	// that cannot be checked is refused too. Under host networking Docker ignores published ports, so none
+	// is checked.
+	ExtraParams OptString `json:"extraParams"`
 }
 
 // GetName returns the value of Name.
@@ -16968,6 +17901,31 @@ func (s *TemplateInstallRequest) GetValues() OptTemplateInstallRequestValues {
 	return s.Values
 }
 
+// GetNetworkMode returns the value of NetworkMode.
+func (s *TemplateInstallRequest) GetNetworkMode() OptString {
+	return s.NetworkMode
+}
+
+// GetRestart returns the value of Restart.
+func (s *TemplateInstallRequest) GetRestart() OptTemplateInstallRequestRestart {
+	return s.Restart
+}
+
+// GetCpus returns the value of Cpus.
+func (s *TemplateInstallRequest) GetCpus() OptFloat64 {
+	return s.Cpus
+}
+
+// GetMemoryMiB returns the value of MemoryMiB.
+func (s *TemplateInstallRequest) GetMemoryMiB() OptInt {
+	return s.MemoryMiB
+}
+
+// GetExtraParams returns the value of ExtraParams.
+func (s *TemplateInstallRequest) GetExtraParams() OptString {
+	return s.ExtraParams
+}
+
 // SetName sets the value of Name.
 func (s *TemplateInstallRequest) SetName(val OptString) {
 	s.Name = val
@@ -16976,6 +17934,87 @@ func (s *TemplateInstallRequest) SetName(val OptString) {
 // SetValues sets the value of Values.
 func (s *TemplateInstallRequest) SetValues(val OptTemplateInstallRequestValues) {
 	s.Values = val
+}
+
+// SetNetworkMode sets the value of NetworkMode.
+func (s *TemplateInstallRequest) SetNetworkMode(val OptString) {
+	s.NetworkMode = val
+}
+
+// SetRestart sets the value of Restart.
+func (s *TemplateInstallRequest) SetRestart(val OptTemplateInstallRequestRestart) {
+	s.Restart = val
+}
+
+// SetCpus sets the value of Cpus.
+func (s *TemplateInstallRequest) SetCpus(val OptFloat64) {
+	s.Cpus = val
+}
+
+// SetMemoryMiB sets the value of MemoryMiB.
+func (s *TemplateInstallRequest) SetMemoryMiB(val OptInt) {
+	s.MemoryMiB = val
+}
+
+// SetExtraParams sets the value of ExtraParams.
+func (s *TemplateInstallRequest) SetExtraParams(val OptString) {
+	s.ExtraParams = val
+}
+
+// The restart policy of every service. Absent leaves the template's.
+type TemplateInstallRequestRestart string
+
+const (
+	TemplateInstallRequestRestartNo            TemplateInstallRequestRestart = "no"
+	TemplateInstallRequestRestartAlways        TemplateInstallRequestRestart = "always"
+	TemplateInstallRequestRestartUnlessStopped TemplateInstallRequestRestart = "unless-stopped"
+	TemplateInstallRequestRestartOnFailure     TemplateInstallRequestRestart = "on-failure"
+)
+
+// AllValues returns all TemplateInstallRequestRestart values.
+func (TemplateInstallRequestRestart) AllValues() []TemplateInstallRequestRestart {
+	return []TemplateInstallRequestRestart{
+		TemplateInstallRequestRestartNo,
+		TemplateInstallRequestRestartAlways,
+		TemplateInstallRequestRestartUnlessStopped,
+		TemplateInstallRequestRestartOnFailure,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplateInstallRequestRestart) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplateInstallRequestRestartNo:
+		return []byte(s), nil
+	case TemplateInstallRequestRestartAlways:
+		return []byte(s), nil
+	case TemplateInstallRequestRestartUnlessStopped:
+		return []byte(s), nil
+	case TemplateInstallRequestRestartOnFailure:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplateInstallRequestRestart) UnmarshalText(data []byte) error {
+	switch TemplateInstallRequestRestart(data) {
+	case TemplateInstallRequestRestartNo:
+		*s = TemplateInstallRequestRestartNo
+		return nil
+	case TemplateInstallRequestRestartAlways:
+		*s = TemplateInstallRequestRestartAlways
+		return nil
+	case TemplateInstallRequestRestartUnlessStopped:
+		*s = TemplateInstallRequestRestartUnlessStopped
+		return nil
+	case TemplateInstallRequestRestartOnFailure:
+		*s = TemplateInstallRequestRestartOnFailure
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
@@ -18276,6 +19315,48 @@ func (s *UpdateShareRequest) SetSmb(val OptShareSMB) {
 // SetNfs sets the value of Nfs.
 func (s *UpdateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
+}
+
+// Ref: #/components/schemas/UpdateStackConfigRequest
+type UpdateStackConfigRequest struct {
+	// Input name to its new value. An input with no entry keeps its value; an empty entry takes the
+	// input's default. An entry for a name that is not one of the stack's inputs is refused.
+	Values OptUpdateStackConfigRequestValues `json:"values"`
+	// Names of secret inputs to give a newly generated value.
+	Generate []string `json:"generate"`
+}
+
+// GetValues returns the value of Values.
+func (s *UpdateStackConfigRequest) GetValues() OptUpdateStackConfigRequestValues {
+	return s.Values
+}
+
+// GetGenerate returns the value of Generate.
+func (s *UpdateStackConfigRequest) GetGenerate() []string {
+	return s.Generate
+}
+
+// SetValues sets the value of Values.
+func (s *UpdateStackConfigRequest) SetValues(val OptUpdateStackConfigRequestValues) {
+	s.Values = val
+}
+
+// SetGenerate sets the value of Generate.
+func (s *UpdateStackConfigRequest) SetGenerate(val []string) {
+	s.Generate = val
+}
+
+// Input name to its new value. An input with no entry keeps its value; an empty entry takes the
+// input's default. An entry for a name that is not one of the stack's inputs is refused.
+type UpdateStackConfigRequestValues map[string]string
+
+func (s *UpdateStackConfigRequestValues) init() UpdateStackConfigRequestValues {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
 }
 
 // Ref: #/components/schemas/UpdateStackRequest

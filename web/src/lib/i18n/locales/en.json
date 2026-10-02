@@ -40,6 +40,8 @@
       "loadFailed": "Could not load the app catalog.",
       "search": "Search apps",
       "categoryFilter": "Filter by category",
+      "maintainerFilter": "Filter by maintainer",
+      "maintainer": "By {{maintainer}}",
       "installedFilter": "Installed on this server",
       "installed": "Installed",
       "notInstalled": "Not installed",
@@ -119,6 +121,81 @@
         "description": "Nothing is created until you press Install. This is the setup file that will be written and what it asks for, worked out with the values above.",
         "compose": "Setup file (docker-compose.yml)"
       },
+      "incomplete": "Fill in the settings that still need a value before installing.",
+      "networkBlocked": "Create the network first, with the command shown, then try again: Hoserva does not create networks.",
+      "limitsBlocked": "Fix the resource limits under Advanced before installing.",
+      "advanced": {
+        "severalServices": "This app is made of several parts, so its network, resource limits and extra parameters cannot be set here for one of them. Change them in its setup file after installing. The restart rule applies to every part.",
+        "noLimit": "No limit",
+        "network": {
+          "label": "Network",
+          "help": "Which network the app is on. Hoserva does not create networks: choose one that exists.",
+          "template": {
+            "title": "As the app is set up",
+            "description": "Keep the network the app's setup chooses."
+          },
+          "bridge": {
+            "title": "Bridge",
+            "description": "The app has its own address inside the server and only the ports you publish are reachable."
+          },
+          "host": {
+            "title": "The server's network",
+            "description": "The app shares the server's network directly, so it can listen on every address and port."
+          },
+          "custom": {
+            "description": "An existing network ({{driver}})."
+          },
+          "other": {
+            "title": "Another network",
+            "description": "Type the name of a network that you have created or will create."
+          },
+          "nameLabel": "Network name",
+          "hostWarningTitle": "The app will share the server's network",
+          "hostWarning": "It can listen on and reach every network interface and port of the server, and the ports you publish are ignored. Choose this only when the app needs it.",
+          "missing": "The network {{name}} does not exist yet. Create it with this command, then check again:",
+          "command": "Command that creates the network",
+          "listFailed": "Could not load the existing networks.",
+          "unreachable": "Docker is not reachable, so the existing networks are not known."
+        },
+        "restart": {
+          "label": "Restart rule",
+          "help": "What happens when the app stops or the server starts.",
+          "template": "As the app is set up",
+          "no": "Never restart",
+          "always": "Always restart",
+          "unlessStopped": "Restart unless stopped by you",
+          "onFailure": "Restart only after a failure"
+        },
+        "cpus": {
+          "label": "CPU limit",
+          "unit": "CPUs",
+          "help": "From 0.01 to 1024. Leave it empty for no limit.",
+          "malformed": "Enter a number such as 1.5, or leave it empty."
+        },
+        "memory": {
+          "label": "Memory limit",
+          "unit": "MiB",
+          "help": "From 6 MiB. Leave it empty for no limit.",
+          "malformed": "Enter a whole number of MiB, or leave it empty."
+        },
+        "extra": {
+          "label": "Extra parameters",
+          "placeholder": "--cap-add NET_ADMIN --dns 1.1.1.1",
+          "help": "Flags as you would give them to docker run. They are turned into settings of the app's setup file and never run as a command. What cannot be turned into a setting is listed before you install."
+        }
+      },
+      "warnings": {
+        "command": "Command to copy",
+        "class": {
+          "untranslated_flag": "Not carried over: an extra parameter",
+          "untranslated_field": "Not carried over",
+          "flagged_path": "A folder outside the storage pool",
+          "missing_network": "A network that does not exist",
+          "conflict": "Two settings clash",
+          "writable_layer": "State inside the app",
+          "note": "Note"
+        }
+      },
       "run": {
         "title": "Installing {{name}}",
         "installed": "{{name}} is installed.",
@@ -149,6 +226,20 @@
       },
       "revision": "Version {{revision}} of the template",
       "docs": "Documentation",
+      "maintainer": "Maintained by {{maintainer}}",
+      "links": {
+        "project": "Project page",
+        "support": "Get help",
+        "donate": "Support the project"
+      },
+      "about": {
+        "title": "About this app"
+      },
+      "screenshots": {
+        "title": "Screenshots",
+        "alt": "Screenshot {{number}} of {{title}}",
+        "unavailable": "This screenshot could not be loaded."
+      },
       "install": "Install",
       "source": {
         "curated": "From Hoserva's own catalog, which is checked against Hoserva's signing key.",
@@ -356,6 +447,13 @@
       "checkFailed": "Could not check the Compose file.",
       "notAppliedInvalid": "Nothing was applied: the Compose file is not valid",
       "saveFailed": "Could not store the Compose file. Nothing was changed.",
+      "saveUnknown": {
+        "title": "Could not confirm whether the Compose file was stored",
+        "loading": "The connection ended before the server answered, so the file may or may not have been stored. Loading the file the server has now.",
+        "done": "The editor now shows the file the server has. If you want the stack started with a different file, edit it and apply again.",
+        "failed": "The file may or may not have been stored, and the file the server has now could not be loaded.",
+        "restore": "Put your edits back"
+      },
       "startFailed": "Could not start the stack.",
       "notStarted": "The file was stored, but the stack was not started",
       "notStartedDescription": "The stack keeps running from its previous definition until it is started again. Your text is kept in the editor.",
@@ -388,10 +486,63 @@
         "action": "Back to {{name}}"
       }
     },
+    "config": {
+      "title": "Settings",
+      "description": "The values this app was installed with. Applying changes saves the new values and restarts the app, so it is briefly unavailable.",
+      "loadFailed": "Could not load the settings of this app.",
+      "manuallyEdited": "Manually edited",
+      "manuallyEditedHelp": "This app's Compose file was changed by hand. Applying settings only changes these values and never rewrites the Compose file.",
+      "none": "This app has no settings to change.",
+      "notFound": {
+        "title": "App not found",
+        "description": "There is no app stack named {{name}} on this server any more, so there are no settings to show. It may have been removed."
+      },
+      "noTemplate": {
+        "title": "No settings form for this app",
+        "unmanaged": "{{name}} is not part of an app stack that Hoserva manages, so there are no settings to change here.",
+        "noForm": "{{name}} was not installed from an app template, so it has no settings form. Change it in its Compose file instead.",
+        "editor": "Open the Compose editor"
+      },
+      "device": {
+        "none": "No graphics device is used.",
+        "help": "The device is set in the app's Compose file. Change it there."
+      },
+      "secret": {
+        "set": "A value is set. It is kept on the server and is never shown.",
+        "notSet": "No value is set.",
+        "replace": "Replace",
+        "generate": "Generate",
+        "keep": "Keep the current value",
+        "placeholder": "Type the new value",
+        "willGenerate": "A new value is made up when you apply. It is never shown."
+      },
+      "apply": "Apply changes",
+      "discard": "Discard changes",
+      "unapplied": "You have changes that are not applied yet.",
+      "confirm": {
+        "title": "Apply the new settings to {{name}}?",
+        "description": "Hoserva saves these values and starts the app with them. Every container whose settings changed is recreated, so it restarts and is briefly unavailable."
+      },
+      "confirmRestart": {
+        "title": "Restart {{name}} with the saved settings?",
+        "description": "Hoserva starts the app again so it uses the settings the server has now. Every container whose settings changed is recreated, so it restarts and is briefly unavailable."
+      },
+      "restartSaved": "Restart to apply the saved settings",
+      "saveFailed": "Could not save the settings. Nothing was changed.",
+      "saveUnknown": {
+        "title": "Could not confirm whether the settings were saved",
+        "loading": "The connection ended before the server answered, so the settings may or may not have been saved. Loading the settings the server has now.",
+        "done": "The form now shows the settings the server has. If they are not the ones you want, change them and apply again.",
+        "failed": "The settings may or may not have been saved, and the settings the server has now could not be loaded."
+      },
+      "startFailed": "Could not start the app.",
+      "notStarted": "The settings were saved, but the app was not restarted",
+      "notStartedDescription": "The app keeps running with its previous settings until it is started again.",
+      "retryStart": "Try starting again"
+    },
     "detail": {
       "back": "Installed apps",
       "loadFailed": "Could not load this app.",
-      "placeholder": "This tab is not available yet.",
       "notKnown": "—",
       "tabs": {
         "overview": "Overview",

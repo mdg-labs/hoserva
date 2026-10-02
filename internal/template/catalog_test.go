@@ -121,6 +121,24 @@ func TestDirCatalogIndexIsUnavailableNeverEmpty(t *testing.T) {
 		"a template listed twice": func(t *testing.T) DirCatalog {
 			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a"},{"id":"a"}]}`)
 		},
+		"a maintainer over the length cap": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","maintainer":"`+strings.Repeat("m", 101)+`"}]}`)
+		},
+		"a maintainer with a control character": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","maintainer":"x\u0007y"}]}`)
+		},
+		"a blank maintainer": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","maintainer":"  "}]}`)
+		},
+		"a description over the length cap": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","description":"`+strings.Repeat("d", 2001)+`"}]}`)
+		},
+		"a description with a control character": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","description":"x\u0007y"}]}`)
+		},
+		"a blank description": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","description":" \n "}]}`)
+		},
 		"larger than the cap": func(t *testing.T) DirCatalog {
 			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[],"pad":"`+strings.Repeat("x", maxIndexBytes)+`"}`)
 		},
@@ -399,5 +417,202 @@ func TestEmbeddedSnapshotCatalogListsAndShowsEveryTemplate(t *testing.T) {
 		if icon, err := c.Icon(context.Background(), e.ID); err != nil || len(icon.Data) == 0 {
 			t.Errorf("%s: Icon: %v", e.ID, err)
 		}
+	}
+}
+
+func TestDirCatalogIndexCarriesTheMaintainer(t *testing.T) {
+	c := fixtureCatalog(t, `{"schema":1,"serial":2,"templates":[
+    {"id":"jellyfin","revision":1,"title":"Jellyfin","categories":["media"],"docs":"https://example.com","maintainer":"LinuxServer.io"},
+    {"id":"risky-agent","revision":1,"title":"Risky agent","categories":["system"],"docs":"https://example.com"}]}`)
+	got, err := c.Index(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Templates[0].Maintainer != "LinuxServer.io" || got.Templates[1].Maintainer != "" {
+		t.Errorf("maintainers = %q, %q", got.Templates[0].Maintainer, got.Templates[1].Maintainer)
+	}
+}
+
+func TestDirCatalogIndexCarriesTheDescription(t *testing.T) {
+	c := fixtureCatalog(t, `{"schema":1,"serial":2,"templates":[
+    {"id":"jellyfin","revision":1,"title":"Jellyfin","categories":["media"],"docs":"https://example.com","description":"Streams your media.\n\nNo account needed."},
+    {"id":"risky-agent","revision":1,"title":"Risky agent","categories":["system"],"docs":"https://example.com"}]}`)
+	got, err := c.Index(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Templates[0].Description != "Streams your media.\n\nNo account needed." || got.Templates[1].Description != "" {
+		t.Errorf("descriptions = %q, %q", got.Templates[0].Description, got.Templates[1].Description)
+	}
+}
+
+// catalogWithShots is the fixture catalog whose jellyfin lists the given
+// screenshots and carries the other optional metadata.
+func catalogWithShots(t *testing.T, shots ...string) DirCatalog {
+	t.Helper()
+	c := fixtureCatalog(t, fixtureIndex)
+	file := filepath.Join(c.Root, "jellyfin", ComposeFile)
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := "  maintainer: LinuxServer.io\n  description: Streams your media.\n  links: { project: https://jellyfin.org/ }\n  screenshots: [" + strings.Join(shots, ", ") + "]\n  webui:"
+	if err := os.WriteFile(file, []byte(strings.Replace(string(data), "  webui:", extra, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestDirCatalogScreenshotServesByPositionWithAContentTypeFromTheAllowList(t *testing.T) {
+	c := catalogWithShots(t, "shots/one.png", "two.webp", "a/b/three.jpg", "four.jpeg")
+	for rel, body := range map[string]string{"shots/one.png": "1", "two.webp": "2", "a/b/three.jpg": "3", "four.jpeg": "4"} {
+		p := filepath.Join(c.Root, "jellyfin", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, want := range []struct{ ct, body string }{{"image/png", "1"}, {"image/webp", "2"}, {"image/jpeg", "3"}, {"image/jpeg", "4"}} {
+		got, err := c.Screenshot(context.Background(), "jellyfin", i)
+		if err != nil || got.ContentType != want.ct || string(got.Data) != want.body {
+			t.Errorf("Screenshot(%d) = %q %q, %v, want %s %q", i, got.ContentType, got.Data, err, want.ct, want.body)
+		}
+	}
+	for _, i := range []int{-1, 4, 100} {
+		if _, err := c.Screenshot(context.Background(), "jellyfin", i); !errors.Is(err, ErrScreenshotNotFound) {
+			t.Errorf("Screenshot(%d): err = %v, want ErrScreenshotNotFound", i, err)
+		}
+	}
+	if _, err := c.Screenshot(context.Background(), "risky-agent", 0); !errors.Is(err, ErrScreenshotNotFound) {
+		t.Errorf("a template with no screenshots: err = %v, want ErrScreenshotNotFound", err)
+	}
+	for _, id := range []string{"nope", "../jellyfin", ""} {
+		if _, err := c.Screenshot(context.Background(), id, 0); !errors.Is(err, ErrTemplateNotFound) {
+			t.Errorf("Screenshot(%q): err = %v, want ErrTemplateNotFound", id, err)
+		}
+	}
+}
+
+func TestDirCatalogScreenshotRefusesWhatIsNotAServableFile(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "x.png"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(t *testing.T, tpl string){
+		"missing": func(t *testing.T, tpl string) {},
+		"a directory": func(t *testing.T, tpl string) {
+			if err := os.MkdirAll(filepath.Join(tpl, "shots", "x.png"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a pipe": func(t *testing.T, tpl string) {
+			if err := os.MkdirAll(filepath.Join(tpl, "shots"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(filepath.Join(tpl, "shots", "x.png"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a symlink out of the catalog": func(t *testing.T, tpl string) {
+			if err := os.MkdirAll(filepath.Join(tpl, "shots"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(outside, "x.png"), filepath.Join(tpl, "shots", "x.png")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a symlink inside the template directory": func(t *testing.T, tpl string) {
+			if err := os.MkdirAll(filepath.Join(tpl, "shots"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(tpl, "real.png"), []byte("real"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(tpl, "real.png"), filepath.Join(tpl, "shots", "x.png")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"inside a symlinked directory": func(t *testing.T, tpl string) {
+			if err := os.Symlink(outside, filepath.Join(tpl, "shots")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"over the size cap": func(t *testing.T, tpl string) {
+			if err := os.MkdirAll(filepath.Join(tpl, "shots"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(tpl, "shots", "x.png"), make([]byte, maxScreenshotBytes+1), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := catalogWithShots(t, "shots/x.png")
+			setup(t, filepath.Join(c.Root, "jellyfin"))
+			got, err := c.Screenshot(context.Background(), "jellyfin", 0)
+			if !errors.Is(err, ErrScreenshotNotFound) || len(got.Data) != 0 {
+				t.Fatalf("Screenshot = %q, %v, want ErrScreenshotNotFound", got.Data, err)
+			}
+		})
+	}
+}
+
+func TestShowCarriesTheCatalogMetadata(t *testing.T) {
+	c := catalogWithShots(t, "a.png", "b.png")
+	d, err := Show(context.Background(), c, "jellyfin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Maintainer != "LinuxServer.io" || d.Description != "Streams your media." || d.Links.Project != "https://jellyfin.org/" || d.Links.Support != "" || d.Screenshots != 2 {
+		t.Errorf("detail = %+v", d)
+	}
+	plain, err := Show(context.Background(), c, "risky-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Maintainer != "" || plain.Description != "" || plain.Links != (Links{}) || plain.Screenshots != 0 {
+		t.Errorf("a template with none = %+v", plain)
+	}
+}
+
+func TestShowRefusesATemplateWhoseMetadataFailsTheRules(t *testing.T) {
+	for _, extra := range []string{
+		"  links: { donate: \"http://example.com/\" }\n",
+		"  links: { donate: \"https://u:p@example.com/\" }\n",
+		"  maintainer: \"a\\x07\"\n",
+		"  screenshots: [../x.png]\n",
+	} {
+		c := DirCatalog{Root: withMetadata(t, extra), Source: SourceCurated}
+		if _, err := Show(context.Background(), c, "jellyfin"); !errors.Is(err, ErrInvalidTemplate) {
+			t.Errorf("%q: err = %v, want ErrInvalidTemplate", extra, err)
+		}
+	}
+}
+
+func TestMapCatalogListsMaintainersAndServesScreenshots(t *testing.T) {
+	compose, err := os.ReadFile(filepath.Join(fixtureDir, "jellyfin", ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	with := strings.Replace(string(compose), "  webui:", "  maintainer: LinuxServer.io\n  screenshots: [a.png, b.webp]\n  webui:", 1)
+	c := MapCatalog{Source: "s", Templates: map[string]string{"jellyfin": with}, Screenshots: map[string][][]byte{"jellyfin": {[]byte("A")}}}
+	idx, err := c.Index(context.Background())
+	if err != nil || idx.Templates[0].Maintainer != "LinuxServer.io" {
+		t.Fatalf("Index = %+v, %v", idx, err)
+	}
+	got, err := c.Screenshot(context.Background(), "jellyfin", 0)
+	if err != nil || got.ContentType != "image/png" || string(got.Data) != "A" {
+		t.Errorf("Screenshot(0) = %+v, %v", got, err)
+	}
+	for _, i := range []int{1, 2, -1} {
+		if _, err := c.Screenshot(context.Background(), "jellyfin", i); !errors.Is(err, ErrScreenshotNotFound) {
+			t.Errorf("Screenshot(%d): err = %v, want ErrScreenshotNotFound", i, err)
+		}
+	}
+	if _, err := c.Screenshot(context.Background(), "nope", 0); !errors.Is(err, ErrTemplateNotFound) {
+		t.Errorf("unknown template: err = %v", err)
 	}
 }

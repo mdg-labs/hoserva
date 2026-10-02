@@ -16,6 +16,8 @@ const (
 	// subresource, no framing, so opening the file directly runs no code.
 	iconCSP           = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 	iconContentOption = "nosniff"
+	// screenshotCSP allows nothing at all: a screenshot is a raster image.
+	screenshotCSP = "default-src 'none'; sandbox"
 )
 
 // CatalogRefresher runs one catalog check and reports the latest one;
@@ -48,6 +50,8 @@ func mapCatalogError(err error) error {
 		return &apiError{code: "catalog_unavailable", statusCode: 503, message: err.Error()}
 	case errors.Is(err, template.ErrIconNotFound):
 		return &apiError{code: "template_icon_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, template.ErrScreenshotNotFound):
+		return &apiError{code: "template_screenshot_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrTemplateNotFound):
 		return &apiError{code: "template_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidTemplate):
@@ -87,15 +91,17 @@ func (h *Handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 	for i, t := range index.Templates {
 		kind, signed := sourceBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
-			ID:         t.ID,
-			Revision:   t.Revision,
-			Title:      t.Title,
-			Categories: t.Categories,
-			Docs:       t.Docs,
-			Source:     t.Source,
-			SourceKind: kind,
-			Signed:     signed,
-			Installed:  installed[t.ID],
+			ID:          t.ID,
+			Revision:    t.Revision,
+			Title:       t.Title,
+			Categories:  t.Categories,
+			Docs:        t.Docs,
+			Maintainer:  optString(t.Maintainer),
+			Description: optString(t.Description),
+			Source:      t.Source,
+			SourceKind:  kind,
+			Signed:      signed,
+			Installed:   installed[t.ID],
 		}
 	}
 	if h.CatalogRefresh != nil {
@@ -178,16 +184,26 @@ func (h *Handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalo
 	}
 	kind, signed := sourceBadge(d.Kind, d.Signed)
 	out := &apiv1.CatalogTemplate{
-		ID:         d.ID,
-		Revision:   d.Revision,
-		Title:      d.Title,
-		Categories: d.Categories,
-		Docs:       d.Docs,
-		Source:     d.Source,
-		SourceKind: kind,
-		Signed:     signed,
-		Compose:    d.Compose,
-		Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+		ID:              d.ID,
+		Revision:        d.Revision,
+		Title:           d.Title,
+		Categories:      d.Categories,
+		Docs:            d.Docs,
+		Maintainer:      optString(d.Maintainer),
+		Description:     optString(d.Description),
+		ScreenshotCount: d.Screenshots,
+		Source:          d.Source,
+		SourceKind:      kind,
+		Signed:          signed,
+		Compose:         d.Compose,
+		Privileges:      make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+	}
+	if d.Links != (template.Links{}) {
+		out.Links = apiv1.NewOptCatalogTemplateLinks(apiv1.CatalogTemplateLinks{
+			Project: optString(d.Links.Project),
+			Support: optString(d.Links.Support),
+			Donate:  optString(d.Links.Donate),
+		})
 	}
 	for i, pr := range d.Privileges {
 		out.Privileges[i] = privilegeToAPI(pr)
@@ -215,4 +231,24 @@ func (h *Handler) GetCatalogTemplateIcon(ctx context.Context, params apiv1.GetCa
 		return &apiv1.GetCatalogTemplateIconOKImageJpegHeaders{ContentSecurityPolicy: iconCSP, XContentTypeOptions: iconContentOption, Response: apiv1.GetCatalogTemplateIconOKImageJpeg{Data: body}}, nil
 	}
 	return nil, fmt.Errorf("catalog icon of template %q has the content type %q, which the API does not serve", params.ID, icon.ContentType)
+}
+
+func (h *Handler) GetCatalogTemplateScreenshot(ctx context.Context, params apiv1.GetCatalogTemplateScreenshotParams) (apiv1.GetCatalogTemplateScreenshotRes, error) {
+	if h.Catalog == nil {
+		return nil, errCatalogNotConfigured()
+	}
+	shot, err := h.Catalog.Screenshot(ctx, params.ID, params.Index)
+	if err != nil {
+		return nil, mapCatalogError(err)
+	}
+	body := bytes.NewReader(shot.Data)
+	switch shot.ContentType {
+	case "image/png":
+		return &apiv1.GetCatalogTemplateScreenshotOKImagePNGHeaders{ContentSecurityPolicy: screenshotCSP, XContentTypeOptions: iconContentOption, Response: apiv1.GetCatalogTemplateScreenshotOKImagePNG{Data: body}}, nil
+	case "image/webp":
+		return &apiv1.GetCatalogTemplateScreenshotOKImageWEBPHeaders{ContentSecurityPolicy: screenshotCSP, XContentTypeOptions: iconContentOption, Response: apiv1.GetCatalogTemplateScreenshotOKImageWEBP{Data: body}}, nil
+	case "image/jpeg":
+		return &apiv1.GetCatalogTemplateScreenshotOKImageJpegHeaders{ContentSecurityPolicy: screenshotCSP, XContentTypeOptions: iconContentOption, Response: apiv1.GetCatalogTemplateScreenshotOKImageJpeg{Data: body}}, nil
+	}
+	return nil, fmt.Errorf("catalog screenshot %d of template %q has the content type %q, which the API does not serve", params.Index, params.ID, shot.ContentType)
 }

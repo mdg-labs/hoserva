@@ -24,6 +24,7 @@ type UpdateUPSSettingsRequest = components["schemas"]["UpdateUPSSettingsRequest"
 type ApplyHostConfigRequest = components["schemas"]["ApplyHostConfigRequest"];
 type CatalogSettingsUpdate = components["schemas"]["CatalogSettingsUpdate"];
 type TemplateInstallRequest = components["schemas"]["TemplateInstallRequest"];
+type UpdateStackConfigRequest = components["schemas"]["UpdateStackConfigRequest"];
 
 export function getStatus(signal?: AbortSignal) {
   return hoservaClient.GET("/status", { signal });
@@ -123,6 +124,10 @@ export function getApps(signal?: AbortSignal) {
   return hoservaClient.GET("/apps", { signal });
 }
 
+export function getDockerNetworks(signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/networks", { signal });
+}
+
 export function getAppUpdates(signal?: AbortSignal) {
   return hoservaClient.GET("/apps/updates", { signal });
 }
@@ -160,6 +165,14 @@ export function updateStack(name: string, compose: string, dryRun: boolean) {
     params: { path: { name }, query: dryRun ? { dryRun: true } : {} },
     body: { compose },
   });
+}
+
+export function getStackConfig(name: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/stacks/{name}/config", { params: { path: { name } }, signal });
+}
+
+export function updateStackConfig(name: string, body: UpdateStackConfigRequest) {
+  return hoservaClient.PUT("/stacks/{name}/config", { params: { path: { name } }, body });
 }
 
 export function startStack(name: string) {
@@ -861,6 +874,12 @@ export function installTemplate(id: string, body: TemplateInstallRequest) {
 // the response is an image the browser decodes, not JSON for the client.
 export function catalogIconPath(id: string): string {
   return `/api/v1/catalog/${encodeURIComponent(id)}/icon`;
+}
+
+// Screenshots are addressed by their position in the template's list, so no
+// file path from a catalog ever reaches an address.
+export function catalogScreenshotPath(id: string, index: number): string {
+  return `/api/v1/catalog/${encodeURIComponent(id)}/screenshots/${index}`;
 }
 
 export function postCatalogRefresh() {

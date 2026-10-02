@@ -356,6 +356,14 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "ListDockerNetworks",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListDockerNetworks(ctx)
+			return err
+		},
+	},
+	{
 		op:   "ListAppUpdates",
 		name: "valid_request",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -828,6 +836,146 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Installed stack's template inputs (#519) ---
+	{
+		op:   "GetStackConfig",
+		name: "valid_installed_stack",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackConfig",
+		name: "stack_made_without_a_template_has_none",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "plain", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "plain"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackConfig",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackConfig",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStackConfig(ctx, apiv1.GetStackConfigParams{Name: "../etc"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "valid_change_of_a_port_and_a_generated_secret",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{
+				Values:   apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"WEBUI_PORT": "3100", "APPDATA": "/mnt/cache/notes"}),
+				Generate: []string{"DB_PASSWORD"},
+			}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "port_another_container_takes",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"WEBUI_PORT": "8096"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "port_out_of_range",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"WEBUI_PORT": "70000"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "device_input_cannot_change",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"TRANSCODE_GPU": "/dev/dri/renderD128"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "generate_of_a_name_that_is_not_a_secret",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{Generate: []string{"WEBUI_PORT"}}, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "value_for_an_input_the_stack_lacks",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
+				return err
+			}
+			req := &apiv1.UpdateStackConfigRequest{Values: apiv1.NewOptUpdateStackConfigRequestValues(apiv1.UpdateStackConfigRequestValues{"NOPE": "1"})}
+			_, err := h.UpdateStackConfig(ctx, req, apiv1.UpdateStackConfigParams{Name: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "stack_made_without_a_template_has_none",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "plain", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{}, apiv1.UpdateStackConfigParams{Name: "plain"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "unknown_name_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{}, apiv1.UpdateStackConfigParams{Name: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateStackConfig",
+		name: "path_traversal_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateStackConfig(ctx, &apiv1.UpdateStackConfigRequest{}, apiv1.UpdateStackConfigParams{Name: "../etc"})
+			return err
+		},
+	},
 	// --- Unraid template converter (#69) ---
 	{
 		op:   "ConvertUnraidTemplate",
@@ -884,6 +1032,76 @@ var contractCases = []contractCase{
 		name: "invalid_stack_name",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("../etc")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "valid_existing_network_with_limits_and_extra_parameters",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{
+				NetworkMode: apiv1.NewOptString("lan"),
+				Restart:     apiv1.NewOptTemplateInstallRequestRestart(apiv1.TemplateInstallRequestRestartAlways),
+				Cpus:        apiv1.NewOptFloat64(1.5),
+				MemoryMiB:   apiv1.NewOptInt(512),
+				ExtraParams: apiv1.NewOptString("--cap-add NET_ADMIN --no-such-flag"),
+			}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "valid_missing_network_is_a_warning",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("iot")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "network_name_that_is_not_one",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("my net")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "cpu_limit_out_of_range",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{Cpus: apiv1.NewOptFloat64(0)}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "extra_parameters_that_clash_with_a_limit",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{MemoryMiB: apiv1.NewOptInt(512), ExtraParams: apiv1.NewOptString("--memory 1g")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "extra_parameter_port_a_container_holds",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{ExtraParams: apiv1.NewOptString("-p 8096:80")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "network_mode_for_a_template_with_several_services",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("host")}, apiv1.PreviewTemplateInstallParams{ID: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "network_that_does_not_exist",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("iot")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
 			return err
 		},
 	},
@@ -1072,6 +1290,46 @@ var contractCases = []contractCase{
 		name: "unknown_template_is_not_found",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.GetCatalogTemplateIcon(ctx, apiv1.GetCatalogTemplateIconParams{ID: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "valid_second_screenshot",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "jellyfin", Index: 1})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "position_past_the_list_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "jellyfin", Index: 2})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "template_without_screenshots_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "aio-notes", Index: 0})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "unknown_template_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "nope", Index: 0})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "path_traversal_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "../jellyfin", Index: 0})
 			return err
 		},
 	},

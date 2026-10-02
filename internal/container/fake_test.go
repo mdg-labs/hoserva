@@ -143,3 +143,23 @@ func TestFakeProvider_RecreateMakesANewContainerStartedOnlyIfTheOldOneRan(t *tes
 		t.Fatalf("StartedAt of the replacement of a stopped container = %v, %v, want the zero time", got, err)
 	}
 }
+
+func TestFakeProvider_Networks(t *testing.T) {
+	f := NewFakeProvider()
+	f.SetNetworks(Network{Name: "lan", Driver: "macvlan"}, Network{Name: "bridge", Driver: "bridge"})
+	got, err := f.Networks(context.Background())
+	if err != nil || len(got) != 2 || got[0].Name != "bridge" || got[1].Name != "lan" {
+		t.Fatalf("Networks() = %v, %v, want bridge then lan", got, err)
+	}
+
+	f.SetNetworksError(errors.New("boom"))
+	if got, err := f.Networks(context.Background()); err == nil || got != nil {
+		t.Fatalf("Networks() = %v, %v, want the scripted error and no list", got, err)
+	}
+
+	f.SetNetworksError(nil)
+	f.SetUnavailable(nil)
+	if _, err := f.Networks(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Networks() error = %v, want ErrUnavailable", err)
+	}
+}

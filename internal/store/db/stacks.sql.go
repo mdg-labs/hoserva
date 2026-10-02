@@ -129,3 +129,20 @@ func (q *Queries) UpdateStackCompose(ctx context.Context, arg UpdateStackCompose
 	}
 	return result.RowsAffected()
 }
+
+const updateStackEnv = `-- name: UpdateStackEnv :execrows
+UPDATE stacks SET env = ? WHERE name = ?
+`
+
+type UpdateStackEnvParams struct {
+	Env  []byte `json:"env"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) UpdateStackEnv(ctx context.Context, arg UpdateStackEnvParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateStackEnv, arg.Env, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

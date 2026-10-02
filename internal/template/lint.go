@@ -98,5 +98,17 @@ func lintTemplate(dir, id string) []Finding {
 		issues = append(issues, Issue{Path: []string{BlockKey, "icon"}, Line: lineOf(t.root, []string{BlockKey, "icon"}),
 			Message: fmt.Sprintf("names %q, which is not a file next to %s", t.Block.Icon, ComposeFile)})
 	}
+	for i, shot := range t.Block.Screenshots {
+		p := []string{BlockKey, "screenshots", fmt.Sprint(i)}
+		info, err := plainFileUnder(filepath.Join(dir, id), shot)
+		switch {
+		case err != nil:
+			issues = append(issues, Issue{Path: p, Line: lineOf(t.root, p),
+				Message: fmt.Sprintf("names %q, which is not a plain file inside the template's directory", shot)})
+		case info.Size() > maxScreenshotBytes:
+			issues = append(issues, Issue{Path: p, Line: lineOf(t.root, p),
+				Message: fmt.Sprintf("names %q, which is larger than %d bytes and would not be shown", shot, maxScreenshotBytes)})
+		}
+	}
 	return at(issues...)
 }

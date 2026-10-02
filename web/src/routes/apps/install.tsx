@@ -26,27 +26,38 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import type { components } from "@/lib/api/client";
-import { getCatalogTemplate, installTemplate, previewTemplateInstall, startStack } from "@/lib/api/operations";
+import { getCatalogTemplate, getDockerNetworks, installTemplate, previewTemplateInstall, startStack } from "@/lib/api/operations";
 import { apiErrorMessage, isAbortError, parseClientResult } from "@/lib/api/request";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { AdvancedSettingsFields, type NetworkChoices } from "@/routes/apps/advanced-settings";
 import { catalogDetailPath } from "@/routes/apps/catalog-filter";
 import {
   buildInstallRequest,
-  fieldOfError,
+  hasInputError,
   hasPortConflict,
+  inputOf,
+  isAdvancedField,
+  malformedLimits,
+  missingNetwork,
+  NO_ADVANCED,
   portConflict,
   secretNames,
+  type AdvancedField,
+  type AdvancedSettings,
   type TemplateInput,
   type TemplateInstallPlan,
 } from "@/routes/apps/install-form";
 import { InstallRun, type StartState } from "@/routes/apps/install-run";
+import { PlanWarnings } from "@/routes/apps/plan-warnings";
 import { sourceNoteKey } from "@/routes/apps/source-note";
 
 type CatalogTemplate = components["schemas"]["CatalogTemplate"];
+type DockerNetworks = components["schemas"]["ListDockerNetworksOK"];
 type TemplateInstallResult = components["schemas"]["TemplateInstallResult"];
 
 const NOT_FOUND_CODE = "template_not_found";
 const NAME_ERROR_CODES = ["invalid_stack_name", "stack_exists", "stack_dir_exists"];
+const NETWORK_ERROR_CODES = ["network_missing"];
 const PREVIEW_DEBOUNCE_MS = 400;
 const NO_DEVICE = "__none__";
 const NAME_FIELD = "stack-name";
@@ -56,7 +67,7 @@ const CATALOG_PATH = "/apps/catalog";
 const NEW_PASSWORD = "new-password";
 const OFF = "off";
 
-type Failure = { code: string | undefined; message: string };
+type Failure = { code: string | undefined; message: string; input: string | null };
 type Preview = { plan: TemplateInstallPlan | null; settledKey: string | null; failure: Failure | null };
 type Run = { result: TemplateInstallResult; start: StartState };
 
@@ -85,7 +96,7 @@ function shownValue(input: TemplateInput, values: Record<string, string>): strin
   return input.value ?? "";
 }
 
-function InputField({
+export function InputField({
   input,
   value,
   optional,
@@ -218,8 +229,8 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
   const [name, setName] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [reloads, setReloads] = useState(0);
+  const [advanced, setAdvanced] = useState<AdvancedSettings>(NO_ADVANCED);
   const [preview, setPreview] = useState<Preview>({ plan: null, settledKey: null, failure: null });
-  const [optionalNames, setOptionalNames] = useState<Set<string> | null>(null);
   const [installFailure, setInstallFailure] = useState<(Failure & { key: string }) | null>(null);
   const [installing, setInstalling] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
@@ -229,10 +240,26 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
 
   const omitKey = [...secretNames(preview.plan?.inputs ?? [])].join("\n");
   const omit = useMemo(() => new Set(omitKey === "" ? [] : omitKey.split("\n")), [omitKey]);
-  const previewBody = useMemo(() => buildInstallRequest(name, values, omit), [name, values, omit]);
+  const previewBody = useMemo(() => buildInstallRequest(name, values, omit, advanced), [name, values, omit, advanced]);
   const previewKey = useMemo(() => JSON.stringify(previewBody), [previewBody]);
-  const installBody = useMemo(() => buildInstallRequest(name, values), [name, values]);
+  const installBody = useMemo(() => buildInstallRequest(name, values, new Set(), advanced), [name, values, advanced]);
   const installKey = useMemo(() => JSON.stringify(installBody), [installBody]);
+
+  const networkQuery = useApiQuery<DockerNetworks>({
+    queryKey: ["docker-networks"],
+    queryFn: (signal) => getDockerNetworks(signal),
+    fallbackError: t("apps.install.advanced.network.listFailed"),
+  });
+  let networks: NetworkChoices;
+  if (networkQuery.error !== null) {
+    networks = { kind: "failed", message: networkQuery.error };
+  } else if (networkQuery.data === null) {
+    networks = { kind: "loading" };
+  } else if (!networkQuery.data.available) {
+    networks = { kind: "failed", message: networkQuery.data.message ?? t("apps.install.advanced.network.unreachable") };
+  } else {
+    networks = { kind: "ready", networks: networkQuery.data.networks };
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -253,7 +280,11 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
                 ? {
                     plan: null,
                     settledKey: previewKey,
-                    failure: { code: result.error?.code, message: parsed.error ?? t("apps.install.previewFailed") },
+                    failure: {
+                      code: result.error?.code,
+                      message: parsed.error ?? t("apps.install.previewFailed"),
+                      input: inputOf(result.error),
+                    },
                   }
                 : { plan: parsed.data, settledKey: previewKey, failure: null };
           } catch (err: unknown) {
@@ -263,21 +294,16 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
             next = {
               plan: null,
               settledKey: previewKey,
-              failure: { code: undefined, message: err instanceof Error ? err.message : t("apps.install.previewFailed") },
+              failure: {
+                code: undefined,
+                message: err instanceof Error ? err.message : t("apps.install.previewFailed"),
+                input: null,
+              },
             };
           }
           const settled = next;
           if (settled.plan !== null) {
             hasPlanRef.current = true;
-            setOptionalNames(
-              (prev) =>
-                prev ??
-                new Set(
-                  settled.plan?.inputs
-                    .filter((input) => input.kind === "string" && (input.value ?? "") === "")
-                    .map((input) => input.name),
-                ),
-            );
           }
           setPreview((prev) => ({ plan: settled.plan ?? prev.plan, settledKey: settled.settledKey, failure: settled.failure }));
         })();
@@ -296,20 +322,29 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
   const shownInstallFailure = installFailure !== null && installFailure.key === installKey ? installFailure : null;
   const conflicted = plan !== null && hasPortConflict(plan);
   const inputNames = (plan?.inputs ?? []).map((input) => input.name);
+  const missing = plan === null ? null : missingNetwork(plan);
+  const malformed = malformedLimits(advanced);
 
   const errors = new Map<string, string>();
+  const advancedErrors: Partial<Record<AdvancedField, string>> = {};
   const unattributed: Failure[] = [];
   for (const item of [failure, shownInstallFailure]) {
     if (item === null) {
       continue;
     }
-    const field =
-      item.code !== undefined && NAME_ERROR_CODES.includes(item.code) ? NAME_FIELD : fieldOfError(item.message, inputNames);
-    if (field === null || field === NAME_FIELD) {
+    if (item.code !== undefined && NAME_ERROR_CODES.includes(item.code)) {
+      errors.set(NAME_FIELD, item.message);
       unattributed.push(item);
-    }
-    if (field !== null) {
-      errors.set(field, item.message);
+    } else if (item.code !== undefined && NETWORK_ERROR_CODES.includes(item.code)) {
+      advancedErrors.networkMode = item.message;
+      unattributed.push(item);
+    } else if (item.input !== null && inputNames.includes(item.input)) {
+      errors.set(item.input, item.message);
+    } else if (item.input !== null && isAdvancedField(item.input)) {
+      advancedErrors[item.input] = item.message;
+      unattributed.push(item);
+    } else {
+      unattributed.push(item);
     }
   }
 
@@ -350,7 +385,12 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
       const result = await installTemplate(template.id, installBody);
       const parsed = parseClientResult(result, t("apps.install.installFailed"));
       if (parsed.error !== null || parsed.data === undefined) {
-        setInstallFailure({ key, code: result.error?.code, message: parsed.error ?? t("apps.install.installFailed") });
+        setInstallFailure({
+          key,
+          code: result.error?.code,
+          message: parsed.error ?? t("apps.install.installFailed"),
+          input: inputOf(result.error),
+        });
         return;
       }
       const installed = parsed.data;
@@ -361,6 +401,7 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
         key,
         code: undefined,
         message: `${err instanceof Error ? err.message : t("apps.install.installFailed")} ${t("apps.install.installUnconfirmed")}`,
+        input: null,
       });
     } finally {
       installingRef.current = false;
@@ -432,7 +473,9 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
   const setValue = (inputName: string, value: string): void => {
     setValues((prev) => ({ ...prev, [inputName]: value }));
   };
-  const installBlocked = pending || failure !== null || conflicted || installing;
+  const inputsIncomplete = hasInputError(plan);
+  const installBlocked =
+    pending || failure !== null || conflicted || inputsIncomplete || missing !== null || malformed.length > 0 || installing;
 
   return (
     <div className="flex flex-col gap-4">
@@ -482,8 +525,8 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
                     key={input.name}
                     input={input}
                     value={shownValue(input, values)}
-                    optional={optionalNames?.has(input.name) ?? false}
-                    error={errors.get(input.name) ?? null}
+                    optional={input.kind === "string" && !input.required}
+                    error={errors.get(input.name) ?? (values[input.name] !== undefined && input.error ? input.error : null)}
                     onChange={(value) => setValue(input.name, value)}
                   />
                 ))
@@ -507,6 +550,15 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
                   </FieldError>
                 ) : null}
               </Field>
+              <AdvancedSettingsFields
+                settings={advanced}
+                onChange={setAdvanced}
+                networks={networks}
+                onRetryNetworks={() => void networkQuery.refresh()}
+                available={plan.advancedAvailable}
+                missingNetwork={missing}
+                errors={advancedErrors}
+              />
             </TabsPanel>
           </Tabs>
         </CardPanel>
@@ -518,6 +570,7 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
         </CardHeader>
         <CardPanel className="flex flex-col gap-4">
           <p className="text-muted-foreground text-sm">{t("apps.install.review.description")}</p>
+          <PlanWarnings warnings={plan.warnings} />
           <PrivilegeSummary privileges={plan.privileges} />
           <CodeView title={t("apps.install.review.compose")} code={plan.compose} defaultOpen />
         </CardPanel>
@@ -528,6 +581,9 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
           {t("apps.install.submit", { title: template.title })}
         </Button>
         {conflicted ? <p className="text-muted-foreground text-sm">{t("apps.install.port.blocked")}</p> : null}
+        {inputsIncomplete ? <p className="text-muted-foreground text-sm">{t("apps.install.incomplete")}</p> : null}
+        {missing !== null ? <p className="text-muted-foreground text-sm">{t("apps.install.networkBlocked")}</p> : null}
+        {malformed.length > 0 ? <p className="text-muted-foreground text-sm">{t("apps.install.limitsBlocked")}</p> : null}
       </div>
     </div>
   );

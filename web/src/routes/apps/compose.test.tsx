@@ -405,6 +405,110 @@ describe("Apply", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("says nothing was changed when the server refuses the save, with the server's message", async () => {
+    mockPut.mockImplementation(() => fail("stack_action_failed", "the compose file cannot be written"));
+    open();
+    type(await editor(), EDITED);
+    await confirmApply();
+
+    expect(await screen.findByText("Could not store the Compose file. Nothing was changed.")).toBeInTheDocument();
+    expect(screen.getByText("the compose file cannot be written")).toBeInTheDocument();
+    expect(await editor()).toHaveValue(EDITED);
+    expect(screen.queryByText("Could not confirm whether the Compose file was stored")).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("says the outcome is unknown when the save got no response, reloads the stored file and starts nothing", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("connection reset")));
+    open();
+    type(await editor(), EDITED);
+    installGet({ getStack: () => ok(stack({ compose: EDITED })) });
+    const getsBefore = mockGet.mock.calls.length;
+    await confirmApply();
+
+    expect(await screen.findByText("Could not confirm whether the Compose file was stored")).toBeInTheDocument();
+    expect(await screen.findByText(/The editor now shows the file the server has/)).toBeInTheDocument();
+    expect(screen.getByText("connection reset")).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was changed/)).not.toBeInTheDocument();
+    expect(mockGet.mock.calls.slice(getsBefore).filter(([path]) => path === "/stacks/{name}")).toHaveLength(1);
+    expect(await editor()).toHaveValue(EDITED);
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows the file the server has, not the unsent text, when the reload after a save with no response succeeds", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("connection reset")));
+    open();
+    type(await editor(), EDITED);
+    await confirmApply();
+
+    expect(await screen.findByText(/The editor now shows the file the server has/)).toBeInTheDocument();
+    expect(await editor()).toHaveValue(COMPOSE);
+  });
+
+  it("says so when the stored file cannot be reloaded, and reloads on request", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("connection reset")));
+    open();
+    type(await editor(), EDITED);
+    installGet({ getStack: () => Promise.reject(new Error("still down")) });
+    await confirmApply();
+
+    expect(await screen.findByText(/the file the server has now could not be loaded/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was changed/)).not.toBeInTheDocument();
+    expect(await editor()).toHaveValue(EDITED);
+
+    installGet();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/The editor now shows the file the server has/)).toBeInTheDocument();
+    expect(await editor()).toHaveValue(COMPOSE);
+  });
+
+  it("puts the unsent text back on request after the reload shows a different file", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("connection reset")));
+    open();
+    type(await editor(), EDITED);
+    await confirmApply();
+
+    expect(await screen.findByText(/The editor now shows the file the server has/)).toBeInTheDocument();
+    expect(await editor()).toHaveValue(COMPOSE);
+
+    fireEvent.click(screen.getByRole("button", { name: "Put your edits back" }));
+    expect(await editor()).toHaveValue(EDITED);
+    expect(screen.getByText("You have changes that are not applied yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Could not confirm whether the Compose file was stored")).not.toBeInTheDocument();
+  });
+
+  it("offers nothing to put back when the server has the text that was sent", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("connection reset")));
+    open();
+    type(await editor(), EDITED);
+    installGet({ getStack: () => ok(stack({ compose: EDITED })) });
+    await confirmApply();
+
+    expect(await screen.findByText(/The editor now shows the file the server has/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Put your edits back" })).not.toBeInTheDocument();
+  });
+
+  it("keeps edits made after a failed reload recoverable when the reload is tried again", async () => {
+    const LATER = "services:\n  jellyfin:\n    image: example/jellyfin:1.2\n";
+    mockPut.mockImplementation(() => Promise.reject(new Error("connection reset")));
+    open();
+    type(await editor(), EDITED);
+    installGet({ getStack: () => Promise.reject(new Error("still down")) });
+    await confirmApply();
+
+    expect(await screen.findByText(/the file the server has now could not be loaded/)).toBeInTheDocument();
+    type(await editor(), LATER);
+
+    installGet();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/The editor now shows the file the server has/)).toBeInTheDocument();
+    expect(await editor()).toHaveValue(COMPOSE);
+
+    fireEvent.click(screen.getByRole("button", { name: "Put your edits back" }));
+    expect(await editor()).toHaveValue(LATER);
+  });
+
   it("says the file was stored but the stack was not started when starting is refused, and keeps the text", async () => {
     mockPost.mockImplementation(() => fail("array_stopped", "the array is stopped"));
     open();

@@ -9,6 +9,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -384,6 +385,9 @@ type apiError struct {
 	code       string
 	statusCode int
 	message    string
+	// input names the input or setting a refusal is about, for the Error
+	// schema's details.
+	input string
 }
 
 func (e *apiError) Error() string { return e.message }
@@ -448,10 +452,13 @@ func (*Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode 
 		errors.As(err, &ae)
 	}
 	if ae != nil {
-		return &apiv1.ErrorStatusCode{
-			StatusCode: ae.statusCode,
-			Response:   apiv1.Error{Code: ae.code, Message: ae.message},
+		resp := apiv1.Error{Code: ae.code, Message: ae.message}
+		if ae.input != "" {
+			if name, err := json.Marshal(ae.input); err == nil {
+				resp.Details = apiv1.NewOptErrorDetails(apiv1.ErrorDetails{"input": name})
+			}
 		}
+		return &apiv1.ErrorStatusCode{StatusCode: ae.statusCode, Response: resp}
 	}
 	log.Printf("hoservad: internal error: %v", err)
 	return &apiv1.ErrorStatusCode{

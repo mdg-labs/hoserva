@@ -1,5 +1,5 @@
 import { ArrowLeft, FileX } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
@@ -81,25 +81,32 @@ async function loadStack(name: string, fallback: string, signal: AbortSignal): P
 
 type Outcome<T> =
   | { ok: true; data: T | undefined }
-  | { ok: false; aborted: true }
-  | { ok: false; aborted: false; code: string | undefined; message: string };
+  | { ok: false; aborted: true; answered: false }
+  | { ok: false; aborted: false; answered: boolean; code: string | undefined; message: string };
 
 // The generated client returns { error } for an HTTP failure and rejects for
 // a network one; both come out as a failed outcome, with the error code the
-// page tells apart.
+// page tells apart. `answered` is false when no HTTP response came, so the
+// request may still have taken effect.
 async function call<T>(run: () => Promise<ClientResult<T>>, fallback: string): Promise<Outcome<T>> {
   try {
     const result = await run();
     const parsed = parseClientResult(result, fallback);
     if (parsed.error !== null) {
-      return { ok: false, aborted: false, code: result.error?.code, message: parsed.error };
+      return { ok: false, aborted: false, answered: true, code: result.error?.code, message: parsed.error };
     }
     return { ok: true, data: parsed.data };
   } catch (err: unknown) {
     if (isAbortError(err)) {
-      return { ok: false, aborted: true };
+      return { ok: false, aborted: true, answered: false };
     }
-    return { ok: false, aborted: false, code: undefined, message: err instanceof Error ? err.message : fallback };
+    return {
+      ok: false,
+      aborted: false,
+      answered: false,
+      code: undefined,
+      message: err instanceof Error ? err.message : fallback,
+    };
   }
 }
 
@@ -211,10 +218,23 @@ type Status =
   | { kind: "checked" }
   | { kind: "checkFailed"; code?: string; message: string }
   | { kind: "saveFailed"; code?: string; message: string }
+  | { kind: "saveUnknown"; message: string | null; reload: "loading" | "done" | "failed"; draft: string | null }
   | { kind: "notStarted"; message: string }
   | { kind: "queued"; job: Job };
 
-function StatusBanners({ status, onRetryStart, retrying }: { status: Status | null; onRetryStart: () => void; retrying: boolean }): React.ReactElement | null {
+function StatusBanners({
+  status,
+  onRetryStart,
+  retrying,
+  onRetryReload,
+  onRestoreDraft,
+}: {
+  status: Status | null;
+  onRetryStart: () => void;
+  retrying: boolean;
+  onRetryReload: (message: string | null) => void;
+  onRestoreDraft: (draft: string) => void;
+}): React.ReactElement | null {
   const { t } = useTranslation();
   if (status === null) {
     return null;
@@ -241,6 +261,32 @@ function StatusBanners({ status, onRetryStart, retrying }: { status: Status | nu
           description={detail(status.message)}
         />
       );
+    case "saveUnknown": {
+      const draft = status.draft;
+      return (
+        <Banner
+          tone="warning"
+          title={t("apps.compose.saveUnknown.title")}
+          description={
+            <>
+              <span className="block">{t(`apps.compose.saveUnknown.${status.reload}`)}</span>
+              {status.message !== null ? detail(status.message) : null}
+            </>
+          }
+          action={
+            status.reload === "failed" ? (
+              <Button size="xs" variant="outline" onClick={() => onRetryReload(status.message)}>
+                {t("apps.installed.retry")}
+              </Button>
+            ) : status.reload === "done" && draft !== null ? (
+              <Button size="xs" variant="outline" onClick={() => onRestoreDraft(draft)}>
+                {t("apps.compose.saveUnknown.restore")}
+              </Button>
+            ) : undefined
+          }
+        />
+      );
+    }
     case "notStarted":
       return (
         <Banner
@@ -264,7 +310,7 @@ function StatusBanners({ status, onRetryStart, retrying }: { status: Status | nu
   }
 }
 
-function JobFollow({ queued, stackName }: { queued: Job; stackName: string }): React.ReactElement {
+export function JobFollow({ queued, stackName }: { queued: Job; stackName: string }): React.ReactElement {
   const { t } = useTranslation();
   const [finished, setFinished] = useState(FINISHED.includes(queued.status));
   const query = useApiQuery<Job>({
@@ -308,6 +354,15 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
   const [importOpen, setImportOpen] = useState(false);
 
   const [phase, setPhase] = useState<"idle" | "validating" | "saving" | "starting">("idle");
+
+  const alive = useRef(true);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const dirty = text !== baseline;
   const busy = phase !== "idle";
@@ -368,18 +423,48 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
     }
   }
 
+  // The save may not have been stored, so the text the editor held when the
+  // reload began stays recoverable once the server's file replaces it.
+  async function reloadStored(message: string | null, draft: string): Promise<void> {
+    setPhase("saving");
+    setStatus({ kind: "saveUnknown", message, reload: "loading", draft: null });
+    const loaded = await call(() => getStack(stack.name), t("apps.compose.loadFailed"));
+    if (!alive.current) {
+      return;
+    }
+    if (loaded.ok && loaded.data?.compose !== undefined) {
+      setStack(loaded.data);
+      setText(loaded.data.compose);
+      setBaseline(loaded.data.compose);
+      setStatus({
+        kind: "saveUnknown",
+        message,
+        reload: "done",
+        draft: draft === loaded.data.compose ? null : draft,
+      });
+    } else {
+      setStatus({ kind: "saveUnknown", message, reload: "failed", draft: null });
+    }
+    setPhase("idle");
+  }
+
+  function restoreDraft(draft: string): void {
+    setText(draft);
+    setStatus(null);
+  }
+
   async function handleApply(): Promise<void> {
     setStatus(null);
     const submitted = text;
     setPhase("saving");
     const stored = await call(() => updateStack(stack.name, submitted, false), t("apps.compose.saveFailed"));
     if (!stored.ok || stored.data === undefined) {
-      setPhase("idle");
       setConfirmOpen(false);
-      if (!stored.ok && !stored.aborted) {
+      if (!stored.ok && !stored.aborted && stored.answered) {
+        setPhase("idle");
         setStatus({ kind: "saveFailed", code: stored.code, message: stored.message });
-      } else if (stored.ok) {
-        setStatus({ kind: "saveFailed", message: t("apps.compose.saveFailed") });
+      } else if (alive.current) {
+        await reloadStored(stored.ok || stored.aborted ? null : stored.message, submitted);
       }
       return;
     }
@@ -437,6 +522,8 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
         status={status}
         retrying={phase === "starting"}
         onRetryStart={() => void handleStart()}
+        onRetryReload={(message) => void reloadStored(message, text)}
+        onRestoreDraft={restoreDraft}
       />
       {startedJob !== null ? <JobFollow queued={startedJob} stackName={stack.name} /> : null}
 

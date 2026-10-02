@@ -17,8 +17,14 @@ type Detail struct {
 	Title      string
 	Categories []string
 	Docs       string
-	Compose    string
-	Privileges []Privilege
+	// Maintainer, Description and Links are empty when the template sets
+	// none; Screenshots counts the screenshots it lists.
+	Maintainer  string
+	Description string
+	Links       Links
+	Screenshots int
+	Compose     string
+	Privileges  []Privilege
 }
 
 // Show reads a template from the catalog and computes its privilege summary
@@ -39,15 +45,19 @@ func Show(ctx context.Context, c Catalog, id string) (*Detail, error) {
 		}
 	}
 	return &Detail{
-		Source:     entry.Source,
-		Kind:       entry.Kind,
-		Signed:     entry.Signed,
-		ID:         t.Block.ID,
-		Revision:   t.Block.Revision,
-		Title:      t.Block.Title,
-		Categories: t.Block.Categories,
-		Docs:       t.Block.Docs,
-		Compose:    string(entry.Data),
-		Privileges: t.Privileges(values),
+		Source:      entry.Source,
+		Kind:        entry.Kind,
+		Signed:      entry.Signed,
+		ID:          t.Block.ID,
+		Revision:    t.Block.Revision,
+		Title:       t.Block.Title,
+		Categories:  t.Block.Categories,
+		Docs:        t.Block.Docs,
+		Maintainer:  t.Block.Maintainer,
+		Description: t.Block.Description,
+		Links:       t.Block.Links,
+		Screenshots: len(t.Block.Screenshots),
+		Compose:     string(entry.Data),
+		Privileges:  t.Privileges(values),
 	}, nil
 }

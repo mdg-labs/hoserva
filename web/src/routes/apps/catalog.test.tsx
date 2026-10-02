@@ -47,6 +47,8 @@ type Entry = {
   sourceKind: "curated" | "user_added";
   signed: boolean;
   installed: boolean;
+  maintainer?: string;
+  description?: string;
 };
 
 function entry(id: string, title: string, extra: Partial<Entry> = {}): Entry {
@@ -164,6 +166,55 @@ describe("CatalogPage", () => {
     await waitFor(() => expect(screen.getByRole("link", { name: "Quick Paste" })).toBeInTheDocument());
     expect(screen.queryByRole("link", { name: "Jellyfin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Notes (all in one)" })).not.toBeInTheDocument();
+  });
+
+  it("shows each maintainer on its card and filters by maintainer through the multi-pick", async () => {
+    installGet(() =>
+      ok(
+        catalog([
+          { ...JELLYFIN, maintainer: "LinuxServer.io" },
+          { ...NOTES, maintainer: "Example Team" },
+          QUICKPASTE,
+        ]),
+      ),
+    );
+    renderPage();
+    await screen.findByRole("link", { name: "Jellyfin" });
+
+    expect(within(cardOf("Jellyfin")).getByText("By LinuxServer.io")).toBeInTheDocument();
+    expect(within(cardOf("Quick Paste")).queryByText(/^By /)).not.toBeInTheDocument();
+
+    const maintainers = screen.getByRole("combobox", { name: "Filter by maintainer" });
+    fireEvent.focus(maintainers);
+    fireEvent.keyDown(maintainers, { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: "Example Team" }));
+    fireEvent.keyDown(maintainers, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Jellyfin" })).not.toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "Notes (all in one)" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Quick Paste" })).not.toBeInTheDocument();
+  });
+
+  it("shows a description as clamped plain text and nothing where a card has none", async () => {
+    const description = "Streams your media.\n\n<b>No account</b> needed.";
+    installGet(() => ok(catalog([{ ...JELLYFIN, description }, NOTES])));
+    renderPage();
+    await screen.findByRole("link", { name: "Jellyfin" });
+
+    const described = within(cardOf("Jellyfin")).getByText(/Streams your media\./);
+    expect(described.textContent).toBe(description);
+    expect(described.querySelector("b")).toBeNull();
+    expect(described).toHaveClass("line-clamp-3");
+    expect(cardOf("Notes (all in one)").querySelector('[data-slot="catalog-card-description"]')).toBeNull();
+  });
+
+  it("offers no maintainer filter when no entry names a maintainer", async () => {
+    installGet(() => ok(catalog([JELLYFIN, NOTES])));
+    renderPage();
+    await screen.findByRole("link", { name: "Jellyfin" });
+
+    expect(screen.getByRole("combobox", { name: "Filter by category" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Filter by maintainer" })).not.toBeInTheDocument();
   });
 
   it("explains an empty result and clears the filters from it", async () => {

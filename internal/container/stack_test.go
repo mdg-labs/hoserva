@@ -23,6 +23,7 @@ type memStackStore struct {
 	insertErr error
 	deleteErr error
 	updateErr error
+	envErr    error
 	calls     int
 }
 
@@ -72,6 +73,23 @@ func (m *memStackStore) UpdateCompose(ctx context.Context, name, compose string,
 		return store.ErrStackNotFound
 	}
 	st.Compose, st.ManuallyEdited = compose, manuallyEdited
+	m.rows[name] = st
+	return nil
+}
+
+func (m *memStackStore) UpdateEnv(ctx context.Context, name string, sealedEnv []byte) error {
+	m.calls++
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.envErr != nil {
+		return m.envErr
+	}
+	st, ok := m.rows[name]
+	if !ok {
+		return store.ErrStackNotFound
+	}
+	st.SealedEnv = sealedEnv
 	m.rows[name] = st
 	return nil
 }

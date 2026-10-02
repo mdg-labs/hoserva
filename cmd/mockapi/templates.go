@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"strconv"
 	"strings"
@@ -43,6 +47,18 @@ x-hoserva:
   categories: [media]
   icon: icon.svg
   docs: https://docs.linuxserver.io/images/docker-jellyfin/
+  maintainer: LinuxServer.io
+  description: |-
+    Jellyfin streams your own movies, shows and music to the devices in your home.
+
+    It runs on your server, keeps its own library and needs no account.
+  screenshots:
+    - screenshots/library.png
+    - screenshots/player.png
+  links:
+    project: https://jellyfin.org/
+    support: https://jellyfin.org/docs/general/getting-help/
+    donate: https://opencollective.com/jellyfin
   webui: http://{host}:${WEBUI_PORT}
   inputs:
     APPDATA:       { kind: path, role: appdata, default: /mnt/cache/appdata }
@@ -74,6 +90,7 @@ x-hoserva:
   categories: [productivity]
   icon: icon.svg
   docs: https://example.com/notes/docs
+  maintainer: Example Notes Project
   inputs:
     APPDATA:     { kind: path, role: appdata, default: /mnt/cache/appdata }
     WEBUI_PORT:  { kind: port, default: 3000 }
@@ -111,6 +128,22 @@ var mockIcons = map[string][]byte{
 	"risky-agent": []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2 22 22H2z" fill="#cd5c5c"/></svg>`),
 }
 
+// mockScreenshots are jellyfin's two screenshots: small real PNG files, so a
+// page built on the mock loads actual images.
+var mockScreenshots = map[string][][]byte{
+	"jellyfin": {mockPNG(color.RGBA{R: 0x6a, G: 0x5a, B: 0xcd, A: 0xff}), mockPNG(color.RGBA{R: 0x2e, G: 0x8b, B: 0x57, A: 0xff})},
+}
+
+func mockPNG(c color.Color) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 320, 180))
+	draw.Draw(img, img.Bounds(), image.NewUniform(c), image.Point{}, draw.Src)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
 // mockExtrasTemplates are the templates of the one user-added source the
 // mock starts with. That source has no public key, so its entries are
 // badged user-added and unsigned.
@@ -129,6 +162,7 @@ x-hoserva:
   categories: [tools]
   icon: icon.svg
   docs: https://example.org/quickpaste/docs
+  maintainer: Community contributor
   inputs:
     APPDATA: { kind: path, role: appdata, default: /mnt/cache/appdata }
 `,
@@ -213,6 +247,16 @@ func (m mockMerged) Icon(ctx context.Context, id string) (template.Icon, error) 
 	return template.Icon{}, fmt.Errorf("%w: %q", template.ErrTemplateNotFound, id)
 }
 
+func (m mockMerged) Screenshot(ctx context.Context, id string, index int) (template.Screenshot, error) {
+	for _, c := range m.catalogs {
+		shot, err := c.Screenshot(ctx, id, index)
+		if !errors.Is(err, template.ErrTemplateNotFound) {
+			return shot, err
+		}
+	}
+	return template.Screenshot{}, fmt.Errorf("%w: %q", template.ErrTemplateNotFound, id)
+}
+
 // mockCatalog is this mock's catalog source: the curated source's name over
 // the mock templates and their icons.
 func mockCatalog() template.MapCatalog {
@@ -224,6 +268,7 @@ func mockCatalog() template.MapCatalog {
 		GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		Templates:   mockTemplates,
 		Icons:       mockIcons,
+		Screenshots: mockScreenshots,
 	}
 }
 
@@ -236,14 +281,18 @@ func (mockGPU) RenderDevices(context.Context) ([]string, error) {
 
 func (mockGPU) RenderGID(context.Context) (string, error) { return "44", nil }
 
+// mockBusyPort is a host port something outside Hoserva listens on in this
+// mock, so a form can meet a port conflict on a port no app lists.
+const mockBusyPort = 9000
+
 // mockPorts reports the host ports this mock's apps publish or are
-// configured to publish, running or stopped.
+// configured to publish, running or stopped, and the one the host listens on.
 type mockPorts struct{ h *handler }
 
 func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
 	m.h.appsMu.Lock()
 	defer m.h.appsMu.Unlock()
-	used := map[int]bool{}
+	used := map[int]bool{mockBusyPort: true}
 	for _, a := range m.h.apps {
 		for _, p := range a.Ports {
 			if hp, ok := p.HostPort.Get(); ok && hp != 0 {
@@ -252,6 +301,31 @@ func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
 		}
 	}
 	return used, nil
+}
+
+// mockNetworkList is the Docker networks of this mock: the built-in three and
+// two the user created. Any other name is a network that does not exist, so a
+// form can meet the missing-network case with a name of its own.
+var mockNetworkList = []container.Network{
+	{Name: "bridge", Driver: "bridge"},
+	{Name: "host", Driver: "host"},
+	{Name: "lan", Driver: "macvlan"},
+	{Name: "none", Driver: "null"},
+	{Name: "vlan20", Driver: "ipvlan"},
+}
+
+// mockNetworks lists mockNetworkList, and fails as Docker does while this
+// mock's Docker is scripted down.
+type mockNetworks struct{ h *handler }
+
+func (m mockNetworks) Networks(context.Context) ([]container.Network, error) {
+	m.h.appsMu.Lock()
+	down := m.h.appsDown
+	m.h.appsMu.Unlock()
+	if down != "" {
+		return nil, fmt.Errorf("%w: %s", container.ErrUnavailable, down)
+	}
+	return append([]container.Network(nil), mockNetworkList...), nil
 }
 
 // composePorts is the host ports a Compose file publishes with env
@@ -351,11 +425,59 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 	return container.Stack{Name: n.Name, TemplateSource: n.TemplateSource, TemplateID: n.TemplateID, TemplateRevision: n.TemplateRevision, InstalledAt: now}, nil
 }
 
+func (m mockStackCreator) Get(_ context.Context, name string) (container.Stack, error) {
+	if !container.ValidStackName(name) {
+		return container.Stack{}, fmt.Errorf("%w: %q", container.ErrInvalidStackName, name)
+	}
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	s, ok := m.h.stacks[name]
+	if !ok {
+		return container.Stack{}, fmt.Errorf("%w: %s", container.ErrStackNotFound, name)
+	}
+	return container.Stack{
+		Name:             s.Name,
+		TemplateSource:   s.Template.Source,
+		TemplateID:       s.Template.ID,
+		TemplateRevision: s.Template.Revision,
+		InstalledAt:      s.InstalledAt,
+		Compose:          s.Compose.Or(""),
+		ManuallyEdited:   s.ManuallyEdited,
+	}, nil
+}
+
+func (m mockStackCreator) Env(ctx context.Context, name string) (string, error) {
+	if _, err := m.Get(ctx, name); err != nil {
+		return "", err
+	}
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	return m.h.stackEnvs[name], nil
+}
+
+// UpdateEnv replaces the stack's .env and works its ports out again from the
+// Compose text, as production does with the row and `docker compose config`.
+func (m mockStackCreator) UpdateEnv(ctx context.Context, name, env string) (container.Stack, error) {
+	if names := container.ReservedEnvDefined(env); len(names) > 0 {
+		return container.Stack{}, fmt.Errorf("%w: %s", container.ErrReservedEnvName, strings.Join(names, ", "))
+	}
+	st, err := m.Get(ctx, name)
+	if err != nil {
+		return container.Stack{}, err
+	}
+	m.h.stacksMu.Lock()
+	defer m.h.stacksMu.Unlock()
+	m.h.setStackEnv(name, env)
+	m.h.setStackPorts(name, composePorts(st.Compose, env))
+	return st, nil
+}
+
 func (h *handler) templateInstaller() *template.Installer {
 	return &template.Installer{
-		Catalog: h.mockCatalogs(),
-		Stacks:  mockStackCreator{h},
-		Ports:   mockPorts{h},
+		Catalog:  h.mockCatalogs(),
+		Stacks:   mockStackCreator{h},
+		Ports:    mockPorts{h},
+		Networks: mockNetworks{h},
 		Shares: func(context.Context) ([]string, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -373,21 +495,41 @@ func (h *handler) templateInstaller() *template.Installer {
 // mapMockTemplateError gives an install error the status and code the
 // production handler gives it.
 func mapMockTemplateError(name string, err error) error {
+	mapped := mapMockTemplateErrorKind(name, err)
+	var ie *template.InputError
+	var me *mockError
+	if errors.As(err, &ie) && errors.As(mapped, &me) {
+		me.input = ie.Input
+	}
+	return mapped
+}
+
+func mapMockTemplateErrorKind(name string, err error) error {
 	switch {
 	case errors.Is(err, template.ErrCatalogUnavailable):
 		return &mockError{code: "catalog_unavailable", statusCode: 503, message: err.Error()}
 	case errors.Is(err, template.ErrIconNotFound):
 		return &mockError{code: "template_icon_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, template.ErrScreenshotNotFound):
+		return &mockError{code: "template_screenshot_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrTemplateNotFound):
 		return &mockError{code: "template_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidTemplate):
 		return &mockError{code: "template_invalid", statusCode: 422, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidInput):
 		return &mockError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
+	case errors.Is(err, template.ErrNetworkMissing):
+		return &mockError{code: "network_missing", statusCode: 409, message: err.Error()}
+	case errors.Is(err, container.ErrUnavailable):
+		return &mockError{code: "docker_unavailable", statusCode: 503, message: fmt.Sprintf("Docker is not installed or not reachable: %v", err)}
 	case errors.Is(err, template.ErrGPUUnavailable):
 		return &mockError{code: "gpu_unavailable", statusCode: 409, message: err.Error()}
-	case errors.Is(err, template.ErrNoFreePort):
+	case errors.Is(err, template.ErrNoFreePort), errors.Is(err, template.ErrPortTaken):
 		return &mockError{code: "no_free_port", statusCode: 409, message: err.Error()}
+	case errors.Is(err, template.ErrStackHasNoTemplate):
+		return &mockError{code: "stack_has_no_template", statusCode: 409, message: fmt.Sprintf("stack %q was not installed from a template and has no inputs to change; edit its Compose file instead", name)}
+	case errors.Is(err, container.ErrStackNotFound):
+		return errStackNotFound(name)
 	case errors.Is(err, container.ErrInvalidStackName):
 		return &mockError{code: "invalid_stack_name", statusCode: 400, message: err.Error()}
 	case errors.Is(err, container.ErrInvalidStack):
@@ -420,7 +562,7 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 	for i, t := range index.Templates {
 		kind, signed := mockBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
-			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs,
+			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs, Maintainer: mockOptString(t.Maintainer), Description: mockOptString(t.Description),
 			Source: t.Source, SourceKind: kind, Signed: signed, Installed: installed[t.ID],
 		}
 	}
@@ -497,7 +639,13 @@ func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalo
 	kind, signed := mockBadge(d.Kind, d.Signed)
 	out := &apiv1.CatalogTemplate{
 		ID: d.ID, Revision: d.Revision, Title: d.Title, Categories: d.Categories, Docs: d.Docs,
+		Maintainer: mockOptString(d.Maintainer), Description: mockOptString(d.Description), ScreenshotCount: d.Screenshots,
 		Source: d.Source, SourceKind: kind, Signed: signed, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+	}
+	if d.Links != (template.Links{}) {
+		out.Links = apiv1.NewOptCatalogTemplateLinks(apiv1.CatalogTemplateLinks{
+			Project: mockOptString(d.Links.Project), Support: mockOptString(d.Links.Support), Donate: mockOptString(d.Links.Donate),
+		})
 	}
 	for i, pr := range d.Privileges {
 		tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}
@@ -533,6 +681,32 @@ func (h *handler) GetCatalogTemplateIcon(ctx context.Context, params apiv1.GetCa
 	return nil, fmt.Errorf("mock catalog icon of template %q has the content type %q, which the API does not serve", params.ID, icon.ContentType)
 }
 
+func mockOptString(s string) apiv1.OptString {
+	if s == "" {
+		return apiv1.OptString{}
+	}
+	return apiv1.NewOptString(s)
+}
+
+const mockScreenshotCSP = "default-src 'none'; sandbox"
+
+func (h *handler) GetCatalogTemplateScreenshot(ctx context.Context, params apiv1.GetCatalogTemplateScreenshotParams) (apiv1.GetCatalogTemplateScreenshotRes, error) {
+	shot, err := h.mockCatalogs().Screenshot(ctx, params.ID, params.Index)
+	if err != nil {
+		return nil, mapMockTemplateError(params.ID, err)
+	}
+	body := bytes.NewReader(shot.Data)
+	switch shot.ContentType {
+	case "image/png":
+		return &apiv1.GetCatalogTemplateScreenshotOKImagePNGHeaders{ContentSecurityPolicy: mockScreenshotCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateScreenshotOKImagePNG{Data: body}}, nil
+	case "image/webp":
+		return &apiv1.GetCatalogTemplateScreenshotOKImageWEBPHeaders{ContentSecurityPolicy: mockScreenshotCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateScreenshotOKImageWEBP{Data: body}}, nil
+	case "image/jpeg":
+		return &apiv1.GetCatalogTemplateScreenshotOKImageJpegHeaders{ContentSecurityPolicy: mockScreenshotCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateScreenshotOKImageJpeg{Data: body}}, nil
+	}
+	return nil, fmt.Errorf("mock catalog screenshot %d of template %q has the content type %q, which the API does not serve", params.Index, params.ID, shot.ContentType)
+}
+
 func (h *handler) PreviewTemplateInstall(ctx context.Context, req *apiv1.TemplateInstallRequest, params apiv1.PreviewTemplateInstallParams) (*apiv1.TemplateInstallPlan, error) {
 	plan, err := h.templateInstaller().Preview(ctx, mockPlanRequest(params.ID, req))
 	if err != nil {
@@ -558,7 +732,18 @@ func (h *handler) InstallTemplate(ctx context.Context, req *apiv1.TemplateInstal
 }
 
 func mockPlanRequest(id string, req *apiv1.TemplateInstallRequest) template.PlanRequest {
-	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil)}
+	adv := template.Advanced{
+		NetworkMode: req.NetworkMode.Or(""),
+		Restart:     string(req.Restart.Or("")),
+		ExtraParams: req.ExtraParams.Or(""),
+	}
+	if v, ok := req.Cpus.Get(); ok {
+		adv.CPUs = &v
+	}
+	if v, ok := req.MemoryMiB.Get(); ok {
+		adv.MemoryMiB = &v
+	}
+	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil), Advanced: adv}
 }
 
 func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
@@ -568,10 +753,21 @@ func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 		Name:       p.Name,
 		Inputs:     make([]apiv1.TemplateInput, len(p.Inputs)),
 		Privileges: make([]apiv1.TemplatePrivilege, len(p.Privileges)),
-		Compose:    p.Compose,
+		Warnings:   make([]apiv1.ConversionWarning, len(p.Warnings)),
+
+		AdvancedAvailable: p.AdvancedAvailable,
+		Compose:           p.Compose,
+	}
+	for i, w := range p.Warnings {
+		out.Warnings[i] = apiv1.ConversionWarning{
+			Class:   apiv1.ConversionWarningClass(w.Class),
+			Message: w.Message,
+			Detail:  mockOptString(w.Detail),
+			Command: mockOptString(w.Command),
+		}
 	}
 	for i, in := range p.Inputs {
-		ti := apiv1.TemplateInput{Name: in.Name, Kind: apiv1.TemplateInputKind(in.Kind), Generated: in.Generated, Suggestions: in.Suggestions}
+		ti := apiv1.TemplateInput{Name: in.Name, Kind: apiv1.TemplateInputKind(in.Kind), Generated: in.Generated, Required: in.Required, Suggestions: in.Suggestions, Error: mockOptString(in.Error)}
 		if in.Role != "" {
 			ti.Role = apiv1.NewOptTemplateInputRole(apiv1.TemplateInputRole(in.Role))
 		}

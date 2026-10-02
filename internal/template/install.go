@@ -19,12 +19,15 @@ import (
 	"github.com/mdg-labs/hoserva/internal/container"
 )
 
-// StackCreator stores a stack and generates its files, and reports the host
-// ports the existing stacks publish, started or not
-// (container.StackService).
+// StackCreator stores a stack and generates its files, reports the host
+// ports the existing stacks publish, started or not, and reads and replaces
+// an installed stack's .env (container.StackService).
 type StackCreator interface {
 	Create(ctx context.Context, n container.NewStack) (container.Stack, error)
 	PublishedPorts(ctx context.Context) (map[int]bool, error)
+	Get(ctx context.Context, name string) (container.Stack, error)
+	Env(ctx context.Context, name string) (string, error)
+	UpdateEnv(ctx context.Context, name, env string) (container.Stack, error)
 }
 
 // Installer resolves a template's inputs and installs it as a stack (doc 04
@@ -33,6 +36,9 @@ type Installer struct {
 	Catalog Catalog
 	Stacks  StackCreator
 	Ports   PortSource
+	// Networks lists the Docker networks, which a chosen network mode is
+	// checked against. Nil means no network can be chosen but bridge and host.
+	Networks NetworkSource
 	// Shares lists the names of the existing shares, which paths default to
 	// and are offered from. Nil offers none.
 	Shares func(ctx context.Context) ([]string, error)
@@ -55,6 +61,8 @@ type PlanRequest struct {
 	// Name is the stack's name; empty means the template's id.
 	Name   string
 	Values map[string]string
+	// Advanced are the container settings chosen beside the inputs.
+	Advanced Advanced
 }
 
 // ResolvedInput is one input with the value it resolves to.
@@ -74,6 +82,13 @@ type ResolvedInput struct {
 	// Suggestions are the existing shares' paths for a path input and the
 	// host's render devices for a device input.
 	Suggestions []string
+	// Required is set on an input that may not be left empty: a path, a port
+	// or a string input the template does not mark optional.
+	Required bool
+	// Error is why the input has no usable value yet. Only a preview sets it,
+	// and only for an input that needs a value and has none; an install
+	// refuses that input instead.
+	Error string
 }
 
 // Plan is what installing a template would do.
@@ -88,6 +103,12 @@ type Plan struct {
 	// Compose is the docker-compose.yml that is written: the template with
 	// its x-hoserva block, plus the GPU mapping when one was chosen.
 	Compose string
+	// Warnings are what the extra parameters and the network mode left
+	// untranslated, in conflict or unresolved.
+	Warnings []Warning
+	// AdvancedAvailable is false for a template with several services, which
+	// network mode, resource limits and extra parameters cannot be applied to.
+	AdvancedAvailable bool
 
 	env string
 }
@@ -133,6 +154,30 @@ func (in *Installer) Install(ctx context.Context, req PlanRequest) (*Plan, conta
 
 func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidInput, fmt.Sprintf(format, args...))
+}
+
+// InputError is a refusal that is about one named input or setting, so a
+// caller attributes it without reading its text. It is ErrInvalidInput unless
+// Kind names another sentinel, such as ErrPortTaken.
+type InputError struct {
+	Input   string
+	Message string
+	Kind    error
+}
+
+func (e *InputError) kind() error {
+	if e.Kind != nil {
+		return e.Kind
+	}
+	return ErrInvalidInput
+}
+
+func (e *InputError) Error() string { return e.kind().Error() + ": " + e.Message }
+
+func (e *InputError) Unwrap() error { return e.kind() }
+
+func invalidInput(input, format string, args ...any) error {
+	return &InputError{Input: input, Message: fmt.Sprintf(format, args...)}
 }
 
 func (in *Installer) load(ctx context.Context, id string) (Entry, *Template, error) {
@@ -202,29 +247,123 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 	}
 	for _, k := range sortedKeys(req.Values) {
 		if _, ok := t.Block.Inputs[k]; !ok {
-			return nil, invalid("%s is not an input of template %s", k, t.Block.ID)
+			return nil, invalidInput(k, "%s is not an input of template %s", k, t.Block.ID)
 		}
 	}
+	adv, err := in.applyAdvanced(ctx, t, entry.Data, req.Advanced, generate)
+	if err != nil {
+		return nil, err
+	}
+	res, err := in.resolve(ctx, t, adv.compose, resolveRequest{values: req.Values, generate: generate, lenient: !generate})
+	if err != nil {
+		return nil, err
+	}
+	if err := in.checkExtraPorts(ctx, adv, res.values); err != nil {
+		return nil, err
+	}
+	var env strings.Builder
+	for _, n := range sortedKeys(t.Block.Inputs) {
+		env.WriteString(n + "=" + quoteEnv(res.values[n]) + "\n")
+	}
+	return &Plan{
+		Source:     entry.Source,
+		ID:         t.Block.ID,
+		Revision:   t.Block.Revision,
+		Title:      t.Block.Title,
+		Name:       name,
+		Inputs:     res.inputs,
+		Privileges: adv.tmpl.Privileges(res.summed),
+		Compose:    string(res.compose),
 
+		Warnings:          adv.warnings,
+		AdvancedAvailable: adv.available,
+		env:               env.String(),
+	}, nil
+}
+
+// resolveRequest is what resolve is asked for. With installed set, the
+// inputs of an installed stack are re-resolved instead: an input the request
+// leaves out keeps its current value, a taken port is refused rather than
+// moved, a device input cannot change, and nothing is generated unless asked.
+type resolveRequest struct {
+	values   map[string]string
+	generate bool
+	// lenient lists an input that needs a value and has none, with its Error
+	// set, instead of refusing the whole request.
+	lenient   bool
+	installed *installedValues
+}
+
+// installedValues are the values an installed stack has now and the secrets
+// to replace with generated ones.
+type installedValues struct {
+	current  map[string]string
+	generate map[string]bool
+}
+
+// resolution is what resolve worked out: the inputs with their values, every
+// input's value as it goes to the .env, the values the privilege summary is
+// computed with, and the Compose text with the GPU mapping when one was
+// chosen.
+type resolution struct {
+	inputs  []ResolvedInput
+	values  map[string]string
+	summed  map[string]string
+	compose []byte
+}
+
+func (in *Installer) resolve(ctx context.Context, t *Template, composeText []byte, req resolveRequest) (*resolution, error) {
 	var (
-		inputs  = sortedKeys(t.Block.Inputs)
-		used    map[int]bool
-		taken   = map[int]bool{}
-		shares  []string
-		devices []string
-		haveGPU bool
-		values  = make(map[string]string, len(inputs))
-		secrets = map[string]string{}
-		pending = map[string]bool{}
-		out     = make([]ResolvedInput, 0, len(inputs))
-		compose = entry.Data
+		err       error
+		inputs    = sortedKeys(t.Block.Inputs)
+		used      map[int]bool
+		taken     = map[int]bool{}
+		unchanged = map[string]bool{}
+		shares    []string
+		devices   []string
+		haveGPU   bool
+		values    = make(map[string]string, len(inputs))
+		secrets   = map[string]string{}
+		pending   = map[string]bool{}
+		out       = make([]ResolvedInput, 0, len(inputs))
+		compose   = composeText
+		inst      = req.installed
 	)
+	// asked is the value the request asks an input to have: its own entry,
+	// or for an installed stack the value the input has now.
+	asked := func(n string) string {
+		v, present := req.values[n]
+		if !present && inst != nil && t.Block.Inputs[n].Kind != KindSecret {
+			return inst.current[n]
+		}
+		return v
+	}
 	for _, n := range inputs {
 		switch t.Block.Inputs[n].Kind {
 		case KindPort:
-			if used == nil {
+			if inst == nil {
+				if used == nil {
+					if used, err = in.usedPorts(ctx); err != nil {
+						return nil, fmt.Errorf("checking the ports for conflicts: %w", err)
+					}
+				}
+				continue
+			}
+			v := firstNonEmpty(asked(n), defaultString(t.Block.Inputs[n].Default))
+			if v == inst.current[n] {
+				unchanged[n] = true
+				if p, perr := strconv.Atoi(v); perr == nil {
+					taken[p] = true
+				}
+			} else if used == nil {
 				if used, err = in.usedPorts(ctx); err != nil {
 					return nil, fmt.Errorf("checking the ports for conflicts: %w", err)
+				}
+				// The stack's own ports are in use by the stack itself.
+				for _, m := range inputs {
+					if p, perr := strconv.Atoi(inst.current[m]); perr == nil && t.Block.Inputs[m].Kind == KindPort {
+						delete(used, p)
+					}
 				}
 			}
 		case KindPath:
@@ -235,7 +374,7 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 				sort.Strings(shares)
 			}
 		case KindDevice:
-			if !haveGPU && in.GPU != nil {
+			if inst == nil && !haveGPU && in.GPU != nil {
 				if devices, err = in.GPU.RenderDevices(ctx); err != nil {
 					return nil, err
 				}
@@ -247,7 +386,22 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 	for _, n := range inputs {
 		spec := t.Block.Inputs[n]
 		ri := ResolvedInput{Name: n, Kind: spec.Kind, Role: spec.Role, Label: spec.Label, Description: spec.Description}
-		given := req.Values[n]
+		switch spec.Kind {
+		case KindPath, KindPort:
+			ri.Required = true
+		case KindString:
+			ri.Required = !spec.Optional
+		}
+		// missing is what a lenient preview does with an input that needs a
+		// value: list it, with why it is not usable yet, and go on.
+		missing := func(format string, args ...any) error {
+			if req.lenient {
+				ri.Error = fmt.Sprintf(format, args...)
+				return nil
+			}
+			return invalidInput(n, format, args...)
+		}
+		given := asked(n)
 		def := defaultString(spec.Default)
 		switch spec.Kind {
 		case KindPath:
@@ -255,13 +409,16 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 			if v == "" && (spec.Role == RoleMedia || spec.Role == RoleDownloads) && contains(shares, spec.Role) {
 				v = poolRoot + "/" + spec.Role
 			}
-			if v == "" {
-				return nil, invalid("%s needs a path", n)
+			switch {
+			case v == "":
+				if err := missing("%s needs a path", n); err != nil {
+					return nil, err
+				}
+			case !strings.HasPrefix(v, "/"):
+				return nil, invalidInput(n, "%s must be an absolute path, got %q", n, v)
+			default:
+				ri.Value = path.Clean(v)
 			}
-			if !strings.HasPrefix(v, "/") {
-				return nil, invalid("%s must be an absolute path, got %q", n, v)
-			}
-			ri.Value = path.Clean(v)
 			if spec.Role != RoleAppdata {
 				for _, s := range shares {
 					ri.Suggestions = append(ri.Suggestions, poolRoot+"/"+s)
@@ -270,16 +427,23 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 		case KindPort:
 			v := firstNonEmpty(given, def)
 			if v == "" {
-				return nil, invalid("%s needs a port", n)
+				if err := missing("%s needs a port", n); err != nil {
+					return nil, err
+				}
+				break
 			}
 			p, perr := strconv.Atoi(v)
 			if perr != nil || p < 1 || p > 65535 {
-				return nil, invalid("%s must be a port from 1 to 65535, got %q", n, v)
+				return nil, invalidInput(n, "%s must be a port from 1 to 65535, got %q", n, v)
 			}
-			if used[p] || taken[p] {
+			switch {
+			case unchanged[n]:
+			case inst != nil && (used[p] || taken[p]):
+				return nil, &InputError{Input: n, Kind: ErrPortTaken, Message: fmt.Sprintf("%s asks for %d, which a container, a stack or the host already uses", n, p)}
+			case used[p] || taken[p]:
 				next, ok := nextFreePort(p, used, taken)
 				if !ok {
-					return nil, fmt.Errorf("%w: %s asked for %d", ErrNoFreePort, n, p)
+					return nil, &InputError{Input: n, Kind: ErrNoFreePort, Message: fmt.Sprintf("%s asked for %d", n, p)}
 				}
 				ri.Requested = strconv.Itoa(p)
 				p = next
@@ -287,15 +451,27 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 			taken[p] = true
 			ri.Value = strconv.Itoa(p)
 		case KindSecret:
-			ri.Generated = given == ""
-			if !ri.Generated {
-				secrets[n] = given
-			} else if generate {
+			switch {
+			case inst != nil && req.values[n] != "":
+				secrets[n] = req.values[n]
+			case inst != nil && inst.generate[n]:
+				ri.Generated = true
 				if secrets[n], err = in.newSecret(); err != nil {
 					return nil, err
 				}
-			} else {
-				pending[n] = true
+			case inst != nil:
+				secrets[n] = inst.current[n]
+			default:
+				ri.Generated = given == ""
+				if !ri.Generated {
+					secrets[n] = given
+				} else if req.generate {
+					if secrets[n], err = in.newSecret(); err != nil {
+						return nil, err
+					}
+				} else {
+					pending[n] = true
+				}
 			}
 		case KindTimezone:
 			v := firstNonEmpty(given, def)
@@ -306,15 +482,22 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 				v = "UTC"
 			}
 			if !timezonePattern.MatchString(v) || strings.Contains(v, "..") {
-				return nil, invalid("%s must be a time zone name such as Europe/Vienna, got %q", n, v)
+				return nil, invalidInput(n, "%s must be a time zone name such as Europe/Vienna, got %q", n, v)
 			}
 			ri.Value = v
 		case KindDevice:
+			if inst != nil {
+				if want, present := req.values[n]; present && want != inst.current[n] {
+					return nil, invalidInput(n, "%s is a device input: its mapping is in the stack's Compose file, so change it there", n)
+				}
+				ri.Value = inst.current[n]
+				break
+			}
 			v := firstNonEmpty(given, def)
 			ri.Suggestions = devices
 			if v != "" {
 				if !contains(devices, v) {
-					return nil, invalid("%s: %q is not one of the host's GPU render devices %v", n, v, devices)
+					return nil, invalidInput(n, "%s: %q is not one of the host's GPU render devices %v", n, v, devices)
 				}
 				gid, gerr := in.GPU.RenderGID(ctx)
 				if gerr != nil {
@@ -328,7 +511,9 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 		default:
 			v := firstNonEmpty(given, def)
 			if v == "" && !spec.Optional {
-				return nil, invalid("%s needs a value", n)
+				if err := missing("%s needs a value", n); err != nil {
+					return nil, err
+				}
 			}
 			ri.Value = v
 		}
@@ -337,16 +522,14 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 		} else {
 			values[n] = secrets[n]
 		}
-		if err := checkEnvValue(n, values[n]); err != nil {
-			return nil, err
+		if inst == nil || values[n] != inst.current[n] {
+			if err := checkEnvValue(n, values[n]); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, ri)
 	}
 
-	var env strings.Builder
-	for _, n := range inputs {
-		env.WriteString(n + "=" + quoteEnv(values[n]) + "\n")
-	}
 	// A secret a preview has not generated yet still has a value once it is
 	// installed, so the summary is computed with one of the generated shape.
 	summed := make(map[string]string, len(values))
@@ -359,17 +542,7 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 	if err := t.checkResolved(summed); err != nil {
 		return nil, err
 	}
-	return &Plan{
-		Source:     entry.Source,
-		ID:         t.Block.ID,
-		Revision:   t.Block.Revision,
-		Title:      t.Block.Title,
-		Name:       name,
-		Inputs:     out,
-		Privileges: t.Privileges(summed),
-		Compose:    string(compose),
-		env:        env.String(),
-	}, nil
+	return &resolution{inputs: out, values: values, summed: summed, compose: compose}, nil
 }
 
 var timezonePattern = regexp.MustCompile(`^[A-Za-z0-9_+/-]+$`)
@@ -424,7 +597,7 @@ func (in *Installer) newSecret() (string, error) {
 // quoteEnv relies on.
 func checkEnvValue(name, v string) error {
 	if strings.ContainsAny(v, "\n\r\x00'") {
-		return invalid("%s must not contain a line break or a single quote", name)
+		return invalidInput(name, "%s must not contain a line break or a single quote", name)
 	}
 	return nil
 }
@@ -444,16 +617,9 @@ func quoteEnv(v string) string {
 // group (Q82). A template's inputs name no service, so every service gets
 // the device.
 func addGPU(compose []byte, device, gid string) ([]byte, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(compose, &doc); err != nil {
-		return nil, fmt.Errorf("%w: not valid YAML: %v", ErrInvalidTemplate, err)
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
-		return nil, fmt.Errorf("%w: not a Compose document", ErrInvalidTemplate)
-	}
-	services := mappingValue(doc.Content[0], "services")
-	if services == nil || services.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%w: no services section", ErrInvalidTemplate)
+	doc, services, err := serviceNodes(compose)
+	if err != nil {
+		return nil, err
 	}
 	for i := 0; i+1 < len(services.Content); i += 2 {
 		svc := services.Content[i+1]
@@ -467,10 +633,31 @@ func addGPU(compose []byte, device, gid string) ([]byte, error) {
 			return nil, fmt.Errorf("%w: service %s: %v", ErrInvalidTemplate, services.Content[i].Value, err)
 		}
 	}
+	return encodeCompose(doc)
+}
+
+// serviceNodes parses a Compose document and returns it with its services
+// mapping.
+func serviceNodes(compose []byte) (doc *yaml.Node, services *yaml.Node, err error) {
+	doc = &yaml.Node{}
+	if err := yaml.Unmarshal(compose, doc); err != nil {
+		return nil, nil, fmt.Errorf("%w: not valid YAML: %v", ErrInvalidTemplate, err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
+		return nil, nil, fmt.Errorf("%w: not a Compose document", ErrInvalidTemplate)
+	}
+	services = mappingValue(doc.Content[0], "services")
+	if services == nil || services.Kind != yaml.MappingNode {
+		return nil, nil, fmt.Errorf("%w: no services section", ErrInvalidTemplate)
+	}
+	return doc, services, nil
+}
+
+func encodeCompose(doc *yaml.Node) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
+	if err := enc.Encode(doc); err != nil {
 		return nil, fmt.Errorf("writing the Compose file: %w", err)
 	}
 	if err := enc.Close(); err != nil {

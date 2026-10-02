@@ -116,6 +116,22 @@ func (s *StackStore) UpdateCompose(ctx context.Context, name, compose string, ma
 	return nil
 }
 
+// UpdateEnv replaces the stack's sealed .env, leaving every other column as
+// it is. It refuses (ErrStackNotFound) a missing name.
+func (s *StackStore) UpdateEnv(ctx context.Context, name string, sealedEnv []byte) error {
+	if sealedEnv == nil {
+		sealedEnv = []byte{}
+	}
+	n, err := s.q.UpdateStackEnv(ctx, storedb.UpdateStackEnvParams{Env: sealedEnv, Name: name})
+	if err != nil {
+		return fmt.Errorf("store: updating the .env of stack %s: %w", name, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrStackNotFound, name)
+	}
+	return nil
+}
+
 // Delete removes the stack's row, never anything on disk. It refuses
 // (ErrStackNotFound) a missing name.
 func (s *StackStore) Delete(ctx context.Context, name string) error {

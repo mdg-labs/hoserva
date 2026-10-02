@@ -211,6 +211,34 @@ func TestTemplateInstallWiring_InstallsACatalogTemplateUnderTheStateDirectory(t 
 		}
 	}
 
+	// The network mode is checked against the same Docker service's networks,
+	// and listing them is served by the handler main.go builds.
+	h.Container = provider
+	provider.SetNetworks(container.Network{Name: "bridge", Driver: "bridge"}, container.Network{Name: "lan", Driver: "macvlan"})
+	listed, err := h.ListDockerNetworks(ctx)
+	if err != nil || !listed.Available || len(listed.Networks) != 2 || listed.Networks[1].Name != "lan" {
+		t.Fatalf("ListDockerNetworks = %+v, %v, want the provider's networks", listed, err)
+	}
+	missing, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("iot")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+	if err != nil || len(missing.Warnings) != 1 || missing.Warnings[0].Command.Or("") != "docker network create iot" {
+		t.Errorf("a network the provider lacks: %+v, %v, want a missing_network warning with its command", missing, err)
+	}
+	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("jellyfin-iot"), NetworkMode: apiv1.NewOptString("iot")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+	if st := h.NewError(ctx, err); st.StatusCode != 409 || st.Response.Code != "network_missing" {
+		t.Errorf("an install on a missing network: %d %q, want 409 network_missing", st.StatusCode, st.Response.Code)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "stacks", "jellyfin-iot")); err == nil {
+		t.Error("an install on a missing network was written anyway")
+	}
+	onLAN, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("jellyfin-lan"), NetworkMode: apiv1.NewOptString("lan"), Restart: apiv1.NewOptTemplateInstallRequestRestart(apiv1.TemplateInstallRequestRestartNo)}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatalf("an install on an existing network: %v", err)
+	}
+	written, err := os.ReadFile(filepath.Join(stateDir, "stacks", "jellyfin-lan", "docker-compose.yml"))
+	if err != nil || !strings.Contains(string(written), "external: true") || !strings.Contains(string(written), `restart: "no"`) || onLAN.Plan.Compose != string(written) {
+		t.Errorf("docker-compose.yml = %q, %v, want the network and the restart policy", written, err)
+	}
+
 	compose.fail = errors.New("compose cannot resolve the stack")
 	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("jellyfin-3")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
 	if st := h.NewError(ctx, err); st.StatusCode != 502 || st.Response.Code != "stack_action_failed" {

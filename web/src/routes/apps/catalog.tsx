@@ -26,6 +26,7 @@ import {
   catalogDetailPath,
   COMMUNITY,
   entryCategories,
+  entryMaintainers,
   filterEntries,
   hasFilters,
   INSTALLED,
@@ -82,12 +83,22 @@ function CatalogCard({ entry }: { entry: CatalogEntry }): React.ReactElement {
             >
               {entry.title}
             </Link>
+            {entry.maintainer ? (
+              <span className="truncate text-muted-foreground text-sm">
+                {t("apps.catalog.maintainer", { maintainer: entry.maintainer })}
+              </span>
+            ) : null}
             <div className="flex flex-wrap gap-1">
               <SourceBadge kind={entry.sourceKind} signed={entry.signed} />
               {entry.installed ? <StatusBadge tone="outline">{t("apps.catalog.installed")}</StatusBadge> : null}
             </div>
           </div>
         </div>
+        {entry.description ? (
+          <p data-slot="catalog-card-description" className="line-clamp-3 break-words text-muted-foreground text-sm">
+            {entry.description}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-1">
           {entry.categories.map((category) => (
             <Badge key={category} variant="outline">
@@ -133,6 +144,7 @@ export function CatalogPage(): React.ReactElement {
   const catalog = catalogQuery.data;
   const entries = useMemo(() => catalog?.templates ?? [], [catalog]);
   const categories = useMemo(() => entryCategories(entries), [entries]);
+  const maintainers = useMemo(() => entryMaintainers(entries), [entries]);
   const matches = useMemo(() => filterEntries(entries, filters), [entries, filters]);
 
   const pageCount = Math.max(1, Math.ceil(matches.length / pageSize));
@@ -302,6 +314,17 @@ export function CatalogPage(): React.ReactElement {
                 label={t("apps.catalog.categoryFilter")}
               />
             </div>
+            {maintainers.length > 0 ? (
+              <div className="min-w-0 flex-1">
+                <MultiPick
+                  value={filters.maintainers}
+                  onChange={(next) => changeFilters({ maintainers: next })}
+                  options={maintainers.map((maintainer) => ({ value: maintainer, label: maintainer }))}
+                  placeholder={t("apps.catalog.maintainerFilter")}
+                  label={t("apps.catalog.maintainerFilter")}
+                />
+              </div>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <ToggleFilter
                 label={t("apps.catalog.installedFilter")}

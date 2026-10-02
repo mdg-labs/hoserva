@@ -169,6 +169,37 @@ func TestCatalog_ListOfAMissingOrUnreadableCatalogIs503NotAnEmptyList(t *testing
 	}
 }
 
+func TestCatalog_ListCarriesTheIndexDescriptionAndRefusesAnInvalidOne(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, index string) template.DirCatalog {
+		dir := filepath.Join(root, name)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(index), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return template.DirCatalog{Root: dir, Source: template.SourceCurated}
+	}
+	h := newCatalogHandler(t)
+	h.Catalog = write("good", `{"schema":1,"serial":3,"templates":[
+    {"id":"described","revision":1,"title":"Described","categories":[],"docs":"https://example.com","description":"Line one.\n\nLine two."},
+    {"id":"bare","revision":1,"title":"Bare","categories":[],"docs":"https://example.com"}]}`)
+	list, err := h.ListCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Templates) != 2 || list.Templates[0].Description.Or("") != "Line one.\n\nLine two." || list.Templates[1].Description.IsSet() {
+		t.Errorf("templates = %+v, want the described entry's description and none on the bare one", list.Templates)
+	}
+
+	h.Catalog = write("bad", `{"schema":1,"serial":3,"templates":[{"id":"x","description":"a\u0007b"}]}`)
+	list, err = h.ListCatalog(context.Background())
+	if status, code := statusOf(h, err); status != 503 || code != "catalog_unavailable" || list != nil {
+		t.Errorf("ListCatalog = %+v, %d %q, want 503 catalog_unavailable", list, status, code)
+	}
+}
+
 func TestCatalog_DetailReturnsTheRawComposeAndThePrivilegeSummary(t *testing.T) {
 	h := newCatalogHandler(t)
 	ctx := context.Background()
@@ -309,5 +340,148 @@ func TestCatalog_ListWhoseStacksCannotBeReadIsAnErrorNotAllNotInstalled(t *testi
 	list, err := h.ListCatalog(context.Background())
 	if status, code := statusOf(h, err); status != 500 || list != nil {
 		t.Fatalf("ListCatalog = %+v, %d %q, want a 500", list, status, code)
+	}
+}
+
+var catalogPNG = []byte("\x89PNG\r\n\x1a\nnot really")
+
+const catalogMetadata = `  maintainer: Example Team
+  description: |-
+    Line one.
+
+    Line two.
+  screenshots: [shots/a.png, b.webp]
+  links:
+    project: https://example.com/project
+    donate: https://example.com/donate
+  docs: https://example.com
+`
+
+func newMetadataHandler(t *testing.T) *api.Handler {
+	t.Helper()
+	h := newCatalogHandler(t)
+	h.Catalog = template.MapCatalog{
+		Source: "hoserva",
+		Kind:   store.CatalogSourceCurated,
+		Signed: true,
+		Serial: 9,
+		Templates: map[string]string{
+			"rich":  strings.Replace(tplTemplate("rich", ""), "  docs: https://example.com\n", catalogMetadata, 1),
+			"plain": tplTemplate("plain", ""),
+			"bad":   strings.Replace(tplTemplate("bad", ""), "  docs: https://example.com\n", "  docs: https://example.com\n  links: { donate: \"http://example.com/\" }\n", 1),
+		},
+		Screenshots: map[string][][]byte{"rich": {catalogPNG, []byte("RIFF....WEBP")}},
+	}
+	return h
+}
+
+func TestCatalog_ListAndDetailCarryTheMetadataOnlyWhenTheTemplateSetsIt(t *testing.T) {
+	h := newMetadataHandler(t)
+	ctx := context.Background()
+	list, err := h.ListCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintainers := map[string]apiv1.OptString{}
+	descriptions := map[string]apiv1.OptString{}
+	for _, e := range list.Templates {
+		maintainers[e.ID] = e.Maintainer
+		descriptions[e.ID] = e.Description
+	}
+	if descriptions["rich"].Or("") != "Line one.\n\nLine two." || descriptions["plain"].IsSet() {
+		t.Errorf("descriptions = %+v", descriptions)
+	}
+	if maintainers["rich"].Or("") != "Example Team" || maintainers["plain"].IsSet() {
+		t.Errorf("maintainers = %+v", maintainers)
+	}
+
+	rich, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "rich"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, hasLinks := rich.Links.Get()
+	if rich.Maintainer.Or("") != "Example Team" || rich.Description.Or("") != "Line one.\n\nLine two." || rich.ScreenshotCount != 2 ||
+		!hasLinks || links.Project.Or("") != "https://example.com/project" || links.Donate.Or("") != "https://example.com/donate" || links.Support.IsSet() {
+		t.Errorf("rich = %+v", rich)
+	}
+	plain, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Maintainer.IsSet() || plain.Description.IsSet() || plain.Links.IsSet() || plain.ScreenshotCount != 0 {
+		t.Errorf("plain = %+v", plain)
+	}
+	_, err = h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "bad"})
+	if status, code := statusOf(h, err); status != 422 || code != "template_invalid" {
+		t.Errorf("an http link = %d %q, want 422 template_invalid", status, code)
+	}
+}
+
+func TestCatalog_ScreenshotIsServedByPositionWithLockedDownHeaders(t *testing.T) {
+	srv := catalogServer(t, newMetadataHandler(t))
+	resp, body := catalogGet(t, srv, "/catalog/rich/screenshots/0")
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/png" || string(body) != string(catalogPNG) {
+		t.Fatalf("status %d, type %q, body %q", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q", got)
+	}
+	csp := resp.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'none'", "sandbox"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("Content-Security-Policy = %q lacks %q", csp, want)
+		}
+	}
+	if resp, _ = catalogGet(t, srv, "/catalog/rich/screenshots/1"); resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/webp" {
+		t.Errorf("second screenshot: status %d, type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	for path, wantCode := range map[string]string{
+		"/catalog/rich/screenshots/2":  "template_screenshot_not_found",
+		"/catalog/plain/screenshots/0": "template_screenshot_not_found",
+		"/catalog/nope/screenshots/0":  "template_not_found",
+	} {
+		resp, body := catalogGet(t, srv, path)
+		var e apiv1.Error
+		if err := json.Unmarshal(body, &e); err != nil || resp.StatusCode != 404 || e.Code != wantCode {
+			t.Errorf("%s: status %d, body %s, want 404 %q", path, resp.StatusCode, body, wantCode)
+		}
+	}
+	for _, path := range []string{"/catalog/rich/screenshots/-1", "/catalog/rich/screenshots/a.png", "/catalog/rich/screenshots/8"} {
+		if resp, body := catalogGet(t, srv, path); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d, body %s, want 400 for a position the API never has", path, resp.StatusCode, body)
+		}
+	}
+}
+
+func TestCatalog_ScreenshotNotConfiguredIs501(t *testing.T) {
+	h, _ := newStacksHandler(t)
+	_, err := h.GetCatalogTemplateScreenshot(context.Background(), apiv1.GetCatalogTemplateScreenshotParams{ID: "probe"})
+	if status, code := statusOf(h, err); status != 501 || code != "not_configured" {
+		t.Errorf("GetCatalogTemplateScreenshot = %d %q, want 501 not_configured", status, code)
+	}
+}
+
+func TestCatalog_ScreenshotThatIsASymlinkIsNeverServed(t *testing.T) {
+	root := t.TempDir()
+	compose := strings.Replace(tplTemplate("probe", ""), "  docs: https://example.com\n", "  docs: https://example.com\n  screenshots: [shots/a.png]\n", 1)
+	if err := os.MkdirAll(filepath.Join(root, "probe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "probe", "compose.yaml"), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "a.png"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "probe", "shots")); err != nil {
+		t.Fatal(err)
+	}
+	h := newCatalogHandler(t)
+	h.Catalog = template.DirCatalog{Root: root, Source: template.SourceCurated}
+	resp, body := catalogGet(t, catalogServer(t, h), "/catalog/probe/screenshots/0")
+	if resp.StatusCode != 404 || strings.Contains(string(body), "secret") {
+		t.Fatalf("status %d, body %s, want 404 and no file content", resp.StatusCode, body)
 	}
 }
