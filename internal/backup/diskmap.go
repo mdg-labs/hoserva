@@ -78,28 +78,44 @@ func MatchAttachedDisk(d disk.Disk, recorded []store.ArrayDisk) (int, bool) {
 // neither. A recorded disk no attached disk claims is replaced when a
 // disk that no recorded disk claims holds its filesystem, and absent
 // otherwise; one whose identity matches but whose filesystem differs is
-// replaced too (disk.FSUUIDMismatch). The boot disk is never a candidate.
-// It reads the given lists only.
+// replaced too (disk.FSUUIDMismatch). The boot disk is never a candidate,
+// with one exception: a cache recorded on a partition of the boot disk is
+// matched against that disk's partitions instead (mapBootPartitions), never
+// against the whole disk. It reads the given lists only.
 func MapArrayDisks(recorded []store.ArrayDisk, attached []disk.Disk) []MappedDisk {
 	var present []disk.Disk
+	var boot []disk.Disk
 	for _, d := range attached {
-		if !d.Boot {
+		if d.Boot {
+			boot = append(boot, d)
+		} else {
 			present = append(present, d)
+		}
+	}
+	var wholeRows []store.ArrayDisk
+	var wholeIdx []int
+	for r, rec := range recorded {
+		if !isBootPartitionRow(rec) {
+			wholeRows = append(wholeRows, rec)
+			wholeIdx = append(wholeIdx, r)
 		}
 	}
 	claimedBy := make([]int, len(present))
 	claimants := make([]int, len(recorded))
 	for i, d := range present {
 		claimedBy[i] = -1
-		if idx, ok := MatchAttachedDisk(d, recorded); ok {
-			claimedBy[i] = idx
-			claimants[idx]++
+		if idx, ok := MatchAttachedDisk(d, wholeRows); ok {
+			claimedBy[i] = wholeIdx[idx]
+			claimants[wholeIdx[idx]]++
 		}
 	}
 
 	out := make([]MappedDisk, len(recorded))
 	for r, rec := range recorded {
 		out[r] = MappedDisk{Recorded: rec, State: DiskAbsent}
+		if isBootPartitionRow(rec) {
+			continue
+		}
 		switch {
 		case claimants[r] > 1:
 			out[r].State = DiskAmbiguous
@@ -121,7 +137,96 @@ func MapArrayDisks(recorded []store.ArrayDisk, attached []disk.Disk) []MappedDis
 			}
 		}
 	}
+	mapBootPartitions(out, boot)
 	return out
+}
+
+// isBootPartitionRow reports whether rec is a cache recorded on a partition
+// of the boot disk (disk.BindBootPartition): its by-id name is the
+// partition's "-partN" link. It is the only slot that can sit on the boot
+// disk, so a data or parity row never is one, whatever its by-id name says.
+func isBootPartitionRow(rec store.ArrayDisk) bool {
+	return rec.Role == store.ArrayRoleCache && disk.IsPartition("", rec.ByIDName)
+}
+
+// mapBootPartitions fills in the states of the boot-partition rows of out
+// from the partitions of the attached boot disks. A row is claimed by a
+// partition when its parent disk's WWN or serial is the boot disk's and the
+// partition carries the recorded by-id name; more than one such partition
+// (a boot disk and its clone) makes it ambiguous. A claimed partition is
+// matched when udev reports a filesystem UUID for it and the recorded one,
+// if any, is the same, and replaced when it carries another or none. A row
+// no partition claims is replaced when an unclaimed boot-disk partition
+// holds its filesystem, and absent otherwise.
+func mapBootPartitions(out []MappedDisk, boot []disk.Disk) {
+	type partition struct {
+		parent disk.Disk
+		part   disk.BootPartition
+	}
+	var all []partition
+	for _, d := range boot {
+		for _, p := range d.Partitions {
+			all = append(all, partition{d, p})
+		}
+	}
+	asDisk := func(p partition) *disk.Disk {
+		return &disk.Disk{
+			Device:       p.part.Device,
+			Size:         p.part.Size,
+			WWN:          p.parent.WWN,
+			Serial:       p.parent.Serial,
+			ByIDName:     p.part.ByIDName,
+			Boot:         true,
+			Filesystem:   p.part.Filesystem,
+			FSUUID:       p.part.FSUUID,
+			ContainsData: p.part.Filesystem != "",
+		}
+	}
+
+	claimedBy := make([]int, len(all))
+	for i := range claimedBy {
+		claimedBy[i] = -1
+	}
+	claimants := make([]int, len(out))
+	for r := range out {
+		rec := out[r].Recorded
+		if !isBootPartitionRow(rec) {
+			continue
+		}
+		want := disk.Identity{WWN: rec.WWN, Serial: rec.Serial}
+		for i, p := range all {
+			if p.part.ByIDName == rec.ByIDName && (disk.Identity{WWN: p.parent.WWN, Serial: p.parent.Serial}).Matches(want) {
+				claimedBy[i] = r
+				claimants[r]++
+			}
+		}
+	}
+	for r := range out {
+		rec := out[r].Recorded
+		if !isBootPartitionRow(rec) {
+			continue
+		}
+		switch {
+		case claimants[r] > 1:
+			out[r].State = DiskAmbiguous
+		case claimants[r] == 1:
+			p := all[slices.Index(claimedBy, r)]
+			out[r].Attached = asDisk(p)
+			out[r].State = DiskReplaced
+			if p.part.FSUUID != "" && !disk.FSUUIDMismatch(rec.FSUUID, p.part.FSUUID) {
+				out[r].State = DiskMatched
+			}
+		case rec.FSUUID != "":
+			for i, p := range all {
+				if claimedBy[i] == -1 && p.part.FSUUID == rec.FSUUID {
+					claimedBy[i] = r
+					out[r].Attached = asDisk(p)
+					out[r].State = DiskReplaced
+					break
+				}
+			}
+		}
+	}
 }
 
 // DiskMappingEntry is one slot of a confirmed disk mapping: the attached

@@ -57,6 +57,38 @@ func (l *Lister) cacheCandidates(parentName string, parent Identity, mounts []Mo
 	return out
 }
 
+// bootPartitions lists every partition of the boot disk with the
+// identity and filesystem udev's cache holds for it, in partition-number
+// order. Unlike cacheCandidates it applies no exclusion: a formatted, mounted
+// or swap partition is listed too, since a bare-metal restore has to see a
+// formatted cache partition to recognise it. It reads sysfs, udev's
+// database and by-id only and never opens a device. A partition udev has no
+// entry for is listed with no filesystem, and an unreadable by-id directory
+// leaves every ByIDName empty: a caller that cannot see what it needs then
+// finds nothing to match, never a partition it could mistake for another.
+func (l *Lister) bootPartitions(parentName string, parent Identity) []BootPartition {
+	byID, _ := scanPartitionByID(l.ByIDDir)
+	var out []BootPartition
+	for _, part := range l.partitions(parentName) {
+		p := BootPartition{Device: "/dev/" + part}
+		if sectors, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "size")); err == nil && sectors > 0 {
+			p.Size = sectors * 512
+		}
+		if number := strings.TrimSpace(readSysString(filepath.Join(l.SysBlockDir, part, "partition"))); number != "" && parent.ByIDName != "" {
+			if want := parent.ByIDName + "-part" + number; slices.Contains(byID[part], want) {
+				p.ByIDName = want
+			}
+		}
+		if props, ok := l.udevProps(part); ok {
+			p.PartUUID = props["ID_PART_ENTRY_UUID"]
+			p.Filesystem = props["ID_FS_TYPE"]
+			p.FSUUID = props["ID_FS_UUID"]
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func (l *Lister) cacheCandidate(part string, parent Identity, byIDNames, named []string) (CachePartition, bool) {
 	number := strings.TrimSpace(readSysString(filepath.Join(l.SysBlockDir, part, "partition")))
 	wantByID := parent.ByIDName + "-part" + number

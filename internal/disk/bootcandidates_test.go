@@ -17,6 +17,7 @@ type partFixture struct {
 	partUUID  string
 	partName  string
 	fsType    string
+	fsUUID    string
 	holders   []string
 	noByID    bool
 	noUdev    bool
@@ -73,6 +74,9 @@ func newBootNVMeLister(t *testing.T, parts []partFixture, swaps, fstab string, u
 			}
 			if p.fsType != "" {
 				body += "E:ID_FS_TYPE=" + p.fsType + "\n"
+			}
+			if p.fsUUID != "" {
+				body += "E:ID_FS_UUID=" + p.fsUUID + "\n"
 			}
 			mustWriteFile(t, filepath.Join(udev, fmt.Sprintf("b259:%d", p.num)), body)
 		}
@@ -303,5 +307,63 @@ func TestPartLabelMayMatch(t *testing.T) {
 				t.Fatalf("partLabelMayMatch(%q, %q) = %v, want %v", tc.spec, tc.udev, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLister_ListsEveryBootDiskPartitionWithItsFilesystemAndIdentity(t *testing.T) {
+	formatted := spare(3)
+	formatted.fsType, formatted.fsUUID = "ext4", "c0ffee00-1111-2222-3333-444444444444"
+	blank := spare(4)
+	blank.noByID = true
+	noUdev := spare(5)
+	noUdev.noUdev = true
+	parts := append(baseParts(), formatted, blank, noUdev)
+	l := newBootNVMeLister(t, parts, "Filename\tType\tSize\tUsed\tPriority\n", "/dev/nvme0n1p2 / ext4 defaults 0 1\n", nil)
+
+	d := bootDisk(t, l)
+	want := []BootPartition{
+		{Device: "/dev/nvme0n1p1", Size: 1048576 * 512, ByIDName: bootByIDPrefix + "-part1", PartUUID: "aaaa0001", Filesystem: "vfat"},
+		{Device: "/dev/nvme0n1p2", Size: 117000000 * 512, ByIDName: bootByIDPrefix + "-part2", PartUUID: "aaaa0002", Filesystem: "ext4"},
+		{Device: "/dev/nvme0n1p3", Size: 1800000000 * 512, ByIDName: bootByIDPrefix + "-part3", PartUUID: formatted.partUUID, Filesystem: "ext4", FSUUID: formatted.fsUUID},
+		{Device: "/dev/nvme0n1p4", Size: 1800000000 * 512, PartUUID: blank.partUUID},
+		{Device: "/dev/nvme0n1p5", Size: 1800000000 * 512, ByIDName: bootByIDPrefix + "-part5"},
+	}
+	if len(d.Partitions) != len(want) {
+		t.Fatalf("Partitions = %+v, want %+v", d.Partitions, want)
+	}
+	for i := range want {
+		if d.Partitions[i] != want[i] {
+			t.Errorf("Partitions[%d] = %+v, want %+v", i, d.Partitions[i], want[i])
+		}
+	}
+	for _, c := range d.CachePartitions {
+		if c.Device == "/dev/nvme0n1p3" {
+			t.Fatalf("the formatted partition is a cache candidate: %+v", c)
+		}
+	}
+}
+
+func TestLister_OnlyTheBootDiskListsPartitions(t *testing.T) {
+	l := newBootNVMeLister(t, append(baseParts(), spare(3)), "Filename\tType\tSize\tUsed\tPriority\n", "/dev/nvme0n1p2 / ext4 defaults 0 1\n", nil)
+	disks, err := l.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range disks {
+		if !d.Boot && len(d.Partitions) != 0 {
+			t.Errorf("%s is not the boot disk but lists partitions %+v", d.Device, d.Partitions)
+		}
+	}
+}
+
+func TestLister_BootPartitionsNeedNoCandidateSources(t *testing.T) {
+	l := newBootNVMeLister(t, append(baseParts(), spare(3)), "", "", nil)
+	l.SwapsFile, l.FstabFile = "", ""
+	d := bootDisk(t, l)
+	if len(d.CachePartitions) != 0 {
+		t.Fatalf("CachePartitions = %+v, want none with no sources", d.CachePartitions)
+	}
+	if len(d.Partitions) != 3 {
+		t.Fatalf("Partitions = %+v, want all three", d.Partitions)
 	}
 }
