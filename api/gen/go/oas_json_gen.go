@@ -5694,6 +5694,206 @@ func (s *BlockingJob) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *CachePartition) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CachePartition) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("device")
+		e.Str(s.Device)
+	}
+	{
+		e.FieldStart("sizeBytes")
+		e.Int64(s.SizeBytes)
+	}
+	{
+		if s.ByIdName.Set {
+			e.FieldStart("byIdName")
+			s.ByIdName.Encode(e)
+		}
+	}
+	{
+		if s.PartUuid.Set {
+			e.FieldStart("partUuid")
+			s.PartUuid.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("reason")
+		s.Reason.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfCachePartition = [5]string{
+	0: "device",
+	1: "sizeBytes",
+	2: "byIdName",
+	3: "partUuid",
+	4: "reason",
+}
+
+// Decode decodes CachePartition from json.
+func (s *CachePartition) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CachePartition to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "device":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Device = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"device\"")
+			}
+		case "sizeBytes":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int64()
+				s.SizeBytes = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"sizeBytes\"")
+			}
+		case "byIdName":
+			if err := func() error {
+				s.ByIdName.Reset()
+				if err := s.ByIdName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"byIdName\"")
+			}
+		case "partUuid":
+			if err := func() error {
+				s.PartUuid.Reset()
+				if err := s.PartUuid.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"partUuid\"")
+			}
+		case "reason":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.Reason.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"reason\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CachePartition")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00010011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCachePartition) {
+					name = jsonFieldsNameOfCachePartition[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CachePartition) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CachePartition) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CachePartitionReason as json.
+func (s CachePartitionReason) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CachePartitionReason from json.
+func (s *CachePartitionReason) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CachePartitionReason to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CachePartitionReason(v) {
+	case CachePartitionReasonSpareBootPartition:
+		*s = CachePartitionReasonSpareBootPartition
+	default:
+		*s = CachePartitionReason(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CachePartitionReason) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CachePartitionReason) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *CacheUsageBreakdown) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -13015,9 +13215,19 @@ func (s *DiskInventoryEntry) encodeFields(e *jx.Encoder) {
 			s.LooksLikeUnraid.Encode(e)
 		}
 	}
+	{
+		if s.CachePartitions != nil {
+			e.FieldStart("cachePartitions")
+			e.ArrStart()
+			for _, elem := range s.CachePartitions {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
 }
 
-var jsonFieldsNameOfDiskInventoryEntry = [13]string{
+var jsonFieldsNameOfDiskInventoryEntry = [14]string{
 	0:  "device",
 	1:  "sizeBytes",
 	2:  "model",
@@ -13031,6 +13241,7 @@ var jsonFieldsNameOfDiskInventoryEntry = [13]string{
 	10: "smartStatus",
 	11: "containsData",
 	12: "looksLikeUnraid",
+	13: "cachePartitions",
 }
 
 // Decode decodes DiskInventoryEntry from json.
@@ -13177,6 +13388,23 @@ func (s *DiskInventoryEntry) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"looksLikeUnraid\"")
+			}
+		case "cachePartitions":
+			if err := func() error {
+				s.CachePartitions = make([]CachePartition, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem CachePartition
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.CachePartitions = append(s.CachePartitions, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"cachePartitions\"")
 			}
 		default:
 			return d.Skip()

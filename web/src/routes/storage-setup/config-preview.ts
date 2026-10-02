@@ -1,5 +1,5 @@
 import type { CreatePolicy, DiskEntry, DiskRole, FilesystemChoice } from "./validation";
-import { assignableDisks } from "./validation";
+import { assignableDisks, cacheRoleOnly } from "./validation";
 
 export interface ArraySetupState {
   disks: DiskEntry[];
@@ -64,7 +64,9 @@ export function summarizeArray(state: ArraySetupState): ArraySummary {
 function contentPaths(state: ArraySetupState): string[] {
   const paths = ["/var/lib/hoserva/snapraid.content"];
   const cacheDisks = assignableDisks(state.disks).filter((disk) => state.roles[disk.device] === "cache");
-  if (cacheDisks.length > 0) {
+  // A cache that is a partition of the boot disk is the boot copy's own
+  // device, so it gets no content copy of its own.
+  if (cacheDisks.length > 0 && !cacheDisks.some(cacheRoleOnly)) {
     paths.push("/mnt/cache/snapraid.content");
   }
 

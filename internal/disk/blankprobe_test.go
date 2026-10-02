@@ -279,3 +279,78 @@ func TestReadExactly_ShortReadIsReturnedAsAnError(t *testing.T) {
 		t.Fatal("readExactly: got nil error, want one for a reader with fewer bytes than requested")
 	}
 }
+
+const partitionEntryOnly = "DEVNAME=/dev/vda2\n" +
+	"PART_ENTRY_SCHEME=gpt\n" +
+	"PART_ENTRY_UUID=0b2ab46c-43a8-4440-9569-9b3f9319e9de\n" +
+	"PART_ENTRY_TYPE=0fc63daf-8483-4772-8e79-3d69d8477de4\n" +
+	"PART_ENTRY_NUMBER=2\n" +
+	"PART_ENTRY_OFFSET=41943040\n" +
+	"PART_ENTRY_SIZE=16773120\n" +
+	"PART_ENTRY_DISK=254:0\n"
+
+// TestLinuxBlankProber_PartitionEntryAloneIsNotASignature is what an
+// unformatted partition looks like to blkid -p: it exits 0 and reports the
+// partition's own table entry (PART_ENTRY_*), which says nothing about its
+// contents. Treating that as "found something" would make every partition
+// refuse as non-blank, so only a filesystem, RAID or partition-table
+// signature of the partition's own counts — and the readback still has to
+// succeed.
+func TestLinuxBlankProber_PartitionEntryAloneIsNotASignature(t *testing.T) {
+	r := NewFakeRunner()
+	r.Script("blkid", []string{"-p", "-o", "export", "/dev/vda2"}, []byte(partitionEntryOnly), nil)
+	readback := NewFakeBlankReadback()
+	readback.ScriptOK("/dev/vda2")
+	p := LinuxBlankProber{Exec: r, Readback: readback}
+
+	blank, err := p.ProbeBlank(context.Background(), "/dev/vda2")
+	if err != nil || !blank {
+		t.Fatalf("ProbeBlank = %v, %v, want blank for a partition that carries only its table entry", blank, err)
+	}
+	if opened := readback.Opened(); len(opened) != 1 {
+		t.Fatalf("Opened() = %v, want the readback to still run", opened)
+	}
+}
+
+func TestLinuxBlankProber_PartitionWithAnyOtherSignatureRefuses(t *testing.T) {
+	for name, extra := range map[string]string{
+		"filesystem":             "TYPE=ext4\nUSAGE=filesystem\nUUID=abcd\n",
+		"swap":                   "TYPE=swap\nUSAGE=other\n",
+		"nested partition table": "PTTYPE=dos\n",
+		"raid member":            "TYPE=linux_raid_member\nUSAGE=raid\n",
+		"an unknown key":         "SOMETHING_NEW=1\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewFakeRunner()
+			r.Script("blkid", []string{"-p", "-o", "export", "/dev/vda2"}, []byte(partitionEntryOnly+extra), nil)
+			readback := NewFakeBlankReadback()
+			readback.ScriptOK("/dev/vda2")
+			blank, err := LinuxBlankProber{Exec: r, Readback: readback}.ProbeBlank(context.Background(), "/dev/vda2")
+			if blank || err != nil {
+				t.Fatalf("ProbeBlank = %v, %v, want a definite not-blank", blank, err)
+			}
+			if len(readback.Opened()) != 0 {
+				t.Fatal("the readback ran for a device that already carries a signature")
+			}
+		})
+	}
+}
+
+// TestLinuxBlankProber_ExitZeroWithNoEntryOutputRefuses keeps the
+// fail-closed reading: exit 0 whose output shows no partition entry (empty,
+// or only a device name) is "found something we cannot classify", never
+// blank.
+func TestLinuxBlankProber_ExitZeroWithNoEntryOutputRefuses(t *testing.T) {
+	for name, out := range map[string]string{"empty": "", "device name only": "DEVNAME=/dev/vda2\n"} {
+		t.Run(name, func(t *testing.T) {
+			r := NewFakeRunner()
+			r.Script("blkid", []string{"-p", "-o", "export", "/dev/vda2"}, []byte(out), nil)
+			readback := NewFakeBlankReadback()
+			readback.ScriptOK("/dev/vda2")
+			blank, err := LinuxBlankProber{Exec: r, Readback: readback}.ProbeBlank(context.Background(), "/dev/vda2")
+			if blank || err != nil {
+				t.Fatalf("ProbeBlank = %v, %v, want not blank", blank, err)
+			}
+		})
+	}
+}

@@ -109,17 +109,25 @@ func isPartitionOf(disk, name string) bool {
 }
 
 func (l *Lister) udevFS(name string) (fsType, label, uuid string) {
+	props, _ := l.udevProps(name)
+	return props["ID_FS_TYPE"], props["ID_FS_LABEL"], props["ID_FS_UUID"]
+}
+
+// udevProps returns every E: property in udev's cached database entry for
+// the block device name, and false when there is no entry to read — the
+// device has no dev number, or udev has not recorded it.
+func (l *Lister) udevProps(name string) (map[string]string, bool) {
 	majmin := readSysString(filepath.Join(l.SysBlockDir, name, "dev"))
 	if majmin == "" {
-		return "", "", ""
+		return nil, false
 	}
-	path := filepath.Join(l.udevDataDir(), "b"+majmin)
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Join(l.udevDataDir(), "b"+majmin))
 	if err != nil {
-		return "", "", ""
+		return nil, false
 	}
 	defer func() { _ = f.Close() }()
 
+	props := make(map[string]string)
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
@@ -130,14 +138,7 @@ func (l *Lister) udevFS(name string) (fsType, label, uuid string) {
 		if !ok {
 			continue
 		}
-		switch key {
-		case "ID_FS_TYPE":
-			fsType = val
-		case "ID_FS_LABEL":
-			label = val
-		case "ID_FS_UUID":
-			uuid = val
-		}
+		props[key] = val
 	}
-	return fsType, label, uuid
+	return props, true
 }

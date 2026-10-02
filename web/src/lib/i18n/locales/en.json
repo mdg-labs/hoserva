@@ -1489,7 +1489,8 @@
     "discovery": {
       "bootDisk": "Boot disk",
       "weakIdentity": "Weak identity",
-      "available": "Available"
+      "available": "Available",
+      "sparePartition": "Spare partition — can hold the cache"
     },
     "smart": {
       "ok": "OK",
@@ -1500,7 +1501,8 @@
       "data": "Data",
       "cache": "Cache",
       "ignore": "Ignore",
-      "unassigned": "Unassigned"
+      "unassigned": "Unassigned",
+      "bootPartitionHint": "Only the cache can use this partition. Hoserva formats this unused partition and never changes the boot disk's partition table."
     },
     "validation": {
       "errorsTitle": "Fix these problems before continuing",
@@ -1511,7 +1513,8 @@
         "noDataDisk": "Assign at least one data disk.",
         "noParityDisk": "Assign at least one parity disk.",
         "parityTooSmall": "Each parity disk must be at least as large as the largest data disk.",
-        "weakIdentityParity": "Disks with weak identity cannot be used as parity."
+        "weakIdentityParity": "Disks with weak identity cannot be used as parity.",
+        "bootPartitionNotCache": "A partition of the boot disk can only be used as the cache."
       },
       "warnings": {
         "weakIdentityData": "A disk with weak identity is assigned as data — parity matching may be unreliable.",
@@ -1527,7 +1530,8 @@
       "keepTitle": "Keep existing data",
       "keepDescription": "Adopt the existing {{filesystem}} filesystem without formatting.",
       "parityTitle": "Parity disks are always formatted",
-      "parityDescription": "Parity disks are always formatted as XFS (Q20)."
+      "parityDescription": "Parity disks are always formatted as XFS (Q20).",
+      "bootPartitionNote": "{{size}} — the boot disk's partition table stays unchanged."
     },
     "pool": {
       "createPolicy": "Default create policy for new shares",

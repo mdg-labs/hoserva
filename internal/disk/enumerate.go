@@ -24,6 +24,12 @@ type Lister struct {
 	ByIDDir     string
 	ProcMounts  string
 	UdevDataDir string
+	// SwapsFile, FstabFile and MountUnitDirs are the sources the boot
+	// disk's cache-candidate check reads (cacheCandidates). With either
+	// SwapsFile or FstabFile empty no candidate is reported.
+	SwapsFile     string
+	FstabFile     string
+	MountUnitDirs []string
 }
 
 // NewLister returns a Lister reading the real system paths.
@@ -32,6 +38,10 @@ func NewLister() *Lister {
 		SysBlockDir: "/sys/class/block",
 		ByIDDir:     "/dev/disk/by-id",
 		ProcMounts:  "/proc/mounts",
+
+		SwapsFile:     "/proc/swaps",
+		FstabFile:     "/etc/fstab",
+		MountUnitDirs: systemdMountUnitDirs,
 	}
 }
 
@@ -95,6 +105,10 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		dev := "/dev/" + name
 
 		fsType, fsLabel, fsUUID := l.discoveryFS(name)
+		var cachePartitions []CachePartition
+		if bootSet[dev] {
+			cachePartitions = l.cacheCandidates(name, id, mounts)
+		}
 		disks = append(disks, Disk{
 			Device:          dev,
 			Size:            size * 512, // /sys/class/block/<dev>/size is always in 512-byte sectors
@@ -109,6 +123,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			FSUUID:          fsUUID,
 			ContainsData:    fsType != "",
 			LooksLikeUnraid: LooksLikeUnraidLabel(fsLabel),
+			CachePartitions: cachePartitions,
 		})
 	}
 

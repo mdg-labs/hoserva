@@ -2617,6 +2617,106 @@ func (s *BlockingJob) SetClass(val JobClass) {
 	s.Class = val
 }
 
+// Ref: #/components/schemas/CachePartition
+type CachePartition struct {
+	// The partition's kernel device, for example `/dev/nvme0n1p3`.
+	Device    string `json:"device"`
+	SizeBytes int64  `json:"sizeBytes"`
+	// The partition's `/dev/disk/by-id` link name, the identity it is formatted and mounted by.
+	ByIdName OptString `json:"byIdName"`
+	// The partition table's identifier for it, re-checked immediately before formatting.
+	PartUuid OptString `json:"partUuid"`
+	// Why it qualifies: `spare_boot_partition` — an unused partition of the boot disk that nothing
+	// mounts, swaps on or names.
+	Reason CachePartitionReason `json:"reason"`
+}
+
+// GetDevice returns the value of Device.
+func (s *CachePartition) GetDevice() string {
+	return s.Device
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *CachePartition) GetSizeBytes() int64 {
+	return s.SizeBytes
+}
+
+// GetByIdName returns the value of ByIdName.
+func (s *CachePartition) GetByIdName() OptString {
+	return s.ByIdName
+}
+
+// GetPartUuid returns the value of PartUuid.
+func (s *CachePartition) GetPartUuid() OptString {
+	return s.PartUuid
+}
+
+// GetReason returns the value of Reason.
+func (s *CachePartition) GetReason() CachePartitionReason {
+	return s.Reason
+}
+
+// SetDevice sets the value of Device.
+func (s *CachePartition) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *CachePartition) SetSizeBytes(val int64) {
+	s.SizeBytes = val
+}
+
+// SetByIdName sets the value of ByIdName.
+func (s *CachePartition) SetByIdName(val OptString) {
+	s.ByIdName = val
+}
+
+// SetPartUuid sets the value of PartUuid.
+func (s *CachePartition) SetPartUuid(val OptString) {
+	s.PartUuid = val
+}
+
+// SetReason sets the value of Reason.
+func (s *CachePartition) SetReason(val CachePartitionReason) {
+	s.Reason = val
+}
+
+// Why it qualifies: `spare_boot_partition` — an unused partition of the boot disk that nothing
+// mounts, swaps on or names.
+type CachePartitionReason string
+
+const (
+	CachePartitionReasonSpareBootPartition CachePartitionReason = "spare_boot_partition"
+)
+
+// AllValues returns all CachePartitionReason values.
+func (CachePartitionReason) AllValues() []CachePartitionReason {
+	return []CachePartitionReason{
+		CachePartitionReasonSpareBootPartition,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CachePartitionReason) MarshalText() ([]byte, error) {
+	switch s {
+	case CachePartitionReasonSpareBootPartition:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CachePartitionReason) UnmarshalText(data []byte) error {
+	switch CachePartitionReason(data) {
+	case CachePartitionReasonSpareBootPartition:
+		*s = CachePartitionReasonSpareBootPartition
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Cache disk byte breakdown for the cache page (doc 03 §3.6), computed as a by-product of each mover
 // run (Q87) — never a live directory walk on a timer (Q13).
 // Ref: #/components/schemas/CacheUsageBreakdown
@@ -6220,6 +6320,13 @@ type DiskInventoryEntry struct {
 	// True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a
 	// conservative heuristic that never mounts the disk to look for `super.dat`.
 	LooksLikeUnraid OptBool `json:"looksLikeUnraid"`
+	// Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc
+	// 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no
+	// filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount
+	// or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from
+	// sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when
+	// the partition is picked.
+	CachePartitions []CachePartition `json:"cachePartitions"`
 }
 
 // GetDevice returns the value of Device.
@@ -6287,6 +6394,11 @@ func (s *DiskInventoryEntry) GetLooksLikeUnraid() OptBool {
 	return s.LooksLikeUnraid
 }
 
+// GetCachePartitions returns the value of CachePartitions.
+func (s *DiskInventoryEntry) GetCachePartitions() []CachePartition {
+	return s.CachePartitions
+}
+
 // SetDevice sets the value of Device.
 func (s *DiskInventoryEntry) SetDevice(val string) {
 	s.Device = val
@@ -6350,6 +6462,11 @@ func (s *DiskInventoryEntry) SetContainsData(val OptBool) {
 // SetLooksLikeUnraid sets the value of LooksLikeUnraid.
 func (s *DiskInventoryEntry) SetLooksLikeUnraid(val OptBool) {
 	s.LooksLikeUnraid = val
+}
+
+// SetCachePartitions sets the value of CachePartitions.
+func (s *DiskInventoryEntry) SetCachePartitions(val []CachePartition) {
+	s.CachePartitions = val
 }
 
 // Doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's

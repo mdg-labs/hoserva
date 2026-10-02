@@ -41,6 +41,7 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	if h.MountFailedSlots != nil {
 		mountFailed = h.MountFailedSlots()
 	}
+	var bootDisks []disk.Disk
 	if h.Disks != nil {
 		disks, err := h.Disks.List(ctx)
 		if err != nil {
@@ -48,9 +49,11 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 		}
 		var present []disk.Disk
 		for _, d := range disks {
-			if !d.Boot {
-				present = append(present, d)
+			if d.Boot {
+				bootDisks = append(bootDisks, d)
+				continue
 			}
+			present = append(present, d)
 		}
 		// Count claimants per member first: a weak-identity member and a
 		// dd-made clone share a filesystem UUID, and choosing between
@@ -92,6 +95,26 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			entries = append(entries, entry)
 		}
 	}
+	// A cache on a boot-disk partition is bound to its parent disk's
+	// identity, and the boot disk is left out of the matching above. It is
+	// present while a boot disk carries that identity: a failed mount of
+	// it is still reported through mountFailed.
+	for i, ad := range arrayDisks {
+		if matched[i] || !disk.IsPartition(ad.Device, ad.ByIDName) || !bootDiskCarries(bootDisks, ad) {
+			continue
+		}
+		matched[i] = true
+		state := apiv1.DiskStateActive
+		if mountFailed[ad.Mountpoint] {
+			state = apiv1.DiskStateMountFailed
+		}
+		entries = append(entries, apiv1.PoolDiskEntry{
+			Device:     ad.Device,
+			MountPoint: ad.Mountpoint,
+			Role:       arrayRoleToAPI(ad.Role),
+			State:      state,
+		})
+	}
 	// Every stored array member with no identity match above is a dead or
 	// pulled drive (doc 02 §4) — reported as its own entry, at its stored
 	// device/role/mountpoint with no size, rather than silently dropped
@@ -121,6 +144,16 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	status := &apiv1.PoolStatus{Mounted: mounted, Disks: entries}
 	h.populatePoolSpace(ctx, status, settings)
 	return status, nil
+}
+
+func bootDiskCarries(bootDisks []disk.Disk, ad store.ArrayDisk) bool {
+	want := disk.Identity{WWN: ad.WWN, Serial: ad.Serial, WeakIdentity: ad.WeakIdentity}
+	for _, d := range bootDisks {
+		if want.Matches(disk.Identity{WWN: d.WWN, Serial: d.Serial, WeakIdentity: d.WeakIdentity}) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchArrayDisk finds the stored array_disks row that identifies the same
@@ -273,6 +306,20 @@ func diskToAPI(d disk.Disk) apiv1.DiskInventoryEntry {
 	}
 	if d.Label != "" {
 		entry.Label = apiv1.NewOptString(d.Label)
+	}
+	for _, c := range d.CachePartitions {
+		part := apiv1.CachePartition{
+			Device:    c.Device,
+			SizeBytes: c.Size,
+			Reason:    apiv1.CachePartitionReasonSpareBootPartition,
+		}
+		if c.ByIDName != "" {
+			part.ByIdName = apiv1.NewOptString(c.ByIDName)
+		}
+		if c.PartUUID != "" {
+			part.PartUuid = apiv1.NewOptString(c.PartUUID)
+		}
+		entry.CachePartitions = append(entry.CachePartitions, part)
 	}
 	return entry
 }

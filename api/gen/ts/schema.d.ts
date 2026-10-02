@@ -1194,7 +1194,7 @@ export interface paths {
         put?: never;
         /**
          * Create the storage array
-         * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1).
+         * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused with `unmanaged_device`.
          */
         post: operations["createArray"];
         delete?: never;
@@ -4478,6 +4478,23 @@ export interface components {
             containsData?: boolean;
             /** @description True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a conservative heuristic that never mounts the disk to look for `super.dat`. */
             looksLikeUnraid?: boolean;
+            /** @description Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when the partition is picked. */
+            cachePartitions?: components["schemas"]["CachePartition"][];
+        };
+        CachePartition: {
+            /** @description The partition's kernel device, for example `/dev/nvme0n1p3`. */
+            device: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            /** @description The partition's `/dev/disk/by-id` link name, the identity it is formatted and mounted by. */
+            byIdName?: string;
+            /** @description The partition table's identifier for it, re-checked immediately before formatting. */
+            partUuid?: string;
+            /**
+             * @description Why it qualifies: `spare_boot_partition` — an unused partition of the boot disk that nothing mounts, swaps on or names.
+             * @enum {string}
+             */
+            reason: "spare_boot_partition";
         };
         /** @description Path segment under `/mnt/disks/` (Q72). */
         ExternalDiskLabel: string;

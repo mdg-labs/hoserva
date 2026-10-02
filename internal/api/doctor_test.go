@@ -369,3 +369,34 @@ func TestDockerEngineChecks_NilProviderNotConfigured(t *testing.T) {
 		t.Fatalf("docker status = %q, want warn when no Provider is wired", check.Status)
 	}
 }
+
+// TestDoctor_SharedNVMeLayout is doctor's side of a cache on the boot
+// disk's spare partition (doc 01 §6): the boot NVMe is one boot block
+// device, not a data disk; SMART is never polled on it; and the free-space
+// check reads the root filesystem only, whatever the cache partition holds.
+func TestDoctor_SharedNVMeLayout(t *testing.T) {
+	f := disk.NewFakeProvider()
+	f.AddDisk("/dev/nvme0n1", disk.Disk{
+		Size: disk.TB, Boot: true, Serial: "S4EWNX0M123456X", ByIDName: "nvme-X",
+		CachePartitions: []disk.CachePartition{{Device: "/dev/nvme0n1p3", Size: 900 * disk.GB, ByIDName: "nvme-X-part3", PartUUID: "5b3d9e0a-03", Reason: disk.ReasonSpareBootPartition}},
+	})
+	f.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	f.SetSMART("/dev/sdb", disk.SMARTReport{SpinState: disk.Active})
+
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil, nil, nil)
+
+	if got := findDoctorCheck(report, "disks"); !strings.Contains(got.Message, "1 data disk(s) visible (2 total block devices)") {
+		t.Fatalf("disk inventory message = %q, want the boot NVMe counted as a block device but not a data disk", got.Message)
+	}
+	for _, call := range f.SMARTCalls() {
+		if call.Device != "/dev/sdb" {
+			t.Fatalf("SMART polled %s; only the data disk may be polled", call.Device)
+		}
+	}
+	if len(f.SMARTCalls()) != 1 {
+		t.Fatalf("SMARTCalls = %+v, want one poll", f.SMARTCalls())
+	}
+	if got := findDoctorCheck(report, idBootSpace); !strings.Contains(got.Message, "boot filesystem") {
+		t.Fatalf("boot space message = %q, want the root filesystem's free space", got.Message)
+	}
+}

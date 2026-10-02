@@ -95,6 +95,10 @@ const (
 // filesystem type is cached. LooksLikeUnraid is the conservative label
 // heuristic LooksLikeUnraidLabel documents (doc 05) — List never mounts a
 // disk to look for super.dat.
+//
+// CachePartitions is set only on a Boot disk: the spare partitions on it
+// that qualify to hold the cache (CachePartition). It comes from the same
+// cached sources as the rest of List and never opens a device.
 type Disk struct {
 	Device          string
 	Size            int64
@@ -110,6 +114,28 @@ type Disk struct {
 	FSUUID          string
 	ContainsData    bool
 	LooksLikeUnraid bool
+	CachePartitions []CachePartition
+}
+
+// ReasonSpareBootPartition is the CachePartition.Reason code for the one
+// way a partition qualifies: it sits on the boot disk, carries no
+// filesystem or swap signature, is neither mounted nor named in fstab or
+// a systemd unit, and is not held open by another device (doc 02 §4).
+const ReasonSpareBootPartition = "spare_boot_partition"
+
+// CachePartition is a spare partition on the boot disk that may hold the
+// cache — the one place Hoserva formats a partition (doc 01 §6, doc 02
+// §4). Device is its kernel name, ByIDName its /dev/disk/by-id link
+// (the parent's by-id name plus "-partN") and PartUUID the partition
+// table's own identifier; both are re-checked immediately before mkfs.
+// Reason says why it qualifies. Being listed here is not a blankness
+// check: the signature probe runs only once the user picks the partition.
+type CachePartition struct {
+	Device   string
+	Size     int64
+	ByIDName string
+	PartUUID string
+	Reason   string
 }
 
 // SMARTReport is one SMART poll's result. Skipped is true when a standby

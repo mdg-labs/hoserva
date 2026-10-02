@@ -109,7 +109,7 @@ This is the fundamental difference from Unraid, which writes parity synchronousl
 ### What Hoserva configures
 
 - `parity` (and `2-parity` when a second parity disk is assigned — Q19) — each parity disk must be ≥ the largest data disk, formatted **XFS**: the parity file is a single file roughly the size of the largest data disk, and ext4's 16 TiB file limit is below today's large disks (Q20). Data disks' `minfreespace` keeps parity headroom when sizes match exactly.
-- `content` — **content files on at least 3 distinct physical devices, and at least `parity disks + 2` copies** (Q18): the boot device first (`/var/lib/hoserva/snapraid.content`, so `status` polling never touches the array), cache if present, then data disks with the most free space. The config generator refuses a layout that violates this. Easy to get wrong and catastrophic to get wrong: losing all content files means parity is useless.
+- `content` — **content files on at least 3 distinct physical devices, and at least `parity disks + 2` copies** (Q18): the boot device first (`/var/lib/hoserva/snapraid.content`, so `status` polling never touches the array), cache if present, then data disks with the most free space. A cache that is a partition of the boot disk is the same physical device as the boot copy, so it gets no copy of its own and the data disks supply the rest — one parity disk then needs two data disks. The config generator refuses a layout that violates this. Easy to get wrong and catastrophic to get wrong: losing all content files means parity is useless.
 - `data d1..dN` — data disks by mount point
 - `exclude` — sensible defaults: `/lost+found/`, `/.Trash-*/`, `/appdata/`, `*.unrecoverable`, `/snapraid.content*`, `*.hoserva-moving-*` (in-flight mover copies, doc 09 §2), `.DS_Store`, thumbnail caches, and any share explicitly marked "exclude from parity"
 - `blocksize`, `autosave` — defaults, exposed under advanced settings
@@ -551,6 +551,16 @@ Before formatting, the job refuses if the slot is still `evacuating` or already 
 - Scheduled short self-tests weekly, long self-tests monthly, configurable
 - **Trend, not just current value** — reallocated sector count going from 0 to 4 is the signal; the absolute number is not
 - History is kept in a separate, downsampled `metrics.db` (Q74)
+
+### Cache on a spare partition of the boot disk
+
+Array disks are whole disks that are not the boot disk, and Hoserva never formats a partition — with one exception: the **cache** slot may be a spare partition of the boot disk, for the partitioned-NVMe layout doc 01 §6 calls acceptable. The user creates that partition in the Debian installer; Hoserva formats that existing, unmounted, blank partition and nothing else, and never edits the boot disk's partition table. Data and parity slots stay whole, non-boot disks.
+
+- **Candidates.** `Provider.List` reports a boot disk's partitions that qualify (doc 01 §6) without opening the device, each with its identity (the `…-partN` by-id link and PARTUUID), size and why it qualifies. The signature probe (`ProbeBlank`) runs only when the user picks one.
+- **Assignment.** The cache role accepts a listed candidate; data and parity refuse any partition of the boot disk (`boot_partition_cache_only`), and a boot-disk partition that is not a candidate — the root, EFI, swap, or a partition that stopped qualifying — is refused as an unmanaged device. Adopting an existing filesystem on such a partition is refused.
+- **Format.** Before any disk in the plan is formatted, and again immediately before the partition's `mkfs`, the partition's identity is re-resolved against a fresh `List` (same by-id name and PARTUUID, still a candidate) and `ProbeBlank` must positively find no signature; a missing probe or probe error refuses. Only then is that one by-id path formatted; the boot-device guard stays in force for the whole disk and every other partition.
+- **Identity.** The cache row stores the parent disk's WWN or serial and the partition's by-id name, so the storage-target gate matches the boot disk, which is always present; the recorded filesystem UUID is not compared against the boot disk's own cached filesystem, and array start still confirms the mounted partition's UUID.
+- **Content files (Q18).** The cache shares the boot copy's device and gets no content file of its own.
 
 ### Disks outside the array
 

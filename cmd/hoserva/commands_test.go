@@ -425,3 +425,62 @@ func assertRequiresConfirm(t *testing.T, args []string) {
 		t.Fatalf("%s without --confirm: %v", strings.Join(args, " "), err)
 	}
 }
+
+// TestDiskListShowsTheBootDisksSparePartitions drives `hoserva disk list`
+// against a stand-in daemon on a Unix socket: the boot disk's spare
+// partition, the one a cache may use (doc 01 §6), reaches the printed
+// inventory through the generated client.
+func TestDiskListShowsTheBootDisksSparePartitions(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var gotPath string
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.Path
+		out, err := (&apiv1.ListDisksOK{Disks: []apiv1.DiskInventoryEntry{{
+			Device: "/dev/nvme0n1", SizeBytes: 1_000_000_000_000, Boot: true,
+			CachePartitions: []apiv1.CachePartition{{
+				Device: "/dev/nvme0n1p3", SizeBytes: 900_000_000_000, Reason: apiv1.CachePartitionReasonSpareBootPartition,
+			}},
+		}}}).MarshalJSON()
+		if err != nil {
+			t.Errorf("encoding the inventory: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "--json", "disk", "list"})
+	runErr := root.Execute()
+	os.Stdout = stdout
+	_ = w.Close()
+	printed, _ := io.ReadAll(r)
+	jsonOutput = false
+	if runErr != nil {
+		t.Fatalf("disk list: %v", runErr)
+	}
+	if gotPath != "GET /api/v1/disks" {
+		t.Fatalf("request = %q, want GET /api/v1/disks", gotPath)
+	}
+	for _, want := range []string{"cachePartitions", "/dev/nvme0n1p3", "spare_boot_partition"} {
+		if !strings.Contains(string(printed), want) {
+			t.Fatalf("output %q does not show %q", printed, want)
+		}
+	}
+}

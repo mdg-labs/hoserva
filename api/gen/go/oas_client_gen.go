@@ -222,7 +222,12 @@ type Invoker interface {
 	// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
 	// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
 	// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
-	// calls `disk.FormatPlan` — never a second formatter (D1).
+	// calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with
+	// one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports
+	// in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition
+	// and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or
+	// `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported
+	// spare partitions is refused with `unmanaged_device`.
 	//
 	// POST /disks/array
 	CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error)
@@ -4069,7 +4074,12 @@ func (c *Client) sendCreateApiToken(ctx context.Context, request *CreateApiToken
 // The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
 // options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
 // or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
-// calls `disk.FormatPlan` — never a second formatter (D1).
+// calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with
+// one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports
+// in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition
+// and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or
+// `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported
+// spare partitions is refused with `unmanaged_device`.
 //
 // POST /disks/array
 func (c *Client) CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error) {

@@ -38,6 +38,12 @@ type FakeProvider struct {
 	disks map[string]*fakeDisk
 	calls []SMARTCall
 
+	// formatCalls records the device of every Format call that was
+	// accepted, in order; partFormatted holds the filesystem a boot-disk
+	// cache partition was formatted with, keyed by its kernel device.
+	formatCalls   []string
+	partFormatted map[string]FilesystemType
+
 	// Now and Sleep default to the wall clock; tests override them to
 	// script FailAfter/SlowDown without actually waiting.
 	Now   Clock
@@ -55,9 +61,10 @@ type FakeProvider struct {
 // NewFakeProvider returns a FakeProvider with no disks and the real clock.
 func NewFakeProvider() *FakeProvider {
 	return &FakeProvider{
-		disks: make(map[string]*fakeDisk),
-		Now:   time.Now,
-		Sleep: time.Sleep,
+		disks:         make(map[string]*fakeDisk),
+		partFormatted: make(map[string]FilesystemType),
+		Now:           time.Now,
+		Sleep:         time.Sleep,
 	}
 }
 
@@ -156,11 +163,36 @@ func (f *FakeProvider) SpinState(dev string) (SpinState, error) {
 func (f *FakeProvider) FormattedAs(dev string) (FilesystemType, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if fs, ok := f.partFormatted[dev]; ok {
+		return fs, true
+	}
 	fd, ok := f.disks[dev]
 	if !ok || fd.formattedAs == "" {
 		return "", false
 	}
 	return fd.formattedAs, true
+}
+
+// FormatCalls returns the device of every accepted Format call, in call
+// order, so a test can assert that nothing outside the assigned targets
+// was ever formatted.
+func (f *FakeProvider) FormatCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.formatCalls...)
+}
+
+// cachePartitionLocked returns the boot-disk cache candidate dev names,
+// by kernel device or by its by-id path. Callers must hold f.mu.
+func (f *FakeProvider) cachePartitionLocked(dev string) (CachePartition, bool) {
+	for _, fd := range f.disks {
+		for _, c := range fd.disk.CachePartitions {
+			if dev == c.Device || dev == (Identity{ByIDName: c.ByIDName}).IdentityPath() {
+				return c, true
+			}
+		}
+	}
+	return CachePartition{}, false
 }
 
 func (f *FakeProvider) checkFailed(fd *fakeDisk, dev string) error {
@@ -300,10 +332,23 @@ func (f *FakeProvider) Format(ctx context.Context, dev string, fs FilesystemType
 		return err
 	}
 	f.mu.Lock()
+	if part, isPart := f.cachePartitionLocked(dev); isPart {
+		defer f.mu.Unlock()
+		if !bootCacheTargetAllowed(ctx, dev) {
+			return fmt.Errorf("%s: %w", dev, ErrBootDevice)
+		}
+		f.partFormatted[part.Device] = fs
+		f.formatCalls = append(f.formatCalls, dev)
+		return nil
+	}
 	actual, fd, ok := f.resolveLocked(dev)
 	if !ok {
 		f.mu.Unlock()
 		return fmt.Errorf("disk %s: %w", dev, ErrDiskNotFound)
+	}
+	if fd.disk.Boot {
+		f.mu.Unlock()
+		return fmt.Errorf("%s: %w", dev, ErrBootDevice)
 	}
 	if err := f.checkFailed(fd, actual); err != nil {
 		f.mu.Unlock()
@@ -321,6 +366,7 @@ func (f *FakeProvider) Format(ctx context.Context, dev string, fs FilesystemType
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.formatCalls = append(f.formatCalls, dev)
 	fd.formattedAs = fs
 	fd.spinState = Active
 	return nil

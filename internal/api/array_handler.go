@@ -22,6 +22,23 @@ func errUnmanagedDevice(err error) error {
 	return &apiError{code: "unmanaged_device", statusCode: 400, message: err.Error()}
 }
 
+func errBootPartitionCacheOnly(device string) error {
+	return &apiError{code: "boot_partition_cache_only", statusCode: 400, message: fmt.Sprintf("%v: %s", disk.ErrBootPartitionNotCache, device)}
+}
+
+// mapBootPartitionError maps disk.BindBootPartition's refusals to the API
+// codes the spec names for them.
+func mapBootPartitionError(err error, device string) error {
+	switch {
+	case errors.Is(err, disk.ErrBootPartitionNotCache):
+		return errBootPartitionCacheOnly(device)
+	case errors.Is(err, disk.ErrBootPartitionAdopt):
+		return errInvalidPlan(err)
+	default:
+		return errUnmanagedDevice(err)
+	}
+}
+
 func errSlotDiskPresent(err error) error {
 	return &apiError{code: "slot_disk_present", statusCode: 409, message: err.Error()}
 }
@@ -50,6 +67,9 @@ func (h *Handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest
 		return nil, errInvalidPlan(err)
 	}
 	if err := disk.CheckFormatTargets(plan); err != nil {
+		if errors.Is(err, disk.ErrBootPartitionAdopt) {
+			return nil, errInvalidPlan(err)
+		}
 		return nil, errUnmanagedDevice(err)
 	}
 
@@ -86,6 +106,12 @@ func diskFormatParamsFromRequest(req *apiv1.CreateArrayRequest, listed []disk.Di
 			assigned.Serial = d.Serial
 			assigned.WeakIdentity = d.WeakIdentity
 			assigned.ByIDName = d.ByIDName
+		} else if bound, size, isPart, err := disk.BindBootPartition(listed, assigned, a.Role == apiv1.ArrayDiskRoleCache); isPart {
+			if err != nil {
+				return job.DiskFormatParams{}, disk.TopologyPlan{}, mapBootPartitionError(err, a.Device)
+			}
+			assigned = bound
+			sizes[a.Device] = size
 		} else if !disk.IsLoopDevice(a.Device) {
 			return job.DiskFormatParams{}, disk.TopologyPlan{}, errUnmanagedDevice(fmt.Errorf("%w: %s", disk.ErrUnmanagedDevice, a.Device))
 		}
@@ -330,6 +356,8 @@ func resolveAssignedDisk(device string, fsOpt apiv1.OptArrayDiskFilesystem, adop
 		assigned.WeakIdentity = d.WeakIdentity
 		assigned.ByIDName = d.ByIDName
 		assigned.FSUUID = d.FSUUID
+	} else if disk.IsBootDiskPartition(listed, device) {
+		return disk.AssignedDisk{}, errBootPartitionCacheOnly(device)
 	} else if !disk.IsLoopDevice(device) {
 		return disk.AssignedDisk{}, errUnmanagedDevice(fmt.Errorf("%w: %s", disk.ErrUnmanagedDevice, device))
 	}

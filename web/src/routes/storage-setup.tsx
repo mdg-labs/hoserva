@@ -32,6 +32,7 @@ import {
   buildConfirmPhrase,
   buildCreateArrayRequest,
   canKeepFilesystem,
+  discoveryRows,
   disksToErase,
   roleAssignmentValid,
   typedConfirmMatches,
@@ -297,7 +298,7 @@ export function StorageSetupPage(): React.ReactElement {
 
       {step === 0 ? (
         <DataTable
-          rows={disks}
+          rows={discoveryRows(disks)}
           getRowKey={(disk) => disk.device}
           rowDisabled={(disk) => disk.boot}
           rowDisabledReason={(disk) => (disk.boot ? t("storageSetup.discovery.bootDisk") : undefined)}
@@ -343,7 +344,11 @@ export function StorageSetupPage(): React.ReactElement {
                 <Card key={disk.device}>
                   <CardHeader>
                     <CardTitle>{disk.device}</CardTitle>
-                    <CardDescription>{formatBytes(disk.sizeBytes)}</CardDescription>
+                    <CardDescription>
+                      {disk.bootPartition
+                        ? t("storageSetup.filesystem.bootPartitionNote", { size: formatBytes(disk.sizeBytes) })
+                        : formatBytes(disk.sizeBytes)}
+                    </CardDescription>
                   </CardHeader>
                   <CardPanel>
                     <ChoiceCards

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -199,7 +200,9 @@ func (p LinuxBlankProber) readback() BlankReadback {
 // whole-disk, never partitioned, but a stray partition table left behind
 // by some other use of the disk must still refuse). A found signature
 // (exit 0) reports false with no error — this is a definite, not
-// inconclusive, answer. Exit 2 ("no signature found" — but also,
+// inconclusive, answer — except that, given a partition, blkid exits 0
+// for its table entry alone (onlyPartitionEntry), which is no signature:
+// that output goes on to the same readback exit 2 does. Exit 2 ("no signature found" — but also,
 // undistinguishably by exit code alone, "impossible to gather any
 // information about the device", blkid(8)) is never trusted on its own:
 // only once a read-only readback of dev itself (Readback) also succeeds
@@ -217,9 +220,15 @@ func (p LinuxBlankProber) ProbeBlank(ctx context.Context, dev string) (bool, err
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	_, err := p.Exec.Run(ctx, "blkid", "-p", "-o", "export", dev)
+	out, err := p.Exec.Run(ctx, "blkid", "-p", "-o", "export", dev)
 	if err == nil {
-		return false, nil
+		if !onlyPartitionEntry(out) {
+			return false, nil
+		}
+		if err := p.readback().Readback(ctx, dev); err != nil {
+			return false, fmt.Errorf("disk: confirming %s reads cleanly before reporting it blank: %w", dev, err)
+		}
+		return true, nil
 	}
 	code, ok := exitCode(err)
 	if !ok {
@@ -236,6 +245,29 @@ func (p LinuxBlankProber) ProbeBlank(ctx context.Context, dev string) (bool, err
 	default:
 		return false, fmt.Errorf("disk: probing %s for a blank disk: %w", dev, err)
 	}
+}
+
+// onlyPartitionEntry reports whether blkid -p -o export output describes
+// nothing but a partition's own table entry: blkid, given a partition,
+// always exits 0 and prints PART_ENTRY_* for it, whatever (or nothing) is
+// inside. The output must name at least one PART_ENTRY_ key and no other
+// key apart from DEVNAME — a TYPE, a PTTYPE, a RAID or any key this does
+// not know is a signature, and unparsable output is not blank either.
+func onlyPartitionEntry(out []byte) bool {
+	entry := false
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		key, _, ok := strings.Cut(strings.TrimSpace(line), "=")
+		switch {
+		case !ok:
+			return false
+		case key == "DEVNAME":
+		case strings.HasPrefix(key, "PART_ENTRY_"):
+			entry = true
+		default:
+			return false
+		}
+	}
+	return entry
 }
 
 var _ BlankProber = LinuxBlankProber{}

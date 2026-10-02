@@ -205,3 +205,67 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestLayout_ContentPaths_CacheOnTheBootDeviceCountsOnce is Q18's rule for
+// a cache that is a spare partition of the boot disk: the boot copy and a
+// copy on the cache are one physical device, so only the boot copy is
+// placed and the data disks supply the rest. With one parity disk and two
+// data disks that is exactly three distinct devices.
+func TestLayout_ContentPaths_CacheOnTheBootDeviceCountsOnce(t *testing.T) {
+	l := Layout{
+		ParityMounts:      []string{"/mnt/parity1"},
+		DataMounts:        []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}},
+		CacheMount:        "/mnt/cache",
+		CacheOnBootDevice: true,
+	}
+	got, err := l.ContentPaths()
+	if err != nil {
+		t.Fatalf("ContentPaths: %v", err)
+	}
+	want := []string{BootContentPath, "/mnt/disk1/snapraid.content", "/mnt/disk2/snapraid.content"}
+	if !equalStrings(got, want) {
+		t.Fatalf("ContentPaths: got %v, want %v (no copy on /mnt/cache: it shares the boot disk)", got, want)
+	}
+	body, err := l.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(body, "/mnt/cache") {
+		t.Fatalf("Render names the cache mount although it shares the boot disk:\n%s", body)
+	}
+}
+
+// TestLayout_ContentPaths_CacheOnTheBootDeviceRefusesTwoDevices is the
+// refusal: one data disk and a cache sharing the boot disk is two
+// physical devices, where an ordinary cache would have made three.
+func TestLayout_ContentPaths_CacheOnTheBootDeviceRefusesTwoDevices(t *testing.T) {
+	l := Layout{
+		ParityMounts:      []string{"/mnt/parity1"},
+		DataMounts:        []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}},
+		CacheMount:        "/mnt/cache",
+		CacheOnBootDevice: true,
+	}
+	if _, err := l.ContentPaths(); !errors.Is(err, ErrContentPlacement) {
+		t.Fatalf("ContentPaths: got %v, want ErrContentPlacement", err)
+	}
+	l.CacheOnBootDevice = false
+	if _, err := l.ContentPaths(); err != nil {
+		t.Fatalf("ContentPaths with a cache on its own device: %v — the same layout must still be placeable", err)
+	}
+}
+
+func TestLayout_ContentPaths_TwoParityWithCacheOnTheBootDeviceNeedsThreeDataDisks(t *testing.T) {
+	l := Layout{
+		ParityMounts:      []string{"/mnt/parity1", "/mnt/parity2"},
+		DataMounts:        []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}},
+		CacheMount:        "/mnt/cache",
+		CacheOnBootDevice: true,
+	}
+	if _, err := l.ContentPaths(); !errors.Is(err, ErrContentPlacement) {
+		t.Fatalf("ContentPaths: got %v, want ErrContentPlacement", err)
+	}
+	l.DataMounts = append(l.DataMounts, DataMount{RoleIndex: 3, Mountpoint: "/mnt/disk3"})
+	if got, err := l.ContentPaths(); err != nil || len(got) != 4 {
+		t.Fatalf("ContentPaths: got %v, %v, want four copies", got, err)
+	}
+}

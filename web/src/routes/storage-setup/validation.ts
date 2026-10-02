@@ -1,6 +1,8 @@
 import type { components } from "@/lib/api/client";
 
-export type DiskEntry = components["schemas"]["DiskInventoryEntry"];
+// A boot disk's spare partition offered as a cache candidate is shown as
+// its own row, marked bootPartition; it never comes from the API as a disk.
+export type DiskEntry = components["schemas"]["DiskInventoryEntry"] & { bootPartition?: boolean };
 
 export type DiskRole = "parity" | "data" | "cache" | "ignore" | "unassigned";
 
@@ -14,7 +16,8 @@ export type RoleValidationCode =
   | "noDataDisk"
   | "noParityDisk"
   | "parityTooSmall"
-  | "weakIdentityParity";
+  | "weakIdentityParity"
+  | "bootPartitionNotCache";
 
 export type RoleWarningCode = "weakIdentityData" | "containsData" | "smartIssue" | "looksLikeUnraid";
 
@@ -27,8 +30,38 @@ export interface RoleValidation {
 
 const ADOPTABLE_FILESYSTEMS = ["xfs", "ext4", "btrfs"];
 
+function bootCachePartitions(disks: DiskEntry[]): DiskEntry[] {
+  return disks
+    .filter((disk) => disk.boot)
+    .flatMap((parent) =>
+      (parent.cachePartitions ?? []).map(
+        (partition): DiskEntry => ({
+          device: partition.device,
+          sizeBytes: partition.sizeBytes,
+          model: parent.model,
+          serial: parent.serial,
+          boot: false,
+          containsData: false,
+          bootPartition: true,
+        }),
+      ),
+    );
+}
+
+// The disks a role can be assigned to: every non-boot disk, plus each boot
+// disk's spare partitions, which can only be the cache (doc 01 §6).
 export function assignableDisks(disks: DiskEntry[]): DiskEntry[] {
-  return disks.filter((disk) => !disk.boot);
+  return [...disks.filter((disk) => !disk.boot), ...bootCachePartitions(disks)];
+}
+
+// The discovery step's rows: every disk, each boot disk followed by the
+// spare partitions that can hold the cache.
+export function discoveryRows(disks: DiskEntry[]): DiskEntry[] {
+  return disks.flatMap((disk) => (disk.boot ? [disk, ...bootCachePartitions([disk])] : [disk]));
+}
+
+export function cacheRoleOnly(disk: DiskEntry): boolean {
+  return disk.bootPartition === true;
 }
 
 export function canKeepFilesystem(disk: DiskEntry): boolean {
@@ -86,6 +119,12 @@ export function validateRoleAssignment(
 
   for (const disk of candidates) {
     const role = roles[disk.device];
+    if (cacheRoleOnly(disk) && (role === "data" || role === "parity")) {
+      errorsByDevice[disk.device] = "bootPartitionNotCache";
+      if (!errorCodes.includes("bootPartitionNotCache")) {
+        errorCodes.push("bootPartitionNotCache");
+      }
+    }
     if (disk.weakIdentity && role === "data") {
       warningsByDevice[disk.device] = "weakIdentityData";
       if (!warningCodes.includes("weakIdentityData")) {

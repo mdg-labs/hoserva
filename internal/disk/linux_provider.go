@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 )
 
@@ -81,7 +82,7 @@ func (p *LinuxProvider) Spindown(ctx context.Context, dev string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := p.refuseBootDevice(ctx, dev); err != nil {
+	if err := p.refuseBootDevice(ctx, dev, false); err != nil {
 		return err
 	}
 
@@ -101,7 +102,7 @@ func (p *LinuxProvider) Format(ctx context.Context, dev string, fs FilesystemTyp
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := p.refuseBootDevice(ctx, dev); err != nil {
+	if err := p.refuseBootDevice(ctx, dev, bootCacheTargetAllowed(ctx, dev)); err != nil {
 		return err
 	}
 	argv, err := formatCommand(dev, fs)
@@ -119,15 +120,26 @@ func (p *LinuxProvider) Format(ctx context.Context, dev string, fs FilesystemTyp
 // partition — WholeDiskDevice(dev) is what actually identifies which disk
 // it belongs to, so a boot disk's own partition (e.g. "/dev/sda2" when
 // "/dev/sda" is recorded as boot) must be refused too, not just the exact
-// whole-disk path.
-func (p *LinuxProvider) refuseBootDevice(ctx context.Context, dev string) error {
+// whole-disk path. A /dev/disk/by-id path is resolved to the kernel
+// device it points at first, so naming the boot disk by its identity link
+// is refused the same as naming it by /dev/sdX. allowPartition is true only
+// for the boot-disk cache partition FormatAssignedProbed verified (see
+// withBootCacheTarget): a partition of the boot disk is then let through,
+// but dev resolving to the whole boot disk never is.
+func (p *LinuxProvider) refuseBootDevice(ctx context.Context, dev string, allowPartition bool) error {
 	disks, err := p.List(ctx)
 	if err != nil {
 		return err
 	}
+	if resolved, err := filepath.EvalSymlinks(dev); err == nil {
+		dev = resolved
+	}
 	whole := WholeDiskDevice(dev)
 	for _, d := range disks {
 		if d.Boot && d.Device == whole {
+			if allowPartition && dev != whole {
+				continue
+			}
 			return fmt.Errorf("%s: %w", dev, ErrBootDevice)
 		}
 	}

@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
-import type { DiskEntry, DiskRole } from "@/routes/storage-setup/validation";
+import { cacheRoleOnly, type DiskEntry, type DiskRole } from "@/routes/storage-setup/validation";
 
 const COLUMN_DEVICE = "device";
 const COLUMN_MODEL = "model";
@@ -103,7 +103,9 @@ export function buildDiscoveryColumns(
     id: COLUMN_STATUS,
     header: t("storageSetup.columns.status"),
     cell: (disk) =>
-      disk.boot ? (
+      disk.bootPartition ? (
+        <StatusBadge tone="info">{t("storageSetup.discovery.sparePartition")}</StatusBadge>
+      ) : disk.boot ? (
         <StatusBadge tone="outline">{t("storageSetup.discovery.bootDisk")}</StatusBadge>
       ) : disk.weakIdentity ? (
         <StatusBadge tone="warning">{t("storageSetup.discovery.weakIdentity")}</StatusBadge>
@@ -140,7 +142,9 @@ export function buildRoleColumns(
                 <SelectValue />
               </SelectTrigger>
               <SelectPopup>
-                {(Object.keys(roleIcons) as Array<Exclude<DiskRole, "unassigned">>).map((option) => {
+                {(Object.keys(roleIcons) as Array<Exclude<DiskRole, "unassigned">>)
+                  .filter((option) => !cacheRoleOnly(disk) || option === "cache")
+                  .map((option) => {
                   const Icon = roleIcons[option];
                   const disabled = option === "parity" && disk.weakIdentity;
                   return (
@@ -160,6 +164,9 @@ export function buildRoleColumns(
                 </SelectItem>
               </SelectPopup>
             </Select>
+            {cacheRoleOnly(disk) ? (
+              <p className="text-muted-foreground text-xs">{t("storageSetup.roles.bootPartitionHint")}</p>
+            ) : null}
             {fieldError ? <FieldError>{fieldError}</FieldError> : null}
             {!fieldError && fieldWarning ? (
               <p className="text-warning-foreground text-xs">{fieldWarning}</p>

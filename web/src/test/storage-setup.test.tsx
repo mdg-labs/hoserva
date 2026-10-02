@@ -6,6 +6,7 @@ import { TypedConfirm } from "@/components/patterns/typed-confirm";
 import { AuthProvider } from "@/lib/api/auth-guard";
 import { StorageSetupPage } from "@/routes/storage-setup";
 import {
+  assignableDisks,
   buildConfirmPhrase,
   buildCreateArrayRequest,
   disksToErase,
@@ -53,6 +54,23 @@ const DISK_WEAK: DiskEntry = {
   sizeBytes: 4_000_000_000_000,
   boot: false,
   weakIdentity: true,
+};
+
+const BOOT_NVME: DiskEntry = {
+  device: "/dev/nvme0n1",
+  sizeBytes: 1_000_000_000_000,
+  model: "Samsung SSD 970 EVO Plus 1TB",
+  serial: "S4EWNX0M123456X",
+  boot: true,
+  cachePartitions: [
+    {
+      device: "/dev/nvme0n1p3",
+      sizeBytes: 900_000_000_000,
+      byIdName: "nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part3",
+      partUuid: "5b3d9e0a-03",
+      reason: "spare_boot_partition",
+    },
+  ],
 };
 
 function renderSetup(): ReturnType<typeof render> {
@@ -201,6 +219,57 @@ describe("storage setup validation", () => {
     expect(preview.snapraidConf).not.toContain("content /mnt/disk1/snapraid.content");
   });
 
+  it("offers the boot disk's spare partition for the cache role only", () => {
+    const disks = [BOOT_NVME, DISK_SDB, DISK_SDC];
+    expect(assignableDisks(disks).map((disk) => disk.device)).toEqual([
+      "/dev/sdb",
+      "/dev/sdc",
+      "/dev/nvme0n1p3",
+    ]);
+
+    const asData = validateRoleAssignment(disks, {
+      "/dev/sdb": "parity",
+      "/dev/sdc": "data",
+      "/dev/nvme0n1p3": "data",
+    });
+    expect(asData.errorsByDevice["/dev/nvme0n1p3"]).toBe("bootPartitionNotCache");
+    expect(roleAssignmentValid(asData)).toBe(false);
+
+    const asCache = validateRoleAssignment(disks, {
+      "/dev/sdb": "parity",
+      "/dev/sdc": "data",
+      "/dev/nvme0n1p3": "cache",
+    });
+    expect(roleAssignmentValid(asCache)).toBe(true);
+  });
+
+  it("sends the spare partition as a formatted cache and lists it to erase", () => {
+    const disks = [BOOT_NVME, DISK_SDB, DISK_SDC];
+    const roles: Record<string, DiskRole> = {
+      "/dev/sdb": "parity",
+      "/dev/sdc": "data",
+      "/dev/nvme0n1p3": "cache",
+    };
+    const erased = disksToErase(disks, roles, {});
+    expect(erased).toEqual(["/dev/nvme0n1p3", "/dev/sdb", "/dev/sdc"]);
+    const body = buildCreateArrayRequest(disks, roles, {}, "mspmfs", 50, buildConfirmPhrase(erased));
+    expect(body.disks).toContainEqual({ device: "/dev/nvme0n1p3", role: "cache", filesystem: "xfs", adopt: false });
+    expect(body.disks.map((disk) => disk.device)).not.toContain("/dev/nvme0n1");
+  });
+
+  it("gives a cache on the boot disk no content file of its own in the preview", () => {
+    const preview = buildConfigPreview({
+      disks: [BOOT_NVME, DISK_SDB, DISK_SDC, { ...DISK_SMALL, device: "/dev/sdd" }],
+      roles: { "/dev/sdb": "parity", "/dev/sdc": "data", "/dev/sdd": "data", "/dev/nvme0n1p3": "cache" },
+      filesystemChoices: {},
+      createPolicy: "mspmfs",
+      minFreeSpaceGb: 50,
+    });
+    expect(preview.snapraidConf).not.toContain("/mnt/cache/snapraid.content");
+    expect(preview.snapraidConf).toContain("content /mnt/disk1/snapraid.content");
+    expect(preview.snapraidConf).toContain("content /mnt/disk2/snapraid.content");
+  });
+
   it("labels binary byte sizes with KiB-style units", () => {
     expect(formatBytes(1024)).toBe("1.00 KiB");
     expect(formatBytes(4 * 1024 ** 4)).toBe("4.00 TiB");
@@ -235,6 +304,20 @@ describe("StorageSetupPage", () => {
 
     expect(screen.getByText("Fix these problems before continuing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("shows the boot disk's spare partition as a cache-only choice", async () => {
+    mockFreshInstall([BOOT_NVME, DISK_SDB, DISK_SDC]);
+    renderSetup();
+    await waitFor(() => expect(screen.getByText("/dev/nvme0n1p3")).toBeInTheDocument());
+    expect(screen.getByText("Spare partition — can hold the cache")).toBeInTheDocument();
+    expect(screen.getAllByText("Boot disk").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.getByText("Role assignment")).toBeInTheDocument());
+    expect(screen.getByText("/dev/nvme0n1p3")).toBeInTheDocument();
+    expect(screen.getByText(/never changes the boot disk's partition table/)).toBeInTheDocument();
+    expect(screen.queryByText("/dev/nvme0n1")).not.toBeInTheDocument();
   });
 
   it("shows a load error instead of the setup wizard when /pool fails", async () => {

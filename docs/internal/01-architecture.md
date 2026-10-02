@@ -304,6 +304,10 @@ Hoserva needs a real boot device.
 
 **Acceptable:** partition the NVMe — ~60 GB root, remainder as cache partition. Works cleanly, costs some cache capacity.
 
+*How it is created.* In the Debian installer's partitioner, make the root partition (~60 GB) and then a second partition from the remaining space — type "Linux filesystem", no filesystem, no mount point, not swap — and leave it unused. Hoserva never creates or resizes that partition: it never writes the partition table of the disk it runs from. Phase 4's installer can create it itself (#100).
+
+*What Hoserva does with it.* `GET /disks` lists the boot disk's spare partitions as cache candidates (`cachePartitions`): a partition qualifies when it is on the boot disk, typed Linux data, has no filesystem or swap signature in udev's cache, is not mounted, not named in `/etc/fstab` or a systemd mount or swap unit, is held open by nothing, and has a by-id link and a PARTUUID. Listing never opens the device; if any of those sources cannot be read, nothing is listed. Such a partition can be assigned the **cache** role and nothing else — never data or parity, and never adopted. When it is, the array-create job re-resolves the partition's identity and probes it blank immediately before `mkfs`, then formats exactly that partition through its `/dev/disk/by-id/…-partN` path. The root, `/boot`, the EFI partition, swap, the rest of the partition table and the whole boot disk are never written. The cache mounts at `/mnt/cache` by filesystem UUID like any other cache, and `hoserva doctor`'s free-space check keeps reporting the root filesystem only. Because the boot copy of the content file and a copy on the cache share one disk, the cache gets no content file of its own and counts as the same device (Q18, doc 02 §2).
+
 **Not supported:** USB stick as the OS device. The installer should actively warn if the target device is removable.
 
 ### Layout principle

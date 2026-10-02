@@ -9,6 +9,16 @@
 # five data disks, one cache disk — sparse qcow2, so declaring realistic
 # sizes costs almost nothing on disk until the guest actually writes to
 # them.
+#
+# HOSERVA_VM_TOPOLOGY selects the layout (default "separate", the one
+# above). "shared-nvme" is doc 01 §6's partitioned-NVMe layout: the OS disk
+# carries a second, unused partition after root (HOSERVA_VM_SPARE_PARTITION_SIZE,
+# default 8G), there is no separate cache disk, and only parity1, disk1 and
+# disk2 are attached as array disks. An array created in it puts the cache
+# on that partition (Hoserva never creates it, doc 02 §4). The partition is
+# added once the guest is up: the base image grows root to fill the disk on
+# its first boot, so the harness grows the disk live (virsh blockresize) and
+# appends the partition into the new space with the guest's own sfdisk.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +33,13 @@ fi
 
 MEMORY_MIB="${HOSERVA_VM_MEMORY_MIB:-4096}"
 VCPU_COUNT="${HOSERVA_VM_VCPU:-4}"
+TOPOLOGY="${HOSERVA_VM_TOPOLOGY:-separate}"
 OS_DISK_SIZE="${HOSERVA_VM_OS_DISK_SIZE:-12G}"
+case "$TOPOLOGY" in
+  separate | shared-nvme) ;;
+  *) die "unknown HOSERVA_VM_TOPOLOGY '$TOPOLOGY' — valid values: separate, shared-nvme" ;;
+esac
+SPARE_PARTITION_SIZE="${HOSERVA_VM_SPARE_PARTITION_SIZE:-8G}"
 
 echo "vm-up[$HOSERVA_LAB_ID]: fetching base image"
 BASE_IMAGE="$("$script_dir/fetch-base-image.sh")"
@@ -43,17 +59,35 @@ echo "vm-up[$HOSERVA_LAB_ID]: creating array disks"
 PARITY_SIZE="${HOSERVA_VM_PARITY_SIZE:-8T}"
 DATA_SIZE="${HOSERVA_VM_DATA_SIZE:-4T}"
 CACHE_SIZE="${HOSERVA_VM_CACHE_SIZE:-1T}"
-ARRAY_DISK_SPECS=(
-  "parity1:$PARITY_SIZE"
-  "disk1:$DATA_SIZE"
-  "disk2:$DATA_SIZE"
-  "disk3:$DATA_SIZE"
-  "disk4:$DATA_SIZE"
-  "disk5:$DATA_SIZE"
-  "cache:$CACHE_SIZE"
-)
+if [[ "$TOPOLOGY" == "shared-nvme" ]]; then
+  ARRAY_DISK_SPECS=(
+    "parity1:$PARITY_SIZE"
+    "disk1:$DATA_SIZE"
+    "disk2:$DATA_SIZE"
+  )
+else
+  ARRAY_DISK_SPECS=(
+    "parity1:$PARITY_SIZE"
+    "disk1:$DATA_SIZE"
+    "disk2:$DATA_SIZE"
+    "disk3:$DATA_SIZE"
+    "disk4:$DATA_SIZE"
+    "disk5:$DATA_SIZE"
+    "cache:$CACHE_SIZE"
+  )
+fi
 ARRAY_DISKS_XML="$(mktemp)"
-trap 'rm -f -- "$ARRAY_DISKS_XML"' EXIT
+OS_DISK_SERIAL_XML_FILE="$(mktemp)"
+trap 'rm -f -- "$ARRAY_DISKS_XML" "$OS_DISK_SERIAL_XML_FILE"' EXIT
+# The shared-nvme OS disk is the boot and cache disk at once, so it gets a
+# serial of its own: the guest then names it /dev/disk/by-id/virtio-<serial>
+# and its partitions ...-partN, the identity Hoserva binds a cache
+# partition to. boot-hoserva-<id> keeps its first 20 bytes (the guest's
+# truncation, see the array disks' serials below) distinct from every
+# array disk's.
+if [[ "$TOPOLOGY" == "shared-nvme" ]]; then
+  echo "      <serial>boot-hoserva-$HOSERVA_LAB_ID</serial>" > "$OS_DISK_SERIAL_XML_FILE"
+fi
 
 # One virtio target letter, and one explicit PCI slot, per array disk, in
 # declaration order — vda/slot 0x09 is the OS disk above, so this starts
@@ -105,6 +139,8 @@ if [[ ! -f "$VM_KEY_DIR/id_ed25519" ]]; then
 fi
 PUBKEY="$(cat "$VM_KEY_DIR/id_ed25519.pub")"
 
+echo "$TOPOLOGY" > "$VM_STATE_DIR/topology"
+
 echo "vm-up[$HOSERVA_LAB_ID]: building cloud-init seed ISO"
 CIDATA_DIR="$VM_SEED_DIR/cidata"
 rm -rf -- "$CIDATA_DIR"
@@ -146,7 +182,8 @@ DOMAIN_XML="$VM_STATE_DIR/domain.xml"
 OS_DISK_XML="$(vm_sed_replacement_escape "$(vm_xml_attr_escape "$OS_DISK")")"
 SEED_ISO_XML="$(vm_sed_replacement_escape "$(vm_xml_attr_escape "$SEED_ISO")")"
 SERIAL_LOG_XML="$(vm_sed_replacement_escape "$(vm_xml_attr_escape "$VM_STATE_DIR/serial.log")")"
-sed -e "/__ARRAY_DISKS__/r $ARRAY_DISKS_XML" -e "/__ARRAY_DISKS__/d" "$script_dir/domain.xml.tmpl" \
+sed -e "/__ARRAY_DISKS__/r $ARRAY_DISKS_XML" -e "/__ARRAY_DISKS__/d" \
+    -e "/__OS_DISK_SERIAL__/r $OS_DISK_SERIAL_XML_FILE" -e "/__OS_DISK_SERIAL__/d" "$script_dir/domain.xml.tmpl" \
   | sed \
     -e "s|__DOMAIN_NAME__|$VM_DOMAIN|g" \
     -e "s|__MEMORY_MIB__|$MEMORY_MIB|g" \
@@ -171,3 +208,21 @@ echo "vm-up[$HOSERVA_LAB_ID]: waiting for cloud-init/sshd to accept our key"
 vm_ssh_wait_ready 180 || die "could not SSH into the guest within 180s of its port opening"
 
 echo "vm-up[$HOSERVA_LAB_ID]: ready — domain '$VM_DOMAIN', ssh: ssh -p $VM_SSH_PORT hoserva@127.0.0.1 -i $VM_KEY_DIR/id_ed25519"
+
+if [[ "$TOPOLOGY" == "shared-nvme" ]]; then
+  echo "vm-up[$HOSERVA_LAB_ID]: adding the spare partition to the OS disk ($SPARE_PARTITION_SIZE after root, left unformatted and unmounted)"
+  os_bytes="$(numfmt --from=iec "$OS_DISK_SIZE")" || die "invalid HOSERVA_VM_OS_DISK_SIZE '$OS_DISK_SIZE'"
+  spare_bytes="$(numfmt --from=iec "$SPARE_PARTITION_SIZE")" || die "invalid HOSERVA_VM_SPARE_PARTITION_SIZE '$SPARE_PARTITION_SIZE'"
+  vm_assert_own_domain "$VM_DOMAIN"
+  # cloud-init must be done first: nothing may still be growing root when
+  # the new space appears.
+  vm_ssh 'sudo cloud-init status --wait >/dev/null 2>&1 || true'
+  virsh -c "$VM_CONNECT" blockresize "$VM_DOMAIN" vda "$(((os_bytes + spare_bytes) / 1024))KiB" >/dev/null
+  # --no-reread: root is mounted, so the kernel cannot re-read the table;
+  # partx then adds only the new partition (2 — root, BIOS boot and EFI
+  # already hold 1, 14 and 15).
+  # No size: the partition takes all the space the disk grew by, less the
+  # backup GPT sfdisk moves to the new end of the disk.
+  vm_ssh "echo 'type=0FC63DAF-8483-4772-8E79-3D69D8477DE4' | sudo sfdisk --append --no-reread /dev/vda >/dev/null && sudo partx -a --nr 2 /dev/vda && sudo udevadm settle" \
+    || die "could not add the spare partition to the guest's OS disk"
+fi
