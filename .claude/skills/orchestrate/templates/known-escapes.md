@@ -80,6 +80,8 @@ existing line by adding its PR number.
 - **drift** — a hand-kept web list of an API enum (notification event types) not extended when the spec gains a value, so the new value gets no settings row or label — PR 531
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
+- **ui-states** — a reload that settles an unanswered save replaces the editor's unsent text with the server's copy and keeps nothing to restore it from, including edits made between a failed reload and its retry — PR 555
+- **ui-states** — a second load path (a reload after a save) calls the raw operation instead of the loader that maps terminal answers (not found, no template), so a permanent state renders as a failure whose retry fails forever — PR 555
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
 - **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357, 527, 531
 - **i18n** — a count-bearing catalog key with no `_one`/`_other` forms, so a count of one reads "1 files" — PR 370
