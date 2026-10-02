@@ -23,6 +23,7 @@ type UpdateGeneralSettingsRequest = components["schemas"]["UpdateGeneralSettings
 type UpdateUPSSettingsRequest = components["schemas"]["UpdateUPSSettingsRequest"];
 type ApplyHostConfigRequest = components["schemas"]["ApplyHostConfigRequest"];
 type CatalogSettingsUpdate = components["schemas"]["CatalogSettingsUpdate"];
+type TemplateInstallRequest = components["schemas"]["TemplateInstallRequest"];
 
 export function getStatus(signal?: AbortSignal) {
   return hoservaClient.GET("/status", { signal });
@@ -846,6 +847,14 @@ export function getCatalog(signal?: AbortSignal) {
 
 export function getCatalogTemplate(id: string, signal?: AbortSignal) {
   return hoservaClient.GET("/catalog/{id}", { params: { path: { id } }, signal });
+}
+
+export function previewTemplateInstall(id: string, body: TemplateInstallRequest, signal?: AbortSignal) {
+  return hoservaClient.POST("/templates/{id}/preview", { params: { path: { id } }, body, signal });
+}
+
+export function installTemplate(id: string, body: TemplateInstallRequest) {
+  return hoservaClient.POST("/templates/{id}/install", { params: { path: { id } }, body });
 }
 
 // An <img> loads the icon itself, so this is the one address built by hand:

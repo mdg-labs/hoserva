@@ -16,6 +16,7 @@ import type { components } from "@/lib/api/client";
 import { getCatalogTemplate } from "@/lib/api/operations";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { installPath } from "@/routes/apps/catalog-filter";
+import { sourceNoteKey } from "@/routes/apps/source-note";
 
 type CatalogTemplate = components["schemas"]["CatalogTemplate"];
 
@@ -101,14 +102,7 @@ export function CatalogDetailPage(): React.ReactElement {
   }
 
   const docs = webAddress(template.docs);
-  const sourceNote = t(
-    template.sourceKind === "curated"
-      ? "apps.catalogDetail.source.curated"
-      : template.signed
-        ? "apps.catalogDetail.source.userAddedSigned"
-        : "apps.catalogDetail.source.userAddedUnsigned",
-    { source: template.source },
-  );
+  const sourceNote = t(sourceNoteKey(template.sourceKind, template.signed), { source: template.source });
 
   return (
     <div className="flex flex-col gap-4">

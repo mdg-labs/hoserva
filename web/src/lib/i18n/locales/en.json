@@ -79,6 +79,67 @@
         "clear": "Clear search and filters"
       }
     },
+    "install": {
+      "back": "Back to the app",
+      "title": "Install {{title}}",
+      "loadFailed": "Could not load this app from the catalog.",
+      "previewFailed": "Could not work out what installing this app would do.",
+      "installFailed": "Could not install the app.",
+      "installUnconfirmed": "The app may have been installed anyway: check Installed apps before trying again.",
+      "optional": "Optional",
+      "submit": "Install {{title}}",
+      "tabs": {
+        "basic": "Basic",
+        "advanced": "Advanced"
+      },
+      "settings": {
+        "title": "Settings",
+        "none": "This app has no settings to choose."
+      },
+      "port": {
+        "unit": "port",
+        "taken": "Port {{port}} is already used by something on this server.",
+        "useNext": "Use free port {{port}}",
+        "blocked": "Choose a free port before installing."
+      },
+      "secret": {
+        "placeholder": "Made up for you when installed",
+        "help": "Leave this empty and Hoserva makes up a strong value. It is kept only in the app's settings file on the server and is never shown again."
+      },
+      "device": {
+        "none": "No graphics device was found on this server.",
+        "useNone": "Do not use a graphics device"
+      },
+      "name": {
+        "label": "Name of the app's setup",
+        "help": "The app is stored under this name. Leave it empty to use \"{{name}}\"."
+      },
+      "review": {
+        "title": "Before it runs",
+        "description": "Nothing is created until you press Install. This is the setup file that will be written and what it asks for, worked out with the values above.",
+        "compose": "Setup file (docker-compose.yml)"
+      },
+      "run": {
+        "title": "Installing {{name}}",
+        "installed": "{{name}} is installed.",
+        "installedHelp": "Its setup is saved on the server. Installing it again from here would clash with it.",
+        "portMoved": "Port {{requested}} was taken in the meantime, so port {{used}} is used instead.",
+        "starting": "Asking the server to start {{name}}…",
+        "running": "{{name}} is running.",
+        "runningHelp": "Open it from Installed apps.",
+        "notStartedTitle": "{{name}} is installed but not running",
+        "startRequestFailed": "Could not ask the server to start the app.",
+        "startFailedTitle": "{{name}} is installed but did not start",
+        "startFailedHelp": "The start ended without finishing. The output below says why.",
+        "retryStart": "Try starting again",
+        "followFailed": "Could not follow the progress of the start.",
+        "logFailed": "Could not read the output of the start.",
+        "followAgain": "Check again",
+        "viewJob": "View job",
+        "toInstalled": "Go to Installed apps",
+        "openCompose": "Open the setup file"
+      }
+    },
     "catalogDetail": {
       "back": "Back to the catalog",
       "loadFailed": "Could not load this app from the catalog.",
@@ -1077,6 +1138,9 @@
     "back": "Back",
     "next": "Next",
     "stepProgress": "Step {{current}} of {{total}}"
+  },
+  "pathPicker": {
+    "choose": "Choose from the shares on this server"
   },
   "copyValue": {
     "label": "Value to copy",
