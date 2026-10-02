@@ -1,6 +1,22 @@
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
 
 import "../lib/i18n";
+
+// Vitest globals are off, so Testing Library registers no cleanup of its own.
+// A test's last commit leaves React's passive-effect flush queued on
+// setImmediate; letting it run here keeps it from firing after jsdom is
+// torn down ("window is not defined", issue #539). The drain ends on a timer
+// turn so the next test starts from the timers phase: Testing Library's
+// findBy* settles with a setTimeout(0) while React schedules its renders on
+// setImmediate, and a test that starts inside the check phase lets that timer
+// win the race, so a findBy* can return a control that is still disabled.
+afterEach(async () => {
+  cleanup();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+});
 
 // jsdom does not implement EventSource. TopBar's inbox opens
 // /api/v1/events on mount through subscribeToEvents, so every test that
