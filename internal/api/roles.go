@@ -76,6 +76,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.UpdateCatalogSettingsOperation:          RoleAdmin,
 	apiv1.GetCatalogTemplateOperation:             RoleViewer,
 	apiv1.GetCatalogTemplateIconOperation:         RoleViewer,
+	apiv1.GetCatalogTemplateScreenshotOperation:   RoleViewer,
 	apiv1.ListCatalogSourcesOperation:             RoleViewer,
 	apiv1.AddCatalogSourceOperation:               RoleAdmin,
 	apiv1.RefreshCatalogSourceOperation:           RoleAdmin,

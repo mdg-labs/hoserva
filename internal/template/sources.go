@@ -322,6 +322,26 @@ func (s *Sources) Icon(ctx context.Context, id string) (Icon, error) {
 	return Icon{}, fmt.Errorf("%w: %q", ErrTemplateNotFound, id)
 }
 
+// Screenshot returns the screenshot of the template from the first source
+// that has the template.
+func (s *Sources) Screenshot(ctx context.Context, id string, index int) (Screenshot, error) {
+	shot, err := s.Curated.Screenshot(ctx, id, index)
+	if !errors.Is(err, ErrTemplateNotFound) {
+		return shot, err
+	}
+	dirs, err := s.userDirs(ctx)
+	if err != nil {
+		return Screenshot{}, err
+	}
+	for _, d := range dirs {
+		shot, err := d.Screenshot(ctx, id, index)
+		if !errors.Is(err, ErrTemplateNotFound) {
+			return shot, err
+		}
+	}
+	return Screenshot{}, fmt.Errorf("%w: %q", ErrTemplateNotFound, id)
+}
+
 // From is the catalog of one source alone, by the id its entries carry as
 // their Source, or ErrSourceNotFound.
 func (s *Sources) From(ctx context.Context, source string) (Catalog, error) {

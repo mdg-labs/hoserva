@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"strconv"
 	"strings"
@@ -43,6 +47,18 @@ x-hoserva:
   categories: [media]
   icon: icon.svg
   docs: https://docs.linuxserver.io/images/docker-jellyfin/
+  maintainer: LinuxServer.io
+  description: |-
+    Jellyfin streams your own movies, shows and music to the devices in your home.
+
+    It runs on your server, keeps its own library and needs no account.
+  screenshots:
+    - screenshots/library.png
+    - screenshots/player.png
+  links:
+    project: https://jellyfin.org/
+    support: https://jellyfin.org/docs/general/getting-help/
+    donate: https://opencollective.com/jellyfin
   webui: http://{host}:${WEBUI_PORT}
   inputs:
     APPDATA:       { kind: path, role: appdata, default: /mnt/cache/appdata }
@@ -74,6 +90,7 @@ x-hoserva:
   categories: [productivity]
   icon: icon.svg
   docs: https://example.com/notes/docs
+  maintainer: Example Notes Project
   inputs:
     APPDATA:     { kind: path, role: appdata, default: /mnt/cache/appdata }
     WEBUI_PORT:  { kind: port, default: 3000 }
@@ -111,6 +128,22 @@ var mockIcons = map[string][]byte{
 	"risky-agent": []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2 22 22H2z" fill="#cd5c5c"/></svg>`),
 }
 
+// mockScreenshots are jellyfin's two screenshots: small real PNG files, so a
+// page built on the mock loads actual images.
+var mockScreenshots = map[string][][]byte{
+	"jellyfin": {mockPNG(color.RGBA{R: 0x6a, G: 0x5a, B: 0xcd, A: 0xff}), mockPNG(color.RGBA{R: 0x2e, G: 0x8b, B: 0x57, A: 0xff})},
+}
+
+func mockPNG(c color.Color) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 320, 180))
+	draw.Draw(img, img.Bounds(), image.NewUniform(c), image.Point{}, draw.Src)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
 // mockExtrasTemplates are the templates of the one user-added source the
 // mock starts with. That source has no public key, so its entries are
 // badged user-added and unsigned.
@@ -129,6 +162,7 @@ x-hoserva:
   categories: [tools]
   icon: icon.svg
   docs: https://example.org/quickpaste/docs
+  maintainer: Community contributor
   inputs:
     APPDATA: { kind: path, role: appdata, default: /mnt/cache/appdata }
 `,
@@ -213,6 +247,16 @@ func (m mockMerged) Icon(ctx context.Context, id string) (template.Icon, error) 
 	return template.Icon{}, fmt.Errorf("%w: %q", template.ErrTemplateNotFound, id)
 }
 
+func (m mockMerged) Screenshot(ctx context.Context, id string, index int) (template.Screenshot, error) {
+	for _, c := range m.catalogs {
+		shot, err := c.Screenshot(ctx, id, index)
+		if !errors.Is(err, template.ErrTemplateNotFound) {
+			return shot, err
+		}
+	}
+	return template.Screenshot{}, fmt.Errorf("%w: %q", template.ErrTemplateNotFound, id)
+}
+
 // mockCatalog is this mock's catalog source: the curated source's name over
 // the mock templates and their icons.
 func mockCatalog() template.MapCatalog {
@@ -224,6 +268,7 @@ func mockCatalog() template.MapCatalog {
 		GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		Templates:   mockTemplates,
 		Icons:       mockIcons,
+		Screenshots: mockScreenshots,
 	}
 }
 
@@ -429,6 +474,8 @@ func mapMockTemplateError(name string, err error) error {
 		return &mockError{code: "catalog_unavailable", statusCode: 503, message: err.Error()}
 	case errors.Is(err, template.ErrIconNotFound):
 		return &mockError{code: "template_icon_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, template.ErrScreenshotNotFound):
+		return &mockError{code: "template_screenshot_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrTemplateNotFound):
 		return &mockError{code: "template_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidTemplate):
@@ -475,7 +522,7 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 	for i, t := range index.Templates {
 		kind, signed := mockBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
-			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs,
+			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs, Maintainer: mockOptString(t.Maintainer),
 			Source: t.Source, SourceKind: kind, Signed: signed, Installed: installed[t.ID],
 		}
 	}
@@ -552,7 +599,13 @@ func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalo
 	kind, signed := mockBadge(d.Kind, d.Signed)
 	out := &apiv1.CatalogTemplate{
 		ID: d.ID, Revision: d.Revision, Title: d.Title, Categories: d.Categories, Docs: d.Docs,
+		Maintainer: mockOptString(d.Maintainer), Description: mockOptString(d.Description), ScreenshotCount: d.Screenshots,
 		Source: d.Source, SourceKind: kind, Signed: signed, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+	}
+	if d.Links != (template.Links{}) {
+		out.Links = apiv1.NewOptCatalogTemplateLinks(apiv1.CatalogTemplateLinks{
+			Project: mockOptString(d.Links.Project), Support: mockOptString(d.Links.Support), Donate: mockOptString(d.Links.Donate),
+		})
 	}
 	for i, pr := range d.Privileges {
 		tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}
@@ -586,6 +639,32 @@ func (h *handler) GetCatalogTemplateIcon(ctx context.Context, params apiv1.GetCa
 		return &apiv1.GetCatalogTemplateIconOKImageJpegHeaders{ContentSecurityPolicy: mockIconCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateIconOKImageJpeg{Data: body}}, nil
 	}
 	return nil, fmt.Errorf("mock catalog icon of template %q has the content type %q, which the API does not serve", params.ID, icon.ContentType)
+}
+
+func mockOptString(s string) apiv1.OptString {
+	if s == "" {
+		return apiv1.OptString{}
+	}
+	return apiv1.NewOptString(s)
+}
+
+const mockScreenshotCSP = "default-src 'none'; sandbox"
+
+func (h *handler) GetCatalogTemplateScreenshot(ctx context.Context, params apiv1.GetCatalogTemplateScreenshotParams) (apiv1.GetCatalogTemplateScreenshotRes, error) {
+	shot, err := h.mockCatalogs().Screenshot(ctx, params.ID, params.Index)
+	if err != nil {
+		return nil, mapMockTemplateError(params.ID, err)
+	}
+	body := bytes.NewReader(shot.Data)
+	switch shot.ContentType {
+	case "image/png":
+		return &apiv1.GetCatalogTemplateScreenshotOKImagePNGHeaders{ContentSecurityPolicy: mockScreenshotCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateScreenshotOKImagePNG{Data: body}}, nil
+	case "image/webp":
+		return &apiv1.GetCatalogTemplateScreenshotOKImageWEBPHeaders{ContentSecurityPolicy: mockScreenshotCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateScreenshotOKImageWEBP{Data: body}}, nil
+	case "image/jpeg":
+		return &apiv1.GetCatalogTemplateScreenshotOKImageJpegHeaders{ContentSecurityPolicy: mockScreenshotCSP, XContentTypeOptions: mockIconNoSniff, Response: apiv1.GetCatalogTemplateScreenshotOKImageJpeg{Data: body}}, nil
+	}
+	return nil, fmt.Errorf("mock catalog screenshot %d of template %q has the content type %q, which the API does not serve", params.Index, params.ID, shot.ContentType)
 }
 
 func (h *handler) PreviewTemplateInstall(ctx context.Context, req *apiv1.TemplateInstallRequest, params apiv1.PreviewTemplateInstallParams) (*apiv1.TemplateInstallPlan, error) {

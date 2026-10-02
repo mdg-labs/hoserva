@@ -282,6 +282,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.UpdateCatalogSettingsOperation,
 		apiv1.GetCatalogTemplateOperation,
 		apiv1.GetCatalogTemplateIconOperation,
+		apiv1.GetCatalogTemplateScreenshotOperation,
 		apiv1.ListCatalogSourcesOperation,
 		apiv1.AddCatalogSourceOperation,
 		apiv1.RefreshCatalogSourceOperation,

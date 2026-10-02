@@ -40,6 +40,8 @@
       "loadFailed": "Could not load the app catalog.",
       "search": "Search apps",
       "categoryFilter": "Filter by category",
+      "maintainerFilter": "Filter by maintainer",
+      "maintainer": "By {{maintainer}}",
       "installedFilter": "Installed on this server",
       "installed": "Installed",
       "notInstalled": "Not installed",
@@ -149,6 +151,20 @@
       },
       "revision": "Version {{revision}} of the template",
       "docs": "Documentation",
+      "maintainer": "Maintained by {{maintainer}}",
+      "links": {
+        "project": "Project page",
+        "support": "Get help",
+        "donate": "Support the project"
+      },
+      "about": {
+        "title": "About this app"
+      },
+      "screenshots": {
+        "title": "Screenshots",
+        "alt": "Screenshot {{number}} of {{title}}",
+        "unavailable": "This screenshot could not be loaded."
+      },
       "install": "Install",
       "source": {
         "curated": "From Hoserva's own catalog, which is checked against Hoserva's signing key.",

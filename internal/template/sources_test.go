@@ -761,3 +761,47 @@ func TestSources_ARestoredSourceWithNoCopyIsHonestUntilRefreshed(t *testing.T) {
 		t.Fatalf("Entry after the refresh = %+v, %v", e, err)
 	}
 }
+
+func TestSources_ScreenshotsAndMaintainersComeFromTheSourceThatSuppliesTheTemplate(t *testing.T) {
+	ctx := context.Background()
+	g := newSourceRig(t)
+	host, url := g.newHost(t)
+	compose := strings.Replace(sourceCompose(t, "risky-agent", 2), "  docs:", "  maintainer: Some Team\n  screenshots: [shots/one.png]\n  docs:", 1)
+	host.serve(buildArchive(t, []tarEntry{
+		reg("index.json", `{"schema":1,"serial":1,"templates":[{"id":"risky-agent","revision":2,"title":"Risky agent","categories":[],"docs":"https://example.com","maintainer":"Some Team"}]}`),
+		{Name: "risky-agent/", Type: tar.TypeDir},
+		reg("risky-agent/compose.yaml", compose),
+		{Name: "risky-agent/shots/", Type: tar.TypeDir},
+		reg("risky-agent/shots/one.png", "PNG"),
+	}), nil, "")
+	if _, err := g.sources.Add(ctx, AddRequest{URL: url}); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := g.sources.Index(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var maintainer string
+	for _, e := range idx.Templates {
+		if e.ID == "risky-agent" {
+			maintainer = e.Maintainer
+		}
+	}
+	if maintainer != "Some Team" {
+		t.Errorf("maintainer of risky-agent = %q", maintainer)
+	}
+	shot, err := g.sources.Screenshot(ctx, "risky-agent", 0)
+	if err != nil || shot.ContentType != "image/png" || string(shot.Data) != "PNG" {
+		t.Fatalf("Screenshot = %+v, %v", shot, err)
+	}
+	if _, err := g.sources.Screenshot(ctx, "risky-agent", 1); !errors.Is(err, ErrScreenshotNotFound) {
+		t.Errorf("a position past the list: err = %v", err)
+	}
+	if _, err := g.sources.Screenshot(ctx, "jellyfin", 0); !errors.Is(err, ErrScreenshotNotFound) {
+		t.Errorf("a curated template with none: err = %v", err)
+	}
+	if _, err := g.sources.Screenshot(ctx, "nope", 0); !errors.Is(err, ErrTemplateNotFound) {
+		t.Errorf("an unknown template: err = %v", err)
+	}
+}

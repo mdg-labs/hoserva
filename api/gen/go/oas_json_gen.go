@@ -6012,6 +6012,12 @@ func (s *CatalogEntry) encodeFields(e *jx.Encoder) {
 		e.Str(s.Docs)
 	}
 	{
+		if s.Maintainer.Set {
+			e.FieldStart("maintainer")
+			s.Maintainer.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("source")
 		e.Str(s.Source)
 	}
@@ -6029,16 +6035,17 @@ func (s *CatalogEntry) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfCatalogEntry = [9]string{
+var jsonFieldsNameOfCatalogEntry = [10]string{
 	0: "id",
 	1: "revision",
 	2: "title",
 	3: "categories",
 	4: "docs",
-	5: "source",
-	6: "sourceKind",
-	7: "signed",
-	8: "installed",
+	5: "maintainer",
+	6: "source",
+	7: "sourceKind",
+	8: "signed",
+	9: "installed",
 }
 
 // Decode decodes CatalogEntry from json.
@@ -6118,8 +6125,18 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"docs\"")
 			}
+		case "maintainer":
+			if err := func() error {
+				s.Maintainer.Reset()
+				if err := s.Maintainer.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"maintainer\"")
+			}
 		case "source":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				v, err := d.Str()
 				s.Source = string(v)
@@ -6131,7 +6148,7 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"source\"")
 			}
 		case "sourceKind":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				if err := s.SourceKind.Decode(d); err != nil {
 					return err
@@ -6141,7 +6158,7 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"sourceKind\"")
 			}
 		case "signed":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				v, err := d.Bool()
 				s.Signed = bool(v)
@@ -6153,7 +6170,7 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"signed\"")
 			}
 		case "installed":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				v, err := d.Bool()
 				s.Installed = bool(v)
@@ -6174,8 +6191,8 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
-		0b11111111,
-		0b00000001,
+		0b11011111,
+		0b00000011,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -7216,6 +7233,28 @@ func (s *CatalogTemplate) encodeFields(e *jx.Encoder) {
 		e.Str(s.Docs)
 	}
 	{
+		if s.Maintainer.Set {
+			e.FieldStart("maintainer")
+			s.Maintainer.Encode(e)
+		}
+	}
+	{
+		if s.Description.Set {
+			e.FieldStart("description")
+			s.Description.Encode(e)
+		}
+	}
+	{
+		if s.Links.Set {
+			e.FieldStart("links")
+			s.Links.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("screenshotCount")
+		e.Int(s.ScreenshotCount)
+	}
+	{
 		e.FieldStart("source")
 		e.Str(s.Source)
 	}
@@ -7241,17 +7280,21 @@ func (s *CatalogTemplate) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfCatalogTemplate = [10]string{
-	0: "id",
-	1: "revision",
-	2: "title",
-	3: "categories",
-	4: "docs",
-	5: "source",
-	6: "sourceKind",
-	7: "signed",
-	8: "compose",
-	9: "privileges",
+var jsonFieldsNameOfCatalogTemplate = [14]string{
+	0:  "id",
+	1:  "revision",
+	2:  "title",
+	3:  "categories",
+	4:  "docs",
+	5:  "maintainer",
+	6:  "description",
+	7:  "links",
+	8:  "screenshotCount",
+	9:  "source",
+	10: "sourceKind",
+	11: "signed",
+	12: "compose",
+	13: "privileges",
 }
 
 // Decode decodes CatalogTemplate from json.
@@ -7331,8 +7374,50 @@ func (s *CatalogTemplate) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"docs\"")
 			}
+		case "maintainer":
+			if err := func() error {
+				s.Maintainer.Reset()
+				if err := s.Maintainer.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"maintainer\"")
+			}
+		case "description":
+			if err := func() error {
+				s.Description.Reset()
+				if err := s.Description.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"description\"")
+			}
+		case "links":
+			if err := func() error {
+				s.Links.Reset()
+				if err := s.Links.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"links\"")
+			}
+		case "screenshotCount":
+			requiredBitSet[1] |= 1 << 0
+			if err := func() error {
+				v, err := d.Int()
+				s.ScreenshotCount = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"screenshotCount\"")
+			}
 		case "source":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				v, err := d.Str()
 				s.Source = string(v)
@@ -7344,7 +7429,7 @@ func (s *CatalogTemplate) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"source\"")
 			}
 		case "sourceKind":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				if err := s.SourceKind.Decode(d); err != nil {
 					return err
@@ -7354,7 +7439,7 @@ func (s *CatalogTemplate) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"sourceKind\"")
 			}
 		case "signed":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 3
 			if err := func() error {
 				v, err := d.Bool()
 				s.Signed = bool(v)
@@ -7366,7 +7451,7 @@ func (s *CatalogTemplate) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"signed\"")
 			}
 		case "compose":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 4
 			if err := func() error {
 				v, err := d.Str()
 				s.Compose = string(v)
@@ -7378,7 +7463,7 @@ func (s *CatalogTemplate) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"compose\"")
 			}
 		case "privileges":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 5
 			if err := func() error {
 				s.Privileges = make([]TemplatePrivilege, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -7405,8 +7490,8 @@ func (s *CatalogTemplate) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
-		0b11111111,
-		0b00000011,
+		0b00011111,
+		0b00111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -7448,6 +7533,103 @@ func (s *CatalogTemplate) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *CatalogTemplate) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CatalogTemplateLinks) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CatalogTemplateLinks) encodeFields(e *jx.Encoder) {
+	{
+		if s.Project.Set {
+			e.FieldStart("project")
+			s.Project.Encode(e)
+		}
+	}
+	{
+		if s.Support.Set {
+			e.FieldStart("support")
+			s.Support.Encode(e)
+		}
+	}
+	{
+		if s.Donate.Set {
+			e.FieldStart("donate")
+			s.Donate.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfCatalogTemplateLinks = [3]string{
+	0: "project",
+	1: "support",
+	2: "donate",
+}
+
+// Decode decodes CatalogTemplateLinks from json.
+func (s *CatalogTemplateLinks) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CatalogTemplateLinks to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "project":
+			if err := func() error {
+				s.Project.Reset()
+				if err := s.Project.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"project\"")
+			}
+		case "support":
+			if err := func() error {
+				s.Support.Reset()
+				if err := s.Support.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"support\"")
+			}
+		case "donate":
+			if err := func() error {
+				s.Donate.Reset()
+				if err := s.Donate.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"donate\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CatalogTemplateLinks")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CatalogTemplateLinks) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CatalogTemplateLinks) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -22561,6 +22743,39 @@ func (s OptCatalogSourceKind) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptCatalogSourceKind) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CatalogTemplateLinks as json.
+func (o OptCatalogTemplateLinks) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes CatalogTemplateLinks from json.
+func (o *OptCatalogTemplateLinks) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptCatalogTemplateLinks to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptCatalogTemplateLinks) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptCatalogTemplateLinks) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

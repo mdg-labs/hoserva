@@ -2665,6 +2665,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/catalog/{id}/screenshots/{index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+                /** @description The screenshot's position in the template's list, from 0 to `screenshotCount` of `getCatalogTemplate` minus one. */
+                index: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one of a catalog template's screenshots
+         * @description The screenshot at that position of the template's `screenshots` list, with a content type from an allow-list (PNG, WebP or JPEG) chosen by the file's extension, never by its content. It is addressed by position, so no file path ever appears in a request. A file that is not a plain file inside the template's own directory (a symlink in the path or as the file, however it points), has another extension, or is larger than 4 MiB is not served, and neither is a position past the end of the list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and anything but the image itself.
+         */
+        get: operations["getCatalogTemplateScreenshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/templates/{id}/preview": {
         parameters: {
             query?: never;
@@ -3807,6 +3832,8 @@ export interface components {
             categories: string[];
             /** @description The upstream documentation the template was written from. */
             docs: string;
+            /** @description Who maintains the template or the app, as the catalog's index lists it. Absent when the template names none. */
+            maintainer?: string;
             /** @description Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
             sourceKind: components["schemas"]["CatalogSourceKind"];
@@ -3931,6 +3958,13 @@ export interface components {
             title: string;
             categories: string[];
             docs: string;
+            /** @description Who maintains the template or the app. Absent when the template names none. */
+            maintainer?: string;
+            /** @description Longer plain text for the template's page. Line breaks are meaningful; it is never markup. Absent when the template has none. */
+            description?: string;
+            links?: components["schemas"]["CatalogTemplateLinks"];
+            /** @description How many screenshots the template lists. Screenshot `i` of `0..screenshotCount-1` is `getCatalogTemplateScreenshot`. */
+            screenshotCount: number;
             /** @description Where the template came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
             sourceKind: components["schemas"]["CatalogSourceKind"];
@@ -3940,6 +3974,15 @@ export interface components {
             compose: string;
             /** @description Empty when the template asks for nothing beyond an ordinary container. */
             privileges: components["schemas"]["TemplatePrivilege"][];
+        };
+        /** @description The addresses the template's page offers, each absolute `https` with a host and no credentials. A link the template does not set is absent. */
+        CatalogTemplateLinks: {
+            /** @description The app's project page. */
+            project?: string;
+            /** @description Where to get help with the app. */
+            support?: string;
+            /** @description Where to support the app's development. */
+            donate?: string;
         };
         TemplateInstallRequest: {
             /** @description The stack's name, under the rules of `createStack`. Absent means the template's id. */
@@ -8978,6 +9021,36 @@ export interface operations {
                 };
                 content: {
                     "image/svg+xml": string;
+                    "image/png": string;
+                    "image/webp": string;
+                    "image/jpeg": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCatalogTemplateScreenshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template's id. */
+                id: string;
+                /** @description The screenshot's position in the template's list, from 0 to `screenshotCount` of `getCatalogTemplate` minus one. */
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The screenshot. */
+            200: {
+                headers: {
+                    "Content-Security-Policy": string;
+                    "X-Content-Type-Options": string;
+                    [name: string]: unknown;
+                };
+                content: {
                     "image/png": string;
                     "image/webp": string;
                     "image/jpeg": string;

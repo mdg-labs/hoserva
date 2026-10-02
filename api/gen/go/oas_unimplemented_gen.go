@@ -673,6 +673,21 @@ func (UnimplementedHandler) GetCatalogTemplateIcon(ctx context.Context, params G
 	return r, ht.ErrNotImplemented
 }
 
+// GetCatalogTemplateScreenshot implements getCatalogTemplateScreenshot operation.
+//
+// The screenshot at that position of the template's `screenshots` list, with a content type from an
+// allow-list (PNG, WebP or JPEG) chosen by the file's extension, never by its content. It is addressed
+// by position, so no file path ever appears in a request. A file that is not a plain file inside the
+// template's own directory (a symlink in the path or as the file, however it points), has another
+// extension, or is larger than 4 MiB is not served, and neither is a position past the end of the
+// list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The
+// response forbids content sniffing and anything but the image itself.
+//
+// GET /catalog/{id}/screenshots/{index}
+func (UnimplementedHandler) GetCatalogTemplateScreenshot(ctx context.Context, params GetCatalogTemplateScreenshotParams) (r GetCatalogTemplateScreenshotRes, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCurrentSession implements getCurrentSession operation.
 //
 // The signed-in user this session cookie belongs to.

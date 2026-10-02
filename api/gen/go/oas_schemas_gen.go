@@ -2749,6 +2749,9 @@ type CatalogEntry struct {
 	Categories []string `json:"categories"`
 	// The upstream documentation the template was written from.
 	Docs string `json:"docs"`
+	// Who maintains the template or the app, as the catalog's index lists it. Absent when the template
+	// names none.
+	Maintainer OptString `json:"maintainer"`
 	// Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source.
 	Source     string            `json:"source"`
 	SourceKind CatalogSourceKind `json:"sourceKind"`
@@ -2782,6 +2785,11 @@ func (s *CatalogEntry) GetCategories() []string {
 // GetDocs returns the value of Docs.
 func (s *CatalogEntry) GetDocs() string {
 	return s.Docs
+}
+
+// GetMaintainer returns the value of Maintainer.
+func (s *CatalogEntry) GetMaintainer() OptString {
+	return s.Maintainer
 }
 
 // GetSource returns the value of Source.
@@ -2827,6 +2835,11 @@ func (s *CatalogEntry) SetCategories(val []string) {
 // SetDocs sets the value of Docs.
 func (s *CatalogEntry) SetDocs(val string) {
 	s.Docs = val
+}
+
+// SetMaintainer sets the value of Maintainer.
+func (s *CatalogEntry) SetMaintainer(val OptString) {
+	s.Maintainer = val
 }
 
 // SetSource sets the value of Source.
@@ -3320,6 +3333,15 @@ type CatalogTemplate struct {
 	Title      string   `json:"title"`
 	Categories []string `json:"categories"`
 	Docs       string   `json:"docs"`
+	// Who maintains the template or the app. Absent when the template names none.
+	Maintainer OptString `json:"maintainer"`
+	// Longer plain text for the template's page. Line breaks are meaningful; it is never markup. Absent
+	// when the template has none.
+	Description OptString               `json:"description"`
+	Links       OptCatalogTemplateLinks `json:"links"`
+	// How many screenshots the template lists. Screenshot `i` of `0..screenshotCount-1` is
+	// `getCatalogTemplateScreenshot`.
+	ScreenshotCount int `json:"screenshotCount"`
 	// Where the template came from: `hoserva` for the curated catalog, a source id for a user-added
 	// source.
 	Source     string            `json:"source"`
@@ -3356,6 +3378,26 @@ func (s *CatalogTemplate) GetCategories() []string {
 // GetDocs returns the value of Docs.
 func (s *CatalogTemplate) GetDocs() string {
 	return s.Docs
+}
+
+// GetMaintainer returns the value of Maintainer.
+func (s *CatalogTemplate) GetMaintainer() OptString {
+	return s.Maintainer
+}
+
+// GetDescription returns the value of Description.
+func (s *CatalogTemplate) GetDescription() OptString {
+	return s.Description
+}
+
+// GetLinks returns the value of Links.
+func (s *CatalogTemplate) GetLinks() OptCatalogTemplateLinks {
+	return s.Links
+}
+
+// GetScreenshotCount returns the value of ScreenshotCount.
+func (s *CatalogTemplate) GetScreenshotCount() int {
+	return s.ScreenshotCount
 }
 
 // GetSource returns the value of Source.
@@ -3408,6 +3450,26 @@ func (s *CatalogTemplate) SetDocs(val string) {
 	s.Docs = val
 }
 
+// SetMaintainer sets the value of Maintainer.
+func (s *CatalogTemplate) SetMaintainer(val OptString) {
+	s.Maintainer = val
+}
+
+// SetDescription sets the value of Description.
+func (s *CatalogTemplate) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetLinks sets the value of Links.
+func (s *CatalogTemplate) SetLinks(val OptCatalogTemplateLinks) {
+	s.Links = val
+}
+
+// SetScreenshotCount sets the value of ScreenshotCount.
+func (s *CatalogTemplate) SetScreenshotCount(val int) {
+	s.ScreenshotCount = val
+}
+
 // SetSource sets the value of Source.
 func (s *CatalogTemplate) SetSource(val string) {
 	s.Source = val
@@ -3431,6 +3493,48 @@ func (s *CatalogTemplate) SetCompose(val string) {
 // SetPrivileges sets the value of Privileges.
 func (s *CatalogTemplate) SetPrivileges(val []TemplatePrivilege) {
 	s.Privileges = val
+}
+
+// The addresses the template's page offers, each absolute `https` with a host and no credentials. A
+// link the template does not set is absent.
+// Ref: #/components/schemas/CatalogTemplateLinks
+type CatalogTemplateLinks struct {
+	// The app's project page.
+	Project OptString `json:"project"`
+	// Where to get help with the app.
+	Support OptString `json:"support"`
+	// Where to support the app's development.
+	Donate OptString `json:"donate"`
+}
+
+// GetProject returns the value of Project.
+func (s *CatalogTemplateLinks) GetProject() OptString {
+	return s.Project
+}
+
+// GetSupport returns the value of Support.
+func (s *CatalogTemplateLinks) GetSupport() OptString {
+	return s.Support
+}
+
+// GetDonate returns the value of Donate.
+func (s *CatalogTemplateLinks) GetDonate() OptString {
+	return s.Donate
+}
+
+// SetProject sets the value of Project.
+func (s *CatalogTemplateLinks) SetProject(val OptString) {
+	s.Project = val
+}
+
+// SetSupport sets the value of Support.
+func (s *CatalogTemplateLinks) SetSupport(val OptString) {
+	s.Support = val
+}
+
+// SetDonate sets the value of Donate.
+func (s *CatalogTemplateLinks) SetDonate(val OptString) {
+	s.Donate = val
 }
 
 // Ref: #/components/schemas/ConfigImportArchive
@@ -7463,6 +7567,165 @@ func (s *GetCatalogTemplateIconOKImageWEBPHeaders) SetResponse(val GetCatalogTem
 
 func (*GetCatalogTemplateIconOKImageWEBPHeaders) getCatalogTemplateIconRes() {}
 
+type GetCatalogTemplateScreenshotOKImageJpeg struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateScreenshotOKImageJpeg) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateScreenshotOKImageJpegHeaders wraps GetCatalogTemplateScreenshotOKImageJpeg with response headers.
+type GetCatalogTemplateScreenshotOKImageJpegHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateScreenshotOKImageJpeg
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) GetResponse() GetCatalogTemplateScreenshotOKImageJpeg {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageJpegHeaders) SetResponse(val GetCatalogTemplateScreenshotOKImageJpeg) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateScreenshotOKImageJpegHeaders) getCatalogTemplateScreenshotRes() {}
+
+type GetCatalogTemplateScreenshotOKImagePNG struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateScreenshotOKImagePNG) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateScreenshotOKImagePNGHeaders wraps GetCatalogTemplateScreenshotOKImagePNG with response headers.
+type GetCatalogTemplateScreenshotOKImagePNGHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateScreenshotOKImagePNG
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) GetResponse() GetCatalogTemplateScreenshotOKImagePNG {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImagePNGHeaders) SetResponse(val GetCatalogTemplateScreenshotOKImagePNG) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateScreenshotOKImagePNGHeaders) getCatalogTemplateScreenshotRes() {}
+
+type GetCatalogTemplateScreenshotOKImageWEBP struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetCatalogTemplateScreenshotOKImageWEBP) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetCatalogTemplateScreenshotOKImageWEBPHeaders wraps GetCatalogTemplateScreenshotOKImageWEBP with response headers.
+type GetCatalogTemplateScreenshotOKImageWEBPHeaders struct {
+	ContentSecurityPolicy string
+	XContentTypeOptions   string
+	Response              GetCatalogTemplateScreenshotOKImageWEBP
+}
+
+// GetContentSecurityPolicy returns the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) GetContentSecurityPolicy() string {
+	return s.ContentSecurityPolicy
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) GetXContentTypeOptions() string {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) GetResponse() GetCatalogTemplateScreenshotOKImageWEBP {
+	return s.Response
+}
+
+// SetContentSecurityPolicy sets the value of ContentSecurityPolicy.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) SetContentSecurityPolicy(val string) {
+	s.ContentSecurityPolicy = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) SetXContentTypeOptions(val string) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetCatalogTemplateScreenshotOKImageWEBPHeaders) SetResponse(val GetCatalogTemplateScreenshotOKImageWEBP) {
+	s.Response = val
+}
+
+func (*GetCatalogTemplateScreenshotOKImageWEBPHeaders) getCatalogTemplateScreenshotRes() {}
+
 type GetJobLogOK struct {
 	Data io.Reader
 }
@@ -11225,6 +11488,52 @@ func (o OptCatalogSourceKind) Get() (v CatalogSourceKind, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptCatalogSourceKind) Or(d CatalogSourceKind) CatalogSourceKind {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCatalogTemplateLinks returns new OptCatalogTemplateLinks with value set to v.
+func NewOptCatalogTemplateLinks(v CatalogTemplateLinks) OptCatalogTemplateLinks {
+	return OptCatalogTemplateLinks{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogTemplateLinks is optional CatalogTemplateLinks.
+type OptCatalogTemplateLinks struct {
+	Value CatalogTemplateLinks
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogTemplateLinks was set.
+func (o OptCatalogTemplateLinks) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogTemplateLinks) Reset() {
+	var v CatalogTemplateLinks
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogTemplateLinks) SetTo(v CatalogTemplateLinks) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogTemplateLinks) Get() (v CatalogTemplateLinks, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogTemplateLinks) Or(d CatalogTemplateLinks) CatalogTemplateLinks {
 	if v, ok := o.Get(); ok {
 		return v
 	}

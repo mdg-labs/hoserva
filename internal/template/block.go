@@ -30,15 +30,26 @@ const (
 // Block is the x-hoserva extension block of schema version 1. It is the one
 // definition the validator and the published JSON Schema are both built from.
 type Block struct {
-	Schema     int              `json:"schema" yaml:"schema" jsonschema:"enum=1,description=Schema version of this block. A newer Hoserva keeps reading older versions."`
-	ID         string           `json:"id" yaml:"id" jsonschema:"pattern=^[a-z0-9]+(-[a-z0-9]+)*$,description=Template id. Equals the name of the directory holding compose.yaml."`
-	Revision   int              `json:"revision" yaml:"revision" jsonschema:"minimum=1,description=Increases with every change to the template."`
-	Title      string           `json:"title" yaml:"title" jsonschema:"minLength=1,description=Name shown in the catalog."`
-	Categories []string         `json:"categories" yaml:"categories" jsonschema:"minItems=1,uniqueItems=true,pattern=^[a-z0-9]+(-[a-z0-9]+)*$,description=Catalog categories."`
-	Icon       string           `json:"icon" yaml:"icon" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml."`
-	Docs       string           `json:"docs" yaml:"docs" jsonschema:"pattern=^https?://,description=Upstream documentation the template was written from."`
-	WebUI      string           `json:"webui,omitempty" yaml:"webui,omitempty" jsonschema:"pattern=^https?://,description=Address of the app's web interface. {host} stands for the server's address and ${INPUT} for an input."`
-	Inputs     map[string]Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema:"description=The only values the install form asks for. Each key is a variable name. Every input except a device input must be used: referenced as ${NAME} in the Compose file or the webui address; or passed to a service through env_file: .env. A device input needs no reference."`
+	Schema      int              `json:"schema" yaml:"schema" jsonschema:"enum=1,description=Schema version of this block. A newer Hoserva keeps reading older versions."`
+	ID          string           `json:"id" yaml:"id" jsonschema:"pattern=^[a-z0-9]+(-[a-z0-9]+)*$,description=Template id. Equals the name of the directory holding compose.yaml."`
+	Revision    int              `json:"revision" yaml:"revision" jsonschema:"minimum=1,description=Increases with every change to the template."`
+	Title       string           `json:"title" yaml:"title" jsonschema:"minLength=1,description=Name shown in the catalog."`
+	Categories  []string         `json:"categories" yaml:"categories" jsonschema:"minItems=1,uniqueItems=true,pattern=^[a-z0-9]+(-[a-z0-9]+)*$,description=Catalog categories."`
+	Icon        string           `json:"icon" yaml:"icon" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml."`
+	Docs        string           `json:"docs" yaml:"docs" jsonschema:"pattern=^https?://,description=Upstream documentation the template was written from."`
+	Maintainer  string           `json:"maintainer,omitempty" yaml:"maintainer,omitempty" jsonschema:"minLength=1,maxLength=100,description=Who maintains the template or the app. Shown in the catalog and used as a filter."`
+	Description string           `json:"description,omitempty" yaml:"description,omitempty" jsonschema:"minLength=1,maxLength=2000,description=Longer plain-text description shown on the template's page. Line breaks are kept; nothing is interpreted as markup."`
+	Screenshots []string         `json:"screenshots,omitempty" yaml:"screenshots,omitempty" jsonschema:"minItems=1,maxItems=8,uniqueItems=true,maxLength=200,pattern=^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*[.](png|webp|jpg|jpeg)$,description=Image files of the template's directory as paths relative to compose.yaml (PNG or WebP or JPEG files). No segment may start with a dot."`
+	Links       Links            `json:"links,omitempty" yaml:"links,omitempty" jsonschema:"description=Where to find the app's project page and ways to support it. Every link is an https address."`
+	WebUI       string           `json:"webui,omitempty" yaml:"webui,omitempty" jsonschema:"pattern=^https?://,description=Address of the app's web interface. {host} stands for the server's address and ${INPUT} for an input."`
+	Inputs      map[string]Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema:"description=The only values the install form asks for. Each key is a variable name. Every input except a device input must be used: referenced as ${NAME} in the Compose file or the webui address; or passed to a service through env_file: .env. A device input needs no reference."`
+}
+
+// Links are the optional addresses a template's page offers.
+type Links struct {
+	Project string `json:"project,omitempty" yaml:"project,omitempty" jsonschema:"pattern=^https://,maxLength=2048,description=The app's project page."`
+	Support string `json:"support,omitempty" yaml:"support,omitempty" jsonschema:"pattern=^https://,maxLength=2048,description=Where to get help with the app."`
+	Donate  string `json:"donate,omitempty" yaml:"donate,omitempty" jsonschema:"pattern=^https://,maxLength=2048,description=Where to support the app's development."`
 }
 
 // Input is one value the install form asks for.

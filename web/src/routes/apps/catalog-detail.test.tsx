@@ -52,6 +52,17 @@ const PRIVILEGES = [
   },
 ];
 
+const RICH = {
+  maintainer: "Example Team",
+  description: "First paragraph.\n\nSecond paragraph.",
+  screenshotCount: 2,
+  links: {
+    project: "https://example.com/project",
+    support: "https://example.com/support",
+    donate: "https://example.com/donate",
+  },
+};
+
 function renderAt(id: string): ReturnType<typeof render> {
   return render(
     <MemoryRouter initialEntries={[`/apps/catalog/${id}`]}>
@@ -158,5 +169,111 @@ describe("CatalogDetailPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("link", { name: "Install" })).toBeInTheDocument();
+  });
+
+  it("shows the maintainer, the description, the screenshots and the links when the template has them", async () => {
+    mockGet.mockImplementation(() => ok(template(RICH)));
+    renderAt("risky-agent");
+
+    expect(await screen.findByText("Maintained by Example Team")).toBeInTheDocument();
+    const about = screen.getByText(/First paragraph\./);
+    expect(about.textContent).toBe("First paragraph.\n\nSecond paragraph.");
+    expect(about.tagName).toBe("P");
+
+    const first = screen.getByRole("img", { name: "Screenshot 1 of Risky agent" });
+    expect(first).toHaveAttribute("src", "/api/v1/catalog/risky-agent/screenshots/0");
+    expect(screen.getByRole("img", { name: "Screenshot 2 of Risky agent" })).toHaveAttribute(
+      "src",
+      "/api/v1/catalog/risky-agent/screenshots/1",
+    );
+
+    for (const [name, href] of [
+      ["Project page", "https://example.com/project"],
+      ["Get help", "https://example.com/support"],
+      ["Support the project", "https://example.com/donate"],
+    ]) {
+      const link = screen.getByRole("link", { name });
+      expect(link).toHaveAttribute("href", href);
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    }
+  });
+
+  it("shows none of it, and no empty section, when the template has none", async () => {
+    mockGet.mockImplementation(() => ok(template({ screenshotCount: 0 })));
+    renderAt("risky-agent");
+
+    await screen.findByRole("heading", { name: "Risky agent" });
+    expect(screen.queryByText(/Maintained by/)).not.toBeInTheDocument();
+    expect(screen.queryByText("About this app")).not.toBeInTheDocument();
+    expect(screen.queryByText("Screenshots")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    for (const name of ["Project page", "Get help", "Support the project"]) {
+      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("offers only the links the template sets", async () => {
+    mockGet.mockImplementation(() =>
+      ok(template({ links: { donate: "https://example.com/donate" }, screenshotCount: 0 })),
+    );
+    renderAt("risky-agent");
+
+    expect(await screen.findByRole("link", { name: "Support the project" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Project page" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Get help" })).not.toBeInTheDocument();
+  });
+
+  it("links only an https address with a host and no credentials, whatever the answer says", async () => {
+    mockGet.mockImplementation(() =>
+      ok(
+        template({
+          screenshotCount: 0,
+          links: {
+            project: "http://example.com/plain",
+            support: "javascript:alert(1)",
+            donate: "https://user:pw@example.com/",
+          },
+        }),
+      ),
+    );
+    renderAt("risky-agent");
+
+    await screen.findByRole("heading", { name: "Risky agent" });
+    for (const name of ["Project page", "Get help", "Support the project"]) {
+      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+
+    for (const bad of ["data:text/html,x", "https://", "https://exa mple.com/", "https://example.com/\u0007", "//example.com/", "/relative"]) {
+      cleanup();
+      mockGet.mockImplementation(() => ok(template({ screenshotCount: 0, links: { project: bad } })));
+      renderAt("risky-agent");
+      await screen.findByRole("heading", { name: "Risky agent" });
+      expect(screen.queryByRole("link", { name: "Project page" }), bad).not.toBeInTheDocument();
+    }
+  });
+
+  it("renders the description as text, never as markup", async () => {
+    mockGet.mockImplementation(() =>
+      ok(template({ screenshotCount: 0, description: "<img src=x onerror=alert(1)><b>bold</b>" })),
+    );
+    renderAt("risky-agent");
+
+    expect(await screen.findByText("<img src=x onerror=alert(1)><b>bold</b>")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("replaces a screenshot that fails to load and keeps the page and the other screenshot", async () => {
+    mockGet.mockImplementation(() => ok(template(RICH)));
+    renderAt("risky-agent");
+
+    const first = await screen.findByRole("img", { name: "Screenshot 1 of Risky agent" });
+    fireEvent.error(first);
+
+    expect(screen.getByText("This screenshot could not be loaded.")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Screenshot 1 of Risky agent" })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Screenshot 2 of Risky agent" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Risky agent" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Install" })).toBeInTheDocument();
   });
 });

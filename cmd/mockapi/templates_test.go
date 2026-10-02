@@ -283,3 +283,59 @@ func TestMockCatalogSettingsStartDailyAndOnAndChangeOneFieldAtATime(t *testing.T
 		t.Fatalf("a refused update changed the settings: %+v", got)
 	}
 }
+
+func TestMockCatalogHasAnEntryWithEveryPieceOfMetadataAndServesItsScreenshots(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	d, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, ok := d.Links.Get()
+	if d.Maintainer.Or("") == "" || d.Description.Or("") == "" || d.ScreenshotCount != 2 || !ok ||
+		links.Project.Or("") == "" || links.Support.Or("") == "" || links.Donate.Or("") == "" {
+		t.Fatalf("jellyfin = %+v, want every piece of metadata", d)
+	}
+	plain, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "risky-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Maintainer.IsSet() || plain.Description.IsSet() || plain.Links.IsSet() || plain.ScreenshotCount != 0 {
+		t.Errorf("risky-agent = %+v, want none", plain)
+	}
+	list, err := h.ListCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintainers := map[string]string{}
+	for _, e := range list.Templates {
+		maintainers[e.ID] = e.Maintainer.Or("")
+	}
+	if maintainers["jellyfin"] != d.Maintainer.Or("") || maintainers["quickpaste"] == "" || maintainers["risky-agent"] != "" {
+		t.Errorf("maintainers = %v", maintainers)
+	}
+
+	res, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "jellyfin", Index: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	png, ok := res.(*apiv1.GetCatalogTemplateScreenshotOKImagePNGHeaders)
+	if !ok {
+		t.Fatalf("response is %T, want the PNG response", res)
+	}
+	prod, err := (&api.Handler{Catalog: mockCatalog()}).GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "jellyfin", Index: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := prod.(*apiv1.GetCatalogTemplateScreenshotOKImagePNGHeaders)
+	if png.ContentSecurityPolicy != want.ContentSecurityPolicy || png.XContentTypeOptions != want.XContentTypeOptions {
+		t.Errorf("headers = %q %q, production %q %q", png.ContentSecurityPolicy, png.XContentTypeOptions, want.ContentSecurityPolicy, want.XContentTypeOptions)
+	}
+	got, _ := io.ReadAll(png.Response)
+	if string(got) != string(mockScreenshots["jellyfin"][0]) {
+		t.Errorf("body is %d bytes, want the first mock screenshot", len(got))
+	}
+}

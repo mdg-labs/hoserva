@@ -4832,6 +4832,68 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /catalog/{id}/screenshots/{index}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The template's id.
+      - name: index
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 7
+        description: >-
+          The screenshot's position in the template's list, from 0 to
+          `screenshotCount` of `getCatalogTemplate` minus one.
+    get:
+      operationId: getCatalogTemplateScreenshot
+      summary: Get one of a catalog template's screenshots
+      description: >-
+        The screenshot at that position of the template's `screenshots` list,
+        with a content type from an allow-list (PNG, WebP or JPEG) chosen by
+        the file's extension, never by its content. It is addressed by
+        position, so no file path ever appears in a request. A file that is
+        not a plain file inside the template's own directory (a symlink in
+        the path or as the file, however it points), has another extension,
+        or is larger than 4 MiB is not served, and neither is a position past
+        the end of the list: 404 `template_screenshot_not_found`. An unknown
+        template is 404 `template_not_found`. The response forbids content
+        sniffing and anything but the image itself.
+      tags: [templates]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The screenshot.
+          headers:
+            Content-Security-Policy:
+              required: true
+              schema:
+                type: string
+            X-Content-Type-Options:
+              required: true
+              schema:
+                type: string
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: '#/components/responses/Error'
+
   /templates/{id}/preview:
     parameters:
       - name: id
@@ -7153,6 +7215,13 @@ components:
         docs:
           type: string
           description: The upstream documentation the template was written from.
+        maintainer:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: >-
+            Who maintains the template or the app, as the catalog's index
+            lists it. Absent when the template names none.
         source:
           type: string
           description: >-
@@ -7375,7 +7444,7 @@ components:
 
     CatalogTemplate:
       type: object
-      required: [id, revision, title, categories, docs, source, sourceKind, signed, compose, privileges]
+      required: [id, revision, title, categories, docs, screenshotCount, source, sourceKind, signed, compose, privileges]
       properties:
         id:
           type: string
@@ -7390,6 +7459,29 @@ components:
             type: string
         docs:
           type: string
+        maintainer:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: >-
+            Who maintains the template or the app. Absent when the template
+            names none.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: >-
+            Longer plain text for the template's page. Line breaks are
+            meaningful; it is never markup. Absent when the template has none.
+        links:
+          $ref: '#/components/schemas/CatalogTemplateLinks'
+        screenshotCount:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: >-
+            How many screenshots the template lists. Screenshot `i` of
+            `0..screenshotCount-1` is `getCatalogTemplateScreenshot`.
         source:
           type: string
           description: >-
@@ -7410,6 +7502,25 @@ components:
           items:
             $ref: '#/components/schemas/TemplatePrivilege'
           description: Empty when the template asks for nothing beyond an ordinary container.
+
+    CatalogTemplateLinks:
+      type: object
+      description: >-
+        The addresses the template's page offers, each absolute `https` with
+        a host and no credentials. A link the template does not set is absent.
+      properties:
+        project:
+          type: string
+          maxLength: 2048
+          description: The app's project page.
+        support:
+          type: string
+          maxLength: 2048
+          description: Where to get help with the app.
+        donate:
+          type: string
+          maxLength: 2048
+          description: Where to support the app's development.
 
     TemplateInstallRequest:
       type: object

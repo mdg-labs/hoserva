@@ -5,6 +5,10 @@ type GetCatalogTemplateIconRes interface {
 	getCatalogTemplateIconRes()
 }
 
+type GetCatalogTemplateScreenshotRes interface {
+	getCatalogTemplateScreenshotRes()
+}
+
 type PlanDiskEvacuationRes interface {
 	planDiskEvacuationRes()
 }

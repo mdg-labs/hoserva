@@ -55,6 +55,7 @@ const (
 	GetCatalogSettingsOperation             OperationName = "GetCatalogSettings"
 	GetCatalogTemplateOperation             OperationName = "GetCatalogTemplate"
 	GetCatalogTemplateIconOperation         OperationName = "GetCatalogTemplateIcon"
+	GetCatalogTemplateScreenshotOperation   OperationName = "GetCatalogTemplateScreenshot"
 	GetCurrentSessionOperation              OperationName = "GetCurrentSession"
 	GetGeneralSettingsOperation             OperationName = "GetGeneralSettings"
 	GetJobOperation                         OperationName = "GetJob"

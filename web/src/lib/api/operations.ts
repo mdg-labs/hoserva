@@ -872,6 +872,12 @@ export function catalogIconPath(id: string): string {
   return `/api/v1/catalog/${encodeURIComponent(id)}/icon`;
 }
 
+// Screenshots are addressed by their position in the template's list, so no
+// file path from a catalog ever reaches an address.
+export function catalogScreenshotPath(id: string, index: number): string {
+  return `/api/v1/catalog/${encodeURIComponent(id)}/screenshots/${index}`;
+}
+
 export function postCatalogRefresh() {
   return hoservaClient.POST("/catalog/refresh");
 }

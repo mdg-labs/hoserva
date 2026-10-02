@@ -10,16 +10,24 @@ export const COMMUNITY = "community";
 export type CatalogFilters = {
   search: string;
   categories: string[];
+  maintainers: string[];
   installed: string | null;
   verified: string | null;
 };
 
-export const NO_FILTERS: CatalogFilters = { search: "", categories: [], installed: null, verified: null };
+export const NO_FILTERS: CatalogFilters = {
+  search: "",
+  categories: [],
+  maintainers: [],
+  installed: null,
+  verified: null,
+};
 
 export function hasFilters(filters: CatalogFilters): boolean {
   return (
     filters.search.trim() !== "" ||
     filters.categories.length > 0 ||
+    filters.maintainers.length > 0 ||
     filters.installed !== null ||
     filters.verified !== null
   );
@@ -27,6 +35,12 @@ export function hasFilters(filters: CatalogFilters): boolean {
 
 export function entryCategories(entries: CatalogEntry[]): string[] {
   return [...new Set(entries.flatMap((entry) => entry.categories))].sort((a, b) => a.localeCompare(b));
+}
+
+export function entryMaintainers(entries: CatalogEntry[]): string[] {
+  return [
+    ...new Set(entries.flatMap((entry) => (entry.maintainer ? [entry.maintainer] : []))),
+  ].sort((a, b) => a.localeCompare(b));
 }
 
 // Search, filters and paging are the caller's (the API lists every entry),
@@ -43,6 +57,12 @@ export function filterEntries(entries: CatalogEntry[], filters: CatalogFilters):
       return false;
     }
     if (filters.categories.length > 0 && !entry.categories.some((c) => filters.categories.includes(c))) {
+      return false;
+    }
+    if (
+      filters.maintainers.length > 0 &&
+      !(entry.maintainer && filters.maintainers.includes(entry.maintainer))
+    ) {
       return false;
     }
     if (filters.installed === INSTALLED && !entry.installed) {

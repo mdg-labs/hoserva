@@ -1215,6 +1215,46 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "valid_second_screenshot",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "jellyfin", Index: 1})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "position_past_the_list_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "jellyfin", Index: 2})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "template_without_screenshots_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "aio-notes", Index: 0})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "unknown_template_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "nope", Index: 0})
+			return err
+		},
+	},
+	{
+		op:   "GetCatalogTemplateScreenshot",
+		name: "path_traversal_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetCatalogTemplateScreenshot(ctx, apiv1.GetCatalogTemplateScreenshotParams{ID: "../jellyfin", Index: 0})
+			return err
+		},
+	},
 	// --- Catalog sources and the template-update check (#283) ---
 	{
 		op:   "ListCatalogSources",

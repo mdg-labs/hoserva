@@ -44,6 +44,55 @@
       "pattern": "^https?://",
       "description": "Upstream documentation the template was written from."
     },
+    "maintainer": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "description": "Who maintains the template or the app. Shown in the catalog and used as a filter."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000,
+      "minLength": 1,
+      "description": "Longer plain-text description shown on the template's page. Line breaks are kept; nothing is interpreted as markup."
+    },
+    "screenshots": {
+      "items": {
+        "type": "string",
+        "maxLength": 200,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*[.](png|webp|jpg|jpeg)$"
+      },
+      "type": "array",
+      "maxItems": 8,
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Image files of the template's directory as paths relative to compose.yaml (PNG or WebP or JPEG files). No segment may start with a dot."
+    },
+    "links": {
+      "properties": {
+        "project": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "description": "The app's project page."
+        },
+        "support": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "description": "Where to get help with the app."
+        },
+        "donate": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "description": "Where to support the app's development."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Where to find the app's project page and ways to support it. Every link is an https address."
+    },
     "webui": {
       "type": "string",
       "pattern": "^https?://",
