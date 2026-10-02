@@ -181,10 +181,16 @@ func TestLister_NeverReportsAPartitionThatCouldHoldData(t *testing.T) {
 	singleQuotedLabelNamed.partName = "single"
 	quotedSpacedLabelNamed := spare(29)
 	quotedSpacedLabelNamed.partName = `quoted\x20spaced`
+	idNamed := spare(30)
+	idNamed.partName = "id-bare"
+	quotedIDNamed := spare(31)
+	quotedIDNamed.partName = "id-quoted"
+	singleQuotedIDNamed := spare(32)
+	singleQuotedIDNamed.partName = "id-single"
 	goodSpare := spare(3)
 	goodSpare.partName = "cache-space"
 
-	parts := append(baseParts(), goodSpare, swapPart, mountedPart, signed, fstabNamed, byUUIDNamed, held, espBlank, noType, noUUID, noUdevData, noHolders, noByID, unitNamed, swapUnitNamed, byIDNamed, zeroSize, labelNamed, spacedLabelNamed, byLabelNamed, unnamedBesideLabelSpec, byLabelSpacedNamed, quotedUUIDNamed, singleQuotedUUIDNamed, quotedLabelNamed, singleQuotedLabelNamed, quotedSpacedLabelNamed)
+	parts := append(baseParts(), goodSpare, swapPart, mountedPart, signed, fstabNamed, byUUIDNamed, held, espBlank, noType, noUUID, noUdevData, noHolders, noByID, unitNamed, swapUnitNamed, byIDNamed, zeroSize, labelNamed, spacedLabelNamed, byLabelNamed, unnamedBesideLabelSpec, byLabelSpacedNamed, quotedUUIDNamed, singleQuotedUUIDNamed, quotedLabelNamed, singleQuotedLabelNamed, quotedSpacedLabelNamed, idNamed, quotedIDNamed, singleQuotedIDNamed)
 	swaps := "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/nvme0n1p4\tpartition\t8388604\t0\t-2\n"
 	fstab := "/dev/nvme0n1p2 / ext4 defaults 0 1\n/dev/nvme0n1p7 /srv ext4 defaults 0 2\nPARTUUID=" + byUUIDNamed.partUUID + " /x ext4 defaults 0 2\n/dev/disk/by-id/nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part18 /y ext4 defaults 0 2\nPARTLABEL=scratch /srv/scratch ext4 defaults,nofail 0 2\nPARTLABEL=my\\040scratch /srv/spaced ext4 defaults,nofail 0 2\n/dev/disk/by-partlabel/stash /srv/stash ext4 defaults,nofail 0 2\n/dev/disk/by-partlabel/my\\x20stash /srv/mystash ext4 defaults,nofail 0 2\nPARTLABEL=other /srv/other ext4 defaults,nofail 0 2\n" +
 		"PARTUUID=\"" + quotedUUIDNamed.partUUID + "\" /srv/q1 ext4 defaults,nofail 0 2\n" +
@@ -193,7 +199,12 @@ func TestLister_NeverReportsAPartitionThatCouldHoldData(t *testing.T) {
 		"PARTLABEL='single' /srv/q4 ext4 defaults,nofail 0 2\n" +
 		"PARTLABEL=\"quoted\\040spaced\" /srv/q5 ext4 defaults,nofail 0 2\n" +
 		"PARTUUID=\"22222222-0000-0000-0000-000000000000\" /srv/q9 ext4 defaults,nofail 0 2\n" +
-		"PARTLABEL=\"elsewhere\" /srv/q10 ext4 defaults,nofail 0 2\n"
+		"PARTLABEL=\"elsewhere\" /srv/q10 ext4 defaults,nofail 0 2\n" +
+		"ID=nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part30 /srv/i1 ext4 defaults,nofail 0 2\n" +
+		"ID=\"nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part31\" /srv/i2 ext4 defaults,nofail 0 2\n" +
+		"ID='nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part32' /srv/i3 ext4 defaults,nofail 0 2\n" +
+		"ID=nvme-Other_Disk_SERIAL0-part3 /srv/i4 ext4 defaults,nofail 0 2\n" +
+		"ID=\"nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0M123456X-part3999\" /srv/i5 ext4 defaults,nofail 0 2\n"
 	units := map[string]string{
 		"srv-data.mount":    "[Mount]\nWhat=/dev/nvme0n1p16\nWhere=/srv/data\n",
 		"dev-extra.swap":    "[Swap]\nWhat=/dev/nvme0n1p17\n",
@@ -220,6 +231,7 @@ func TestLister_AnUnbalancedQuoteInATagValueNamesEveryPartition(t *testing.T) {
 		"closing single quote only": "PARTLABEL=other' /srv/b ext4 defaults,nofail 0 2\n",
 		"mismatched quote pair":     "PARTUUID=\"" + spareOne.partUUID + "' /srv/c ext4 defaults,nofail 0 2\n",
 		"lone quote":                "PARTLABEL=\" /srv/d ext4 defaults,nofail 0 2\n",
+		"unbalanced ID tag":         "ID=\"nvme-Other_Disk_SERIAL0-part3 /srv/f ext4 defaults,nofail 0 2\n",
 		"quote-only unrelated uuid": "PARTUUID='22222222-0000-0000-0000-000000000000 /srv/e ext4 defaults,nofail 0 2\n",
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -180,12 +180,13 @@ func unitWhats(path string) ([]string, error) {
 
 // specNamesPartition reports whether a device specification from a
 // mounts listing, swaps, fstab or unit file names the partition at dev:
-// by kernel path, PARTUUID, PARTLABEL, a /dev/disk/by-partuuid,
-// by-partlabel or by-id link, or any other /dev path that resolves to it.
+// by kernel path, PARTUUID, PARTLABEL, ID (a /dev/disk/by-id name), a
+// /dev/disk/by-partuuid, by-partlabel or by-id link, or any other /dev path
+// that resolves to it.
 // A label is compared with partLabel, the partition's udev
 // ID_PART_ENTRY_NAME; when udev reports none, or the name cannot be
 // decoded, the spec cannot be ruled out, so it counts as naming the
-// partition. A PARTLABEL= or PARTUUID= value may be wrapped in one pair of
+// partition. A PARTLABEL=, PARTUUID= or ID= value may be wrapped in one pair of
 // matching quotes, the way blkid prints it; an unbalanced quote leaves the
 // value unreadable, so it counts as naming the partition too.
 func specNamesPartition(spec, dev, partUUID, partLabel string, byIDNames []string) bool {
@@ -197,6 +198,10 @@ func specNamesPartition(spec, dev, partUUID, partLabel string, byIDNames []strin
 	if id, ok := strings.CutPrefix(spec, "PARTUUID="); ok {
 		id, balanced := unquoteTagValue(id)
 		return !balanced || strings.EqualFold(id, partUUID)
+	}
+	if id, ok := strings.CutPrefix(spec, "ID="); ok {
+		id, balanced := unquoteTagValue(id)
+		return !balanced || slices.Contains(byIDNames, id)
 	}
 	if label, ok := strings.CutPrefix(spec, "/dev/disk/by-partlabel/"); ok && partLabelMayMatch(label, partLabel) {
 		return true
