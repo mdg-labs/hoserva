@@ -1,0 +1,7 @@
+# appdata on the cache device (cache "prefer").
+file|cache|appdata/notes/data/v3/index.db|size=70000
+symlink|cache|appdata/notes/latest|target=data/v3
+fifo|cache|appdata/notes/run/cache.fifo
+file|cache|appdata/photos/thumbs.db|size=90000|xattr=user.fixtureapp.rev="7"
+file|cache|appdata/gateway/proxy.conf|size=1500
+file|cache|appdata/mediaserver/transcode-cache.bin|size=100000

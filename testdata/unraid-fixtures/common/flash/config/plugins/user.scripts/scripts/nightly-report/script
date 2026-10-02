@@ -1,0 +1,3 @@
+#!/bin/bash
+# Prints the free space of the first data disk.
+df -h /mnt/disk1 | tail -n 1

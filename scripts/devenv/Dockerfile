@@ -16,6 +16,14 @@ FROM debian:trixie-slim
 # lab. samba pulls in samba-common-bin (smbpasswd, pdbedit) as a dependency;
 # smbclient is the client side scripts/devenv/smb-check.sh drives against it.
 #
+# fdisk (the package that ships sfdisk; util-linux alone does not), gdisk,
+# zip, unzip and attr are here for the Unraid source fixtures (issue #74,
+# doc 06 §5): scripts/devenv/unraid-fixture.sh lays out Unraid's MBR and GPT
+# partition tables with sfdisk and re-reads them with sgdisk, packs the Flash
+# Backup zips with zip and checks them with unzip, and sets and reads the
+# user.* extended attributes a real array carries with setfattr and getfattr.
+# Spike S2 installed fdisk and gdisk by hand for the same reason (doc 08 §2).
+#
 # The trade-off, stated so it isn't lost: a passing lab run now demonstrates
 # the recipe on Hoserva's own image, not on a near-stock debian:trixie-slim.
 # Versions still come from Debian 13 (Q7), never pinned here.
@@ -29,6 +37,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fuse3 \
         samba \
         smbclient \
+        fdisk \
+        gdisk \
+        zip \
+        unzip \
+        attr \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

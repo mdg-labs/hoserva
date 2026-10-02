@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>gateway</Name>
+  <Repository>fixture/gateway:0.9</Repository>
+  <Registry>https://registry.example.invalid/fixture/gateway</Registry>
+  <Network>br0</Network>
+  <MyIP>192.168.50.20</MyIP>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://example.invalid/fixture/gateway</Support>
+  <Project>https://example.invalid/fixture</Project>
+  <Overview>A reverse proxy written for Hoserva migration fixtures.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8083]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://example.invalid/fixture/gateway.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1757937600</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/gateway" Mode="rw" Description="" Type="Path" Display="advanced-hide" Required="true" Mask="false">/mnt/user/appdata/gateway</Config>
+  <Config Name="Web port" Target="8083" Default="8083" Mode="tcp" Description="" Type="Port" Display="always" Required="true" Mask="False">8083</Config>
+</Container>

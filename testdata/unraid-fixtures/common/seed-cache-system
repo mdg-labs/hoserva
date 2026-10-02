@@ -1,0 +1,7 @@
+# Cache-resident shares: documents (cache "yes", waiting for the mover),
+# domains (cache "only") and system (cache "prefer", holding Docker's data).
+file|cache|documents/new-scan.bin|size=45000
+text|cache|documents/todo.txt|content=files the mover has not moved yet\n
+file|cache|domains/vm-notes/readme.bin|size=8000
+file|cache|system/docker/dockerdir/layer-index.bin|size=64000
+text|cache|system/libvirt/README.txt|content=libvirt.img is created here when VM Manager is enabled\n
