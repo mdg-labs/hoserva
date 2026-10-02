@@ -430,11 +430,13 @@ func parseUsers(data []byte) (names []string, bad int) {
 // cronScriptLine matches only the line the User Scripts plugin writes: a
 // schedule, the plugin's startCustom.php, the script's path and optionally
 // output redirects. The plugin writes the folder name unquoted and keeps its
-// spaces, so the folder is everything between "/scripts/" and "/script". The
+// spaces, so the folder is everything between "/scripts/" and "/script" that
+// holds no shell metacharacter; a line that chains a command inside the path is
+// not the plugin's and is never read, so no text of it becomes a folder name. The
 // schedule is captured as raw fields and checked by cronScheduleFields; any
 // other line is a hand-written cron command and may hold a credential, so it
 // is never read further.
-var cronScriptLine = regexp.MustCompile(`^(@[a-z]+|\S+(?:\s+\S+){4})\s+(?:\S*/)?startCustom\.php\s+\S*/scripts/([^/]+)/script` +
+var cronScriptLine = regexp.MustCompile(`^(@[a-z]+|\S+(?:\s+\S+){4})\s+(?:\S*/)?startCustom\.php\s+\S*/scripts/([^/;&|$\x60<>\n]+)/script` +
 	`(?:\s+(?:[0-9]?>>?\s*[^\s;&|]+|&>>?\s*[^\s;&|]+|[0-9]?>&[0-9]))*\s*$`)
 
 var cronShorthand = map[string]bool{

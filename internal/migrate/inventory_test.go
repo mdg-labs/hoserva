@@ -653,6 +653,49 @@ func TestUserScripts_OnlyThePluginsOwnCommandIsReadAndEverythingElseIsUnreadable
 	}
 }
 
+func TestUserScripts_AShellMetacharacterInTheScriptPathMakesTheLineUnreadableByLineNumber(t *testing.T) {
+	const start = "/usr/local/emhttp/plugins/user.scripts/startCustom.php"
+	const dir = "/boot/config/plugins/user.scripts/scripts/"
+	lines := []string{
+		"0 3 * * * " + start + " " + dir + "l; TOKEN=SECRET-P1 ./script",
+		"0 3 * * * " + start + " " + dir + "l& SECRET-P1/script",
+		"0 3 * * * " + start + " " + dir + "l| SECRET-P1/script",
+		"0 3 * * * " + start + " " + dir + "l$SECRET-P1/script",
+		"0 3 * * * " + start + " " + dir + "l`SECRET-P1`/script",
+		"0 3 * * * " + start + " " + dir + "l<SECRET-P1/script",
+		"0 3 * * * " + start + " " + dir + "l>SECRET-P1/script",
+		"0 3 * * * " + start + " " + dir + "Clear Docker Logs/script > /dev/null 2>&1",
+	}
+	files, spec := flashTree(t, inventoryVariant)
+	files["config/plugins/user.scripts/scripts/Clear Docker Logs/script"] = []byte("#!/bin/bash\n")
+	files["config/plugins/user.scripts/customSchedule.cron"] = []byte(strings.Join(lines, "\n") + "\n")
+	r, err := scanner(fixtureDisks(spec)).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < len(lines)-1; i++ {
+		requireRow(t, r, CheckUserScripts, StatusWarn, "customSchedule.cron", fmt.Sprintf("Line %d of customSchedule.cron is not", i+1))
+	}
+	if got := findRow(t, r, CheckUserScripts, "Clear Docker Logs"); !strings.Contains(got.Detail, "0 3 * * *") || !strings.Contains(got.Detail, "Scheduled") {
+		t.Errorf("a folder with spaces stopped being readable: %+v", got)
+	}
+	for _, row := range rowsFor(r, CheckUserScripts) {
+		if strings.Contains(row.Subject, "SECRET-P1") || strings.Contains(row.Detail, "SECRET-P1") {
+			t.Errorf("text from a metacharacter line is a row: %+v", row)
+		}
+	}
+	if strings.Contains(r.Markdown(), "SECRET-P1") {
+		t.Error("text from a metacharacter line is in the report Markdown")
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "SECRET-P1") {
+		t.Error("text from a metacharacter line is in the report JSON")
+	}
+}
+
 func TestUserScripts_EntriesThatCannotBeFoundAreNeverReportedAsNone(t *testing.T) {
 	r := scanInventory(t, func(f map[string][]byte) {
 		for name := range f {
