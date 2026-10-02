@@ -193,20 +193,22 @@ func (r *Refresher) begin() (f *checkFlight, leader bool) {
 }
 
 func (r *Refresher) run(ctx context.Context, f *checkFlight, trigger Trigger) {
-	defer func() {
-		r.mu.Lock()
-		r.flight = nil
-		if f.result.Outcome != "" {
-			res := f.result
-			r.last = &res
-		}
-		r.mu.Unlock()
-		close(f.done)
-	}()
+	defer close(f.done)
 	// A caller that goes away must not abort a check others are waiting on.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
 	defer cancel()
 	f.result = r.check(runCtx, trigger)
+	// The check is over, and Last and the next Check see that, before
+	// Finished announces it: whoever reacts to the announcement by asking
+	// for the last result or by starting another check must not find this
+	// one still in flight.
+	r.mu.Lock()
+	r.flight = nil
+	if f.result.Outcome != "" {
+		res := f.result
+		r.last = &res
+	}
+	r.mu.Unlock()
 	if r.Finished != nil {
 		r.Finished(f.result)
 	}

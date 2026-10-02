@@ -453,6 +453,38 @@ func TestRefresh_FinishedIsCalledOnceForEveryFinishedCheckWhateverStartedIt(t *t
 	}
 }
 
+func TestRefresh_AFinishedCheckIsLastAndNoLongerRunningWhenFinishedAnnouncesIt(t *testing.T) {
+	g := newAutoRig(t)
+	g.publish(t, `"v1"`, catalogEntries(3, "x", map[string]int{"a": 1}))
+	type seen struct {
+		last    CheckResult
+		hasLast bool
+		started bool
+	}
+	got := make(chan seen, 1)
+	var once sync.Once
+	g.refresher.Finished = func(r CheckResult) {
+		once.Do(func() {
+			last, ok := g.refresher.Last()
+			got <- seen{last: last, hasLast: ok, started: g.refresher.StartBackground(context.Background(), TriggerOpen)}
+		})
+	}
+	res, err := g.refresher.Refresh(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := <-got
+	if !s.hasLast || s.last.Outcome != res.Outcome || !s.last.CheckedAt.Equal(res.CheckedAt) {
+		t.Fatalf("Last inside Finished = %+v, %v, want the finished check %+v", s.last, s.hasLast, res)
+	}
+	if !s.started {
+		t.Fatal("a check asked for inside Finished joined the one that had just finished instead of starting its own")
+	}
+	if _, err := g.refresher.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRefresh_StartBackgroundStartsNothingWhileACheckIsRunning(t *testing.T) {
 	g := newAutoRig(t)
 	g.publish(t, `"v1"`, catalogEntries(3, "x", map[string]int{"a": 1}))
