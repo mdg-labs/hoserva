@@ -447,6 +447,11 @@
         "title": "Apply the new settings to {{name}}?",
         "description": "Hoserva saves these values and starts the app with them. Every container whose settings changed is recreated, so it restarts and is briefly unavailable."
       },
+      "confirmRestart": {
+        "title": "Restart {{name}} with the saved settings?",
+        "description": "Hoserva starts the app again so it uses the settings the server has now. Every container whose settings changed is recreated, so it restarts and is briefly unavailable."
+      },
+      "restartSaved": "Restart to apply the saved settings",
       "saveFailed": "Could not save the settings. Nothing was changed.",
       "saveUnknown": {
         "title": "Could not confirm whether the settings were saved",

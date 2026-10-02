@@ -325,6 +325,93 @@ describe("Applying", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  async function unknownOutcome(): Promise<void> {
+    mockPut.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderTab();
+    fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+    expect(await screen.findByText(/The form now shows the settings the server has/)).toBeInTheDocument();
+  }
+
+  it("offers to restart with the saved settings after an unknown outcome, asks first, then starts the stack and follows the job", async () => {
+    await unknownOutcome();
+    expect(mockPost).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart to apply the saved settings" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/restarts and is briefly unavailable/)).toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restart to apply the saved settings" }));
+
+    expect(await screen.findByText("Starting notes")).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalledWith("/stacks/{name}/start", { params: { path: { name: "notes" } } });
+    expect(mockPut).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: "View job" })).toHaveAttribute("href", `/jobs/${JOB_ID}`);
+    expect(screen.queryByRole("button", { name: "Restart to apply the saved settings" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer the restart when the saved settings could not be reloaded, and offers it once they were", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderTab();
+    fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
+    mockGet.mockImplementationOnce(() => Promise.reject(new Error("still down")));
+
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText(/the settings the server has now could not be loaded/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restart to apply the saved settings" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Restart to apply the saved settings" })).toBeInTheDocument();
+  });
+
+  it("withdraws the restart offer once the form is edited or another apply starts", async () => {
+    await unknownOutcome();
+    expect(screen.getByRole("button", { name: "Restart to apply the saved settings" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Site name"), { target: { value: "Crew" } });
+    expect(screen.queryByRole("button", { name: "Restart to apply the saved settings" })).not.toBeInTheDocument();
+
+    mockPut.mockImplementation(() => ok(config()));
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+    expect(await screen.findByText("Starting notes")).toBeInTheDocument();
+    expect(screen.queryByText("Could not confirm whether the settings were saved")).not.toBeInTheDocument();
+  });
+
+  it("reports a failed restart of the saved settings, never as success, and starts again on request", async () => {
+    await unknownOutcome();
+    mockPost.mockImplementationOnce(() => fail("array_stopped", "the array is stopped"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart to apply the saved settings" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restart to apply the saved settings" }));
+
+    expect(await screen.findByText("The settings were saved, but the app was not restarted")).toBeInTheDocument();
+    expect(screen.getByText("the array is stopped")).toBeInTheDocument();
+    expect(screen.queryByText("Starting notes")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Try starting again" }));
+    expect(await screen.findByText("Starting notes")).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a restart of the saved settings that was rejected", async () => {
+    await unknownOutcome();
+    mockPost.mockImplementationOnce(() => Promise.reject(new Error("connection reset")));
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart to apply the saved settings" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restart to apply the saved settings" }));
+
+    expect(await screen.findByText("The settings were saved, but the app was not restarted")).toBeInTheDocument();
+    expect(screen.getByText("connection reset")).toBeInTheDocument();
+    expect(screen.queryByText("Starting notes")).not.toBeInTheDocument();
+  });
+
   it("says the settings were saved when the start fails, and starts again on request", async () => {
     mockPut.mockImplementation(() => ok(config()));
     mockPost.mockImplementationOnce(() => fail("array_stopped", "the array is stopped"));

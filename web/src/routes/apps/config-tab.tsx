@@ -47,13 +47,16 @@ const NO_TEMPLATE_CODE = "stack_has_no_template";
 const NOT_FOUND_CODE = "stack_not_found";
 const APPS_PATH = "/apps";
 const OFF = "off";
+const APPLY = "apply";
+const RESTART = "restart";
 const NEW_PASSWORD = "new-password";
 
 type Loaded = { kind: "config"; config: StackConfig } | { kind: "noTemplate" } | { kind: "notFound" };
 type Failure = { message: string };
 type Start = { kind: "queued"; job: Job } | { kind: "notStarted"; message: string };
 type Phase = "idle" | "saving" | "starting" | "reloading";
-type Unknown = { message: string | null; reload: "loading" | "done" | "failed" };
+type Unknown = { message: string | null; reload: "loading" | "done" | "failed"; restartable: boolean };
+type ConfirmKind = typeof APPLY | typeof RESTART;
 
 async function loadConfig(stack: string, signal: AbortSignal): Promise<ClientResult<Loaded>> {
   const result = await getStackConfig(stack, signal);
@@ -195,6 +198,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
   const [edits, setEdits] = useState<ConfigEdits>(NO_EDITS);
   const [phase, setPhase] = useState<Phase>("idle");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmKind, setConfirmKind] = useState<ConfirmKind>(APPLY);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [start, setStart] = useState<Start | null>(null);
   const [unknown, setUnknown] = useState<Unknown | null>(null);
@@ -216,6 +220,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
   function edit(name: string, value: string): void {
     setEdits((prev) => ({ ...prev, values: { ...prev.values, [name]: value } }));
     setFailure(null);
+    setUnknown((prev) => (prev === null ? null : { ...prev, restartable: false }));
   }
 
   function setMode(name: string, mode: SecretMode): void {
@@ -227,6 +232,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
       return { values, secrets: { ...prev.secrets, [name]: mode } };
     });
     setFailure(null);
+    setUnknown((prev) => (prev === null ? null : { ...prev, restartable: false }));
   }
 
   async function handleStart(): Promise<void> {
@@ -250,7 +256,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
 
   async function reload(message: string | null): Promise<void> {
     setPhase("reloading");
-    setUnknown({ message, reload: "loading" });
+    setUnknown({ message, reload: "loading", restartable: false });
     let outcome: Unknown["reload"] = "failed";
     try {
       const parsed = parseClientResult(await getStackConfig(stack), t("apps.config.loadFailed"));
@@ -263,9 +269,25 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
       outcome = "failed";
     }
     if (alive.current) {
-      setUnknown({ message, reload: outcome });
+      setUnknown({ message, reload: outcome, restartable: outcome === "done" });
       setPhase("idle");
     }
+  }
+
+  async function handleRestart(): Promise<void> {
+    if (busy) {
+      return;
+    }
+    setFailure(null);
+    setStart(null);
+    setUnknown(null);
+    await handleStart();
+    setConfirmOpen(false);
+  }
+
+  function openConfirm(kind: ConfirmKind): void {
+    setConfirmKind(kind);
+    setConfirmOpen(true);
   }
 
   async function handleApply(): Promise<void> {
@@ -335,6 +357,10 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
               <Button size="xs" variant="outline" onClick={() => void reload(unknown.message)}>
                 {t("apps.installed.retry")}
               </Button>
+            ) : unknown.restartable ? (
+              <Button size="xs" variant="outline" disabled={busy} onClick={() => openConfirm(RESTART)}>
+                {t("apps.config.restartSaved")}
+              </Button>
             ) : undefined
           }
         />
@@ -398,7 +424,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
             })
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <Button disabled={body === null || busy} onClick={() => setConfirmOpen(true)}>
+            <Button disabled={body === null || busy} onClick={() => openConfirm(APPLY)}>
               {t("apps.config.apply")}
             </Button>
             <Button variant="outline" disabled={!touched || busy} onClick={() => setEdits(NO_EDITS)}>
@@ -418,11 +444,11 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
             setConfirmOpen(next);
           }
         }}
-        title={t("apps.config.confirm.title", { name: app.name })}
-        description={t("apps.config.confirm.description")}
-        confirmLabel={t("apps.config.apply")}
+        title={t(confirmKind === RESTART ? "apps.config.confirmRestart.title" : "apps.config.confirm.title", { name: app.name })}
+        description={t(confirmKind === RESTART ? "apps.config.confirmRestart.description" : "apps.config.confirm.description")}
+        confirmLabel={t(confirmKind === RESTART ? "apps.config.restartSaved" : "apps.config.apply")}
         loading={busy}
-        onConfirm={() => void handleApply()}
+        onConfirm={() => void (confirmKind === RESTART ? handleRestart() : handleApply())}
       />
     </div>
   );
