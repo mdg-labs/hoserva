@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>short-separate</Name>
+  <Repository>registry.example.com/team/separate:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>-ti -m 512m -h separate-host</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/separate" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/separate</Config>
+</Container>

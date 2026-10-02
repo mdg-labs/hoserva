@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>dupes</Name>
+  <Repository>registry.example.com/team/dupes:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>-v /mnt/user/appdata/dupes:/data -p 8080:8080/tcp -e MODE=fast --mount type=bind,source=/mnt/user/media,target=/media,readonly</ExtraParams>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/dupes" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dupes</Config>
+  <Config Name="Mode" Target="MODE" Default="fast" Mode="" Description="Run mode" Type="Variable" Display="always" Required="false" Mask="false">fast</Config>
+</Container>

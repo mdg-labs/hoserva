@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>notes-server</Name>
+  <Repository>registry.example.com/team/notes:2.4.1</Repository>
+  <Network>bridge</Network>
+  <Overview>A small notes server written for this test corpus.</Overview>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Port of the web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Pool data" Target="/data" Default="/mnt/user/appdata/notes" Mode="rw" Description="Notes storage in the pool" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/notes</Config>
+  <Config Name="Cache scratch" Target="/scratch" Default="/mnt/cache/appdata/notes" Mode="rw" Description="Scratch space on the cache" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/cache/appdata/notes</Config>
+  <Config Name="Library" Target="/library" Default="/mnt/user/media" Mode="ro" Description="Read-only media share" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/media</Config>
+  <Config Name="Time zone" Target="TZ" Default="UTC" Mode="" Description="Container time zone" Type="Variable" Display="always" Required="false" Mask="false">UTC</Config>
+</Container>

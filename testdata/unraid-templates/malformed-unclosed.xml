@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>broken</Name>
+  <Repository>registry.example.com/team/broken:1.0.0</Repository>
+  <Config Name="Data" Target="/data" Mode="rw" Type="Path">/mnt/user/appdata/broken
+</Container>

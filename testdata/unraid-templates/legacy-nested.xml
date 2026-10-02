@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Container>
+  <Name>legacy</Name>
+  <Repository>registry.example.com/team/legacy:0.9.0</Repository>
+  <Network>bridge</Network>
+  <Overview>A template in the older layout, where ports and paths are nested elements.</Overview>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8080</HostPort>
+        <ContainerPort>80</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/legacy</HostDir>
+      <ContainerDir>/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+</Container>

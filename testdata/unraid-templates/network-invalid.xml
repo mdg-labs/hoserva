@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>bad-network</Name>
+  <Repository>registry.example.com/team/badnet:1.0.0</Repository>
+  <Network>not a network!</Network>
+  <MyIP>192.0.2.41, 999.1.1.1</MyIP>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/badnet" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/badnet</Config>
+</Container>

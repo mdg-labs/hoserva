@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>variables</Name>
+  <Repository>registry.example.com/team/variables:5.1.0</Repository>
+  <Network>bridge</Network>
+  <Config Name="User ID" Target="PUID" Default="99" Mode="" Description="User the app runs as" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="Group ID" Target="PGID" Default="100" Mode="" Description="Group the app runs as" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Host OS" Target="HOST_OS" Default="Unraid" Mode="" Description="System the app is told it runs on" Type="Variable" Display="advanced" Required="false" Mask="false">Unraid</Config>
+  <Config Name="Dollar value" Target="PATTERN" Default="" Mode="" Description="A value with a doubled dollar sign" Type="Variable" Display="advanced" Required="false" Mask="false">price$$tag</Config>
+  <Config Name="API key" Target="API_KEY" Default="" Mode="" Description="Secret key" Type="Variable" Display="always" Required="true" Mask="true">s3cret-for-tests</Config>
+  <Config Name="Optional" Target="OPTIONAL" Default="" Mode="" Description="Left empty" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Empty port" Target="9999" Default="" Mode="tcp" Description="No host port chosen" Type="Port" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Empty path" Target="/optional" Default="" Mode="rw" Description="No host path chosen" Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+</Container>

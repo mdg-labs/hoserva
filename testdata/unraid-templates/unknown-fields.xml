@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>unknowns</Name>
+  <Repository>registry.example.com/team/unknowns:1.0.0</Repository>
+  <Network>bridge</Network>
+  <Privileged>maybe</Privileged>
+  <CPUset>first-two</CPUset>
+  <StartupDelay>30</StartupDelay>
+  <Config Name="Mystery" Target="/x" Default="" Mode="" Description="A kind of entry the converter does not know" Type="Gizmo" Display="advanced" Required="false" Mask="false">value</Config>
+  <Config Name="Unnamed variable" Target="" Default="" Mode="" Description="No name" Type="Variable" Display="advanced" Required="false" Mask="false">value</Config>
+  <Config Name="Unnamed label" Target="" Default="" Mode="" Description="No key" Type="Label" Display="advanced" Required="false" Mask="false">value</Config>
+</Container>

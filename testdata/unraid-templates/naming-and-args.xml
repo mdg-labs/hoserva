@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>My App (v2)</Name>
+  <Repository>registry.example.com/team/naming</Repository>
+  <Network>bridge</Network>
+  <PostArgs>--listen 0.0.0.0:8080 --title 'My Notes'</PostArgs>
+  <CPUset>0-3</CPUset>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/naming" Mode="rw,slave" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/naming</Config>
+  <Config Name="Port range" Target="6000-6010" Default="6000-6010" Mode="udp" Description="Media ports" Type="Port" Display="advanced" Required="false" Mask="false">6000-6010</Config>
+</Container>

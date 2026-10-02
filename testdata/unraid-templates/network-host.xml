@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>host-network</Name>
+  <Repository>registry.example.com/team/hostnet:1.0.0</Repository>
+  <Network>host</Network>
+  <Privileged>true</Privileged>
+  <Config Name="Web port" Target="8080" Default="8080" Mode="tcp" Description="Ignored under host networking" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/hostnet" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hostnet</Config>
+</Container>

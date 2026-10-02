@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<Template>
+  <Name>wrong-root</Name>
+  <Repository>registry.example.com/team/wrongroot:1.0.0</Repository>
+</Template>

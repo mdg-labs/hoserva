@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>spacing</Name>
+  <Repository>registry.example.com/team/spacing:1.0.0</Repository>
+  <Network>bridge</Network>
+  <ExtraParams>--memory=1g   --hostname   spaced  -m=1g --env "GREETING=hello world" --entrypoint '/opt/my app/start'</ExtraParams>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/spacing" Mode="rw" Description="Data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/spacing</Config>
+</Container>
