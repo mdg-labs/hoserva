@@ -75,18 +75,18 @@ func (in *Installer) UpdateConfig(ctx context.Context, name string, req ConfigUp
 	generate := make(map[string]bool, len(req.Generate))
 	for _, n := range sortedKeys(req.Values) {
 		if _, ok := t.Block.Inputs[n]; !ok {
-			return nil, invalid("%s is not an input of stack %s", n, name)
+			return nil, invalidInput(n, "%s is not an input of stack %s", n, name)
 		}
 	}
 	for _, n := range req.Generate {
 		spec, ok := t.Block.Inputs[n]
 		switch {
 		case !ok:
-			return nil, invalid("%s is not an input of stack %s", n, name)
+			return nil, invalidInput(n, "%s is not an input of stack %s", n, name)
 		case spec.Kind != KindSecret:
-			return nil, invalid("%s is not a secret, so it cannot be generated", n)
+			return nil, invalidInput(n, "%s is not a secret, so it cannot be generated", n)
 		case req.Values[n] != "":
-			return nil, invalid("%s is given a value and also asked to be generated", n)
+			return nil, invalidInput(n, "%s is given a value and also asked to be generated", n)
 		}
 		generate[n] = true
 	}

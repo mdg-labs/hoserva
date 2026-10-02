@@ -218,6 +218,12 @@ func TestMigrationPendingScenarioHasNoDocker(t *testing.T) {
 	if images, err := h.ListAppImages(t.Context()); err != nil || images.Available {
 		t.Fatalf("ListAppImages = %+v, %v; want available=false", images, err)
 	}
+	if nets, err := h.ListDockerNetworks(t.Context()); err != nil || nets.Available || len(nets.Networks) != 0 || !nets.Message.Set {
+		t.Fatalf("ListDockerNetworks = %+v, %v; want available=false with a message and no list", nets, err)
+	}
+	if _, err := h.PreviewTemplateInstall(t.Context(), &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("lan")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"}); mockErrorCode(t, err) != "docker_unavailable" {
+		t.Fatalf("a network mode with Docker down: %v, want docker_unavailable", err)
+	}
 	if updates, err := h.ListAppUpdates(t.Context()); err != nil || updates.Available {
 		t.Fatalf("ListAppUpdates = %+v, %v; want available=false", updates, err)
 	}

@@ -344,3 +344,62 @@ func TestMockCatalogHasAnEntryWithEveryPieceOfMetadataAndServesItsScreenshots(t 
 		t.Errorf("body is %d bytes, want the first mock screenshot", len(got))
 	}
 }
+
+func TestMockNetworkModeMirrorsProduction(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	nets, err := h.ListDockerNetworks(ctx)
+	if err != nil || !nets.Available || len(nets.Networks) != len(mockNetworkList) {
+		t.Fatalf("ListDockerNetworks = %+v, %v", nets, err)
+	}
+	preview := func(mode string) *apiv1.TemplateInstallPlan {
+		t.Helper()
+		plan, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString(mode)}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+		if err != nil {
+			t.Fatalf("PreviewTemplateInstall(%s): %v", mode, err)
+		}
+		return plan
+	}
+	if plan := preview("lan"); len(plan.Warnings) != 0 {
+		t.Errorf("a network the mock lists has warnings %+v", plan.Warnings)
+	}
+	plan := preview("iot")
+	if len(plan.Warnings) != 1 || plan.Warnings[0].Class != apiv1.ConversionWarningClassMissingNetwork || plan.Warnings[0].Command.Or("") != "docker network create iot" {
+		t.Errorf("warnings = %+v, want the missing network with its exact command", plan.Warnings)
+	}
+	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("iot")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+	if code := mockErrorCode(t, err); code != "network_missing" {
+		t.Errorf("install on a missing network: %v, want network_missing", err)
+	}
+	if _, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "jellyfin"}); err == nil {
+		t.Error("a refused install recorded a stack")
+	}
+
+	_, err = h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{MemoryMiB: apiv1.NewOptInt(2)}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+	resp := h.NewError(ctx, err)
+	if got, ok := resp.Response.Details.Get(); resp.Response.Code != "invalid_template_input" || !ok || string(got["input"]) != `"memoryMiB"` {
+		t.Errorf("a memory limit out of range: %d %q %v, want details.input memoryMiB", resp.StatusCode, resp.Response.Code, got)
+	}
+}
+
+func TestMockRefusesAnExtraParameterPortTheHostHolds(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	req := func(flags string) *apiv1.TemplateInstallRequest {
+		return &apiv1.TemplateInstallRequest{ExtraParams: apiv1.NewOptString(flags)}
+	}
+	_, err = h.PreviewTemplateInstall(ctx, req("-p 9000:80"), apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+	resp := h.NewError(ctx, err)
+	if got, ok := resp.Response.Details.Get(); resp.StatusCode != 409 || resp.Response.Code != "no_free_port" || !ok || string(got["input"]) != `"extraParams"` {
+		t.Errorf("the scripted busy port in extra parameters: %d %q %v, want 409 no_free_port naming extraParams", resp.StatusCode, resp.Response.Code, got)
+	}
+	if _, err := h.PreviewTemplateInstall(ctx, req("-p 9100:80"), apiv1.PreviewTemplateInstallParams{ID: "jellyfin"}); err != nil {
+		t.Errorf("a free port was refused: %v", err)
+	}
+}

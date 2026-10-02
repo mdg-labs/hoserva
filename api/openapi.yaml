@@ -3565,6 +3565,32 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /apps/networks:
+    get:
+      operationId: listDockerNetworks
+      summary: List Docker networks
+      description: >-
+        Every network the Docker Engine holds, sorted by name: the built-in
+        `bridge`, `host` and `none` and the networks the user created
+        (macvlan and ipvlan included). The install wizard offers the
+        existing ones as network modes (Q37, doc 03 §5.4); Hoserva never
+        creates a network. `available` is false, with no error, whenever
+        Docker itself is not reachable (doc 04 §3), and then `networks` is
+        empty without meaning there are none: a caller that needs the list
+        must treat it as unknown. Any other failure to read the list is an
+        error, never an empty list.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Network inventory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDockerNetworksOK'
+        default:
+          $ref: '#/components/responses/Error'
+
   /apps/updates:
     get:
       operationId: listAppUpdates
@@ -4368,7 +4394,7 @@ paths:
         is not absolute, a `string` input emptied that is not optional, or a
         `device` input given a different value (its mapping is in the
         Compose file, so it is changed there) is refused with 400
-        `invalid_template_input`; a `port` input changed to a port that a
+        `invalid_template_input`, whose `details.input` names the input; a `port` input changed to a port that a
         container publishes or is configured to publish, that another
         stack's Compose file publishes, or that the host listens on, is
         refused with 409 `no_free_port` and is never moved to another port
@@ -4925,12 +4951,20 @@ paths:
         Docker socket and host paths outside the pool and cache (the cache
         itself and Docker's data-root on it count as outside) — never from
         anything the template declares. `compose` is the file an install
-        would write. An input that is not the template's, a value that does
-        not fit its kind, a path input with no value, no default and no
-        existing share to default to, or a `string` input with no value and
-        no default is refused with 400 `invalid_template_input` (a `string`
-        input the template marks `optional` may be left empty and is
-        written to `.env` with an empty value); a name that is not a valid
+        would write. A path input with no value, no default and no existing
+        share to default to, a port input with neither value nor default, and
+        a `string` input with no value and no default are listed with
+        `required: true` and an `error`, so a form shows every field and
+        `installTemplate` refuses them (a `string` input the template marks
+        `optional` may be left empty and is written to `.env` with an empty
+        value). An input that is not the template's or a value that does not
+        fit its kind is refused with 400 `invalid_template_input`, and so is
+        a setting that does not fit (`networkMode`, `cpus`, `memoryMiB`,
+        `extraParams`); the error's `details.input` names the input or setting
+        it is about. The container settings of the request (`networkMode`,
+        `restart`, `cpus`, `memoryMiB`, `extraParams`) are written into
+        `compose`, and `warnings` lists what they could not carry out; a name
+        that is not a valid
         stack name with 400 `invalid_stack_name`; an unknown template with
         404 `template_not_found`; a catalog entry that fails the template
         rules with 422 `template_invalid` (an input is written to the
@@ -4939,7 +4973,9 @@ paths:
         `DOCKER_CERT_PATH` or `DOCKER_TLS_VERIFY`, which Docker takes from
         the daemon's environment, fails them); a GPU the host cannot give to a
         container (no `render` group) with 409 `gpu_unavailable`; no free
-        port above a conflicting one with 409 `no_free_port`; Docker not
+        port above a conflicting one with 409 `no_free_port`, and the same
+        code, never moving the port, for a host port `extraParams` publishes
+        that is taken; Docker not
         reachable, which the port check needs, with 503 `docker_unavailable`.
         The check also reads the ports of every existing stack with `docker
         compose config`; a stack whose ports cannot be read refuses the
@@ -5001,7 +5037,12 @@ paths:
         other kind `previewTemplateInstall` lists is reported with its
         install. The stack errors of `createStack`
         apply (409 `stack_exists`, 409 `stack_dir_exists`, 400
-        `invalid_stack`), as do those of `previewTemplateInstall`.
+        `invalid_stack`), as do those of `previewTemplateInstall`. An input
+        that needs a value and has none is refused with 400
+        `invalid_template_input` whose `details.input` names it, and a
+        `networkMode` that names a network that does not exist with 409
+        `network_missing` (the message holds the `docker network create`
+        command); nothing is written in either case.
       tags: [templates]
       x-hoserva-role: admin
       requestBody:
@@ -7546,10 +7587,74 @@ components:
             Input name to value. An input with no entry, or an empty one,
             takes its default. An entry for a name that is not one of the
             template's inputs is refused.
+        networkMode:
+          type: string
+          description: >-
+            `bridge`, `host` or the name of an existing Docker network (Q37).
+            It replaces the service's own `network_mode` and `networks` in
+            the generated Compose file. A name that is not a Docker network
+            name, or is `none`, is refused with 400 `invalid_template_input`
+            (`details.input` is `networkMode`). A network that does not exist
+            is a `missing_network` warning in the plan, with the exact
+            `docker network create <name>` command, and `installTemplate`
+            refuses it with 409 `network_missing`: Hoserva never creates
+            networks. A failure to list the networks is an error (503
+            `docker_unavailable` when Docker is not reachable), never read as
+            the network existing. Absent leaves the template's network
+            settings as they are, and so does an empty string. Refused for a template with several
+            services, like `cpus`, `memoryMiB` and `extraParams`
+            (`advancedAvailable` is false).
+        restart:
+          type: string
+          enum: ["no", always, unless-stopped, on-failure]
+          description: >-
+            The restart policy of every service. Absent leaves the template's.
+        cpus:
+          type: number
+          format: double
+          description: >-
+            CPU limit of the service (Compose `cpus`), from 0.01 to 1024.
+            Absent is no limit, and 0 is not a limit but a value outside the range: 400
+            `invalid_template_input` (`details.input` is `cpus`).
+        memoryMiB:
+          type: integer
+          description: >-
+            Memory limit of the service in MiB (Compose `mem_limit`), from 6
+            to 16777216. Absent is no limit, and 0 is not a limit but a value
+            outside the range: 400 `invalid_template_input`
+            (`details.input` is `memoryMiB`).
+        extraParams:
+          type: string
+          description: >-
+            At most 4096 bytes; longer is 400 `invalid_template_input`. Absent
+            or empty adds nothing. Raw `docker run` flags, read by the parser doc 04 §5 describes for
+            an Unraid template's `ExtraParams`: parsed into Compose fields and
+            merged into the service, never passed to a shell. A flag outside
+            the translate table, a word that is not a flag, or a string with
+            shell syntax is a `untranslated_flag` warning in the plan and a
+            comment above the service in the Compose file, never dropped
+            silently. A flag that widens privileges (`--cap-add`, `--device`,
+            `--pid=host`, `--security-opt`, a mount of a host path or of the
+            Docker socket) is applied and shows in the plan's `privileges`.
+            An entry that clashes with the template's own (a variable, label
+            or mount at the same target with another value) is a `conflict`
+            warning and the template's is kept. `--restart`, `--cpus` and
+            `--memory` are refused with 400 `invalid_template_input`
+            (`details.input` is `extraParams`) only when the request also
+            gives `restart`, `cpus` or `memoryMiB` respectively; otherwise they
+            translate like any other flag. A named volume a mount refers to is
+            declared under the top-level `volumes` of the Compose file (one the
+            template declares stays as declared). A host port a `-p` flag
+            publishes is checked as a port input is: one the template's own
+            ports, another flag, a container, a stack or the host already
+            holds is refused with 409 `no_free_port` (`details.input` is
+            `extraParams`) and is never moved, and a port that cannot be
+            checked is refused too. Under host networking Docker ignores
+            published ports, so none is checked.
 
     TemplateInput:
       type: object
-      required: [name, kind, generated]
+      required: [name, kind, generated, required]
       properties:
         name:
           type: string
@@ -7577,6 +7682,19 @@ components:
         generated:
           type: boolean
           description: A secret that the install generates.
+        required:
+          type: boolean
+          description: >-
+            True for an input that may not be left empty: a `path`, a `port`,
+            or a `string` input the template does not mark `optional`.
+        error:
+          type: string
+          description: >-
+            Present on a `required` input that has no value and no default:
+            what is missing. `previewTemplateInstall` lists the input with
+            this instead of refusing the request, so a form can show every
+            field; `installTemplate` refuses the same input with 400
+            `invalid_template_input`.
         suggestions:
           type: array
           items:
@@ -7678,7 +7796,7 @@ components:
 
     TemplateInstallPlan:
       type: object
-      required: [template, title, name, inputs, privileges, compose]
+      required: [template, title, name, inputs, privileges, warnings, advancedAvailable, compose]
       properties:
         template:
           $ref: '#/components/schemas/StackTemplate'
@@ -7695,7 +7813,27 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TemplatePrivilege'
-          description: Empty when the template asks for nothing beyond an ordinary container.
+          description: >-
+            Computed from the generated Compose content, so it includes what
+            `networkMode` and `extraParams` add. Empty when the template
+            asks for nothing beyond an ordinary container.
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversionWarning'
+          description: >-
+            What the network mode and the extra parameters could not carry
+            out or need a decision on, to read before installing: untranslated
+            flags, host paths outside the pool and the cache, clashes with
+            the template's own entries, a network that does not exist (with
+            its command) and notes. Empty with no such setting.
+        advancedAvailable:
+          type: boolean
+          description: >-
+            False for a template with several services, where `networkMode`,
+            `cpus`, `memoryMiB` and `extraParams` are refused because no
+            input says which service they mean; `restart` still applies to
+            every service.
         compose:
           type: string
           description: The `docker-compose.yml` text that an install writes.
@@ -7782,8 +7920,9 @@ components:
           type: string
           description: >-
             Only on `missing_network`: the `docker network create` command.
-            It holds `<PLACEHOLDER>` values for what the template does not
-            say.
+            In a conversion it holds `<PLACEHOLDER>` values for what the
+            template does not say; in an install plan it is the exact
+            `docker network create <name>` for the network that was chosen.
 
     UnraidTemplateMetadata:
       type: object
@@ -8196,6 +8335,31 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AppImage'
+
+    DockerNetwork:
+      type: object
+      required: [name, driver]
+      properties:
+        name:
+          type: string
+        driver:
+          type: string
+          description: The network's driver, such as `bridge`, `host`, `macvlan` or `ipvlan`.
+
+    ListDockerNetworksOK:
+      type: object
+      required: [available, networks]
+      properties:
+        available:
+          type: boolean
+          description: False when the Docker Engine is not reachable (doc 04 §3).
+        message:
+          type: string
+          description: Set alongside available=false with the reason and a remediation.
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DockerNetwork'
 
     MetricResolution:
       type: string

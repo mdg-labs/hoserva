@@ -92,6 +92,7 @@ const (
 	ListCatalogOperation                    OperationName = "ListCatalog"
 	ListCatalogSourcesOperation             OperationName = "ListCatalogSources"
 	ListDisksOperation                      OperationName = "ListDisks"
+	ListDockerNetworksOperation             OperationName = "ListDockerNetworks"
 	ListExternalDisksOperation              OperationName = "ListExternalDisks"
 	ListJobsOperation                       OperationName = "ListJobs"
 	ListNotificationChannelsOperation       OperationName = "ListNotificationChannels"

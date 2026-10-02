@@ -121,6 +121,81 @@
         "description": "Nothing is created until you press Install. This is the setup file that will be written and what it asks for, worked out with the values above.",
         "compose": "Setup file (docker-compose.yml)"
       },
+      "incomplete": "Fill in the settings that still need a value before installing.",
+      "networkBlocked": "Create the network first, with the command shown, then try again: Hoserva does not create networks.",
+      "limitsBlocked": "Fix the resource limits under Advanced before installing.",
+      "advanced": {
+        "severalServices": "This app is made of several parts, so its network, resource limits and extra parameters cannot be set here for one of them. Change them in its setup file after installing. The restart rule applies to every part.",
+        "noLimit": "No limit",
+        "network": {
+          "label": "Network",
+          "help": "Which network the app is on. Hoserva does not create networks: choose one that exists.",
+          "template": {
+            "title": "As the app is set up",
+            "description": "Keep the network the app's setup chooses."
+          },
+          "bridge": {
+            "title": "Bridge",
+            "description": "The app has its own address inside the server and only the ports you publish are reachable."
+          },
+          "host": {
+            "title": "The server's network",
+            "description": "The app shares the server's network directly, so it can listen on every address and port."
+          },
+          "custom": {
+            "description": "An existing network ({{driver}})."
+          },
+          "other": {
+            "title": "Another network",
+            "description": "Type the name of a network that you have created or will create."
+          },
+          "nameLabel": "Network name",
+          "hostWarningTitle": "The app will share the server's network",
+          "hostWarning": "It can listen on and reach every network interface and port of the server, and the ports you publish are ignored. Choose this only when the app needs it.",
+          "missing": "The network {{name}} does not exist yet. Create it with this command, then check again:",
+          "command": "Command that creates the network",
+          "listFailed": "Could not load the existing networks.",
+          "unreachable": "Docker is not reachable, so the existing networks are not known."
+        },
+        "restart": {
+          "label": "Restart rule",
+          "help": "What happens when the app stops or the server starts.",
+          "template": "As the app is set up",
+          "no": "Never restart",
+          "always": "Always restart",
+          "unlessStopped": "Restart unless stopped by you",
+          "onFailure": "Restart only after a failure"
+        },
+        "cpus": {
+          "label": "CPU limit",
+          "unit": "CPUs",
+          "help": "From 0.01 to 1024. Leave it empty for no limit.",
+          "malformed": "Enter a number such as 1.5, or leave it empty."
+        },
+        "memory": {
+          "label": "Memory limit",
+          "unit": "MiB",
+          "help": "From 6 MiB. Leave it empty for no limit.",
+          "malformed": "Enter a whole number of MiB, or leave it empty."
+        },
+        "extra": {
+          "label": "Extra parameters",
+          "placeholder": "--cap-add NET_ADMIN --dns 1.1.1.1",
+          "help": "Flags as you would give them to docker run. They are turned into settings of the app's setup file and never run as a command. What cannot be turned into a setting is listed before you install."
+        }
+      },
+      "warnings": {
+        "command": "Command to copy",
+        "class": {
+          "untranslated_flag": "Not carried over: an extra parameter",
+          "untranslated_field": "Not carried over",
+          "flagged_path": "A folder outside the storage pool",
+          "missing_network": "A network that does not exist",
+          "conflict": "Two settings clash",
+          "writable_layer": "State inside the app",
+          "note": "Note"
+        }
+      },
       "run": {
         "title": "Installing {{name}}",
         "installed": "{{name}} is installed.",

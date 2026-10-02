@@ -958,8 +958,19 @@ func TestAnOptionalStringInputMayStayEmptyAndARequiredOneMayNot(t *testing.T) {
 			in, stacks := newInstaller(t)
 			in.Catalog = MapCatalog{Templates: map[string]string{"probe": compose}}
 			plan, err := run(in)
+			if tc.wantErr && call == "preview" {
+				if err != nil {
+					t.Errorf("%s preview: %v, want the input listed with its error", tc.name, err)
+					continue
+				}
+				if got := input(t, plan, "CLAIM"); !got.Required || !strings.Contains(got.Error, "CLAIM needs a value") || got.Value != "" {
+					t.Errorf("%s preview: CLAIM = %+v, want it required, empty and with an error", tc.name, got)
+				}
+				continue
+			}
 			if tc.wantErr {
-				if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "CLAIM needs a value") || len(stacks.created) != 0 {
+				var ie *InputError
+				if !errors.Is(err, ErrInvalidInput) || !errors.As(err, &ie) || ie.Input != "CLAIM" || !strings.Contains(err.Error(), "CLAIM needs a value") || len(stacks.created) != 0 {
 					t.Errorf("%s %s: err = %v, created = %d", tc.name, call, err, len(stacks.created))
 				}
 				continue

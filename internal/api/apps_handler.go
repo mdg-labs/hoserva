@@ -177,6 +177,24 @@ func (h *Handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, er
 	return &apiv1.ListAppImagesOK{Available: true, Images: out}, nil
 }
 
+func (h *Handler) ListDockerNetworks(ctx context.Context) (*apiv1.ListDockerNetworksOK, error) {
+	if h.Container == nil {
+		return &apiv1.ListDockerNetworksOK{Available: false, Networks: []apiv1.DockerNetwork{}, Message: apiv1.NewOptString("Docker is not configured on this daemon")}, nil
+	}
+	networks, err := h.Container.Networks(ctx)
+	if err != nil {
+		if errors.Is(err, container.ErrUnavailable) {
+			return &apiv1.ListDockerNetworksOK{Available: false, Networks: []apiv1.DockerNetwork{}, Message: unavailableAppsMessage(err)}, nil
+		}
+		return nil, fmt.Errorf("listing networks: %w", err)
+	}
+	out := make([]apiv1.DockerNetwork, len(networks))
+	for i, n := range networks {
+		out[i] = apiv1.DockerNetwork{Name: n.Name, Driver: n.Driver}
+	}
+	return &apiv1.ListDockerNetworksOK{Available: true, Networks: out}, nil
+}
+
 func containerToAPI(c container.Container) apiv1.App {
 	ports := make([]apiv1.AppPort, 0, len(c.Ports))
 	for _, p := range c.Ports {

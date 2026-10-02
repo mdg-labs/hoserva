@@ -132,18 +132,7 @@ type composeDoc struct {
 // here, over the finished document: a template's values are literal text,
 // and Compose would otherwise read a $ in them as an interpolation.
 func (c *converter) render() (string, error) {
-	svc := c.svc
-	for _, p := range c.ports {
-		svc.Ports = append(svc.Ports, quoted(p))
-	}
-	svc.Volumes = c.volumes
-	svc.Environment = nonEmpty(c.env)
-	svc.Labels = nonEmpty(c.labels)
-	svc.Sysctls = nonEmpty(c.sysctls)
-	svc.Ulimits = nonEmptyAny(c.ulimits)
-	if len(c.logOpts) > 0 {
-		svc.Logging = &composeLogging{Options: c.logOpts}
-	}
+	svc := c.finishedService()
 	doc := composeDoc{Services: map[string]composeService{c.svcName: svc}}
 	if len(c.networks) > 0 {
 		doc.Networks = c.networks
@@ -180,6 +169,44 @@ func (c *converter) render() (string, error) {
 		return "", fmt.Errorf("converting template: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// finishedService is the service with everything the converter collected
+// outside c.svc written into it.
+func (c *converter) finishedService() composeService {
+	svc := c.svc
+	for _, p := range c.ports {
+		svc.Ports = append(svc.Ports, quoted(p))
+	}
+	svc.Volumes = c.volumes
+	svc.Environment = nonEmpty(c.env)
+	svc.Labels = nonEmpty(c.labels)
+	svc.Sysctls = nonEmpty(c.sysctls)
+	svc.Ulimits = nonEmptyAny(c.ulimits)
+	if len(c.logOpts) > 0 {
+		svc.Logging = &composeLogging{Options: c.logOpts}
+	}
+	return svc
+}
+
+// fragment is the service's own settings as a mapping node, without the
+// image, for a caller that merges them into a service it already has. It
+// returns only the service mapping: the named volumes its mounts refer to are
+// in c.namedVolumes, which the caller declares at the top level as render
+// does. Every string has its $ doubled, as render does.
+func (c *converter) fragment() (*yaml.Node, error) {
+	var n yaml.Node
+	if err := n.Encode(c.finishedService()); err != nil {
+		return nil, fmt.Errorf("reading the extra parameters: %w", err)
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == "image" {
+			n.Content = append(n.Content[:i], n.Content[i+2:]...)
+			break
+		}
+	}
+	escapeDollars(&n)
+	return &n, nil
 }
 
 func nonEmpty(m map[string]string) map[string]string {

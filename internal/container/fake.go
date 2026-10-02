@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,8 @@ type FakeProvider struct {
 	listErr    error
 	images     []Image
 	imagesErr  error
+	networks   []Network
+	networkErr error
 
 	pulls          map[string]string
 	failures       map[string]error
@@ -59,6 +62,7 @@ func (f *FakeProvider) SetUnavailable(err error) {
 	f.versionErr = err
 	f.listErr = err
 	f.imagesErr = err
+	f.networkErr = err
 }
 
 // AddContainer adds c to what List and Inspect return.
@@ -87,6 +91,32 @@ func (f *FakeProvider) AddImage(i Image) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.images = append(f.images, i)
+}
+
+// SetNetworks scripts the networks Networks returns, in the order given.
+func (f *FakeProvider) SetNetworks(n ...Network) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.networks = append([]Network(nil), n...)
+}
+
+// SetNetworksError scripts Networks to fail, as when the Engine answers the
+// network list with an error while the rest of it works; nil clears it.
+func (f *FakeProvider) SetNetworksError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.networkErr = err
+}
+
+func (f *FakeProvider) Networks(ctx context.Context) ([]Network, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.networkErr != nil {
+		return nil, f.networkErr
+	}
+	out := append([]Network(nil), f.networks...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func (f *FakeProvider) Version(ctx context.Context) (EngineVersion, error) {

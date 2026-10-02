@@ -1043,7 +1043,10 @@ func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigR
 // `docker compose config`. Nothing is started. The result carries the privilege summary, so a template
 // that asks for privileged mode, the Docker socket or any other kind `previewTemplateInstall` lists is
 // reported with its install. The stack errors of `createStack` apply (409 `stack_exists`, 409
-// `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`.
+// `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`. An input that
+// needs a value and has none is refused with 400 `invalid_template_input` whose `details.input` names
+// it, and a `networkMode` that names a network that does not exist with 409 `network_missing` (the
+// message holds the `docker network create` command); nothing is written in either case.
 //
 // POST /templates/{id}/install
 func (UnimplementedHandler) InstallTemplate(ctx context.Context, req *TemplateInstallRequest, params InstallTemplateParams) (r *TemplateInstallResult, _ error) {
@@ -1181,6 +1184,20 @@ func (UnimplementedHandler) ListCatalogSources(ctx context.Context) (r *CatalogS
 //
 // GET /disks
 func (UnimplementedHandler) ListDisks(ctx context.Context) (r *ListDisksOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListDockerNetworks implements listDockerNetworks operation.
+//
+// Every network the Docker Engine holds, sorted by name: the built-in `bridge`, `host` and `none` and
+// the networks the user created (macvlan and ipvlan included). The install wizard offers the existing
+// ones as network modes (Q37, doc 03 §5.4); Hoserva never creates a network. `available` is false,
+// with no error, whenever Docker itself is not reachable (doc 04 §3), and then `networks` is empty
+// without meaning there are none: a caller that needs the list must treat it as unknown. Any other
+// failure to read the list is an error, never an empty list.
+//
+// GET /apps/networks
+func (UnimplementedHandler) ListDockerNetworks(ctx context.Context) (r *ListDockerNetworksOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1518,17 +1535,23 @@ func (UnimplementedHandler) PreviewConfigImport(ctx context.Context, req *Previe
 // host PID or cgroup namespace, device cgroup rules, added capabilities, disabled or replaced
 // confinement, extra groups, the Docker socket and host paths outside the pool and cache (the cache
 // itself and Docker's data-root on it count as outside) — never from anything the template declares.
-// `compose` is the file an install would write. An input that is not the template's, a value that does
-// not fit its kind, a path input with no value, no default and no existing share to default to, or a
-// `string` input with no value and no default is refused with 400 `invalid_template_input` (a `string`
-// input the template marks `optional` may be left empty and is written to `.env` with an empty value);
-// a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template with 404
-// `template_not_found`; a catalog entry that fails the template rules with 422 `template_invalid` (an
-// input is written to the stack's `.env` under its name, so one named `PATH`, `HOME`,
-// `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
+// `compose` is the file an install would write. A path input with no value, no default and no existing
+// share to default to, a port input with neither value nor default, and a `string` input with no value
+// and no default are listed with `required: true` and an `error`, so a form shows every field and
+// `installTemplate` refuses them (a `string` input the template marks `optional` may be left empty and
+// is written to `.env` with an empty value). An input that is not the template's or a value that does
+// not fit its kind is refused with 400 `invalid_template_input`, and so is a setting that does not fit
+// (`networkMode`, `cpus`, `memoryMiB`, `extraParams`); the error's `details.input` names the input or
+// setting it is about. The container settings of the request (`networkMode`, `restart`, `cpus`,
+// `memoryMiB`, `extraParams`) are written into `compose`, and `warnings` lists what they could not
+// carry out; a name that is not a valid stack name with 400 `invalid_stack_name`; an unknown template
+// with 404 `template_not_found`; a catalog entry that fails the template rules with 422
+// `template_invalid` (an input is written to the stack's `.env` under its name, so one named `PATH`,
+// `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH` or
 // `DOCKER_TLS_VERIFY`, which Docker takes from the daemon's environment, fails them); a GPU the host
 // cannot give to a container (no `render` group) with 409 `gpu_unavailable`; no free port above a
-// conflicting one with 409 `no_free_port`; Docker not reachable, which the port check needs, with 503
+// conflicting one with 409 `no_free_port`, and the same code, never moving the port, for a host port
+// `extraParams` publishes that is taken; Docker not reachable, which the port check needs, with 503
 // `docker_unavailable`. The check also reads the ports of every existing stack with
 // `docker compose config`; a stack whose ports cannot be read refuses the request
 // (`stack_action_failed`) instead of the port being assumed free. Reading a stack's ports also
@@ -2330,22 +2353,22 @@ func (UnimplementedHandler) UpdateStack(ctx context.Context, req *UpdateStackReq
 // `previewTemplateInstall` uses, before anything is stored: a value that does not fit its kind, a path
 // that is not absolute, a `string` input emptied that is not optional, or a `device` input given a
 // different value (its mapping is in the Compose file, so it is changed there) is refused with 400
-// `invalid_template_input`; a `port` input changed to a port that a container publishes or is
-// configured to publish, that another stack's Compose file publishes, or that the host listens on, is
-// refused with 409 `no_free_port` and is never moved to another port (the stack's own ports are not
-// taken); a `.env` that would define a variable Docker takes from the daemon's environment is refused
-// with 400 `invalid_stack_env`. A refusal changes nothing. Otherwise the new `.env` is sealed into the
-// stack's row and the stack's `.env` file is regenerated from it: only the lines of the inputs that
-// changed are rewritten and every other line is kept. If writing the file fails the row is put back as
-// it was. `docker-compose.yml` is never regenerated from the template, so a manual edit of it stays,
-// and nothing is restarted: `startStack` makes the change take effect. An input without an entry keeps
-// its value. An empty entry takes the input's default, as in an install, and so clears an optional
-// `string` input. A secret with no entry or an empty one keeps the sealed value; a non-empty one
-// replaces it; one named in `generate` gets a newly generated value (48 hexadecimal characters), and
-// naming one that is not a secret, or that also has a value, is refused with 400
-// `invalid_template_input`. The answer is `getStackConfig`'s, with the values as they are now. The
-// other errors of `getStackConfig` apply; 503 `docker_unavailable` is answered only when a port was
-// changed, since the check needs Docker.
+// `invalid_template_input`, whose `details.input` names the input; a `port` input changed to a port
+// that a container publishes or is configured to publish, that another stack's Compose file publishes,
+// or that the host listens on, is refused with 409 `no_free_port` and is never moved to another port
+// (the stack's own ports are not taken); a `.env` that would define a variable Docker takes from the
+// daemon's environment is refused with 400 `invalid_stack_env`. A refusal changes nothing. Otherwise
+// the new `.env` is sealed into the stack's row and the stack's `.env` file is regenerated from it:
+// only the lines of the inputs that changed are rewritten and every other line is kept. If writing the
+// file fails the row is put back as it was. `docker-compose.yml` is never regenerated from the
+// template, so a manual edit of it stays, and nothing is restarted: `startStack` makes the change take
+// effect. An input without an entry keeps its value. An empty entry takes the input's default, as in
+// an install, and so clears an optional `string` input. A secret with no entry or an empty one keeps
+// the sealed value; a non-empty one replaces it; one named in `generate` gets a newly generated value
+// (48 hexadecimal characters), and naming one that is not a secret, or that also has a value, is
+// refused with 400 `invalid_template_input`. The answer is `getStackConfig`'s, with the values as they
+// are now. The other errors of `getStackConfig` apply; 503 `docker_unavailable` is answered only when
+// a port was changed, since the check needs Docker.
 //
 // PUT /stacks/{name}/config
 func (UnimplementedHandler) UpdateStackConfig(ctx context.Context, req *UpdateStackConfigRequest, params UpdateStackConfigParams) (r *StackConfig, _ error) {

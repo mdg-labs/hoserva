@@ -5282,8 +5282,9 @@ type ConversionWarning struct {
 	Message string `json:"message"`
 	// The flag, path, network name or entry concerned.
 	Detail OptString `json:"detail"`
-	// Only on `missing_network`: the `docker network create` command. It holds `<PLACEHOLDER>` values for
-	// what the template does not say.
+	// Only on `missing_network`: the `docker network create` command. In a conversion it holds
+	// `<PLACEHOLDER>` values for what the template does not say; in an install plan it is the exact
+	// `docker network create <name>` for the network that was chosen.
 	Command OptString `json:"command"`
 }
 
@@ -6704,6 +6705,33 @@ func (s *DiskUpgradePlanRequest) SetDevice(val string) {
 // SetFilesystem sets the value of Filesystem.
 func (s *DiskUpgradePlanRequest) SetFilesystem(val OptArrayDiskFilesystem) {
 	s.Filesystem = val
+}
+
+// Ref: #/components/schemas/DockerNetwork
+type DockerNetwork struct {
+	Name string `json:"name"`
+	// The network's driver, such as `bridge`, `host`, `macvlan` or `ipvlan`.
+	Driver string `json:"driver"`
+}
+
+// GetName returns the value of Name.
+func (s *DockerNetwork) GetName() string {
+	return s.Name
+}
+
+// GetDriver returns the value of Driver.
+func (s *DockerNetwork) GetDriver() string {
+	return s.Driver
+}
+
+// SetName sets the value of Name.
+func (s *DockerNetwork) SetName(val string) {
+	s.Name = val
+}
+
+// SetDriver sets the value of Driver.
+func (s *DockerNetwork) SetDriver(val string) {
+	s.Driver = val
 }
 
 // Ref: #/components/schemas/DoctorCheck
@@ -8835,6 +8863,45 @@ func (s *ListDisksOK) GetDisks() []DiskInventoryEntry {
 // SetDisks sets the value of Disks.
 func (s *ListDisksOK) SetDisks(val []DiskInventoryEntry) {
 	s.Disks = val
+}
+
+// Ref: #/components/schemas/ListDockerNetworksOK
+type ListDockerNetworksOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message  OptString       `json:"message"`
+	Networks []DockerNetwork `json:"networks"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListDockerNetworksOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListDockerNetworksOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetNetworks returns the value of Networks.
+func (s *ListDockerNetworksOK) GetNetworks() []DockerNetwork {
+	return s.Networks
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListDockerNetworksOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListDockerNetworksOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetNetworks sets the value of Networks.
+func (s *ListDockerNetworksOK) SetNetworks(val []DockerNetwork) {
+	s.Networks = val
 }
 
 type ListExternalDisksOK struct {
@@ -11967,6 +12034,52 @@ func (o OptFloat32) Or(d float32) float32 {
 	return d
 }
 
+// NewOptFloat64 returns new OptFloat64 with value set to v.
+func NewOptFloat64(v float64) OptFloat64 {
+	return OptFloat64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFloat64 is optional float64.
+type OptFloat64 struct {
+	Value float64
+	Set   bool
+}
+
+// IsSet returns true if OptFloat64 was set.
+func (o OptFloat64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFloat64) Reset() {
+	var v float64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFloat64) SetTo(v float64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFloat64) Get() (v float64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFloat64) Or(d float64) float64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptInt returns new OptInt with value set to v.
 func NewOptInt(v int) OptInt {
 	return OptInt{
@@ -13381,6 +13494,52 @@ func (o OptTemplateInputRole) Get() (v TemplateInputRole, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptTemplateInputRole) Or(d TemplateInputRole) TemplateInputRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptTemplateInstallRequestRestart returns new OptTemplateInstallRequestRestart with value set to v.
+func NewOptTemplateInstallRequestRestart(v TemplateInstallRequestRestart) OptTemplateInstallRequestRestart {
+	return OptTemplateInstallRequestRestart{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTemplateInstallRequestRestart is optional TemplateInstallRequestRestart.
+type OptTemplateInstallRequestRestart struct {
+	Value TemplateInstallRequestRestart
+	Set   bool
+}
+
+// IsSet returns true if OptTemplateInstallRequestRestart was set.
+func (o OptTemplateInstallRequestRestart) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTemplateInstallRequestRestart) Reset() {
+	var v TemplateInstallRequestRestart
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTemplateInstallRequestRestart) SetTo(v TemplateInstallRequestRestart) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTemplateInstallRequestRestart) Get() (v TemplateInstallRequestRestart, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTemplateInstallRequestRestart) Or(d TemplateInstallRequestRestart) TemplateInstallRequestRestart {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -17330,6 +17489,13 @@ type TemplateInput struct {
 	RequestedValue OptString `json:"requestedValue"`
 	// A secret that the install generates.
 	Generated bool `json:"generated"`
+	// True for an input that may not be left empty: a `path`, a `port`, or a `string` input the template
+	// does not mark `optional`.
+	Required bool `json:"required"`
+	// Present on a `required` input that has no value and no default: what is missing.
+	// `previewTemplateInstall` lists the input with this instead of refusing the request, so a form can
+	// show every field; `installTemplate` refuses the same input with 400 `invalid_template_input`.
+	Error OptString `json:"error"`
 	// The existing shares' paths for a `path` input that is not appdata; the host's `/dev/dri` render
 	// devices for a `device` input.
 	Suggestions []string `json:"suggestions"`
@@ -17375,6 +17541,16 @@ func (s *TemplateInput) GetGenerated() bool {
 	return s.Generated
 }
 
+// GetRequired returns the value of Required.
+func (s *TemplateInput) GetRequired() bool {
+	return s.Required
+}
+
+// GetError returns the value of Error.
+func (s *TemplateInput) GetError() OptString {
+	return s.Error
+}
+
 // GetSuggestions returns the value of Suggestions.
 func (s *TemplateInput) GetSuggestions() []string {
 	return s.Suggestions
@@ -17418,6 +17594,16 @@ func (s *TemplateInput) SetRequestedValue(val OptString) {
 // SetGenerated sets the value of Generated.
 func (s *TemplateInput) SetGenerated(val bool) {
 	s.Generated = val
+}
+
+// SetRequired sets the value of Required.
+func (s *TemplateInput) SetRequired(val bool) {
+	s.Required = val
+}
+
+// SetError sets the value of Error.
+func (s *TemplateInput) SetError(val OptString) {
+	s.Error = val
 }
 
 // SetSuggestions sets the value of Suggestions.
@@ -17563,8 +17749,18 @@ type TemplateInstallPlan struct {
 	// The stack's name.
 	Name   string          `json:"name"`
 	Inputs []TemplateInput `json:"inputs"`
-	// Empty when the template asks for nothing beyond an ordinary container.
+	// Computed from the generated Compose content, so it includes what `networkMode` and `extraParams`
+	// add. Empty when the template asks for nothing beyond an ordinary container.
 	Privileges []TemplatePrivilege `json:"privileges"`
+	// What the network mode and the extra parameters could not carry out or need a decision on, to read
+	// before installing: untranslated flags, host paths outside the pool and the cache, clashes with the
+	// template's own entries, a network that does not exist (with its command) and notes. Empty with no
+	// such setting.
+	Warnings []ConversionWarning `json:"warnings"`
+	// False for a template with several services, where `networkMode`, `cpus`, `memoryMiB` and
+	// `extraParams` are refused because no input says which service they mean; `restart` still applies to
+	// every service.
+	AdvancedAvailable bool `json:"advancedAvailable"`
 	// The `docker-compose.yml` text that an install writes.
 	Compose string `json:"compose"`
 }
@@ -17592,6 +17788,16 @@ func (s *TemplateInstallPlan) GetInputs() []TemplateInput {
 // GetPrivileges returns the value of Privileges.
 func (s *TemplateInstallPlan) GetPrivileges() []TemplatePrivilege {
 	return s.Privileges
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *TemplateInstallPlan) GetWarnings() []ConversionWarning {
+	return s.Warnings
+}
+
+// GetAdvancedAvailable returns the value of AdvancedAvailable.
+func (s *TemplateInstallPlan) GetAdvancedAvailable() bool {
+	return s.AdvancedAvailable
 }
 
 // GetCompose returns the value of Compose.
@@ -17624,6 +17830,16 @@ func (s *TemplateInstallPlan) SetPrivileges(val []TemplatePrivilege) {
 	s.Privileges = val
 }
 
+// SetWarnings sets the value of Warnings.
+func (s *TemplateInstallPlan) SetWarnings(val []ConversionWarning) {
+	s.Warnings = val
+}
+
+// SetAdvancedAvailable sets the value of AdvancedAvailable.
+func (s *TemplateInstallPlan) SetAdvancedAvailable(val bool) {
+	s.AdvancedAvailable = val
+}
+
 // SetCompose sets the value of Compose.
 func (s *TemplateInstallPlan) SetCompose(val string) {
 	s.Compose = val
@@ -17636,6 +17852,43 @@ type TemplateInstallRequest struct {
 	// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
 	// that is not one of the template's inputs is refused.
 	Values OptTemplateInstallRequestValues `json:"values"`
+	// `bridge`, `host` or the name of an existing Docker network (Q37). It replaces the service's own
+	// `network_mode` and `networks` in the generated Compose file. A name that is not a Docker network
+	// name, or is `none`, is refused with 400 `invalid_template_input` (`details.input` is `networkMode`).
+	// A network that does not exist is a `missing_network` warning in the plan, with the exact
+	// `docker network create <name>` command, and `installTemplate` refuses it with 409 `network_missing`:
+	// Hoserva never creates networks. A failure to list the networks is an error (503 `docker_unavailable`
+	// when Docker is not reachable), never read as the network existing. Absent leaves the template's
+	// network settings as they are, and so does an empty string. Refused for a template with several
+	// services, like `cpus`, `memoryMiB` and `extraParams` (`advancedAvailable` is false).
+	NetworkMode OptString `json:"networkMode"`
+	// The restart policy of every service. Absent leaves the template's.
+	Restart OptTemplateInstallRequestRestart `json:"restart"`
+	// CPU limit of the service (Compose `cpus`), from 0.01 to 1024. Absent is no limit, and 0 is not a
+	// limit but a value outside the range: 400 `invalid_template_input` (`details.input` is `cpus`).
+	Cpus OptFloat64 `json:"cpus"`
+	// Memory limit of the service in MiB (Compose `mem_limit`), from 6 to 16777216. Absent is no limit,
+	// and 0 is not a limit but a value outside the range: 400 `invalid_template_input` (`details.input` is
+	// `memoryMiB`).
+	MemoryMiB OptInt `json:"memoryMiB"`
+	// At most 4096 bytes; longer is 400 `invalid_template_input`. Absent or empty adds nothing. Raw
+	// `docker run` flags, read by the parser doc 04 §5 describes for an Unraid template's `ExtraParams`:
+	// parsed into Compose fields and merged into the service, never passed to a shell. A flag outside the
+	// translate table, a word that is not a flag, or a string with shell syntax is a `untranslated_flag`
+	// warning in the plan and a comment above the service in the Compose file, never dropped silently. A
+	// flag that widens privileges (`--cap-add`, `--device`, `--pid=host`, `--security-opt`, a mount of a
+	// host path or of the Docker socket) is applied and shows in the plan's `privileges`. An entry that
+	// clashes with the template's own (a variable, label or mount at the same target with another value)
+	// is a `conflict` warning and the template's is kept. `--restart`, `--cpus` and `--memory` are refused
+	// with 400 `invalid_template_input` (`details.input` is `extraParams`) only when the request also
+	// gives `restart`, `cpus` or `memoryMiB` respectively; otherwise they translate like any other flag. A
+	// named volume a mount refers to is declared under the top-level `volumes` of the Compose file (one
+	// the template declares stays as declared). A host port a `-p` flag publishes is checked as a port
+	// input is: one the template's own ports, another flag, a container, a stack or the host already holds
+	// is refused with 409 `no_free_port` (`details.input` is `extraParams`) and is never moved, and a port
+	// that cannot be checked is refused too. Under host networking Docker ignores published ports, so none
+	// is checked.
+	ExtraParams OptString `json:"extraParams"`
 }
 
 // GetName returns the value of Name.
@@ -17648,6 +17901,31 @@ func (s *TemplateInstallRequest) GetValues() OptTemplateInstallRequestValues {
 	return s.Values
 }
 
+// GetNetworkMode returns the value of NetworkMode.
+func (s *TemplateInstallRequest) GetNetworkMode() OptString {
+	return s.NetworkMode
+}
+
+// GetRestart returns the value of Restart.
+func (s *TemplateInstallRequest) GetRestart() OptTemplateInstallRequestRestart {
+	return s.Restart
+}
+
+// GetCpus returns the value of Cpus.
+func (s *TemplateInstallRequest) GetCpus() OptFloat64 {
+	return s.Cpus
+}
+
+// GetMemoryMiB returns the value of MemoryMiB.
+func (s *TemplateInstallRequest) GetMemoryMiB() OptInt {
+	return s.MemoryMiB
+}
+
+// GetExtraParams returns the value of ExtraParams.
+func (s *TemplateInstallRequest) GetExtraParams() OptString {
+	return s.ExtraParams
+}
+
 // SetName sets the value of Name.
 func (s *TemplateInstallRequest) SetName(val OptString) {
 	s.Name = val
@@ -17656,6 +17934,87 @@ func (s *TemplateInstallRequest) SetName(val OptString) {
 // SetValues sets the value of Values.
 func (s *TemplateInstallRequest) SetValues(val OptTemplateInstallRequestValues) {
 	s.Values = val
+}
+
+// SetNetworkMode sets the value of NetworkMode.
+func (s *TemplateInstallRequest) SetNetworkMode(val OptString) {
+	s.NetworkMode = val
+}
+
+// SetRestart sets the value of Restart.
+func (s *TemplateInstallRequest) SetRestart(val OptTemplateInstallRequestRestart) {
+	s.Restart = val
+}
+
+// SetCpus sets the value of Cpus.
+func (s *TemplateInstallRequest) SetCpus(val OptFloat64) {
+	s.Cpus = val
+}
+
+// SetMemoryMiB sets the value of MemoryMiB.
+func (s *TemplateInstallRequest) SetMemoryMiB(val OptInt) {
+	s.MemoryMiB = val
+}
+
+// SetExtraParams sets the value of ExtraParams.
+func (s *TemplateInstallRequest) SetExtraParams(val OptString) {
+	s.ExtraParams = val
+}
+
+// The restart policy of every service. Absent leaves the template's.
+type TemplateInstallRequestRestart string
+
+const (
+	TemplateInstallRequestRestartNo            TemplateInstallRequestRestart = "no"
+	TemplateInstallRequestRestartAlways        TemplateInstallRequestRestart = "always"
+	TemplateInstallRequestRestartUnlessStopped TemplateInstallRequestRestart = "unless-stopped"
+	TemplateInstallRequestRestartOnFailure     TemplateInstallRequestRestart = "on-failure"
+)
+
+// AllValues returns all TemplateInstallRequestRestart values.
+func (TemplateInstallRequestRestart) AllValues() []TemplateInstallRequestRestart {
+	return []TemplateInstallRequestRestart{
+		TemplateInstallRequestRestartNo,
+		TemplateInstallRequestRestartAlways,
+		TemplateInstallRequestRestartUnlessStopped,
+		TemplateInstallRequestRestartOnFailure,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TemplateInstallRequestRestart) MarshalText() ([]byte, error) {
+	switch s {
+	case TemplateInstallRequestRestartNo:
+		return []byte(s), nil
+	case TemplateInstallRequestRestartAlways:
+		return []byte(s), nil
+	case TemplateInstallRequestRestartUnlessStopped:
+		return []byte(s), nil
+	case TemplateInstallRequestRestartOnFailure:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TemplateInstallRequestRestart) UnmarshalText(data []byte) error {
+	switch TemplateInstallRequestRestart(data) {
+	case TemplateInstallRequestRestartNo:
+		*s = TemplateInstallRequestRestartNo
+		return nil
+	case TemplateInstallRequestRestartAlways:
+		*s = TemplateInstallRequestRestartAlways
+		return nil
+	case TemplateInstallRequestRestartUnlessStopped:
+		*s = TemplateInstallRequestRestartUnlessStopped
+		return nil
+	case TemplateInstallRequestRestartOnFailure:
+		*s = TemplateInstallRequestRestartOnFailure
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name

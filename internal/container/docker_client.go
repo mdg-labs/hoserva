@@ -45,6 +45,7 @@ type engineAPI interface {
 	ContainerRename(ctx context.Context, containerID string, options dockerclient.ContainerRenameOptions) (dockerclient.ContainerRenameResult, error)
 	ContainerLogs(ctx context.Context, containerID string, options dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error)
 	ContainerStats(ctx context.Context, containerID string, options dockerclient.ContainerStatsOptions) (dockerclient.ContainerStatsResult, error)
+	NetworkList(ctx context.Context, options dockerclient.NetworkListOptions) (dockerclient.NetworkListResult, error)
 	ImageList(ctx context.Context, options dockerclient.ImageListOptions) (dockerclient.ImageListResult, error)
 	ImagePull(ctx context.Context, refStr string, options dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error)
 	ImageTag(ctx context.Context, options dockerclient.ImageTagOptions) (dockerclient.ImageTagResult, error)
@@ -107,6 +108,22 @@ func (c *EngineClient) List(ctx context.Context) ([]Container, error) {
 	for _, s := range res.Items {
 		out = append(out, containerFromSummary(s))
 	}
+	return out, nil
+}
+
+// Networks lists the Engine's networks by name and driver.
+func (c *EngineClient) Networks(ctx context.Context) ([]Network, error) {
+	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
+	defer cancel()
+	res, err := c.cli.NetworkList(ctx, dockerclient.NetworkListOptions{})
+	if err != nil {
+		return nil, wrapEngineErr(err)
+	}
+	out := make([]Network, 0, len(res.Items))
+	for _, n := range res.Items {
+		out = append(out, Network{Name: n.Name, Driver: n.Driver})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

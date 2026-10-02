@@ -140,6 +140,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.EvacuateDiskOperation,
 		apiv1.GetAppOperation,
 		apiv1.ListAppImagesOperation,
+		apiv1.ListDockerNetworksOperation,
 		apiv1.ListAppUpdatesOperation,
 		apiv1.ListAppsOperation,
 		apiv1.FinishDiskRemovalOperation,

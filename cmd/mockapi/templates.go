@@ -303,6 +303,31 @@ func (m mockPorts) UsedPorts(context.Context) (map[int]bool, error) {
 	return used, nil
 }
 
+// mockNetworkList is the Docker networks of this mock: the built-in three and
+// two the user created. Any other name is a network that does not exist, so a
+// form can meet the missing-network case with a name of its own.
+var mockNetworkList = []container.Network{
+	{Name: "bridge", Driver: "bridge"},
+	{Name: "host", Driver: "host"},
+	{Name: "lan", Driver: "macvlan"},
+	{Name: "none", Driver: "null"},
+	{Name: "vlan20", Driver: "ipvlan"},
+}
+
+// mockNetworks lists mockNetworkList, and fails as Docker does while this
+// mock's Docker is scripted down.
+type mockNetworks struct{ h *handler }
+
+func (m mockNetworks) Networks(context.Context) ([]container.Network, error) {
+	m.h.appsMu.Lock()
+	down := m.h.appsDown
+	m.h.appsMu.Unlock()
+	if down != "" {
+		return nil, fmt.Errorf("%w: %s", container.ErrUnavailable, down)
+	}
+	return append([]container.Network(nil), mockNetworkList...), nil
+}
+
 // composePorts is the host ports a Compose file publishes with env
 // substituted: the first number of a `ports` entry given as a string
 // ("${PORT}:80", "127.0.0.1:8080:80"), or a long-syntax `published`. An entry
@@ -449,9 +474,10 @@ func (m mockStackCreator) UpdateEnv(ctx context.Context, name, env string) (cont
 
 func (h *handler) templateInstaller() *template.Installer {
 	return &template.Installer{
-		Catalog: h.mockCatalogs(),
-		Stacks:  mockStackCreator{h},
-		Ports:   mockPorts{h},
+		Catalog:  h.mockCatalogs(),
+		Stacks:   mockStackCreator{h},
+		Ports:    mockPorts{h},
+		Networks: mockNetworks{h},
 		Shares: func(context.Context) ([]string, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -469,6 +495,16 @@ func (h *handler) templateInstaller() *template.Installer {
 // mapMockTemplateError gives an install error the status and code the
 // production handler gives it.
 func mapMockTemplateError(name string, err error) error {
+	mapped := mapMockTemplateErrorKind(name, err)
+	var ie *template.InputError
+	var me *mockError
+	if errors.As(err, &ie) && errors.As(mapped, &me) {
+		me.input = ie.Input
+	}
+	return mapped
+}
+
+func mapMockTemplateErrorKind(name string, err error) error {
 	switch {
 	case errors.Is(err, template.ErrCatalogUnavailable):
 		return &mockError{code: "catalog_unavailable", statusCode: 503, message: err.Error()}
@@ -482,6 +518,10 @@ func mapMockTemplateError(name string, err error) error {
 		return &mockError{code: "template_invalid", statusCode: 422, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidInput):
 		return &mockError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
+	case errors.Is(err, template.ErrNetworkMissing):
+		return &mockError{code: "network_missing", statusCode: 409, message: err.Error()}
+	case errors.Is(err, container.ErrUnavailable):
+		return &mockError{code: "docker_unavailable", statusCode: 503, message: fmt.Sprintf("Docker is not installed or not reachable: %v", err)}
 	case errors.Is(err, template.ErrGPUUnavailable):
 		return &mockError{code: "gpu_unavailable", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrNoFreePort), errors.Is(err, template.ErrPortTaken):
@@ -692,7 +732,18 @@ func (h *handler) InstallTemplate(ctx context.Context, req *apiv1.TemplateInstal
 }
 
 func mockPlanRequest(id string, req *apiv1.TemplateInstallRequest) template.PlanRequest {
-	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil)}
+	adv := template.Advanced{
+		NetworkMode: req.NetworkMode.Or(""),
+		Restart:     string(req.Restart.Or("")),
+		ExtraParams: req.ExtraParams.Or(""),
+	}
+	if v, ok := req.Cpus.Get(); ok {
+		adv.CPUs = &v
+	}
+	if v, ok := req.MemoryMiB.Get(); ok {
+		adv.MemoryMiB = &v
+	}
+	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil), Advanced: adv}
 }
 
 func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
@@ -702,10 +753,21 @@ func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 		Name:       p.Name,
 		Inputs:     make([]apiv1.TemplateInput, len(p.Inputs)),
 		Privileges: make([]apiv1.TemplatePrivilege, len(p.Privileges)),
-		Compose:    p.Compose,
+		Warnings:   make([]apiv1.ConversionWarning, len(p.Warnings)),
+
+		AdvancedAvailable: p.AdvancedAvailable,
+		Compose:           p.Compose,
+	}
+	for i, w := range p.Warnings {
+		out.Warnings[i] = apiv1.ConversionWarning{
+			Class:   apiv1.ConversionWarningClass(w.Class),
+			Message: w.Message,
+			Detail:  mockOptString(w.Detail),
+			Command: mockOptString(w.Command),
+		}
 	}
 	for i, in := range p.Inputs {
-		ti := apiv1.TemplateInput{Name: in.Name, Kind: apiv1.TemplateInputKind(in.Kind), Generated: in.Generated, Suggestions: in.Suggestions}
+		ti := apiv1.TemplateInput{Name: in.Name, Kind: apiv1.TemplateInputKind(in.Kind), Generated: in.Generated, Required: in.Required, Suggestions: in.Suggestions, Error: mockOptString(in.Error)}
 		if in.Role != "" {
 			ti.Role = apiv1.NewOptTemplateInputRole(apiv1.TemplateInputRole(in.Role))
 		}

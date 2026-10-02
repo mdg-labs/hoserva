@@ -52,6 +52,9 @@ var (
 	// ErrPortTaken is returned when a stack's port input is changed to a
 	// port that a container, another stack or the host already uses.
 	ErrPortTaken = errors.New("template: the port is already in use")
+	// ErrNetworkMissing is returned by an install that names a Docker network
+	// that does not exist. Hoserva never creates networks (Q37).
+	ErrNetworkMissing = errors.New("template: the network does not exist")
 	// ErrStackHasNoTemplate is returned for a stack whose Compose file has
 	// no x-hoserva block, so it has no inputs to show or change.
 	ErrStackHasNoTemplate = errors.New("template: the stack has no x-hoserva block")

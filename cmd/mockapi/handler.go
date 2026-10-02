@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -255,6 +256,9 @@ type mockError struct {
 	code       string
 	statusCode int
 	message    string
+	// input names the input or setting a refusal is about, for the Error
+	// schema's details.
+	input string
 }
 
 func (e *mockError) Error() string { return e.message }
@@ -389,10 +393,13 @@ func (h *handler) GetJobLog(ctx context.Context, params apiv1.GetJobLogParams) (
 // opaque 500 — no internal error text reaches the response body.
 func (h *handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
 	if me, ok := err.(*mockError); ok {
-		return &apiv1.ErrorStatusCode{
-			StatusCode: me.statusCode,
-			Response:   apiv1.Error{Code: me.code, Message: me.message},
+		resp := apiv1.Error{Code: me.code, Message: me.message}
+		if me.input != "" {
+			if name, err := json.Marshal(me.input); err == nil {
+				resp.Details = apiv1.NewOptErrorDetails(apiv1.ErrorDetails{"input": name})
+			}
 		}
+		return &apiv1.ErrorStatusCode{StatusCode: me.statusCode, Response: resp}
 	}
 
 	var secErr *ogenerrors.SecurityError

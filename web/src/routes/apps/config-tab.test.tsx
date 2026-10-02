@@ -38,8 +38,8 @@ function ok<T>(data: T): Answer {
   return Promise.resolve({ data, response: { ok: true } });
 }
 
-function fail(code: string, message: string): Answer {
-  return Promise.resolve({ error: { code, message }, response: { ok: false } });
+function fail(code: string, message: string, details?: Record<string, unknown>): Answer {
+  return Promise.resolve({ error: { code, message, ...(details ? { details } : {}) }, response: { ok: false } });
 }
 
 const JOB_ID = "11111111-1111-1111-1111-111111111111";
@@ -236,7 +236,11 @@ describe("Applying", () => {
 
   it("shows the server's refusal on the field it names, keeps the edits and starts nothing", async () => {
     mockPut.mockImplementation(() =>
-      fail("no_free_port", "template: the port is already in use: WEBUI_PORT asks for 4000, which a container, a stack or the host already uses"),
+      fail(
+        "no_free_port",
+        "template: the port is already in use: WEBUI_PORT asks for 4000, which a container, a stack or the host already uses",
+        { input: "WEBUI_PORT" },
+      ),
     );
     renderTab();
     fireEvent.change(await screen.findByLabelText("Web interface port"), { target: { value: "4000" } });
@@ -252,6 +256,19 @@ describe("Applying", () => {
     expect(screen.getByLabelText("Site name")).toHaveValue("Team");
     expect(screen.queryByText("Could not save the settings. Nothing was changed.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply changes" })).toBeEnabled();
+  });
+
+  it("does not mark a field for a refusal that names none, whatever its words mention", async () => {
+    mockPut.mockImplementation(() => fail("no_free_port", "template: the port is already in use: WEBUI_PORT asks for 4000"));
+    renderTab();
+    fireEvent.change(await screen.findByLabelText("Web interface port"), { target: { value: "4000" } });
+
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText(/WEBUI_PORT asks for 4000/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Could not save the settings. Nothing was changed.")).toBeInTheDocument();
   });
 
   it("shows a refusal that names no field as a banner", async () => {

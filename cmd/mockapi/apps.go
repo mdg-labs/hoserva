@@ -578,6 +578,22 @@ func (h *handler) ListAppImages(ctx context.Context) (*apiv1.ListAppImagesOK, er
 	return &apiv1.ListAppImagesOK{Available: true, Images: mockAppImages()}, nil
 }
 
+// ListDockerNetworks answers mockNetworkList, and reports Docker as
+// unreachable, with no list, while this mock's Docker is scripted down.
+func (h *handler) ListDockerNetworks(ctx context.Context) (*apiv1.ListDockerNetworksOK, error) {
+	h.appsMu.Lock()
+	down := h.appsDown
+	h.appsMu.Unlock()
+	if down != "" {
+		return &apiv1.ListDockerNetworksOK{Available: false, Networks: []apiv1.DockerNetwork{}, Message: apiv1.NewOptString(down)}, nil
+	}
+	out := make([]apiv1.DockerNetwork, len(mockNetworkList))
+	for i, n := range mockNetworkList {
+		out[i] = apiv1.DockerNetwork{Name: n.Name, Driver: n.Driver}
+	}
+	return &apiv1.ListDockerNetworksOK{Available: true, Networks: out}, nil
+}
+
 // ListAppUpdates answers a fixed mix of every status, so each label the UI
 // shows for a check result is reachable without a registry: by container
 // name, and not_checked for any other.

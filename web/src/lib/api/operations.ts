@@ -124,6 +124,10 @@ export function getApps(signal?: AbortSignal) {
   return hoservaClient.GET("/apps", { signal });
 }
 
+export function getDockerNetworks(signal?: AbortSignal) {
+  return hoservaClient.GET("/apps/networks", { signal });
+}
+
 export function getAppUpdates(signal?: AbortSignal) {
   return hoservaClient.GET("/apps/updates", { signal });
 }

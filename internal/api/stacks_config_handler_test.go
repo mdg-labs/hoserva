@@ -147,19 +147,22 @@ func TestStackConfig_RefusalsLeaveTheEnvByteIdentical(t *testing.T) {
 		req    *apiv1.UpdateStackConfigRequest
 		status int
 		code   string
+		input  string
 	}{
-		{"port out of range", configValues(map[string]string{"PORT": "70000"}), 400, "invalid_template_input"},
-		{"input the stack lacks", configValues(map[string]string{"NOPE": "1"}), 400, "invalid_template_input"},
-		{"a device change", configValues(map[string]string{"GPU": "/dev/dri/renderD128"}), 400, "invalid_template_input"},
-		{"generate of a non-secret", &apiv1.UpdateStackConfigRequest{Generate: []string{"PORT"}}, 400, "invalid_template_input"},
-		{"a port another container takes", configValues(map[string]string{"PORT": "9000"}), 409, "no_free_port"},
+		{"port out of range", configValues(map[string]string{"PORT": "70000"}), 400, "invalid_template_input", "PORT"},
+		{"input the stack lacks", configValues(map[string]string{"NOPE": "1"}), 400, "invalid_template_input", "NOPE"},
+		{"a device change", configValues(map[string]string{"GPU": "/dev/dri/renderD128"}), 400, "invalid_template_input", "GPU"},
+		{"generate of a non-secret", &apiv1.UpdateStackConfigRequest{Generate: []string{"PORT"}}, 400, "invalid_template_input", "PORT"},
+		{"a port another container takes", configValues(map[string]string{"PORT": "9000"}), 409, "no_free_port", "PORT"},
 	} {
 		h, root := installProbe(t)
 		h.TemplateInstall.Ports = tplPorts{used: map[int]bool{8080: true, 8081: true, 9000: true}}
 		before := readStackFile(t, root, "probe", ".env")
 		_, err := h.UpdateStackConfig(ctx, tc.req, apiv1.UpdateStackConfigParams{Name: "probe"})
-		if status, code := statusOf(h, err); status != tc.status || code != tc.code {
-			t.Errorf("%s = %d %q, want %d %q", tc.name, status, code, tc.status, tc.code)
+		resp := h.NewError(ctx, err)
+		details, _ := resp.Response.Details.Get()
+		if resp.StatusCode != tc.status || resp.Response.Code != tc.code || string(details["input"]) != `"`+tc.input+`"` {
+			t.Errorf("%s = %d %q details %v, want %d %q naming %s", tc.name, resp.StatusCode, resp.Response.Code, details, tc.status, tc.code, tc.input)
 		}
 		if got := readStackFile(t, root, "probe", ".env"); got != before {
 			t.Errorf("%s changed the .env:\n%s", tc.name, got)

@@ -135,3 +135,89 @@ func TestAppInstallSurfacesTheDaemonsRefusal(t *testing.T) {
 		t.Errorf("err = %v, want the daemon's message", err)
 	}
 }
+
+func TestAppInstallSendsTheContainerSettingsAndPrintsTheWarnings(t *testing.T) {
+	var gotBody apiv1.TemplateInstallRequest
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &gotBody); err != nil {
+			t.Errorf("request body %q: %v", raw, err)
+		}
+		plan := testInstallPlan()
+		plan.Warnings = []apiv1.ConversionWarning{
+			{Class: apiv1.ConversionWarningClassMissingNetwork, Message: "The network iot does not exist.", Detail: apiv1.NewOptString("iot"), Command: apiv1.NewOptString("docker network create iot")},
+			{Class: apiv1.ConversionWarningClassUntranslatedFlag, Message: "The ExtraParams flag --nope has no Compose equivalent the converter knows."},
+		}
+		writeJSON(t, w, http.StatusOK, &plan)
+	})
+	printed, err := runAppCLI(t, sock, "app", "install", "risky-agent", "--dry-run", "--network", "iot", "--restart", "unless-stopped", "--cpus", "1.5", "--memory-mib", "512", "--extra-params", "--cap-add NET_ADMIN --nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.NetworkMode.Or("") != "iot" || gotBody.Restart.Or("") != apiv1.TemplateInstallRequestRestartUnlessStopped || gotBody.Cpus.Or(0) != 1.5 || gotBody.MemoryMiB.Or(0) != 512 || gotBody.ExtraParams.Or("") != "--cap-add NET_ADMIN --nope" {
+		t.Errorf("request body = %+v", gotBody)
+	}
+	for _, want := range []string{"Warnings:", "- missing_network: The network iot does not exist.", "    docker network create iot", "- untranslated_flag: The ExtraParams flag --nope"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+}
+
+func TestAppInstallLeavesTheContainerSettingsOutWhenNoFlagIsGiven(t *testing.T) {
+	var raw []byte
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		plan := testInstallPlan()
+		writeJSON(t, w, http.StatusOK, &plan)
+	})
+	if _, err := runAppCLI(t, sock, "app", "install", "risky-agent", "--dry-run"); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"networkMode", "restart", "cpus", "memoryMiB", "extraParams"} {
+		if strings.Contains(string(raw), key) {
+			t.Errorf("request body %s carries %s although no flag was given", raw, key)
+		}
+	}
+}
+
+func TestAppInstallRefusesAFlagGivenNothingBeforeCallingTheDaemon(t *testing.T) {
+	called := false
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+	for _, args := range [][]string{
+		{"app", "install", "x", "--network", ""},
+		{"app", "install", "x", "--restart", ""},
+		{"app", "install", "x", "--restart", "sometimes"},
+		{"app", "install", "x", "--extra-params", ""},
+		{"app", "install", "x", "--cpus", "0"},
+		{"app", "install", "x", "--memory-mib", "0"},
+	} {
+		if _, err := runAppCLI(t, sock, args...); err == nil {
+			t.Errorf("%v succeeded", args)
+		}
+	}
+	if called {
+		t.Error("a flag with no value reached the daemon")
+	}
+}
+
+func TestAppNetworksListsTheDaemonsNetworksAndNeverAnEmptyListForUnreachableDocker(t *testing.T) {
+	var gotRequest string
+	available := true
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotRequest = r.Method + " " + r.URL.Path
+		out := &apiv1.ListDockerNetworksOK{Available: available, Networks: []apiv1.DockerNetwork{{Name: "bridge", Driver: "bridge"}, {Name: "lan", Driver: "macvlan"}}}
+		if !available {
+			out = &apiv1.ListDockerNetworksOK{Networks: []apiv1.DockerNetwork{}, Message: apiv1.NewOptString("Docker is not reachable")}
+		}
+		writeJSON(t, w, http.StatusOK, out)
+	})
+	printed, err := runAppCLI(t, sock, "app", "networks")
+	if err != nil || gotRequest != "GET /api/v1/apps/networks" || !strings.Contains(printed, "lan\tmacvlan") {
+		t.Fatalf("app networks = %q, %v (request %q)", printed, err, gotRequest)
+	}
+	available = false
+	if _, err := runAppCLI(t, sock, "app", "networks"); err == nil || !strings.Contains(err.Error(), "Docker is not reachable") {
+		t.Errorf("err = %v, want the unreachable Docker reported", err)
+	}
+}

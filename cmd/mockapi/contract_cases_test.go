@@ -356,6 +356,14 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "ListDockerNetworks",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListDockerNetworks(ctx)
+			return err
+		},
+	},
+	{
 		op:   "ListAppUpdates",
 		name: "valid_request",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -1024,6 +1032,76 @@ var contractCases = []contractCase{
 		name: "invalid_stack_name",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("../etc")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "valid_existing_network_with_limits_and_extra_parameters",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{
+				NetworkMode: apiv1.NewOptString("lan"),
+				Restart:     apiv1.NewOptTemplateInstallRequestRestart(apiv1.TemplateInstallRequestRestartAlways),
+				Cpus:        apiv1.NewOptFloat64(1.5),
+				MemoryMiB:   apiv1.NewOptInt(512),
+				ExtraParams: apiv1.NewOptString("--cap-add NET_ADMIN --no-such-flag"),
+			}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "valid_missing_network_is_a_warning",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("iot")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "network_name_that_is_not_one",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("my net")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "cpu_limit_out_of_range",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{Cpus: apiv1.NewOptFloat64(0)}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "extra_parameters_that_clash_with_a_limit",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{MemoryMiB: apiv1.NewOptInt(512), ExtraParams: apiv1.NewOptString("--memory 1g")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "extra_parameter_port_a_container_holds",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{ExtraParams: apiv1.NewOptString("-p 8096:80")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "PreviewTemplateInstall",
+		name: "network_mode_for_a_template_with_several_services",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("host")}, apiv1.PreviewTemplateInstallParams{ID: "aio-notes"})
+			return err
+		},
+	},
+	{
+		op:   "InstallTemplate",
+		name: "network_that_does_not_exist",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{NetworkMode: apiv1.NewOptString("iot")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
 			return err
 		},
 	},

@@ -320,6 +320,7 @@ func contractContainerProvider(t *testing.T, appdata string) *container.FakeProv
 		t.Fatalf("creating contract appdata: %v", err)
 	}
 	f := container.NewFakeProvider()
+	f.SetNetworks(mockNetworkList...)
 	f.AddContainer(container.Container{
 		ID:      "3f2a9c1e4b5d",
 		Name:    "jellyfin",
@@ -777,9 +778,10 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	h.CatalogSettings = store.NewCatalogSettingsStore(db)
 	h.CatalogSources = contractCatalogSources(t, db, h.CatalogRefresh.(*scriptedCatalogRefresher))
 	h.TemplateInstall = &template.Installer{
-		Catalog: mockCatalog(),
-		Stacks:  stacks,
-		Ports:   template.HostPorts{Containers: containers, ProcNet: procNet},
+		Catalog:  mockCatalog(),
+		Stacks:   stacks,
+		Ports:    template.HostPorts{Containers: containers, ProcNet: procNet},
+		Networks: containers,
 		Shares: func(ctx context.Context) ([]string, error) {
 			list, err := h.Shares.List(ctx)
 			names := make([]string, len(list))

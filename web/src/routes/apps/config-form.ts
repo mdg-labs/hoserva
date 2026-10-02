@@ -68,7 +68,9 @@ export function buildConfigRequest(
 }
 
 // The install form's field takes an install plan's input; a stack's input
-// has the same label, kind and suggestions, never a requested port.
+// has the same label, kind and suggestions, never a requested port. The field
+// is told whether the input is optional by its own prop, so `required`, which
+// only a plan carries, is not read here.
 export function asTemplateInput(input: StackConfigInput): TemplateInput {
   return {
     name: input.name,
@@ -78,6 +80,7 @@ export function asTemplateInput(input: StackConfigInput): TemplateInput {
     description: input.description,
     value: input.value,
     generated: false,
+    required: false,
     suggestions: input.suggestions,
   };
 }

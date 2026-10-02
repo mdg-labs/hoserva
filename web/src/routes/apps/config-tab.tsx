@@ -38,7 +38,7 @@ import {
   type StackConfigInput,
 } from "@/routes/apps/config-form";
 import { appComposePath, type App } from "@/routes/apps/containers";
-import { fieldOfError } from "@/routes/apps/install-form";
+import { inputOf } from "@/routes/apps/install-form";
 import { InputField } from "@/routes/apps/install";
 
 type Job = components["schemas"]["Job"];
@@ -52,7 +52,7 @@ const RESTART = "restart";
 const NEW_PASSWORD = "new-password";
 
 type Loaded = { kind: "config"; config: StackConfig } | { kind: "noTemplate" } | { kind: "notFound" };
-type Failure = { message: string };
+type Failure = { message: string; input: string | null };
 type Start = { kind: "queued"; job: Job } | { kind: "notStarted"; message: string };
 type Phase = "idle" | "saving" | "starting" | "reloading";
 type Unknown = { message: string | null; reload: "loading" | "done" | "failed"; restartable: boolean };
@@ -215,7 +215,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
   const busy = phase !== "idle";
   const touched = Object.keys(edits.values).length > 0 || Object.values(edits.secrets).some((mode) => mode !== KEEP);
   const inputNames = config.inputs.map((input) => input.name);
-  const failedField = failure === null ? null : fieldOfError(failure.message, inputNames);
+  const failedField = failure !== null && failure.input !== null && inputNames.includes(failure.input) ? failure.input : null;
 
   function edit(name: string, value: string): void {
     setEdits((prev) => ({ ...prev, values: { ...prev.values, [name]: value } }));
@@ -304,7 +304,7 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
       const result = await updateStackConfig(stack, body);
       const parsed = parseClientResult(result, t("apps.config.saveFailed"));
       if (parsed.error !== null) {
-        setFailure({ message: parsed.error });
+        setFailure({ message: parsed.error, input: inputOf(result.error) });
       } else if (parsed.data === undefined) {
         unanswered = null;
       } else {

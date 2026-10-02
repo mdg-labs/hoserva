@@ -19,6 +19,16 @@ func errTemplatesNotConfigured() error {
 // installed stack's inputs can run into, to mapStackError. verb names what
 // was attempted, for the message of a failure it cannot classify.
 func mapTemplateError(name string, err error, verb string) error {
+	mapped := mapTemplateErrorKind(name, err, verb)
+	var ie *template.InputError
+	var ae *apiError
+	if errors.As(err, &ie) && errors.As(mapped, &ae) {
+		ae.input = ie.Input
+	}
+	return mapped
+}
+
+func mapTemplateErrorKind(name string, err error, verb string) error {
 	switch {
 	case errors.Is(err, template.ErrTemplateNotFound):
 		return &apiError{code: "template_not_found", statusCode: 404, message: err.Error()}
@@ -26,6 +36,8 @@ func mapTemplateError(name string, err error, verb string) error {
 		return &apiError{code: "template_invalid", statusCode: 422, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidInput):
 		return &apiError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
+	case errors.Is(err, template.ErrNetworkMissing):
+		return &apiError{code: "network_missing", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrGPUUnavailable):
 		return &apiError{code: "gpu_unavailable", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrNoFreePort), errors.Is(err, template.ErrPortTaken):
@@ -37,7 +49,18 @@ func mapTemplateError(name string, err error, verb string) error {
 }
 
 func planRequest(id string, req *apiv1.TemplateInstallRequest) template.PlanRequest {
-	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil)}
+	return template.PlanRequest{
+		ID:     id,
+		Name:   req.Name.Or(""),
+		Values: req.Values.Or(nil),
+		Advanced: template.Advanced{
+			NetworkMode: req.NetworkMode.Or(""),
+			Restart:     string(req.Restart.Or("")),
+			CPUs:        optFloat(req.Cpus),
+			MemoryMiB:   optInt(req.MemoryMiB),
+			ExtraParams: req.ExtraParams.Or(""),
+		},
+	}
 }
 
 func (h *Handler) PreviewTemplateInstall(ctx context.Context, req *apiv1.TemplateInstallRequest, params apiv1.PreviewTemplateInstallParams) (*apiv1.TemplateInstallPlan, error) {
@@ -125,14 +148,19 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 		Name:       p.Name,
 		Inputs:     make([]apiv1.TemplateInput, len(p.Inputs)),
 		Privileges: make([]apiv1.TemplatePrivilege, len(p.Privileges)),
-		Compose:    p.Compose,
+		Warnings:   make([]apiv1.ConversionWarning, len(p.Warnings)),
+
+		AdvancedAvailable: p.AdvancedAvailable,
+		Compose:           p.Compose,
 	}
 	for i, in := range p.Inputs {
 		ti := apiv1.TemplateInput{
 			Name:        in.Name,
 			Kind:        apiv1.TemplateInputKind(in.Kind),
 			Generated:   in.Generated,
+			Required:    in.Required,
 			Suggestions: in.Suggestions,
+			Error:       optString(in.Error),
 		}
 		if in.Role != "" {
 			ti.Role = apiv1.NewOptTemplateInputRole(apiv1.TemplateInputRole(in.Role))
@@ -154,7 +182,33 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 	for i, pr := range p.Privileges {
 		out.Privileges[i] = privilegeToAPI(pr)
 	}
+	for i, w := range p.Warnings {
+		out.Warnings[i] = warningToAPI(w)
+	}
 	return out
+}
+
+func optFloat(o apiv1.OptFloat64) *float64 {
+	if v, ok := o.Get(); ok {
+		return &v
+	}
+	return nil
+}
+
+func optInt(o apiv1.OptInt) *int {
+	if v, ok := o.Get(); ok {
+		return &v
+	}
+	return nil
+}
+
+func warningToAPI(w template.Warning) apiv1.ConversionWarning {
+	return apiv1.ConversionWarning{
+		Class:   apiv1.ConversionWarningClass(w.Class),
+		Message: w.Message,
+		Detail:  optString(w.Detail),
+		Command: optString(w.Command),
+	}
 }
 
 func privilegeToAPI(pr template.Privilege) apiv1.TemplatePrivilege {
@@ -201,12 +255,7 @@ func conversionToAPI(c *template.Conversion) apiv1.UnraidConversion {
 		},
 	}
 	for i, w := range c.Warnings {
-		out.Warnings[i] = apiv1.ConversionWarning{
-			Class:   apiv1.ConversionWarningClass(w.Class),
-			Message: w.Message,
-			Detail:  optString(w.Detail),
-			Command: optString(w.Command),
-		}
+		out.Warnings[i] = warningToAPI(w)
 	}
 	for i, p := range c.Privileges {
 		out.Privileges[i] = privilegeToAPI(p)

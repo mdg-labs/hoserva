@@ -205,6 +205,13 @@ type StateChange struct {
 	At     time.Time
 }
 
+// Network is one Docker network the Engine holds, built in (bridge, host,
+// none) or created by the user.
+type Network struct {
+	Name   string
+	Driver string
+}
+
 // Provider is the interface every subsystem touching the Docker Engine
 // API sits behind (doc 01 §4, doc 06 §2): a real client, backed by the
 // Engine API with a negotiated API version (Q38), and a scriptable fake
@@ -230,6 +237,10 @@ type Provider interface {
 	// inspection. A port left to the Engine to choose has a zero HostPort.
 	ConfiguredPorts(ctx context.Context, id string) ([]Port, error)
 	Images(ctx context.Context) ([]Image, error)
+	// Networks lists every network the Engine holds, sorted by name. A
+	// failure is never an empty list: a caller that cannot learn the networks
+	// must not conclude that a network is missing or present.
+	Networks(ctx context.Context) ([]Network, error)
 	// StartedAt is when the Engine last started the container, in UTC, and
 	// the zero time for one it has never started. The listing does not carry
 	// it, so it is an inspection of its own, and an error is never a time:
