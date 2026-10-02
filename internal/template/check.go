@@ -415,15 +415,8 @@ func checkMetadata(t *Template) []Issue {
 	if err := validateMaintainer(t.Block.Maintainer); err != nil {
 		out = append(out, Issue{Path: []string{BlockKey, "maintainer"}, Message: err.Error()})
 	}
-	if d := t.Block.Description; d != "" {
-		switch {
-		case utf8.RuneCountInString(d) > maxDescriptionRunes:
-			out = append(out, Issue{Path: []string{BlockKey, "description"}, Message: fmt.Sprintf("is longer than %d characters", maxDescriptionRunes)})
-		case hasControl(d, true):
-			out = append(out, Issue{Path: []string{BlockKey, "description"}, Message: "holds a control character; only line breaks and tabs are allowed"})
-		case strings.TrimSpace(d) == "":
-			out = append(out, Issue{Path: []string{BlockKey, "description"}, Message: "is blank"})
-		}
+	if err := validateDescription(t.Block.Description); err != nil {
+		out = append(out, Issue{Path: []string{BlockKey, "description"}, Message: err.Error()})
 	}
 	links := []struct{ key, value string }{
 		{"project", t.Block.Links.Project},
@@ -451,6 +444,23 @@ func validateMaintainer(s string) error {
 		return fmt.Errorf("is longer than %d characters", maxMaintainerRunes)
 	case hasControl(s, false):
 		return errors.New("holds a control character")
+	case strings.TrimSpace(s) == "":
+		return errors.New("is blank")
+	}
+	return nil
+}
+
+// validateDescription accepts an empty value (no description) or plain text
+// of at most maxDescriptionRunes characters with something visible in it;
+// line breaks and tabs are the only control characters allowed.
+func validateDescription(s string) error {
+	switch {
+	case s == "":
+		return nil
+	case utf8.RuneCountInString(s) > maxDescriptionRunes:
+		return fmt.Errorf("is longer than %d characters", maxDescriptionRunes)
+	case hasControl(s, true):
+		return errors.New("holds a control character; only line breaks and tabs are allowed")
 	case strings.TrimSpace(s) == "":
 		return errors.New("is blank")
 	}

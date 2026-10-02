@@ -7222,6 +7222,14 @@ components:
           description: >-
             Who maintains the template or the app, as the catalog's index
             lists it. Absent when the template names none.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: >-
+            The template's description as the catalog's index lists it; the
+            catalog card shows an excerpt. Plain text, never markup. Absent
+            when the template has none.
         source:
           type: string
           description: >-

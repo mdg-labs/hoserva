@@ -311,8 +311,13 @@ func TestMockCatalogHasAnEntryWithEveryPieceOfMetadataAndServesItsScreenshots(t 
 		t.Fatal(err)
 	}
 	maintainers := map[string]string{}
+	descriptions := map[string]string{}
 	for _, e := range list.Templates {
 		maintainers[e.ID] = e.Maintainer.Or("")
+		descriptions[e.ID] = e.Description.Or("")
+	}
+	if descriptions["jellyfin"] != d.Description.Or("") || descriptions["risky-agent"] != "" {
+		t.Errorf("descriptions = %v, want the detail's description on jellyfin and none on risky-agent", descriptions)
 	}
 	if maintainers["jellyfin"] != d.Maintainer.Or("") || maintainers["quickpaste"] == "" || maintainers["risky-agent"] != "" {
 		t.Errorf("maintainers = %v", maintainers)

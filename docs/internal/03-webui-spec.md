@@ -379,7 +379,7 @@ Bulk: update all, stop all, start all.
 
 ### 5.2 `/apps/catalog` — App catalog
 
-Searchable, category-filtered grid of templates. Per entry: icon, name, maintainer, short description, source repository, install count if available.
+Searchable, category-filtered grid of templates. Per entry: icon, name, maintainer, short description, source repository. The short description is the template's `description` (doc 04 §7) as plain text, clamped to a few lines; a template without one shows nothing in its place. No install count is shown: Hoserva collects none.
 
 Filters: category, maintainer, installed / not installed, verified / community.
 

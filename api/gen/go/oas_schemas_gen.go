@@ -2752,6 +2752,9 @@ type CatalogEntry struct {
 	// Who maintains the template or the app, as the catalog's index lists it. Absent when the template
 	// names none.
 	Maintainer OptString `json:"maintainer"`
+	// The template's description as the catalog's index lists it; the catalog card shows an excerpt. Plain
+	// text, never markup. Absent when the template has none.
+	Description OptString `json:"description"`
 	// Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source.
 	Source     string            `json:"source"`
 	SourceKind CatalogSourceKind `json:"sourceKind"`
@@ -2790,6 +2793,11 @@ func (s *CatalogEntry) GetDocs() string {
 // GetMaintainer returns the value of Maintainer.
 func (s *CatalogEntry) GetMaintainer() OptString {
 	return s.Maintainer
+}
+
+// GetDescription returns the value of Description.
+func (s *CatalogEntry) GetDescription() OptString {
+	return s.Description
 }
 
 // GetSource returns the value of Source.
@@ -2840,6 +2848,11 @@ func (s *CatalogEntry) SetDocs(val string) {
 // SetMaintainer sets the value of Maintainer.
 func (s *CatalogEntry) SetMaintainer(val OptString) {
 	s.Maintainer = val
+}
+
+// SetDescription sets the value of Description.
+func (s *CatalogEntry) SetDescription(val OptString) {
+	s.Description = val
 }
 
 // SetSource sets the value of Source.

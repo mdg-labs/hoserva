@@ -6018,6 +6018,12 @@ func (s *CatalogEntry) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.Description.Set {
+			e.FieldStart("description")
+			s.Description.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("source")
 		e.Str(s.Source)
 	}
@@ -6035,17 +6041,18 @@ func (s *CatalogEntry) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfCatalogEntry = [10]string{
-	0: "id",
-	1: "revision",
-	2: "title",
-	3: "categories",
-	4: "docs",
-	5: "maintainer",
-	6: "source",
-	7: "sourceKind",
-	8: "signed",
-	9: "installed",
+var jsonFieldsNameOfCatalogEntry = [11]string{
+	0:  "id",
+	1:  "revision",
+	2:  "title",
+	3:  "categories",
+	4:  "docs",
+	5:  "maintainer",
+	6:  "description",
+	7:  "source",
+	8:  "sourceKind",
+	9:  "signed",
+	10: "installed",
 }
 
 // Decode decodes CatalogEntry from json.
@@ -6135,8 +6142,18 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"maintainer\"")
 			}
+		case "description":
+			if err := func() error {
+				s.Description.Reset()
+				if err := s.Description.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"description\"")
+			}
 		case "source":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				v, err := d.Str()
 				s.Source = string(v)
@@ -6148,7 +6165,7 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"source\"")
 			}
 		case "sourceKind":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				if err := s.SourceKind.Decode(d); err != nil {
 					return err
@@ -6158,7 +6175,7 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"sourceKind\"")
 			}
 		case "signed":
-			requiredBitSet[1] |= 1 << 0
+			requiredBitSet[1] |= 1 << 1
 			if err := func() error {
 				v, err := d.Bool()
 				s.Signed = bool(v)
@@ -6170,7 +6187,7 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"signed\"")
 			}
 		case "installed":
-			requiredBitSet[1] |= 1 << 1
+			requiredBitSet[1] |= 1 << 2
 			if err := func() error {
 				v, err := d.Bool()
 				s.Installed = bool(v)
@@ -6191,8 +6208,8 @@ func (s *CatalogEntry) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
-		0b11011111,
-		0b00000011,
+		0b10011111,
+		0b00000111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

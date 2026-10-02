@@ -130,6 +130,15 @@ func TestDirCatalogIndexIsUnavailableNeverEmpty(t *testing.T) {
 		"a blank maintainer": func(t *testing.T) DirCatalog {
 			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","maintainer":"  "}]}`)
 		},
+		"a description over the length cap": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","description":"`+strings.Repeat("d", 2001)+`"}]}`)
+		},
+		"a description with a control character": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","description":"x\u0007y"}]}`)
+		},
+		"a blank description": func(t *testing.T) DirCatalog {
+			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[{"id":"a","description":" \n "}]}`)
+		},
 		"larger than the cap": func(t *testing.T) DirCatalog {
 			return fixtureCatalog(t, `{"schema":1,"serial":1,"templates":[],"pad":"`+strings.Repeat("x", maxIndexBytes)+`"}`)
 		},
@@ -421,6 +430,19 @@ func TestDirCatalogIndexCarriesTheMaintainer(t *testing.T) {
 	}
 	if got.Templates[0].Maintainer != "LinuxServer.io" || got.Templates[1].Maintainer != "" {
 		t.Errorf("maintainers = %q, %q", got.Templates[0].Maintainer, got.Templates[1].Maintainer)
+	}
+}
+
+func TestDirCatalogIndexCarriesTheDescription(t *testing.T) {
+	c := fixtureCatalog(t, `{"schema":1,"serial":2,"templates":[
+    {"id":"jellyfin","revision":1,"title":"Jellyfin","categories":["media"],"docs":"https://example.com","description":"Streams your media.\n\nNo account needed."},
+    {"id":"risky-agent","revision":1,"title":"Risky agent","categories":["system"],"docs":"https://example.com"}]}`)
+	got, err := c.Index(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Templates[0].Description != "Streams your media.\n\nNo account needed." || got.Templates[1].Description != "" {
+		t.Errorf("descriptions = %q, %q", got.Templates[0].Description, got.Templates[1].Description)
 	}
 }
 

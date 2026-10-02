@@ -522,7 +522,7 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 	for i, t := range index.Templates {
 		kind, signed := mockBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
-			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs, Maintainer: mockOptString(t.Maintainer),
+			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs, Maintainer: mockOptString(t.Maintainer), Description: mockOptString(t.Description),
 			Source: t.Source, SourceKind: kind, Signed: signed, Installed: installed[t.ID],
 		}
 	}

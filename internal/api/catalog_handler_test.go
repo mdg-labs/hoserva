@@ -169,6 +169,37 @@ func TestCatalog_ListOfAMissingOrUnreadableCatalogIs503NotAnEmptyList(t *testing
 	}
 }
 
+func TestCatalog_ListCarriesTheIndexDescriptionAndRefusesAnInvalidOne(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, index string) template.DirCatalog {
+		dir := filepath.Join(root, name)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(index), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return template.DirCatalog{Root: dir, Source: template.SourceCurated}
+	}
+	h := newCatalogHandler(t)
+	h.Catalog = write("good", `{"schema":1,"serial":3,"templates":[
+    {"id":"described","revision":1,"title":"Described","categories":[],"docs":"https://example.com","description":"Line one.\n\nLine two."},
+    {"id":"bare","revision":1,"title":"Bare","categories":[],"docs":"https://example.com"}]}`)
+	list, err := h.ListCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Templates) != 2 || list.Templates[0].Description.Or("") != "Line one.\n\nLine two." || list.Templates[1].Description.IsSet() {
+		t.Errorf("templates = %+v, want the described entry's description and none on the bare one", list.Templates)
+	}
+
+	h.Catalog = write("bad", `{"schema":1,"serial":3,"templates":[{"id":"x","description":"a\u0007b"}]}`)
+	list, err = h.ListCatalog(context.Background())
+	if status, code := statusOf(h, err); status != 503 || code != "catalog_unavailable" || list != nil {
+		t.Errorf("ListCatalog = %+v, %d %q, want 503 catalog_unavailable", list, status, code)
+	}
+}
+
 func TestCatalog_DetailReturnsTheRawComposeAndThePrivilegeSummary(t *testing.T) {
 	h := newCatalogHandler(t)
 	ctx := context.Background()
@@ -352,8 +383,13 @@ func TestCatalog_ListAndDetailCarryTheMetadataOnlyWhenTheTemplateSetsIt(t *testi
 		t.Fatal(err)
 	}
 	maintainers := map[string]apiv1.OptString{}
+	descriptions := map[string]apiv1.OptString{}
 	for _, e := range list.Templates {
 		maintainers[e.ID] = e.Maintainer
+		descriptions[e.ID] = e.Description
+	}
+	if descriptions["rich"].Or("") != "Line one.\n\nLine two." || descriptions["plain"].IsSet() {
+		t.Errorf("descriptions = %+v", descriptions)
 	}
 	if maintainers["rich"].Or("") != "Example Team" || maintainers["plain"].IsSet() {
 		t.Errorf("maintainers = %+v", maintainers)

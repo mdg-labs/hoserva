@@ -91,16 +91,17 @@ func (h *Handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 	for i, t := range index.Templates {
 		kind, signed := sourceBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
-			ID:         t.ID,
-			Revision:   t.Revision,
-			Title:      t.Title,
-			Categories: t.Categories,
-			Docs:       t.Docs,
-			Maintainer: optString(t.Maintainer),
-			Source:     t.Source,
-			SourceKind: kind,
-			Signed:     signed,
-			Installed:  installed[t.ID],
+			ID:          t.ID,
+			Revision:    t.Revision,
+			Title:       t.Title,
+			Categories:  t.Categories,
+			Docs:        t.Docs,
+			Maintainer:  optString(t.Maintainer),
+			Description: optString(t.Description),
+			Source:      t.Source,
+			SourceKind:  kind,
+			Signed:      signed,
+			Installed:   installed[t.ID],
 		}
 	}
 	if h.CatalogRefresh != nil {

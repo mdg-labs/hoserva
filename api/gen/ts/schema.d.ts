@@ -3834,6 +3834,8 @@ export interface components {
             docs: string;
             /** @description Who maintains the template or the app, as the catalog's index lists it. Absent when the template names none. */
             maintainer?: string;
+            /** @description The template's description as the catalog's index lists it; the catalog card shows an excerpt. Plain text, never markup. Absent when the template has none. */
+            description?: string;
             /** @description Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
             sourceKind: components["schemas"]["CatalogSourceKind"];

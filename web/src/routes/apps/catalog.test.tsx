@@ -48,6 +48,7 @@ type Entry = {
   signed: boolean;
   installed: boolean;
   maintainer?: string;
+  description?: string;
 };
 
 function entry(id: string, title: string, extra: Partial<Entry> = {}): Entry {
@@ -192,6 +193,19 @@ describe("CatalogPage", () => {
     await waitFor(() => expect(screen.queryByRole("link", { name: "Jellyfin" })).not.toBeInTheDocument());
     expect(screen.getByRole("link", { name: "Notes (all in one)" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Quick Paste" })).not.toBeInTheDocument();
+  });
+
+  it("shows a description as clamped plain text and nothing where a card has none", async () => {
+    const description = "Streams your media.\n\n<b>No account</b> needed.";
+    installGet(() => ok(catalog([{ ...JELLYFIN, description }, NOTES])));
+    renderPage();
+    await screen.findByRole("link", { name: "Jellyfin" });
+
+    const described = within(cardOf("Jellyfin")).getByText(/Streams your media\./);
+    expect(described.textContent).toBe(description);
+    expect(described.querySelector("b")).toBeNull();
+    expect(described).toHaveClass("line-clamp-3");
+    expect(cardOf("Notes (all in one)").querySelector('[data-slot="catalog-card-description"]')).toBeNull();
   });
 
   it("offers no maintainer filter when no entry names a maintainer", async () => {

@@ -78,6 +78,8 @@ type IndexEntry struct {
 	Docs       string
 	// Maintainer is empty when the template names none.
 	Maintainer string
+	// Description is empty when the template names none.
+	Description string
 	// Source, Kind and Signed are the entry's source and its badge, as on
 	// Entry.
 	Source string
@@ -239,12 +241,13 @@ type indexDoc struct {
 	Serial      int64     `json:"serial"`
 	GeneratedAt time.Time `json:"generatedAt"`
 	Templates   []struct {
-		ID         string   `json:"id"`
-		Revision   int      `json:"revision"`
-		Title      string   `json:"title"`
-		Categories []string `json:"categories"`
-		Docs       string   `json:"docs"`
-		Maintainer string   `json:"maintainer"`
+		ID          string   `json:"id"`
+		Revision    int      `json:"revision"`
+		Title       string   `json:"title"`
+		Categories  []string `json:"categories"`
+		Docs        string   `json:"docs"`
+		Maintainer  string   `json:"maintainer"`
+		Description string   `json:"description"`
 	} `json:"templates"`
 }
 
@@ -296,7 +299,10 @@ func parseIndex(data []byte) (Index, error) {
 		if err := validateMaintainer(t.Maintainer); err != nil {
 			return Index{}, fmt.Errorf("lists template %q with a maintainer that %v", t.ID, err)
 		}
-		out.Templates[i] = IndexEntry{ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: cats, Docs: t.Docs, Maintainer: t.Maintainer}
+		if err := validateDescription(t.Description); err != nil {
+			return Index{}, fmt.Errorf("lists template %q with a description that %v", t.ID, err)
+		}
+		out.Templates[i] = IndexEntry{ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: cats, Docs: t.Docs, Maintainer: t.Maintainer, Description: t.Description}
 	}
 	return out, nil
 }
@@ -411,7 +417,7 @@ func (m MapCatalog) Index(_ context.Context) (Index, error) {
 	for i, id := range ids {
 		e := IndexEntry{ID: id, Title: id, Categories: []string{}}
 		if t, _ := Parse([]byte(m.Templates[id])); t != nil {
-			e = IndexEntry{ID: id, Revision: t.Block.Revision, Title: t.Block.Title, Categories: t.Block.Categories, Docs: t.Block.Docs, Maintainer: t.Block.Maintainer}
+			e = IndexEntry{ID: id, Revision: t.Block.Revision, Title: t.Block.Title, Categories: t.Block.Categories, Docs: t.Block.Docs, Maintainer: t.Block.Maintainer, Description: t.Block.Description}
 		}
 		e.Source, e.Kind, e.Signed = m.Source, m.Kind, m.Signed
 		out.Templates[i] = e

@@ -94,6 +94,11 @@ function CatalogCard({ entry }: { entry: CatalogEntry }): React.ReactElement {
             </div>
           </div>
         </div>
+        {entry.description ? (
+          <p data-slot="catalog-card-description" className="line-clamp-3 break-words text-muted-foreground text-sm">
+            {entry.description}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-1">
           {entry.categories.map((category) => (
             <Badge key={category} variant="outline">
