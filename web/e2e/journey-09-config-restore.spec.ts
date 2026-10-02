@@ -142,7 +142,9 @@ async function signInThroughUi(page: Page, username: string, password: string): 
   await page.getByRole("button", { name: catalogString("login.submit"), exact: true }).click();
   await expectOutcome(
     page.getByRole("link", { name: catalogString("nav.jobs"), exact: true }),
-    page.getByRole("alert"),
+    // Only the login form's own banner means the sign-in failed; the page loaded
+    // after it can carry alerts of its own, such as the dashboard's failed-job banner.
+    page.locator("form").getByRole("alert"),
     `signing in as ${username}`,
   );
 }
