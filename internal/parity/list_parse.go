@@ -19,7 +19,8 @@ var ErrListParse = errors.New("parity: could not parse snapraid list output")
 // point), its path relative to that disk, and its size in bytes — read
 // straight from the content file `sync` just wrote, never a live stat.
 // Hardlinks and symlinks (`link_hardlink:`/`link_symlink:` log lines)
-// carry no size of their own and are not represented here.
+// carry no size of their own and are not represented here; ListReport
+// counts them per disk.
 type ListFile struct {
 	Disk    string
 	RelPath string
@@ -33,6 +34,10 @@ type ListReport struct {
 	// DiffLog.DataMounts and StatusReport.DataMounts already use.
 	DataMounts map[string]string
 	Files      []ListFile
+	// LinkCount is the number of symlinks and hardlinked names tracked on
+	// each SnapRAID disk id, from the `link_symlink:` and `link_hardlink:`
+	// lines. A disk that tracks none has no entry.
+	LinkCount map[string]int
 }
 
 // ParseList parses a `snapraid list -l <log>` run's structured log
@@ -44,8 +49,9 @@ func ParseList(log []byte) (ListReport, error) {
 		return ListReport{}, fmt.Errorf("%w: empty log", ErrListParse)
 	}
 
-	report := ListReport{DataMounts: map[string]string{}}
+	report := ListReport{DataMounts: map[string]string{}, LinkCount: map[string]int{}}
 	sawSummary := false
+	summaryLinks := -1
 
 	for _, line := range lines {
 		tag, rest, ok := cutTag(line)
@@ -64,13 +70,33 @@ func ParseList(log []byte) (ListReport, error) {
 				return ListReport{}, fmt.Errorf("%w: malformed file record: %q", ErrListParse, line)
 			}
 			report.Files = append(report.Files, f)
+		case "link_symlink", "link_hardlink":
+			disk, _, ok := strings.Cut(rest, ":")
+			if !ok || disk == "" {
+				return ListReport{}, fmt.Errorf("%w: malformed link record: %q", ErrListParse, line)
+			}
+			report.LinkCount[disk]++
 		case "summary":
 			sawSummary = true
+			if n, ok := strings.CutPrefix(rest, "link_count:"); ok {
+				if v, err := strconv.Atoi(n); err == nil {
+					summaryLinks = v
+				}
+			}
 		}
 	}
 
 	if !sawSummary {
 		return ListReport{}, fmt.Errorf("%w: no summary section found", ErrListParse)
+	}
+	if summaryLinks >= 0 {
+		var counted int
+		for _, n := range report.LinkCount {
+			counted += n
+		}
+		if counted != summaryLinks {
+			return ListReport{}, fmt.Errorf("%w: %d link records but summary:link_count:%d", ErrListParse, counted, summaryLinks)
+		}
 	}
 	return report, nil
 }

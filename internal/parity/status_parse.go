@@ -22,8 +22,21 @@ type StatusReport struct {
 	// DataMounts maps SnapRAID's own disk id ("d1") to the mount path the
 	// config assigned it, read from the log's own config echo.
 	DataMounts map[string]string
-	// PerDiskFileCount is `summary:disk_file_count:<id>:<n>` per disk.
+	// PerDiskFileCount is `summary:disk_file_count:<id>:<n>` per disk. It
+	// counts regular files only: SnapRAID tracks symlinks and hardlinked
+	// names separately (PerDiskLinkCount), though its diff reports them as
+	// scan lines like files.
 	PerDiskFileCount map[string]int
+	// TrackedLinks is the number of symlinks plus hardlinked names the
+	// loading header's `msg:verbose` lines report across all disks. Status
+	// states no per-disk link count; Engine.Diff runs `snapraid list` for
+	// it only when this is above zero.
+	TrackedLinks int
+	// PerDiskLinkCount is each disk's symlink and hardlink count, filled
+	// from `snapraid list` by Engine.Diff and absent from status itself.
+	// BuildDiffReport adds it to PerDiskFileCount so a disk's before-count
+	// covers the same entries the diff's add/remove tallies do.
+	PerDiskLinkCount map[string]int
 	// ZeroSubsecondFiles is `summary:zerosubsecond_file_count` — Q17's own
 	// trigger: run `touch` before a sync only when this is > 0.
 	ZeroSubsecondFiles int
@@ -85,6 +98,8 @@ func ParseStatus(log []byte) (StatusReport, error) {
 			if t.After(report.LastActivityAt) {
 				report.LastActivityAt = t
 			}
+		case "msg":
+			report.TrackedLinks += loadedLinkCount(rest)
 		case "summary":
 			sawSummary = true
 			parseStatusSummaryField(&report, rest)
@@ -100,6 +115,26 @@ func ParseStatus(log []byte) (StatusReport, error) {
 		report.ParityDisks = 2
 	}
 	return report, nil
+}
+
+// loadedLinkCount reads the `msg:verbose:        N hardlinks` and
+// `msg:verbose:        N symlinks` lines SnapRAID prints while loading
+// the content file (confirmed against a real snapraid 12.4-1 binary in the
+// loop-device lab), and returns N for either; 0 for any other message.
+func loadedLinkCount(rest string) int {
+	level, text, ok := strings.Cut(rest, ":")
+	if !ok || level != "verbose" {
+		return 0
+	}
+	fields := strings.Fields(text)
+	if len(fields) != 2 || (fields[1] != "hardlinks" && fields[1] != "symlinks") {
+		return 0
+	}
+	n, err := strconv.Atoi(fields[0])
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func parseStatusSummaryField(report *StatusReport, rest string) {

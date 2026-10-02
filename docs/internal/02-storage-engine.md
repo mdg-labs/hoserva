@@ -144,6 +144,8 @@ Hoserva therefore blocks the sync when:
 
 On block: the sync is held, a high-priority notification fires through every configured channel, and the dashboard shows a prominent banner with the diff and two actions — *Review the diff and sync anyway* or *Cancel and investigate*. The sync does not proceed until a human decides.
 
+**What "files" counts.** SnapRAID tracks symlinks and hardlinked names apart from regular files: `snapraid status` reports `disk_file_count` for regular files only, while `snapraid diff` reports a symlink or hardlinked name as an added or removed entry exactly like a file. A disk's count is therefore its regular files (status) plus its links (the `link_symlink:` and `link_hardlink:` lines of `snapraid list`, which Hoserva runs only when status's loading header reports any link), and the projection of what the disk holds after the sync is that count plus the diff's additions and copies minus its removals, so a disk that is really emptied projects to exactly zero and a disk that keeps files never does. The removed-percent rule is unchanged: it divides by the array's regular files alone, the sum of `disk_file_count`. A projection below zero, which only a disagreement between those three reads could produce, is treated as an emptied disk.
+
 The thresholds are configurable but cannot be disabled entirely; the minimum is a confirmation prompt. The defaults are revisited with the soak test's diff history at the end of Phase 1 (doc 06 §6) (Q16).
 
 **The guard applies to every sync, whatever triggered it** — the nightly chain, adding a disk, the sync inside an evacuation, or a manual click.

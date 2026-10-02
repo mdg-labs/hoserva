@@ -177,10 +177,7 @@ func (g Guard) Evaluate(diff DiffReport, manifest []ManifestEntry, removingDisks
 	// not be silently absorbed.
 	removedCount := diff.Removed - len(matchedRemovals)
 
-	var totalBefore int
-	for _, dd := range diff.PerDisk {
-		totalBefore += dd.FilesBefore
-	}
+	totalBefore := diff.RegularFilesBefore()
 	var percent float64
 	if totalBefore > 0 {
 		percent = float64(removedCount+diff.Updated) / float64(totalBefore) * 100
@@ -199,7 +196,7 @@ func (g Guard) Evaluate(diff DiffReport, manifest []ManifestEntry, removingDisks
 		if removingDisks[disk] {
 			continue
 		}
-		if dd.FilesBefore > 0 && dd.FilesAfter == 0 {
+		if leavesDiskEmpty(dd) {
 			zeroDisks = append(zeroDisks, ZeroFilesDisk{Disk: disk, FilesBefore: dd.FilesBefore})
 		}
 	}
@@ -403,9 +400,18 @@ func ConfirmManifestTargets(ctx context.Context, lister Engine, diff DiffReport,
 // of what the guard itself decided.
 func anyDiskEmptied(diff DiffReport) bool {
 	for _, dd := range diff.PerDisk {
-		if dd.FilesBefore > 0 && dd.FilesAfter == 0 {
+		if leavesDiskEmpty(dd) {
 			return true
 		}
 	}
 	return false
+}
+
+// leavesDiskEmpty is the one test for "a disk that had entries ends up with
+// none". BuildDiffReport's projection is exact, so FilesAfter is never below
+// zero; a negative value would mean the status, list and diff it was built
+// from disagree, and it counts as emptied rather than slipping past an
+// equality test.
+func leavesDiskEmpty(dd DiskDiff) bool {
+	return dd.FilesBefore > 0 && dd.FilesAfter <= 0
 }

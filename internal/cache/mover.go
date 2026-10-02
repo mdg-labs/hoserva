@@ -125,11 +125,11 @@ type Deps struct {
 	// TrackedFileCount returns the array's current tracked file count —
 	// the same denominator the threshold guard's own next Evaluate call
 	// will divide by when it computes RemovedUpdatedPercent
-	// (guard.go's Evaluate, "totalBefore": the sum of
-	// DiffReport.PerDisk[mount].FilesBefore across every disk in a fresh
-	// diff). A real caller wires this to something that calls
-	// parity.Engine.Diff and sums PerDisk exactly the way Evaluate does —
-	// never an independent filesystem walk, which would count files
+	// (guard.go's Evaluate, "totalBefore": DiffReport.RegularFilesBefore
+	// of a fresh diff, the regular files across every disk without the
+	// links PerDisk[mount].FilesBefore also counts). A real caller wires
+	// this to something that calls parity.Engine.Diff and reads
+	// RegularFilesBefore exactly the way Evaluate does — never an independent filesystem walk, which would count files
 	// SnapRAID's own parity.DefaultExcludes excludes and so overestimate
 	// the true tracked count in exactly the unsafe direction. This value
 	// must never be larger than what the guard's own next Evaluate call
