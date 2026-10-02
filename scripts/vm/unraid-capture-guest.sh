@@ -107,7 +107,8 @@ for img in notes:1.0 mediaserver:2.3 photos:latest syncer:1.0 gateway:0.9 web:1.
   docker import --change 'CMD ["/bin/busybox","sleep","31536000"]' "$work/rootfs.tar" "fixture/$img" >/dev/null
 done
 
-mkdir -p /mnt/user/appdata/{notes,mediaserver,photos,syncer,gateway,dbtool,handmade,stack} /mnt/user/documents /mnt/user/media/photos /mnt/user/backup /mnt/cache/transcode
+if [[ -n ${D_POOL[cache]:-} ]]; then transcode=/mnt/cache/transcode; else transcode=/mnt/user/appdata/mediaserver/transcode; fi
+mkdir -p /mnt/user/appdata/{notes,mediaserver,photos,syncer,gateway,dbtool,handmade,stack} /mnt/user/documents /mnt/user/media/photos /mnt/user/backup "$transcode"
 
 dm() {  # name, docker run arguments..., image
   local name=$1
@@ -127,7 +128,7 @@ dm notes --label 'net.unraid.docker.webui=http://[IP]:[PORT:8080]/' \
   -e PUID=99 -e PGID=100 -e FIXTURE_API_TOKEN=fixture-not-a-secret \
   -p 8080:80/tcp -v /mnt/user/appdata/notes:/config:rw -v /mnt/user/documents:/data:ro fixture/notes:1.0
 dm mediaserver --label 'net.unraid.docker.webui=http://[IP]:[PORT:9090]/' --network host \
-  -v /mnt/user/appdata/mediaserver:/config:rw -v /mnt/user/media:/media:ro -v /mnt/cache/transcode:/transcode:rw fixture/mediaserver:2.3
+  -v /mnt/user/appdata/mediaserver:/config:rw -v /mnt/user/media:/media:ro -v "$transcode:/transcode:rw" fixture/mediaserver:2.3
 dm photos --label 'net.unraid.docker.webui=http://[IP]:[PORT:8082]/' \
   -p 8082:8082/tcp -v /mnt/user/media/photos:/photos:rw -v /mnt/user/appdata/photos:/config:rw fixture/photos:latest
 dm syncer -v /mnt/user/appdata/syncer:/config:rw -v /mnt/user/backup:/backup:rw fixture/syncer:1.0

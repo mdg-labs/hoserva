@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>mediaserver</Name>
+  <Repository>fixture/mediaserver:2.3</Repository>
+  <Registry>https://registry.example.invalid/fixture/mediaserver</Registry>
+  <Network>host</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://example.invalid/fixture/mediaserver</Support>
+  <Project>https://example.invalid/fixture</Project>
+  <Overview>A media server written for Hoserva migration fixtures.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:9090]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://example.invalid/fixture/mediaserver.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1757937600</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/mediaserver" Mode="rw" Description="" Type="Path" Display="advanced-hide" Required="true" Mask="false">/mnt/user/appdata/mediaserver</Config>
+  <Config Name="Media" Target="/media" Default="" Mode="ro" Description="" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media</Config>
+  <Config Name="Transcode" Target="/transcode" Default="" Mode="rw" Description="" Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/mediaserver/transcode</Config>
+  <Config Name="TZ" Target="TZ" Default="UTC" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">UTC</Config>
+</Container>
