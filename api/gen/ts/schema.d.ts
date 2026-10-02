@@ -3918,7 +3918,7 @@ export interface components {
             plan: components["schemas"]["TemplateInstallPlan"];
         };
         UnraidConvertRequest: {
-            /** @description The text of one Unraid container template (an XML file). */
+            /** @description The text of one Unraid container template (an XML file). The converter takes at most 49152 bytes of UTF-8; `maxLength` counts characters, so a template with multi-byte characters can be refused under it. */
             xml: string;
         };
         UnraidConversion: {

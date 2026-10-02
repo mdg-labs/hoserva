@@ -9,6 +9,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/template"
 )
 
 // TestConvertUnraidTemplate_IsServedByTheDaemonsHandler builds the handler
@@ -21,7 +22,7 @@ func TestConvertUnraidTemplate_IsServedByTheDaemonsHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(http.MaxBytesHandler(server, maxRequestBodyBytes))
+	ts := httptest.NewServer(limitRequestBody(server))
 	defer ts.Close()
 
 	post := func(xml string) (int, map[string]any) {
@@ -54,6 +55,15 @@ func TestConvertUnraidTemplate_IsServedByTheDaemonsHandler(t *testing.T) {
 	}
 	if privs, _ := out["privileges"].([]any); len(privs) != 1 {
 		t.Errorf("privileges = %v, want the added capability", out["privileges"])
+	}
+
+	// Every filler byte is one json.Marshal sends as a six-byte \u escape, so
+	// the largest template the converter takes is the largest body.
+	head := `<Container><Name>web</Name><Repository>example.com/web:1</Repository><!--`
+	tail := `--></Container>`
+	largest := head + strings.Repeat("<>&", (template.MaxUnraidTemplateBytes-len(head)-len(tail))/3) + tail
+	if status, out := post(largest); status != http.StatusOK {
+		t.Errorf("a %d-byte template = %d %v, want 200", len(largest), status, out)
 	}
 
 	status, out = post(`<Compose/>`)

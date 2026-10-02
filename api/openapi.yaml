@@ -7355,7 +7355,11 @@ components:
           type: string
           minLength: 1
           maxLength: 49152
-          description: The text of one Unraid container template (an XML file).
+          description: >-
+            The text of one Unraid container template (an XML file). The
+            converter takes at most 49152 bytes of UTF-8; `maxLength` counts
+            characters, so a template with multi-byte characters can be
+            refused under it.
 
     UnraidConversion:
       type: object

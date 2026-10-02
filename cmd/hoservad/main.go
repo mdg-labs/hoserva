@@ -38,6 +38,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
+	"github.com/mdg-labs/hoserva/internal/template"
 	"github.com/mdg-labs/hoserva/web"
 
 	_ "modernc.org/sqlite"
@@ -87,6 +88,27 @@ const notifyHTTPTimeout = 30 * time.Second
 // MB, entirely from buffering a body nothing downstream needed more than
 // a few dozen bytes of.
 const maxRequestBodyBytes = 64 * 1024
+
+// convertPath is the one operation whose body carries a whole file: an
+// Unraid template of up to template.MaxUnraidTemplateBytes, sent as a JSON
+// string, where each byte may arrive as a six-byte \u escape.
+const convertPath = apiPathPrefix + "/apps/convert"
+
+const maxConvertBodyBytes = 6*template.MaxUnraidTemplateBytes + 1024
+
+// limitRequestBody is http.MaxBytesHandler at maxRequestBodyBytes, or at
+// maxConvertBodyBytes for convertPath.
+func limitRequestBody(next http.Handler) http.Handler {
+	small := http.MaxBytesHandler(next, maxRequestBodyBytes)
+	convert := http.MaxBytesHandler(next, maxConvertBodyBytes)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == convertPath {
+			convert.ServeHTTP(w, r)
+			return
+		}
+		small.ServeHTTP(w, r)
+	})
+}
 
 // requestReadTimeout bounds how long net/http waits for a request's
 // headers *and* body together (http.Server.ReadTimeout) — a second bound
@@ -1046,7 +1068,7 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 	// below (a GET with no body has nothing for it to bound) — see
 	// maxRequestBodyBytes's own doc comment.
 	mux.Handle(apiPathPrefix+"/events", http.MaxBytesHandler(api.SetupGate(withSourceAddrMiddleware(events), authStore, apiPathPrefix), maxRequestBodyBytes))
-	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(withSourceAddrMiddleware(api.FlushLogStream(apiPathPrefix, apiServer)), authStore, apiPathPrefix), maxRequestBodyBytes))
+	mux.Handle(apiPathPrefix+"/", limitRequestBody(api.SetupGate(withSourceAddrMiddleware(api.FlushLogStream(apiPathPrefix, apiServer)), authStore, apiPathPrefix)))
 	mountAPINotFoundRoutes(mux)
 	mux.Handle("/", spaHandler(webRoot))
 
@@ -1111,7 +1133,7 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	// one has set up yet, so the two import operations pass the setup gate
 	// here and nowhere else: buildTCPServer's gate keeps them closed until an
 	// admin exists.
-	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(api.FlushLogStream(apiPathPrefix, apiServer), authStore, apiPathPrefix, api.ConfigImportPaths...), maxRequestBodyBytes))
+	mux.Handle(apiPathPrefix+"/", limitRequestBody(api.SetupGate(api.FlushLogStream(apiPathPrefix, apiServer), authStore, apiPathPrefix, api.ConfigImportPaths...)))
 	mountAPINotFoundRoutes(mux)
 
 	guarded := unixSocketAuthMiddleware(mux, auth.OSGroupLookup{}, uint32(os.Getuid()))

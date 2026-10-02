@@ -17464,7 +17464,9 @@ func (s *UnraidConversion) SetMetadata(val UnraidTemplateMetadata) {
 
 // Ref: #/components/schemas/UnraidConvertRequest
 type UnraidConvertRequest struct {
-	// The text of one Unraid container template (an XML file).
+	// The text of one Unraid container template (an XML file). The converter takes at most 49152 bytes of
+	// UTF-8; `maxLength` counts characters, so a template with multi-byte characters can be refused under
+	// it.
 	XML string `json:"xml"`
 }
 
