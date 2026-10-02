@@ -9,6 +9,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/share"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
@@ -16,6 +17,10 @@ import (
 // (doc 04 §7): /var/lib/hoserva/catalog on an installed system, the dev
 // daemon's own state directory otherwise.
 const catalogDirName = "catalog"
+
+// catalogSourcesDirName holds one directory per user-added catalog source
+// inside the state directory (doc 04 §4), next to the curated catalog's.
+const catalogSourcesDirName = "catalog-sources"
 
 // seedCatalog installs the curated catalog this build embeds as the on-disk
 // copy when there is none or the one there is older (doc 04 §7), so a fresh
@@ -28,17 +33,24 @@ func seedCatalog(stateDir string) error {
 	if err != nil {
 		return err
 	}
-	store := template.CatalogStore{Dir: filepath.Join(stateDir, catalogDirName)}
-	if _, err := store.Seed(archive, sig); err != nil {
+	catalog := template.CatalogStore{Dir: filepath.Join(stateDir, catalogDirName)}
+	if _, err := catalog.Seed(archive, sig); err != nil {
 		return fmt.Errorf("installing the embedded catalog snapshot: %w", err)
 	}
 	return nil
 }
 
 // curatedCatalog is the curated catalog's on-disk copy, the one source
-// registered and on by default (doc 04 §4).
+// registered and on by default (doc 04 §4). Its archive is only ever
+// installed after its signature verified against the compiled-in key, so its
+// entries carry the curated, signed badge.
 func curatedCatalog(stateDir string) template.Catalog {
-	return template.DirCatalog{Root: filepath.Join(stateDir, catalogDirName), Source: template.SourceCurated}
+	return template.DirCatalog{
+		Root:   filepath.Join(stateDir, catalogDirName),
+		Source: template.SourceCurated,
+		Kind:   store.CatalogSourceCurated,
+		Signed: true,
+	}
 }
 
 // catalogPublisher is the one notify.Service method a failed catalog check
@@ -66,11 +78,32 @@ func newCatalogRefresher(stateDir string, notifier catalogPublisher) *template.R
 
 // wireCatalog is what makes the catalog operations reachable: /catalog,
 // /catalog/{id} and /catalog/{id}/icon (Handler.Catalog) read only the
-// on-disk copy and need no Docker service, and /catalog/refresh
-// (Handler.CatalogRefresh) runs the check that replaces it.
-func wireCatalog(handler *api.Handler, stateDir string, notifier catalogPublisher) {
-	handler.Catalog = curatedCatalog(stateDir)
-	handler.CatalogRefresh = newCatalogRefresher(stateDir, notifier)
+// on-disk copies and need no Docker service, /catalog/refresh
+// (Handler.CatalogRefresh) runs the check that replaces the curated copy,
+// and /catalog-sources and /stacks/{name}/template-update
+// (Handler.CatalogSources) add, refresh, list and remove the user's own
+// sources. With sourceStore the catalog is the curated one plus those
+// sources, and the curated source has its row; with none, only the curated
+// catalog is served and the source operations stay 501.
+func wireCatalog(handler *api.Handler, stateDir string, notifier catalogPublisher, sourceStore template.SourceStore) {
+	curated := curatedCatalog(stateDir)
+	refresher := newCatalogRefresher(stateDir, notifier)
+	handler.Catalog = curated
+	handler.CatalogRefresh = refresher
+	if sourceStore == nil {
+		return
+	}
+	sources := &template.Sources{
+		Store:          sourceStore,
+		Dir:            filepath.Join(stateDir, catalogSourcesDirName),
+		Curated:        curated,
+		CuratedRefresh: refresher,
+	}
+	if err := sources.EnsureCurated(context.Background()); err != nil {
+		log.Printf("hoservad: recording the curated catalog source: %v — the sources list will not show it until the next start", err)
+	}
+	handler.Catalog = sources
+	handler.CatalogSources = sources
 }
 
 // wireCatalogChecks is what makes the automatic catalog checks and their
@@ -87,7 +120,12 @@ func wireCatalogChecks(handler *api.Handler, settings api.CatalogSettingsStore) 
 	if !ok {
 		return nil
 	}
-	refresher.Finished = hub.Publish
+	refresher.Finished = func(r template.CheckResult) {
+		hub.Publish(r)
+		if sources, ok := handler.CatalogSources.(*template.Sources); ok {
+			sources.CuratedChecked(r)
+		}
+	}
 	if settings == nil {
 		return nil
 	}
@@ -100,16 +138,17 @@ func wireCatalogChecks(handler *api.Handler, settings api.CatalogSettingsStore) 
 // startTemplates is what main.go calls: it seeds the on-disk catalog from
 // the embedded snapshot, then wires the catalog operations (with the catalog
 // check, which publishes through notifier, and the automatic checks that
-// follow settings) and template install over it. A
+// follow settings, and the user-added sources in sourceStore) and template
+// install over it. A
 // seed that fails (a build with no snapshot, a snapshot that does not verify)
 // is logged and does not stop the daemon: whatever catalog an earlier start or
 // refresh left stays in use, and with none the catalog list is
 // catalog_unavailable and every template is template_not_found.
-func startTemplates(handler *api.Handler, stateDir string, apps *appServices, shares func(ctx context.Context) ([]string, error), notifier catalogPublisher, settings api.CatalogSettingsStore) *template.AutoRefresher {
+func startTemplates(handler *api.Handler, stateDir string, apps *appServices, shares func(ctx context.Context) ([]string, error), notifier catalogPublisher, settings api.CatalogSettingsStore, sourceStore template.SourceStore) *template.AutoRefresher {
 	if err := seedCatalog(stateDir); err != nil {
 		log.Printf("hoservad: %v — template installs use only the catalog already in %s", err, filepath.Join(stateDir, catalogDirName))
 	}
-	wireCatalog(handler, stateDir, notifier)
+	wireCatalog(handler, stateDir, notifier, sourceStore)
 	wireTemplateInstall(handler, stateDir, apps, shares)
 	return wireCatalogChecks(handler, settings)
 }
@@ -124,8 +163,12 @@ func wireTemplateInstall(handler *api.Handler, stateDir string, apps *appService
 	if apps == nil || handler.Stacks == nil {
 		return
 	}
+	catalog := handler.Catalog
+	if catalog == nil {
+		catalog = curatedCatalog(stateDir)
+	}
 	handler.TemplateInstall = &template.Installer{
-		Catalog:  curatedCatalog(stateDir),
+		Catalog:  catalog,
 		Stacks:   handler.Stacks,
 		Ports:    template.HostPorts{Containers: apps.Lifecycle.Provider},
 		Shares:   shares,

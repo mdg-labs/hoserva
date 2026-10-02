@@ -116,6 +116,8 @@ var mockIcons = map[string][]byte{
 func mockCatalog() template.MapCatalog {
 	return template.MapCatalog{
 		Source:      template.SourceCurated,
+		Kind:        store.CatalogSourceCurated,
+		Signed:      true,
 		Serial:      1,
 		GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		Templates:   mockTemplates,
@@ -315,9 +317,10 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 		out.GeneratedAt = apiv1.NewOptDateTime(index.GeneratedAt)
 	}
 	for i, t := range index.Templates {
+		kind, signed := mockBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
 			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs,
-			Source: catalog.Name(), Installed: installed[t.ID],
+			Source: t.Source, SourceKind: kind, Signed: signed, Installed: installed[t.ID],
 		}
 	}
 	h.catalogMu.Lock()
@@ -390,9 +393,10 @@ func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalo
 	if err != nil {
 		return nil, mapMockTemplateError(params.ID, err)
 	}
+	kind, signed := mockBadge(d.Kind, d.Signed)
 	out := &apiv1.CatalogTemplate{
 		ID: d.ID, Revision: d.Revision, Title: d.Title, Categories: d.Categories, Docs: d.Docs,
-		Source: d.Source, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+		Source: d.Source, SourceKind: kind, Signed: signed, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
 	}
 	for i, pr := range d.Privileges {
 		tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}

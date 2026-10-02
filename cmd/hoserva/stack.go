@@ -23,6 +23,7 @@ func stackCmd() *cobra.Command {
 		},
 		stackShowCmd(),
 		stackEditCmd(),
+		stackTemplateUpdateCmd(),
 		&cobra.Command{
 			Use:   "start NAME",
 			Short: "Run docker compose up for a stack as a job, so an edit takes effect; prints the job",

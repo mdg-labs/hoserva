@@ -2365,6 +2365,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/template-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Check whether a stack's template has a newer revision
+         * @description Compares the template revision the stack was installed from (its `stacks` row) with the revision the stack's own source lists now, and never changes the stack, its files or its row: a catalog update is only ever offered, and applying it is the user's action. `update_available` carries `diff`, a unified diff from the stack's stored `docker-compose.yml` to the newer revision's `compose.yaml`, and the source's badge (`sourceKind`, `signed`). A stack that was edited by hand is marked with `manuallyEdited` and its diff is against the edited file, never as if it were the pristine install. The other statuses carry no diff: `up_to_date` (the source lists the installed revision or an older one), `not_from_template` (the stack records no template or no revision number), `source_removed` (the source the stack was installed from is no longer one of the sources) and `template_removed` (the source no longer lists the template). A catalog that cannot be read is an error (503 `catalog_unavailable`), never `up_to_date`. A GPU device a template install added to the stack's Compose file shows in the diff as removed lines. An unknown stack is 404 `stack_not_found`; a name that is not a valid stack name is 400 `invalid_stack_name`.
+         */
+        get: operations["getStackTemplateUpdate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/start": {
         parameters: {
             query?: never;
@@ -2397,7 +2420,7 @@ export interface paths {
         };
         /**
          * List the catalog's templates
-         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in the index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has run since the daemon started, also starts one catalog check in the background, never a second while one is running. The answer is the on-disk copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
+         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated catalog's. The curated catalog's entries come first, then those of each user-added source (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of an unsigned source has `signed` false. Every entry says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has run since the daemon started, also starts one catalog check in the background, never a second while one is running. The answer is the on-disk copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
          */
         get: operations["listCatalog"];
         put?: never;
@@ -2452,6 +2475,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/catalog-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the catalog sources
+         * @description The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a source whose installed archive passed a signature check: always for the curated catalog, and for a user-added source only when it was added with a public key. `serial` is the installed catalog's serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive was installed or confirmed unchanged, and is absent before the first.
+         */
+        get: operations["listCatalogSources"];
+        put?: never;
+        /**
+         * Add a catalog source
+         * @description Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched from beneath `url` in the same format as the curated catalog and installed, and only then is the source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva contacts the URL only because the user added it, and only again when the user refreshes it. The URL must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source` otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519 key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature is requested and every entry it supplies is badged `signed` false. A template of an unsigned source still goes through the same privilege summary and warnings at install. Refused with 409 `catalog_source_exists` when a source with that URL (the curated one included) exists, 502 `catalog_source_unreachable` when the archive could not be fetched, and 422 `catalog_source_rejected` when the archive was fetched but refused (a signature that does not verify, a malformed archive).
+         */
+        post: operations["addCatalogSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/catalog-sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The source's id, as listed by `listCatalogSources`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a catalog source
+         * @description Removes one user-added source: its on-disk copy and its record, and nothing of any other source. Stacks already installed from it are not touched: their Compose files and rows stay as they are, and they only report `source_removed` from `getStackTemplateUpdate`. The curated catalog cannot be removed: 409 `catalog_source_curated`. An unknown id is 404 `catalog_source_not_found`. A removal that fails part way leaves a source the next call finishes removing.
+         */
+        delete: operations["removeCatalogSource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/catalog-sources/{id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The source's id, as listed by `listCatalogSources`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a catalog source for updates now
+         * @description Runs one check of the source and returns how it ended, as `refreshCatalog` does for the curated catalog (the curated id runs that same check). A user-added source is only ever fetched when it is added or refreshed here, never by the background interval. A newer archive replaces the source's copy only if it verifies the way the source was added (against its public key, or well-formed for an unsigned source) and its serial is strictly higher. Any other outcome keeps the installed copy and everything recorded about the source, and is `failed` with a `reason` and a `message` (200). A remembered rejection never carries over from one source to another. An unknown id is 404 `catalog_source_not_found`.
+         */
+        post: operations["refreshCatalogSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/catalog/{id}": {
         parameters: {
             query?: never;
@@ -2464,7 +2557,7 @@ export interface paths {
         };
         /**
          * Show one catalog template
-         * @description The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary: what its Compose content asks for beyond an ordinary container, computed with each input's default (a secret, which has none, with a generated-shaped value) and never from anything the template declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+         * @description The template's metadata, its `compose.yaml` text as the catalog holds it, and its privilege summary: what its Compose content asks for beyond an ordinary container, computed with each input's default (a secret, which has none, with a generated-shaped value) and never from anything the template declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the template rules with 422 `template_invalid`, as `previewTemplateInstall` does. The template's source and its badge (`sourceKind`, `signed`) come with it; the privilege summary is the same for an unsigned source's template as for a curated one, because an unsigned template can ask for any privilege.
          */
         get: operations["getCatalogTemplate"];
         put?: never;
@@ -3640,8 +3733,11 @@ export interface components {
             categories: string[];
             /** @description The upstream documentation the template was written from. */
             docs: string;
-            /** @description Where the entry came from: `hoserva` for the curated catalog. */
+            /** @description Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
+            sourceKind: components["schemas"]["CatalogSourceKind"];
+            /** @description The source's badge as data: true only when the source's installed archive passed a signature check. False for every entry of an unsigned user-added source. */
+            signed: boolean;
             /** @description A stack of this template id exists. */
             installed: boolean;
         };
@@ -3703,14 +3799,69 @@ export interface components {
             /** @description Present only when `outcome` is `failed`. */
             message?: string;
         };
+        /**
+         * @description `curated`: Hoserva's own catalog (doc 04 §7). `user_added`: a source URL the user added (doc 04 §4).
+         * @enum {string}
+         */
+        CatalogSourceKind: "curated" | "user_added";
+        CatalogSource: {
+            /** @description `hoserva` for the curated catalog, otherwise the id its entries carry as `source`. */
+            id: string;
+            /** @description The address the archive is fetched from beneath. */
+            url: string;
+            kind: components["schemas"]["CatalogSourceKind"];
+            /** @description True only when the source's installed archive passed a signature check: always for the curated catalog, and for a user-added source only when it was added with a public key. */
+            signed: boolean;
+            /**
+             * Format: int64
+             * @description The installed catalog's serial; absent when it cannot be read.
+             */
+            serial?: number;
+            /**
+             * Format: date-time
+             * @description When the source's archive was last installed or confirmed unchanged; absent before the first time.
+             */
+            lastRefreshedAt?: string;
+        };
+        CatalogSourceList: {
+            sources: components["schemas"]["CatalogSource"][];
+        };
+        AddCatalogSourceRequest: {
+            /** @description An `https` address with no credentials, query or fragment; the archive and its signature are fetched from beneath it. */
+            url: string;
+            /** @description The Ed25519 public key the archive is signed with, as PEM or the base64 of the raw 32 bytes. Absent means the source is unsigned; a key that is present but blank is refused with 400, never read as unsigned. */
+            publicKey?: string;
+        };
+        StackTemplateUpdate: {
+            /** @enum {string} */
+            status: "update_available" | "up_to_date" | "not_from_template" | "source_removed" | "template_removed";
+            /** @description The source the stack records; absent when it records none. */
+            source?: string;
+            /** @description The template the stack records; absent when it records none. */
+            templateId?: string;
+            /** @description The revision the stack was installed from; absent for `not_from_template`. */
+            installedRevision?: number;
+            /** @description The revision the source lists now; present for `update_available` and `up_to_date`. */
+            availableRevision?: number;
+            sourceKind?: components["schemas"]["CatalogSourceKind"];
+            /** @description The source's badge, present with `availableRevision`: true only when the source's installed archive passed a signature check. */
+            signed?: boolean;
+            /** @description The stack's Compose text was saved by hand, so `diff` is against the edited file and applying the update would overwrite the edit. */
+            manuallyEdited: boolean;
+            /** @description Present only for `update_available`: a unified diff from the stack's `docker-compose.yml` to the newer revision's `compose.yaml`. */
+            diff?: string;
+        };
         CatalogTemplate: {
             id: string;
             revision: number;
             title: string;
             categories: string[];
             docs: string;
-            /** @description Where the template came from: `hoserva` for the curated catalog. */
+            /** @description Where the template came from: `hoserva` for the curated catalog, a source id for a user-added source. */
             source: string;
+            sourceKind: components["schemas"]["CatalogSourceKind"];
+            /** @description True only when the source's installed archive passed a signature check; false for a template of an unsigned user-added source. */
+            signed: boolean;
             /** @description The template's `compose.yaml` text, with its `x-hoserva` block. */
             compose: string;
             /** @description Empty when the template asks for nothing beyond an ordinary container. */
@@ -8316,6 +8467,30 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getStackTemplateUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The comparison. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackTemplateUpdate"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     startStack: {
         parameters: {
             query?: never;
@@ -8412,6 +8587,98 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The check's outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRefresh"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listCatalogSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sources. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSourceList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addCatalogSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddCatalogSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description The source that was added. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSource"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeCatalogSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The source's id, as listed by `listCatalogSources`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The source was removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshCatalogSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The source's id, as listed by `listCatalogSources`. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

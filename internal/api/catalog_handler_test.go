@@ -40,6 +40,8 @@ func newCatalogHandler(t *testing.T) *api.Handler {
 	h.Stacks.Store = listingStackStore{h.Stacks.Store.(*stackMemStore)}
 	h.Catalog = template.MapCatalog{
 		Source:      "hoserva",
+		Kind:        store.CatalogSourceCurated,
+		Signed:      true,
 		Serial:      9,
 		GeneratedAt: time.Date(2026, 10, 1, 11, 14, 10, 0, time.UTC),
 		Templates: map[string]string{

@@ -120,6 +120,13 @@ type handler struct {
 	catalogMu     sync.Mutex
 	catalogChecks int
 	catalogLast   *apiv1.CatalogRefresh
+	// sourcesMu guards catalogSources, the user-added catalog sources added
+	// through this mock instance in the order they were added, and
+	// nextSourceID, which numbers them. The mock's sources supply no
+	// templates of their own.
+	sourcesMu      sync.Mutex
+	catalogSources []apiv1.CatalogSource
+	nextSourceID   int
 	// catalogSettings are the catalog refresh settings (guarded by
 	// catalogMu); the mock never checks by itself, whatever they say.
 	catalogSettings store.CatalogSettings

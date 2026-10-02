@@ -1,11 +1,17 @@
 package template
 
-import "context"
+import (
+	"context"
+
+	"github.com/mdg-labs/hoserva/internal/store"
+)
 
 // Detail is one catalog template as its page shows it: the metadata, the
 // compose.yaml text as the catalog holds it, and the privilege summary.
 type Detail struct {
 	Source     string
+	Kind       store.CatalogSourceKind
+	Signed     bool
 	ID         string
 	Revision   int
 	Title      string
@@ -34,6 +40,8 @@ func Show(ctx context.Context, c Catalog, id string) (*Detail, error) {
 	}
 	return &Detail{
 		Source:     entry.Source,
+		Kind:       entry.Kind,
+		Signed:     entry.Signed,
 		ID:         t.Block.ID,
 		Revision:   t.Block.Revision,
 		Title:      t.Block.Title,

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // SourceCurated is the source name recorded for a template of Hoserva's own
@@ -46,9 +48,14 @@ var (
 )
 
 // Entry is one template as a catalog holds it: the compose.yaml bytes and
-// the name of the source they came from.
+// the source they came from, with that source's badge: its Kind and whether
+// its archive was Signed (verified against a key). A catalog that does not
+// set them reports nothing about its source's trust, which readers treat as
+// user-added and unsigned.
 type Entry struct {
 	Source string
+	Kind   store.CatalogSourceKind
+	Signed bool
 	Data   []byte
 }
 
@@ -59,6 +66,11 @@ type IndexEntry struct {
 	Title      string
 	Categories []string
 	Docs       string
+	// Source, Kind and Signed are the entry's source and its badge, as on
+	// Entry.
+	Source string
+	Kind   store.CatalogSourceKind
+	Signed bool
 }
 
 // Index is what a catalog lists: its serial, when it was built when it says
@@ -122,6 +134,9 @@ var idPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 type DirCatalog struct {
 	Root   string
 	Source string
+	// Kind and Signed are the badge every entry of this directory carries.
+	Kind   store.CatalogSourceKind
+	Signed bool
 }
 
 var errNotPlain = errors.New("not a plain file")
@@ -180,6 +195,9 @@ func (d DirCatalog) Index(_ context.Context) (Index, error) {
 	out, err := parseIndex(data)
 	if err != nil {
 		return Index{}, fmt.Errorf("%w: %s %v", ErrCatalogUnavailable, file, err)
+	}
+	for i := range out.Templates {
+		out.Templates[i].Source, out.Templates[i].Kind, out.Templates[i].Signed = d.Source, d.Kind, d.Signed
 	}
 	return out, nil
 }
@@ -260,7 +278,7 @@ func (d DirCatalog) Entry(_ context.Context, id string) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("reading template %q: %w", id, err)
 	}
-	return Entry{Source: d.Source, Data: data}, nil
+	return Entry{Source: d.Source, Kind: d.Kind, Signed: d.Signed, Data: data}, nil
 }
 
 // MapCatalog is a Catalog held in memory, id to compose.yaml text, for tests
@@ -268,6 +286,8 @@ func (d DirCatalog) Entry(_ context.Context, id string) (Entry, error) {
 // the file name its compose.yaml declares.
 type MapCatalog struct {
 	Source      string
+	Kind        store.CatalogSourceKind
+	Signed      bool
 	Serial      int64
 	GeneratedAt time.Time
 	Templates   map[string]string
@@ -284,6 +304,7 @@ func (m MapCatalog) Index(_ context.Context) (Index, error) {
 		if t, _ := Parse([]byte(m.Templates[id])); t != nil {
 			e = IndexEntry{ID: id, Revision: t.Block.Revision, Title: t.Block.Title, Categories: t.Block.Categories, Docs: t.Block.Docs}
 		}
+		e.Source, e.Kind, e.Signed = m.Source, m.Kind, m.Signed
 		out.Templates[i] = e
 	}
 	return out, nil
@@ -294,7 +315,7 @@ func (m MapCatalog) Entry(_ context.Context, id string) (Entry, error) {
 	if !ok {
 		return Entry{}, fmt.Errorf("%w: %q", ErrTemplateNotFound, id)
 	}
-	return Entry{Source: m.Source, Data: []byte(data)}, nil
+	return Entry{Source: m.Source, Kind: m.Kind, Signed: m.Signed, Data: []byte(data)}, nil
 }
 
 func (m MapCatalog) Icon(ctx context.Context, id string) (Icon, error) {

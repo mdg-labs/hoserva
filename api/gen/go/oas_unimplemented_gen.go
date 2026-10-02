@@ -40,6 +40,29 @@ func (UnimplementedHandler) AcknowledgeDegradedArray(ctx context.Context) (r *Sy
 	return r, ht.ErrNotImplemented
 }
 
+// AddCatalogSource implements addCatalogSource operation.
+//
+// Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
+// from beneath `url` in the same format as the curated catalog and installed, and only then is the
+// source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva
+// contacts the URL only because the user added it, and only again when the user refreshes it. The URL
+// must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source`
+// otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is
+// size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519
+// key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that
+// key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature
+// is requested and every entry it supplies is badged `signed` false. A template of an unsigned source
+// still goes through the same privilege summary and warnings at install. Refused with 409
+// `catalog_source_exists` when a source with that URL (the curated one included) exists, 502
+// `catalog_source_unreachable` when the archive could not be fetched, and 422
+// `catalog_source_rejected` when the archive was fetched but refused (a signature that does not
+// verify, a malformed archive).
+//
+// POST /catalog-sources
+func (UnimplementedHandler) AddCatalogSource(ctx context.Context, req *AddCatalogSourceRequest) (r *CatalogSource, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // AddDisk implements addDisk operation.
 //
 // Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
@@ -616,7 +639,10 @@ func (UnimplementedHandler) GetCatalogSettings(ctx context.Context) (r *CatalogS
 // what its Compose content asks for beyond an ordinary container, computed with each input's default
 // (a secret, which has none, with a generated-shaped value) and never from anything the template
 // declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
-// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+// template rules with 422 `template_invalid`, as `previewTemplateInstall` does. The template's source
+// and its badge (`sourceKind`, `signed`) come with it; the privilege summary is the same for an
+// unsigned source's template as for a curated one, because an unsigned template can ask for any
+// privilege.
 //
 // GET /catalog/{id}
 func (UnimplementedHandler) GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (r *CatalogTemplate, _ error) {
@@ -824,6 +850,27 @@ func (UnimplementedHandler) GetSharePermissions(ctx context.Context, params GetS
 //
 // GET /stacks/{name}
 func (UnimplementedHandler) GetStack(ctx context.Context, params GetStackParams) (r *Stack, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetStackTemplateUpdate implements getStackTemplateUpdate operation.
+//
+// Compares the template revision the stack was installed from (its `stacks` row) with the revision the
+// stack's own source lists now, and never changes the stack, its files or its row: a catalog update is
+// only ever offered, and applying it is the user's action. `update_available` carries `diff`, a
+// unified diff from the stack's stored `docker-compose.yml` to the newer revision's `compose.yaml`,
+// and the source's badge (`sourceKind`, `signed`). A stack that was edited by hand is marked with
+// `manuallyEdited` and its diff is against the edited file, never as if it were the pristine install.
+// The other statuses carry no diff: `up_to_date` (the source lists the installed revision or an older
+// one), `not_from_template` (the stack records no template or no revision number), `source_removed`
+// (the source the stack was installed from is no longer one of the sources) and `template_removed`
+// (the source no longer lists the template). A catalog that cannot be read is an error (503
+// `catalog_unavailable`), never `up_to_date`. A GPU device a template install added to the stack's
+// Compose file shows in the diff as removed lines. An unknown stack is 404 `stack_not_found`; a name
+// that is not a valid stack name is 400 `invalid_stack_name`.
+//
+// GET /stacks/{name}/template-update
+func (UnimplementedHandler) GetStackTemplateUpdate(ctx context.Context, params GetStackTemplateUpdateParams) (r *StackTemplateUpdate, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1048,20 +1095,38 @@ func (UnimplementedHandler) ListBackupDestinations(ctx context.Context) (r *List
 // ListCatalog implements listCatalog operation.
 //
 // The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
-// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
-// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
-// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
-// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
-// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
-// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
-// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
-// run since the daemon started, also starts one catalog check in the background, never a second while
-// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
-// `catalog` event on `/api/v1/events`.
+// waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated
+// catalog's. The curated catalog's entries come first, then those of each user-added source
+// (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that
+// order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated
+// one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for
+// a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of
+// an unsigned source has `signed` false. Every entry says whether a stack of that template id already
+// exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging
+// are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check
+// (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that
+// is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`,
+// never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when
+// the last check is older than 15 minutes, or when none has run since the daemon started, also starts
+// one catalog check in the background, never a second while one is running. The answer is the on-disk
+// copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
 //
 // GET /catalog
 func (UnimplementedHandler) ListCatalog(ctx context.Context) (r *CatalogList, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListCatalogSources implements listCatalogSources operation.
+//
+// The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added
+// (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a
+// source whose installed archive passed a signature check: always for the curated catalog, and for a
+// user-added source only when it was added with a public key. `serial` is the installed catalog's
+// serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive
+// was installed or confirmed unchanged, and is absent before the first.
+//
+// GET /catalog-sources
+func (UnimplementedHandler) ListCatalogSources(ctx context.Context) (r *CatalogSourceList, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1467,6 +1532,22 @@ func (UnimplementedHandler) RefreshCatalog(ctx context.Context) (r *CatalogRefre
 	return r, ht.ErrNotImplemented
 }
 
+// RefreshCatalogSource implements refreshCatalogSource operation.
+//
+// Runs one check of the source and returns how it ended, as `refreshCatalog` does for the curated
+// catalog (the curated id runs that same check). A user-added source is only ever fetched when it is
+// added or refreshed here, never by the background interval. A newer archive replaces the source's
+// copy only if it verifies the way the source was added (against its public key, or well-formed for an
+// unsigned source) and its serial is strictly higher. Any other outcome keeps the installed copy and
+// everything recorded about the source, and is `failed` with a `reason` and a `message` (200). A
+// remembered rejection never carries over from one source to another. An unknown id is 404
+// `catalog_source_not_found`.
+//
+// POST /catalog-sources/{id}/refresh
+func (UnimplementedHandler) RefreshCatalogSource(ctx context.Context, params RefreshCatalogSourceParams) (r *CatalogRefresh, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 //
 // Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -1506,6 +1587,19 @@ func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *Regis
 // DELETE /apps/{id}
 func (UnimplementedHandler) RemoveApp(ctx context.Context, params RemoveAppParams) (r *RemoveAppResult, _ error) {
 	return r, ht.ErrNotImplemented
+}
+
+// RemoveCatalogSource implements removeCatalogSource operation.
+//
+// Removes one user-added source: its on-disk copy and its record, and nothing of any other source.
+// Stacks already installed from it are not touched: their Compose files and rows stay as they are, and
+// they only report `source_removed` from `getStackTemplateUpdate`. The curated catalog cannot be
+// removed: 409 `catalog_source_curated`. An unknown id is 404 `catalog_source_not_found`. A removal
+// that fails part way leaves a source the next call finishes removing.
+//
+// DELETE /catalog-sources/{id}
+func (UnimplementedHandler) RemoveCatalogSource(ctx context.Context, params RemoveCatalogSourceParams) error {
+	return ht.ErrNotImplemented
 }
 
 // RemoveStack implements removeStack operation.

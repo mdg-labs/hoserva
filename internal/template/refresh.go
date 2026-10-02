@@ -354,12 +354,16 @@ func (r *Refresher) fetchAndInstall(ctx context.Context, trigger Trigger) (Check
 		}
 		sum := sha256.Sum256(archive)
 		got = served{archive: hex.EncodeToString(sum[:]), archiveValidators: archiveValidators}
-		sig, sigValidators, _, err := fetch(ctx, client, sigURL, maxFetchSigBytes, Validators{})
-		if err != nil {
-			return failure(ReasonFetchFailed, err), got
+		var sig []byte
+		if !r.Store.Unsigned {
+			var sigValidators Validators
+			sig, sigValidators, _, err = fetch(ctx, client, sigURL, maxFetchSigBytes, Validators{})
+			if err != nil {
+				return failure(ReasonFetchFailed, err), got
+			}
+			sigSum := sha256.Sum256(sig)
+			got.sig, got.sigValidators = hex.EncodeToString(sigSum[:]), sigValidators
 		}
-		sigSum := sha256.Sum256(sig)
-		got.sig, got.sigValidators = hex.EncodeToString(sigSum[:]), sigValidators
 
 		fetched, err := r.Store.InstallFetched(archive, sig, archiveValidators)
 		switch {

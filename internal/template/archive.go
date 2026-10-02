@@ -66,6 +66,10 @@ type CatalogStore struct {
 	Dir string
 	// Key verifies the archive signature; nil means CatalogPublicKey.
 	Key ed25519.PublicKey
+	// Unsigned installs an archive with no signature check at all. Only a
+	// user-added source with no key of its own sets it (doc 04 §7); the zero
+	// value, which the curated catalog uses, verifies every archive.
+	Unsigned bool
 
 	rename func(oldpath, newpath string) error
 }
@@ -75,6 +79,15 @@ func (s CatalogStore) key() ed25519.PublicKey {
 		return s.Key
 	}
 	return CatalogPublicKey
+}
+
+// verify checks archive and its signature the way this store trusts them:
+// unsigned stores check only that the archive is a well-formed catalog.
+func (s CatalogStore) verify(archive, sig []byte) (int64, []byte, error) {
+	if s.Unsigned {
+		return checkArchive(archive)
+	}
+	return verifyArchive(s.key(), archive, sig)
 }
 
 func (s CatalogStore) mv(oldpath, newpath string) error {
@@ -99,6 +112,12 @@ func verifyArchive(key ed25519.PublicKey, archive, sig []byte) (int64, []byte, e
 	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, archive, sig) {
 		return 0, nil, ErrBadSignature
 	}
+	return checkArchive(archive)
+}
+
+// checkArchive is the well-formedness half of verifyArchive: it reads the
+// archive and returns its serial and index.json.
+func checkArchive(archive []byte) (int64, []byte, error) {
 	serial, index, err := readArchive(archive, nil)
 	if err != nil {
 		return 0, nil, err
@@ -214,7 +233,7 @@ type installResult struct {
 }
 
 func (s CatalogStore) install(archive, sig []byte, opts installOptions) (res installResult, err error) {
-	serial, index, err := verifyArchive(s.key(), archive, sig)
+	serial, index, err := s.verify(archive, sig)
 	if err != nil {
 		return res, err
 	}
