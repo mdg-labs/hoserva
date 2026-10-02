@@ -14,6 +14,7 @@ import (
 	ht "github.com/ogen-go/ogen/http"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
@@ -3271,6 +3272,51 @@ var contractCases = []contractCase{
 		name: "array_member_is_refused",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdb", Label: "backup4"})
+			return err
+		},
+	},
+	{
+		// The Unraid USB stick is the user's rollback and is never offered
+		// as an external disk: production refuses it with unraid_stick/409
+		// through every external-disk operation, by device or by label,
+		// and the mock mirrors that (external.go).
+		op:   "RegisterExternalDisk",
+		name: "unraid_stick_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockFlashDevice, Label: "usbstick"})
+			return err
+		},
+	},
+	{
+		op:   "MountExternalDisk",
+		name: "unraid_stick_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "UNRAID"})
+			return err
+		},
+	},
+	{
+		op:   "FormatExternalDisk",
+		name: "unraid_stick_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			plan := disk.ExternalFormatPlan(disk.AssignedDisk{Device: mockFlashDevice, Filesystem: disk.XFS})
+			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: plan.Confirmation()}, apiv1.FormatExternalDiskParams{Label: "UNRAID"})
+			return err
+		},
+	},
+	{
+		op:   "FormatExternalDisk",
+		name: "unraid_stick_is_refused_before_the_confirmation",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: "wrong"}, apiv1.FormatExternalDiskParams{Label: "UNRAID"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateExternalDisk",
+		name: "unraid_stick_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateExternalDisk(ctx, &apiv1.UpdateExternalDiskRequest{BackupDestination: apiv1.NewOptBool(true)}, apiv1.UpdateExternalDiskParams{Label: "UNRAID"})
 			return err
 		},
 	},

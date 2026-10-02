@@ -8687,7 +8687,8 @@ func (s *Server) handleForgetMigrationRequest(args [0]string, argsEscaped bool, 
 //
 // Formats the disk after the same typed confirmation array setup uses
 // (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong
-// or missing confirmation is refused with `confirmation_required` and formats nothing.
+// or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB
+// stick is refused with `unraid_stick` (409), whatever the confirmation.
 //
 // POST /disks/external/{label}/format
 func (s *Server) handleFormatExternalDiskRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -19624,7 +19625,8 @@ func (s *Server) handleListDockerNetworksRequest(args [0]string, argsEscaped boo
 //
 // Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a
 // pool or parity member. Registered external disks plus inventory disks that are not the boot device
-// and not in the array. Nothing is mounted by this call.
+// and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it
+// is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
 //
 // GET /disks/external
 func (s *Server) handleListExternalDisksRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -22491,7 +22493,8 @@ func (s *Server) handleMarkNotificationsReadRequest(args [0]string, argsEscaped 
 // handleMountExternalDiskRequest handles mountExternalDisk operation.
 //
 // Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically
-// on plug-in. The boot device and array disks are refused.
+// on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick
+// (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
 //
 // POST /disks/external/{label}/mount
 func (s *Server) handleMountExternalDiskRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -25934,7 +25937,8 @@ func (s *Server) handleRegenerateTLSCertificateRequest(args [0]string, argsEscap
 // handleRegisterExternalDiskRequest handles registerExternalDisk operation.
 //
 // Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as
-// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused.
+// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB
+// stick (`unraid_stick`, 409).
 //
 // POST /disks/external
 func (s *Server) handleRegisterExternalDiskRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -35601,6 +35605,7 @@ func (s *Server) handleUpdateCatalogSettingsRequest(args [0]string, argsEscaped 
 // handleUpdateExternalDiskRequest handles updateExternalDisk operation.
 //
 // Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
+// Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
 //
 // PATCH /disks/external/{label}
 func (s *Server) handleUpdateExternalDiskRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

@@ -179,3 +179,46 @@ func TestSystemdMounter_StopsUnitByFilename(t *testing.T) {
 		t.Fatalf("call = %+v, want systemctl stop mnt-disks-backup.mount", calls)
 	}
 }
+
+func TestIsUnraidStick(t *testing.T) {
+	tests := []struct {
+		name string
+		d    Disk
+		want bool
+	}{
+		{"label as Unraid writes it", Disk{Filesystem: "vfat", Label: "UNRAID"}, true},
+		{"label in another case", Disk{Filesystem: "vfat", Label: "unraid"}, true},
+		{"another FAT label", Disk{Filesystem: "vfat", Label: "USBDRIVE"}, false},
+		{"UNRAID on another filesystem", Disk{Filesystem: "ext4", Label: "UNRAID"}, false},
+		{"unlabelled FAT", Disk{Filesystem: "vfat"}, false},
+	}
+	for _, tt := range tests {
+		if got := IsUnraidStick(tt.d); got != tt.want {
+			t.Errorf("%s: IsUnraidStick = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestRefuseUnraidStick(t *testing.T) {
+	disks := []Disk{
+		{Device: "/dev/sdu", Filesystem: "vfat", Label: "UNRAID", FSUUID: "ABCD-1234"},
+		{Device: "/dev/sdw", Filesystem: "vfat", Label: "USBDRIVE", FSUUID: "1111-2222"},
+	}
+	tests := []struct {
+		name      string
+		dev, uuid string
+		refused   bool
+	}{
+		{"the stick's device", "/dev/sdu", "", true},
+		{"a partition of the stick", "/dev/sdu1", "", true},
+		{"another device holding the stick's UUID, in another case", "/dev/sdz", "abcd-1234", true},
+		{"another FAT disk", "/dev/sdw", "1111-2222", false},
+		{"a disk the inventory lacks and no UUID", "/dev/sdz", "", false},
+	}
+	for _, tt := range tests {
+		err := RefuseUnraidStick(disks, tt.dev, tt.uuid)
+		if tt.refused != errors.Is(err, ErrUnraidStick) {
+			t.Errorf("%s: RefuseUnraidStick = %v, refused want %v", tt.name, err, tt.refused)
+		}
+	}
+}

@@ -43,11 +43,18 @@ func defaultMockExternal() apiv1.ExternalDisk {
 	}
 }
 
+func errUnraidStick(device string) error {
+	return &mockError{code: "unraid_stick", statusCode: 409, message: fmt.Sprintf("%s: %v", device, disk.ErrUnraidStick)}
+}
+
 func (h *handler) getExternal(label string) (apiv1.ExternalDisk, error) {
 	h.externalMu.Lock()
 	defer h.externalMu.Unlock()
 	if d, ok := h.external[label]; ok {
 		return d, nil
+	}
+	if label == disk.UnraidStickLabel {
+		return apiv1.ExternalDisk{}, errUnraidStick(mockFlashDevice)
 	}
 	if label != mockExternalLabel {
 		return apiv1.ExternalDisk{}, &mockError{code: "external_disk_not_found", statusCode: 404, message: fmt.Sprintf("no external disk %q", label)}
@@ -92,12 +99,18 @@ func (h *handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterE
 		if e.Boot {
 			return nil, errInvalidPlan(fmt.Errorf("%s: %w", req.Device, disk.ErrBootDevice))
 		}
+		if disk.IsUnraidStick(disk.Disk{Filesystem: e.Filesystem.Or(""), Label: e.Label.Or("")}) {
+			return nil, errUnraidStick(req.Device)
+		}
 		break
 	}
 	for _, d := range mockArrayDisks(h.scenario) {
 		if d.Device == req.Device {
 			return nil, errInvalidPlan(fmt.Errorf("%w: %s", disk.ErrExternalInArray, req.Device))
 		}
+	}
+	if req.Device == mockFlashDevice {
+		return nil, errUnraidStick(req.Device)
 	}
 	if !found && !disk.IsLoopDevice(req.Device) {
 		return nil, errUnmanagedDevice(fmt.Errorf("%w: %s", disk.ErrUnmanagedDevice, req.Device))

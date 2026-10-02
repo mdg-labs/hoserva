@@ -564,7 +564,8 @@ func (UnimplementedHandler) ForgetMigration(ctx context.Context) error {
 //
 // Formats the disk after the same typed confirmation array setup uses
 // (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong
-// or missing confirmation is refused with `confirmation_required` and formats nothing.
+// or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB
+// stick is refused with `unraid_stick` (409), whatever the confirmation.
 //
 // POST /disks/external/{label}/format
 func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (r *ExternalDisk, _ error) {
@@ -1252,7 +1253,8 @@ func (UnimplementedHandler) ListDockerNetworks(ctx context.Context) (r *ListDock
 //
 // Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a
 // pool or parity member. Registered external disks plus inventory disks that are not the boot device
-// and not in the array. Nothing is mounted by this call.
+// and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it
+// is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
 //
 // GET /disks/external
 func (UnimplementedHandler) ListExternalDisks(ctx context.Context) (r *ListExternalDisksOK, _ error) {
@@ -1401,7 +1403,8 @@ func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *Mark
 // MountExternalDisk implements mountExternalDisk operation.
 //
 // Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically
-// on plug-in. The boot device and array disks are refused.
+// on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick
+// (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
 //
 // POST /disks/external/{label}/mount
 func (UnimplementedHandler) MountExternalDisk(ctx context.Context, params MountExternalDiskParams) (r *ExternalDisk, _ error) {
@@ -1709,7 +1712,8 @@ func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *Ne
 // RegisterExternalDisk implements registerExternalDisk operation.
 //
 // Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as
-// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused.
+// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB
+// stick (`unraid_stick`, 409).
 //
 // POST /disks/external
 func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *RegisterExternalDiskRequest) (r *ExternalDisk, _ error) {
@@ -2323,6 +2327,7 @@ func (UnimplementedHandler) UpdateCatalogSettings(ctx context.Context, req *Cata
 // UpdateExternalDisk implements updateExternalDisk operation.
 //
 // Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
+// Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
 //
 // PATCH /disks/external/{label}
 func (UnimplementedHandler) UpdateExternalDisk(ctx context.Context, req *UpdateExternalDiskRequest, params UpdateExternalDiskParams) (r *ExternalDisk, _ error) {

@@ -32,6 +32,30 @@ func errExternalExists(err error) error {
 	return &apiError{code: "external_disk_exists", statusCode: 409, message: err.Error()}
 }
 
+func errUnraidStick(err error) error {
+	return &apiError{code: "unraid_stick", statusCode: 409, message: err.Error()}
+}
+
+func mapUnraidStick(err error) error {
+	if errors.Is(err, disk.ErrUnraidStick) {
+		return errUnraidStick(err)
+	}
+	return err
+}
+
+// refuseUnraidStick lists the disks afresh, so a listing that fails refuses
+// the operation instead of letting it through.
+func (h *Handler) refuseUnraidStick(ctx context.Context, device, fsUUID string) error {
+	if isPendingUUID(fsUUID) {
+		fsUUID = ""
+	}
+	listed, err := h.Disks.List(ctx)
+	if err != nil {
+		return fmt.Errorf("listing disks to check %s is not the Unraid USB stick: %w", device, err)
+	}
+	return mapUnraidStick(disk.RefuseUnraidStick(listed, device, fsUUID))
+}
+
 func (h *Handler) diskRunner() disk.Runner {
 	if h.DiskRunner != nil {
 		return h.DiskRunner
@@ -118,7 +142,7 @@ func (h *Handler) ListExternalDisks(ctx context.Context) (*apiv1.ListExternalDis
 		if _, already := seen[d.Device]; already {
 			continue
 		}
-		if disk.ValidateExternalLabel(d.Label) != nil {
+		if disk.ValidateExternalLabel(d.Label) != nil || disk.IsUnraidStick(d) {
 			continue
 		}
 		row := store.ExternalDisk{
@@ -165,6 +189,10 @@ func (h *Handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterE
 		inv = disk.Disk{Device: req.Device}
 	}
 
+	if err := mapUnraidStick(disk.RefuseUnraidStick(listed, req.Device, inv.FSUUID)); err != nil {
+		return nil, err
+	}
+
 	fsUUID := pendingExternalUUID(label)
 	fs := inv.Filesystem
 	if inv.FSUUID != "" {
@@ -204,6 +232,11 @@ func (h *Handler) UpdateExternalDisk(ctx context.Context, req *apiv1.UpdateExter
 		return nil, err
 	}
 	if v, ok := req.BackupDestination.Get(); ok {
+		if v {
+			if err := h.refuseUnraidStick(ctx, row.Device, row.FSUUID); err != nil {
+				return nil, err
+			}
+		}
 		if err := h.setExternalBackupDestination(ctx, row.Label, v); err != nil {
 			return nil, err
 		}
@@ -257,6 +290,9 @@ func (h *Handler) MountExternalDisk(ctx context.Context, params apiv1.MountExter
 	if err := disk.RefuseBootDevice(ctx, h.Disks, row.Device); err != nil {
 		return nil, errInvalidPlan(err)
 	}
+	if err := h.refuseUnraidStick(ctx, row.Device, row.FSUUID); err != nil {
+		return nil, err
+	}
 	if isPendingUUID(row.FSUUID) {
 		return nil, errInvalidPlan(fmt.Errorf("disk: format %q before mounting", row.Label))
 	}
@@ -309,6 +345,9 @@ func (h *Handler) FormatExternalDisk(ctx context.Context, req *apiv1.FormatExter
 	label := string(params.Label)
 	row, inv, registered, err := h.resolveExternal(ctx, label, false)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.refuseUnraidStick(ctx, row.Device, row.FSUUID); err != nil {
 		return nil, err
 	}
 	if req.Confirmation == "" {
@@ -466,6 +505,9 @@ func (h *Handler) inventoryDisk(ctx context.Context, label string) (disk.Disk, e
 			continue
 		}
 		if d.Label == label {
+			if disk.IsUnraidStick(d) {
+				return disk.Disk{}, errUnraidStick(fmt.Errorf("%s: %w", d.Device, disk.ErrUnraidStick))
+			}
 			return d, nil
 		}
 	}

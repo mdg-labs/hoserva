@@ -7,14 +7,16 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // The Unraid USB stick is a FAT filesystem labelled UNRAID (doc 05 §3). It is
 // the user's rollback (doc 05 §4 step 11, §5), so it is only ever mounted
 // read-only, at a private mountpoint, for as long as one scan reads it.
 const (
-	stickLabel      = "UNRAID"
-	stickFilesystem = "vfat"
+	stickLabel      = disk.UnraidStickLabel
+	stickFilesystem = disk.UnraidStickFilesystem
 	// stickDir is the stick's mountpoint under Service.Dir (0700), so no other
 	// user of the machine can walk the configuration it holds.
 	stickDir = "stick"
@@ -93,7 +95,7 @@ func (s *Service) stickCandidates(ctx context.Context) ([]FlashDevice, error) {
 		if _, member := inArray[d.Device]; member || d.Boot || d.Failed {
 			continue
 		}
-		if d.Filesystem != stickFilesystem || !strings.EqualFold(d.Label, stickLabel) {
+		if !disk.IsUnraidStick(d) {
 			continue
 		}
 		if d.FSUUID == "" || uuids[strings.ToUpper(d.FSUUID)] != 1 {
