@@ -134,7 +134,7 @@ A written go / no-go report, downloadable, that the user reads **before** commit
    - `system`, except Docker's own storage (the Docker directory, or the `docker.img` file in image mode);
    - `libvirt.img`, which sits in `system`.
 
-   Stop the Docker service and the VM service first (Settings → Docker, Settings → VM Manager: Enable set to No), because the Unraid mover skips files that are open. Then run the mover, or `rsync`, and confirm the cache is empty afterwards; the prepare script reports what is still there.
+   Stop the Docker service and the VM service first (Settings → Docker, Settings → VM Manager: Enable set to No), because the Unraid mover skips files that are open. The mover only moves a share toward the array when the share says so: a `prefer` share is moved onto the cache, not off it, and an `only` share is never moved. So for each share above, set Primary storage to the cache pool, Secondary storage to Array and Mover action to Cache → Array (the Unraid 6.12 and 7 share settings), then run the mover, and confirm the cache is empty afterwards; the prepare script reports what is still there.
 
    **Docker's own storage is deliberately not moved.** In directory mode it keeps every image layer as a btrfs subvolume, which a file-level move does not reproduce, and the images are pulled again when containers are recreated (steps 19 and 20). What does not come back is each container's writable-layer state; the prepare script lists it per container, and doc 04 §5's warning names it again at conversion time (step 19).
 6. **Run a final Unraid parity check** and confirm it completes clean. Migrating on top of an already-degraded array is how people lose everything.
@@ -216,7 +216,7 @@ What else rollback needs depends on where Unraid boots from and where Debian was
 | internal, boot + data | another device | Switch the firmware boot order back; partition 4, the cache, is untouched until step 17 |
 | internal, boot + data | the same NVMe | Restore the zip to a USB stick and boot it; re-create the cache |
 
-The shared-NVMe rows differ because step 12 destroyed the Unraid cache; what was on it is on the array since step 5. The internal-boot rows follow Unraid's own Internal Boot documentation and the device layout in doc 08 §2 (the mirrored-pair rows rest on the FAQ's statement that a mirror continues degraded, and on each device keeping its own EFI partition); Hoserva has no internal-boot server to test them against, so they are verified against fixtures only (§2).
+The shared-NVMe rows differ because step 12 destroyed the Unraid cache; what was on it is on the array since step 5. The internal-boot rows follow Unraid's own Internal Boot documentation and the device layout in doc 08 §2 (the mirrored-pair rows rest on the FAQ's statement that a mirror continues degraded, and on each device keeping its own EFI partition); Hoserva has no internal-boot server to test them against, so they can only ever be verified against fixtures (§2), and until #293 builds the internal-boot fixtures and the scan passes against them they are not verified at all.
 
 The UI must mark step 17 as the point of no return and require explicit confirmation.
 
