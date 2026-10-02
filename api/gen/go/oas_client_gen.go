@@ -449,6 +449,14 @@ type Invoker interface {
 	//
 	// POST /disks/array/remove/finish
 	FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error)
+	// ForgetMigration invokes forgetMigration operation.
+	//
+	// Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
+	// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment).
+	// Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+	//
+	// DELETE /migrate
+	ForgetMigration(ctx context.Context) error
 	// FormatExternalDisk invokes formatExternalDisk operation.
 	//
 	// Formats the disk after the same typed confirmation array setup uses
@@ -606,6 +614,24 @@ type Invoker interface {
 	//
 	// GET /metrics
 	GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error)
+	// GetMigration invokes getMigration operation.
+	//
+	// The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows.
+	// `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running,
+	// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
+	// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
+	// scan, if there was one, is still returned). The rows name and count; they never quote a file's
+	// content. `getMigrationReport` returns the same report as a document.
+	//
+	// GET /migrate
+	GetMigration(ctx context.Context) (*Migration, error)
+	// GetMigrationReport invokes getMigrationReport operation.
+	//
+	// The latest scan's report as a Markdown document: the verdict, then every check with its status,
+	// subject and detail. 404 `no_migration_report` before a scan has finished.
+	//
+	// GET /migrate/report
+	GetMigrationReport(ctx context.Context) (GetMigrationReportOK, error)
 	// GetNetworkSettings invokes getNetworkSettings operation.
 	//
 	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
@@ -1626,6 +1652,24 @@ type Invoker interface {
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, request *StartFixRequest) (*Job, error)
+	// StartMigrationScan invokes startMigrationScan operation.
+	//
+	// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
+	// no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root
+	// only, as the session's source; it is never modified and never extracted: entries are read in memory.
+	// A scan replaces the previous session's report and zip once it finishes. Refused before anything is
+	// queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry
+	// path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB,
+	// refused as soon as the request body, which is the zip and its multipart framing, passes that size
+	// plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
+	// (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
+	// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
+	// `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
+	// layout refusal; the override is recorded in the report and printed at its top. The scan reads the
+	// disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+	//
+	// POST /migrate/scan
+	StartMigrationScan(ctx context.Context, request *StartMigrationScanReq) (*Job, error)
 	// StartMover invokes startMover operation.
 	//
 	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
@@ -7249,6 +7293,133 @@ func (c *Client) sendFinishDiskRemoval(ctx context.Context, request *FinishDiskR
 	return result, nil
 }
 
+// ForgetMigration invokes forgetMigration operation.
+//
+// Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
+// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment).
+// Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+//
+// DELETE /migrate
+func (c *Client) ForgetMigration(ctx context.Context) error {
+	_, err := c.sendForgetMigration(ctx)
+	return err
+}
+
+func (c *Client) sendForgetMigration(ctx context.Context) (res *ForgetMigrationNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("forgetMigration"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/migrate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ForgetMigrationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ForgetMigrationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ForgetMigrationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeForgetMigrationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // FormatExternalDisk invokes formatExternalDisk operation.
 //
 // Formats the disk after the same typed confirmation array setup uses
@@ -9873,6 +10044,262 @@ func (c *Client) sendGetMetrics(ctx context.Context, params GetMetricsParams) (r
 
 	stage = "DecodeResponse"
 	result, err := decodeGetMetricsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetMigration invokes getMigration operation.
+//
+// The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows.
+// `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running,
+// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
+// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
+// scan, if there was one, is still returned). The rows name and count; they never quote a file's
+// content. `getMigrationReport` returns the same report as a document.
+//
+// GET /migrate
+func (c *Client) GetMigration(ctx context.Context) (*Migration, error) {
+	res, err := c.sendGetMigration(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetMigration(ctx context.Context) (res *Migration, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMigration"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/migrate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetMigrationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetMigrationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetMigrationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetMigrationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetMigrationReport invokes getMigrationReport operation.
+//
+// The latest scan's report as a Markdown document: the verdict, then every check with its status,
+// subject and detail. 404 `no_migration_report` before a scan has finished.
+//
+// GET /migrate/report
+func (c *Client) GetMigrationReport(ctx context.Context) (GetMigrationReportOK, error) {
+	res, err := c.sendGetMigrationReport(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetMigrationReport(ctx context.Context) (res GetMigrationReportOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMigrationReport"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/migrate/report"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetMigrationReportOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/report"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetMigrationReportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetMigrationReportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetMigrationReportResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -21761,6 +22188,146 @@ func (c *Client) sendStartFix(ctx context.Context, request *StartFixRequest) (re
 
 	stage = "DecodeResponse"
 	result, err := decodeStartFixResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartMigrationScan invokes startMigrationScan operation.
+//
+// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
+// no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root
+// only, as the session's source; it is never modified and never extracted: entries are read in memory.
+// A scan replaces the previous session's report and zip once it finishes. Refused before anything is
+// queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry
+// path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB,
+// refused as soon as the request body, which is the zip and its multipart framing, passes that size
+// plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
+// (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
+// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
+// `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
+// layout refusal; the override is recorded in the report and printed at its top. The scan reads the
+// disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+//
+// POST /migrate/scan
+func (c *Client) StartMigrationScan(ctx context.Context, request *StartMigrationScanReq) (*Job, error) {
+	res, err := c.sendStartMigrationScan(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendStartMigrationScan(ctx context.Context, request *StartMigrationScanReq) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startMigrationScan"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/scan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartMigrationScanOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/scan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStartMigrationScanRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartMigrationScanOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartMigrationScanOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartMigrationScanResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

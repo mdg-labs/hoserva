@@ -1803,6 +1803,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/migrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The migration session and its report
+         * @description The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows. `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if there was one, is still returned). The rows name and count; they never quote a file's content. `getMigrationReport` returns the same report as a document.
+         */
+        get: operations["getMigration"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete the migration session
+         * @description Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+         */
+        delete: operations["forgetMigration"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan a Flash Backup zip
+         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+         */
+        post: operations["startMigrationScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the go / no-go report
+         * @description The latest scan's report as a Markdown document: the verdict, then every check with its status, subject and detail. 404 `no_migration_report` before a scan has finished.
+         */
+        get: operations["getMigrationReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/appdata/backup": {
         parameters: {
             query?: never;
@@ -3152,7 +3216,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -5214,6 +5278,49 @@ export interface components {
             archive?: string | null;
             /** @description Why the destination failed. Absent when it passed. */
             error?: string | null;
+        };
+        /** @enum {string} */
+        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned";
+        /**
+         * @description `refuse` blocks the migration; `flag` and `warn` need attention before it goes ahead; `info` and `pass` do not.
+         * @enum {string}
+         */
+        MigrationCheckStatus: "pass" | "warn" | "flag" | "refuse" | "info";
+        /** @enum {string} */
+        MigrationVerdict: "go" | "go_with_warnings" | "no_go";
+        MigrationReportRow: {
+            /** @description Which check the row belongs to, such as `unraid_version`, `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`, `parity_size`, `smart`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without changing this shape. */
+            check: string;
+            status: components["schemas"]["MigrationCheckStatus"];
+            /** @description A slot, pool or device the row is about. Absent for the whole system. */
+            subject?: string;
+            detail: string;
+        };
+        MigrationReport: {
+            /** Format: date-time */
+            generatedAt: string;
+            /** @description From the first line of the flash's `changes.txt`. Absent when it states none. */
+            unraidVersion?: string;
+            /** @description True when the scan ran only because `unverifiedLayout` overrode the refusal of the version or flash layout (Q24). */
+            unverifiedLayout: boolean;
+            verdict: components["schemas"]["MigrationVerdict"];
+            rows: components["schemas"]["MigrationReportRow"][];
+        };
+        Migration: {
+            phase: components["schemas"]["MigrationPhase"];
+            /** @description Why the latest scan did not finish. Present only in `scan_failed`. */
+            scanError?: string;
+            /**
+             * Format: int64
+             * @description The size in bytes of the zip the report was made from.
+             */
+            sourceSize?: number;
+            /**
+             * Format: date-time
+             * @description When the zip the report was made from was uploaded.
+             */
+            sourceReceivedAt?: string;
+            report?: components["schemas"]["MigrationReport"];
         };
         AppdataBackupContainer: {
             name: string;
@@ -7944,6 +8051,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Migration"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    forgetMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startMigrationScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description The Flash Backup zip, its root being `/boot`.
+                     */
+                    file: string;
+                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
+                    unverifiedLayout?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The queued `migration_scan` job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMigrationReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
                 };
             };
             default: components["responses"]["Error"];

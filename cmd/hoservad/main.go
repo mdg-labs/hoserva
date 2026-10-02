@@ -32,6 +32,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -96,18 +97,44 @@ const convertPath = apiPathPrefix + "/apps/convert"
 
 const maxConvertBodyBytes = 6*template.MaxUnraidTemplateBytes + 1024
 
-// limitRequestBody is http.MaxBytesHandler at maxRequestBodyBytes, or at
-// maxConvertBodyBytes for convertPath.
+// scanPath is the operation that takes a Flash Backup zip of up to
+// migrate.MaxZipBytes. The generated server authenticates it before it reads
+// the body, so a caller without an admin session is answered 401 or 403 with
+// the body unread; an admin's upload is streamed to a temporary file past
+// MaxMultipartMemory, never held whole in memory.
+const scanPath = apiPathPrefix + "/migrate/scan"
+
+// limitRequestBody is http.MaxBytesHandler at maxRequestBodyBytes, at
+// maxConvertBodyBytes for convertPath, and at migrate.UploadBodyLimit, with a
+// read deadline sized for that upload, for scanPath.
 func limitRequestBody(next http.Handler) http.Handler {
+	return limitRequestBodyWith(next, migrate.UploadBodyLimit, migrate.UploadReadTimeout)
+}
+
+func limitRequestBodyWith(next http.Handler, scanLimit int64, scanTimeout time.Duration) http.Handler {
 	small := http.MaxBytesHandler(next, maxRequestBodyBytes)
 	convert := http.MaxBytesHandler(next, maxConvertBodyBytes)
+	scan := migrate.LimitUploadBody(next, scanLimit, scanTimeout)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == convertPath {
+		switch r.URL.Path {
+		case convertPath:
 			convert.ServeHTTP(w, r)
-			return
+		case scanPath:
+			scan.ServeHTTP(w, r)
+		default:
+			small.ServeHTTP(w, r)
 		}
-		small.ServeHTTP(w, r)
 	})
+}
+
+// decodeError is the generated servers' error handler: api.WriteDecodeError,
+// except that a scan upload past its body limit is the zip being too large.
+func decodeError(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	if r.URL.Path == scanPath && migrate.IsUploadTooLarge(err) {
+		migrate.WriteZipTooLarge(w)
+		return
+	}
+	api.WriteDecodeError(ctx, w, r, err)
 }
 
 // requestReadTimeout bounds how long net/http waits for a request's
@@ -115,7 +142,8 @@ func limitRequestBody(next http.Handler) http.Handler {
 // alongside maxRequestBodyBytes: the size cap stops an oversized body
 // from ever being buffered, but a slow client trickling a body in just
 // under that cap could otherwise still hold a connection (and the
-// goroutine serving it) open indefinitely.
+// goroutine serving it) open indefinitely. scanPath's upload moves its own
+// deadline out when its body is first read (migrate.UploadReadTimeout).
 const requestReadTimeout = 15 * time.Second
 
 type config struct {
@@ -594,6 +622,11 @@ func run(cfg config) error {
 	wireContainerUpdates(handler, registry, updateChecker, newUpdater(apps, store.NewImageHistoryStore(db), appdataService, updateChecker), awaitReconciled)
 	wireRestoreDrill(registry, backupService, api.NewDrillStore(db), notifyService)
 	wireConfigBackup(registry, backupService, notifyService)
+	if err := wireMigration(ctx, handler, registry, disks, store.NewMigrationSessionStore(db), absStateDir); err != nil {
+		// The migrator is optional: without it its operations answer 501
+		// rather than failing the daemon's start.
+		log.Printf("hoservad: the Unraid migrator is not available: %v", err)
+	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,
@@ -1056,7 +1089,7 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 	apiServer, err := apiv1.NewServer(handler, security,
 		apiv1.WithPathPrefix(apiPathPrefix),
 		apiv1.WithNotFound(jsonAPINotFoundHandler),
-		apiv1.WithErrorHandler(api.WriteDecodeError),
+		apiv1.WithErrorHandler(decodeError),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("building generated API server: %w", err)
@@ -1112,7 +1145,7 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	apiServer, err := apiv1.NewServer(handler, security,
 		apiv1.WithPathPrefix(apiPathPrefix),
 		apiv1.WithNotFound(jsonAPINotFoundHandler),
-		apiv1.WithErrorHandler(api.WriteDecodeError),
+		apiv1.WithErrorHandler(decodeError),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("building generated API server: %w", err)

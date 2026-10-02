@@ -29,6 +29,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -434,6 +435,21 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	for _, jt := range contractProductionRunFuncs {
 		registry.Register(jt, true, noop)
 	}
+	// The migration scan runs for real, over the rig's disks, so a case that
+	// starts one can read its report once it has finished.
+	migrationSvc := &migrate.Service{
+		Dir:      filepath.Join(t.TempDir(), "migrate"),
+		Scanner:  &migrate.Scanner{Disks: provider, UIDOwner: func(int) (string, error) { return "", nil }},
+		Sessions: store.NewMigrationSessionStore(db),
+		JobEnded: func(ctx context.Context, id string) (string, bool, error) {
+			j, err := jobStore.Get(ctx, id)
+			if err != nil {
+				return "", false, err
+			}
+			return string(j.Status), j.Status.Terminal(), nil
+		},
+	}
+	registry.Register(job.TypeMigrationScan, false, job.RunMigrationScan(migrationSvc.RunScan))
 
 	// degradedGate mirrors cmd/hoservad's own newArraySequence (#385, doc
 	// 02 §1, Q69): expected from the same layout PutArray above seeded,
@@ -717,7 +733,8 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// Its destinations (#60) are the mock's two seeded ones, "boot"
 		// and "pool", with paths in this test's own temp directory so
 		// nothing is written to a real path, and a fake rclone.
-		Backup: contractBackupService(t, db, dbPath),
+		Backup:    contractBackupService(t, db, dbPath),
+		Migration: migrationSvc,
 		// The regeneration step ImportConfig runs once the database is
 		// restored; an archive that does not verify is refused before it.
 		RegenerateConfig: func(context.Context) error { return nil },

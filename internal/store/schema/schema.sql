@@ -878,3 +878,24 @@ CREATE TABLE registry_credentials (
     credential BLOB NOT NULL,
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- The Unraid migration session (#75, doc 05): at most one row. source_* is the
+-- Flash Backup zip the latest finished scan read, as a file name inside
+-- <state dir>/migrate (never a path a client chose), its size and when it was
+-- uploaded; report is that scan's report as JSON. scan_* is a scan that has not
+-- finished: scan_file is its staged upload, scan_error is empty while it runs
+-- and says why it stopped otherwise. Every column is empty ('' or 0) when it
+-- does not apply. The zip itself is never in the database or in a config
+-- archive: it holds secrets.
+CREATE TABLE migration_session (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    source_file TEXT NOT NULL DEFAULT '',
+    source_size INTEGER NOT NULL DEFAULT 0,
+    source_received_at TEXT NOT NULL DEFAULT '',
+    report TEXT NOT NULL DEFAULT '',
+    scan_file TEXT NOT NULL DEFAULT '',
+    scan_size INTEGER NOT NULL DEFAULT 0,
+    scan_received_at TEXT NOT NULL DEFAULT '',
+    scan_unverified_layout INTEGER NOT NULL DEFAULT 0 CHECK (scan_unverified_layout IN (0, 1)),
+    scan_error TEXT NOT NULL DEFAULT ''
+) STRICT;

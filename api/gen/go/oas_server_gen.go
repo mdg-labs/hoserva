@@ -428,6 +428,14 @@ type Handler interface {
 	//
 	// POST /disks/array/remove/finish
 	FinishDiskRemoval(ctx context.Context, req *FinishDiskRemovalRequest) (*Job, error)
+	// ForgetMigration implements forgetMigration operation.
+	//
+	// Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
+	// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment).
+	// Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+	//
+	// DELETE /migrate
+	ForgetMigration(ctx context.Context) error
 	// FormatExternalDisk implements formatExternalDisk operation.
 	//
 	// Formats the disk after the same typed confirmation array setup uses
@@ -585,6 +593,24 @@ type Handler interface {
 	//
 	// GET /metrics
 	GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error)
+	// GetMigration implements getMigration operation.
+	//
+	// The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows.
+	// `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running,
+	// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
+	// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
+	// scan, if there was one, is still returned). The rows name and count; they never quote a file's
+	// content. `getMigrationReport` returns the same report as a document.
+	//
+	// GET /migrate
+	GetMigration(ctx context.Context) (*Migration, error)
+	// GetMigrationReport implements getMigrationReport operation.
+	//
+	// The latest scan's report as a Markdown document: the verdict, then every check with its status,
+	// subject and detail. 404 `no_migration_report` before a scan has finished.
+	//
+	// GET /migrate/report
+	GetMigrationReport(ctx context.Context) (GetMigrationReportOK, error)
 	// GetNetworkSettings implements getNetworkSettings operation.
 	//
 	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
@@ -1605,6 +1631,24 @@ type Handler interface {
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, req *StartFixRequest) (*Job, error)
+	// StartMigrationScan implements startMigrationScan operation.
+	//
+	// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
+	// no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root
+	// only, as the session's source; it is never modified and never extracted: entries are read in memory.
+	// A scan replaces the previous session's report and zip once it finishes. Refused before anything is
+	// queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry
+	// path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB,
+	// refused as soon as the request body, which is the zip and its multipart framing, passes that size
+	// plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
+	// (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
+	// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
+	// `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
+	// layout refusal; the override is recorded in the report and printed at its top. The scan reads the
+	// disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+	//
+	// POST /migrate/scan
+	StartMigrationScan(ctx context.Context, req *StartMigrationScanReq) (*Job, error)
 	// StartMover implements startMover operation.
 	//
 	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job

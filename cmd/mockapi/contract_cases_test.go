@@ -4017,6 +4017,144 @@ var contractCases = []contractCase{
 		},
 	},
 
+	// --- Migration scan (#75): the upload's refusals, the job submission
+	// and the session's reads; what a scan finds is internal/migrate's own
+	// tests. ---
+	{
+		op:   "StartMigrationScan",
+		name: "valid_queues_the_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false))
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "valid_unknown_version_with_the_override",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("6.9.2", nil), true))
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "missing_file",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, &apiv1.StartMigrationScanReq{})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "not_a_zip",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, contractScanRequest([]byte("not a zip"), false))
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "entry_leaves_the_root",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", func(f map[string]string) { f["../evil"] = "x" }), false))
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "no_disk_cfg",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", func(f map[string]string) { delete(f, "config/disk.cfg") }), false))
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "unknown_version_without_the_override",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("6.9.2", nil), false))
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationScan",
+		name: "refused_in_maintenance_mode",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false))
+			return err
+		},
+	},
+	{
+		op:   "GetMigration",
+		name: "valid_before_any_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetMigration(ctx)
+			return err
+		},
+	},
+	{
+		op:   "GetMigration",
+		name: "valid_after_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+				return err
+			}
+			return contractAwaitScanned(ctx, h)
+		},
+	},
+	{
+		op:   "GetMigrationReport",
+		name: "valid_after_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.GetMigrationReport(ctx)
+			return err
+		},
+	},
+	{
+		op:   "GetMigrationReport",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetMigrationReport(ctx)
+			return err
+		},
+	},
+	{
+		op:   "ForgetMigration",
+		name: "valid_deletes_a_scanned_session",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			if err := h.ForgetMigration(ctx); err != nil {
+				return err
+			}
+			_, err := h.GetMigrationReport(ctx)
+			if err == nil {
+				return errors.New("the report survived ForgetMigration")
+			}
+			return nil
+		},
+	},
+	{
+		op:   "ForgetMigration",
+		name: "valid_with_nothing_to_delete",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.ForgetMigration(ctx)
+		},
+	},
+
 	// --- Config backup on demand (#450): the refusals and the job
 	// submission; what the job then writes is production's own tests. ---
 	{

@@ -7431,6 +7431,9 @@ func (s *FinishDiskRemovalRequest) SetConfirmation(val string) {
 	s.Confirmation = val
 }
 
+// ForgetMigrationNoContent is response for ForgetMigration operation.
+type ForgetMigrationNoContent struct{}
+
 // Ref: #/components/schemas/FormatExternalDiskRequest
 type FormatExternalDiskRequest struct {
 	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
@@ -7892,6 +7895,20 @@ type GetJobLogOK struct {
 //
 // Kept to satisfy the io.Reader interface.
 func (s GetJobLogOK) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+type GetMigrationReportOK struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetMigrationReportOK) Read(p []byte) (n int, err error) {
 	if s.Data == nil {
 		return 0, io.EOF
 	}
@@ -8425,6 +8442,7 @@ const (
 	JobTypeDiskUpgradeData       JobType = "disk_upgrade_data"
 	JobTypeDiskUpgradeParity     JobType = "disk_upgrade_parity"
 	JobTypePoolRemount           JobType = "pool_remount"
+	JobTypeMigrationScan         JobType = "migration_scan"
 	JobTypeAppdataBackup         JobType = "appdata_backup"
 	JobTypeAppdataRestore        JobType = "appdata_restore"
 	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
@@ -8462,6 +8480,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeDiskUpgradeData,
 		JobTypeDiskUpgradeParity,
 		JobTypePoolRemount,
+		JobTypeMigrationScan,
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
 		JobTypeAppdataRestorePreview,
@@ -8515,6 +8534,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeDiskUpgradeParity:
 		return []byte(s), nil
 	case JobTypePoolRemount:
+		return []byte(s), nil
+	case JobTypeMigrationScan:
 		return []byte(s), nil
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
@@ -8603,6 +8624,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypePoolRemount:
 		*s = JobTypePoolRemount
+		return nil
+	case JobTypeMigrationScan:
+		*s = JobTypeMigrationScan
 		return nil
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
@@ -9550,6 +9574,352 @@ func (s *MetricSeries) SetTo(val time.Time) {
 // SetPoints sets the value of Points.
 func (s *MetricSeries) SetPoints(val []MetricPoint) {
 	s.Points = val
+}
+
+// Ref: #/components/schemas/Migration
+type Migration struct {
+	Phase MigrationPhase `json:"phase"`
+	// Why the latest scan did not finish. Present only in `scan_failed`.
+	ScanError OptString `json:"scanError"`
+	// The size in bytes of the zip the report was made from.
+	SourceSize OptInt64 `json:"sourceSize"`
+	// When the zip the report was made from was uploaded.
+	SourceReceivedAt OptDateTime        `json:"sourceReceivedAt"`
+	Report           OptMigrationReport `json:"report"`
+}
+
+// GetPhase returns the value of Phase.
+func (s *Migration) GetPhase() MigrationPhase {
+	return s.Phase
+}
+
+// GetScanError returns the value of ScanError.
+func (s *Migration) GetScanError() OptString {
+	return s.ScanError
+}
+
+// GetSourceSize returns the value of SourceSize.
+func (s *Migration) GetSourceSize() OptInt64 {
+	return s.SourceSize
+}
+
+// GetSourceReceivedAt returns the value of SourceReceivedAt.
+func (s *Migration) GetSourceReceivedAt() OptDateTime {
+	return s.SourceReceivedAt
+}
+
+// GetReport returns the value of Report.
+func (s *Migration) GetReport() OptMigrationReport {
+	return s.Report
+}
+
+// SetPhase sets the value of Phase.
+func (s *Migration) SetPhase(val MigrationPhase) {
+	s.Phase = val
+}
+
+// SetScanError sets the value of ScanError.
+func (s *Migration) SetScanError(val OptString) {
+	s.ScanError = val
+}
+
+// SetSourceSize sets the value of SourceSize.
+func (s *Migration) SetSourceSize(val OptInt64) {
+	s.SourceSize = val
+}
+
+// SetSourceReceivedAt sets the value of SourceReceivedAt.
+func (s *Migration) SetSourceReceivedAt(val OptDateTime) {
+	s.SourceReceivedAt = val
+}
+
+// SetReport sets the value of Report.
+func (s *Migration) SetReport(val OptMigrationReport) {
+	s.Report = val
+}
+
+// `refuse` blocks the migration; `flag` and `warn` need attention before it goes ahead; `info` and
+// `pass` do not.
+// Ref: #/components/schemas/MigrationCheckStatus
+type MigrationCheckStatus string
+
+const (
+	MigrationCheckStatusPass   MigrationCheckStatus = "pass"
+	MigrationCheckStatusWarn   MigrationCheckStatus = "warn"
+	MigrationCheckStatusFlag   MigrationCheckStatus = "flag"
+	MigrationCheckStatusRefuse MigrationCheckStatus = "refuse"
+	MigrationCheckStatusInfo   MigrationCheckStatus = "info"
+)
+
+// AllValues returns all MigrationCheckStatus values.
+func (MigrationCheckStatus) AllValues() []MigrationCheckStatus {
+	return []MigrationCheckStatus{
+		MigrationCheckStatusPass,
+		MigrationCheckStatusWarn,
+		MigrationCheckStatusFlag,
+		MigrationCheckStatusRefuse,
+		MigrationCheckStatusInfo,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationCheckStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationCheckStatusPass:
+		return []byte(s), nil
+	case MigrationCheckStatusWarn:
+		return []byte(s), nil
+	case MigrationCheckStatusFlag:
+		return []byte(s), nil
+	case MigrationCheckStatusRefuse:
+		return []byte(s), nil
+	case MigrationCheckStatusInfo:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationCheckStatus) UnmarshalText(data []byte) error {
+	switch MigrationCheckStatus(data) {
+	case MigrationCheckStatusPass:
+		*s = MigrationCheckStatusPass
+		return nil
+	case MigrationCheckStatusWarn:
+		*s = MigrationCheckStatusWarn
+		return nil
+	case MigrationCheckStatusFlag:
+		*s = MigrationCheckStatusFlag
+		return nil
+	case MigrationCheckStatusRefuse:
+		*s = MigrationCheckStatusRefuse
+		return nil
+	case MigrationCheckStatusInfo:
+		*s = MigrationCheckStatusInfo
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationPhase
+type MigrationPhase string
+
+const (
+	MigrationPhaseNone       MigrationPhase = "none"
+	MigrationPhaseScanning   MigrationPhase = "scanning"
+	MigrationPhaseScanFailed MigrationPhase = "scan_failed"
+	MigrationPhaseScanned    MigrationPhase = "scanned"
+)
+
+// AllValues returns all MigrationPhase values.
+func (MigrationPhase) AllValues() []MigrationPhase {
+	return []MigrationPhase{
+		MigrationPhaseNone,
+		MigrationPhaseScanning,
+		MigrationPhaseScanFailed,
+		MigrationPhaseScanned,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationPhase) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationPhaseNone:
+		return []byte(s), nil
+	case MigrationPhaseScanning:
+		return []byte(s), nil
+	case MigrationPhaseScanFailed:
+		return []byte(s), nil
+	case MigrationPhaseScanned:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationPhase) UnmarshalText(data []byte) error {
+	switch MigrationPhase(data) {
+	case MigrationPhaseNone:
+		*s = MigrationPhaseNone
+		return nil
+	case MigrationPhaseScanning:
+		*s = MigrationPhaseScanning
+		return nil
+	case MigrationPhaseScanFailed:
+		*s = MigrationPhaseScanFailed
+		return nil
+	case MigrationPhaseScanned:
+		*s = MigrationPhaseScanned
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationReport
+type MigrationReport struct {
+	GeneratedAt time.Time `json:"generatedAt"`
+	// From the first line of the flash's `changes.txt`. Absent when it states none.
+	UnraidVersion OptString `json:"unraidVersion"`
+	// True when the scan ran only because `unverifiedLayout` overrode the refusal of the version or flash
+	// layout (Q24).
+	UnverifiedLayout bool                 `json:"unverifiedLayout"`
+	Verdict          MigrationVerdict     `json:"verdict"`
+	Rows             []MigrationReportRow `json:"rows"`
+}
+
+// GetGeneratedAt returns the value of GeneratedAt.
+func (s *MigrationReport) GetGeneratedAt() time.Time {
+	return s.GeneratedAt
+}
+
+// GetUnraidVersion returns the value of UnraidVersion.
+func (s *MigrationReport) GetUnraidVersion() OptString {
+	return s.UnraidVersion
+}
+
+// GetUnverifiedLayout returns the value of UnverifiedLayout.
+func (s *MigrationReport) GetUnverifiedLayout() bool {
+	return s.UnverifiedLayout
+}
+
+// GetVerdict returns the value of Verdict.
+func (s *MigrationReport) GetVerdict() MigrationVerdict {
+	return s.Verdict
+}
+
+// GetRows returns the value of Rows.
+func (s *MigrationReport) GetRows() []MigrationReportRow {
+	return s.Rows
+}
+
+// SetGeneratedAt sets the value of GeneratedAt.
+func (s *MigrationReport) SetGeneratedAt(val time.Time) {
+	s.GeneratedAt = val
+}
+
+// SetUnraidVersion sets the value of UnraidVersion.
+func (s *MigrationReport) SetUnraidVersion(val OptString) {
+	s.UnraidVersion = val
+}
+
+// SetUnverifiedLayout sets the value of UnverifiedLayout.
+func (s *MigrationReport) SetUnverifiedLayout(val bool) {
+	s.UnverifiedLayout = val
+}
+
+// SetVerdict sets the value of Verdict.
+func (s *MigrationReport) SetVerdict(val MigrationVerdict) {
+	s.Verdict = val
+}
+
+// SetRows sets the value of Rows.
+func (s *MigrationReport) SetRows(val []MigrationReportRow) {
+	s.Rows = val
+}
+
+// Ref: #/components/schemas/MigrationReportRow
+type MigrationReportRow struct {
+	// Which check the row belongs to, such as `unraid_version`, `boot_device`, `disk_mapping`,
+	// `disk_identity`, `parity_config`, `parity_size`, `smart`, `uid_99` or `sync_estimate`. Later parts
+	// of the scan add checks without changing this shape.
+	Check  string               `json:"check"`
+	Status MigrationCheckStatus `json:"status"`
+	// A slot, pool or device the row is about. Absent for the whole system.
+	Subject OptString `json:"subject"`
+	Detail  string    `json:"detail"`
+}
+
+// GetCheck returns the value of Check.
+func (s *MigrationReportRow) GetCheck() string {
+	return s.Check
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationReportRow) GetStatus() MigrationCheckStatus {
+	return s.Status
+}
+
+// GetSubject returns the value of Subject.
+func (s *MigrationReportRow) GetSubject() OptString {
+	return s.Subject
+}
+
+// GetDetail returns the value of Detail.
+func (s *MigrationReportRow) GetDetail() string {
+	return s.Detail
+}
+
+// SetCheck sets the value of Check.
+func (s *MigrationReportRow) SetCheck(val string) {
+	s.Check = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationReportRow) SetStatus(val MigrationCheckStatus) {
+	s.Status = val
+}
+
+// SetSubject sets the value of Subject.
+func (s *MigrationReportRow) SetSubject(val OptString) {
+	s.Subject = val
+}
+
+// SetDetail sets the value of Detail.
+func (s *MigrationReportRow) SetDetail(val string) {
+	s.Detail = val
+}
+
+// Ref: #/components/schemas/MigrationVerdict
+type MigrationVerdict string
+
+const (
+	MigrationVerdictGo             MigrationVerdict = "go"
+	MigrationVerdictGoWithWarnings MigrationVerdict = "go_with_warnings"
+	MigrationVerdictNoGo           MigrationVerdict = "no_go"
+)
+
+// AllValues returns all MigrationVerdict values.
+func (MigrationVerdict) AllValues() []MigrationVerdict {
+	return []MigrationVerdict{
+		MigrationVerdictGo,
+		MigrationVerdictGoWithWarnings,
+		MigrationVerdictNoGo,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationVerdict) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationVerdictGo:
+		return []byte(s), nil
+	case MigrationVerdictGoWithWarnings:
+		return []byte(s), nil
+	case MigrationVerdictNoGo:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationVerdict) UnmarshalText(data []byte) error {
+	switch MigrationVerdict(data) {
+	case MigrationVerdictGo:
+		*s = MigrationVerdictGo
+		return nil
+	case MigrationVerdictGoWithWarnings:
+		*s = MigrationVerdictGoWithWarnings
+		return nil
+	case MigrationVerdictNoGo:
+		*s = MigrationVerdictNoGo
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Structured outcome of one finished mover run (#273, doc 09 §2), persisted in SQLite rather than
@@ -12467,6 +12837,52 @@ func (o OptJobStatus) Get() (v JobStatus, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptJobStatus) Or(d JobStatus) JobStatus {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationReport returns new OptMigrationReport with value set to v.
+func NewOptMigrationReport(v MigrationReport) OptMigrationReport {
+	return OptMigrationReport{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationReport is optional MigrationReport.
+type OptMigrationReport struct {
+	Value MigrationReport
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationReport was set.
+func (o OptMigrationReport) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationReport) Reset() {
+	var v MigrationReport
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationReport) SetTo(v MigrationReport) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationReport) Get() (v MigrationReport, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationReport) Or(d MigrationReport) MigrationReport {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -17247,6 +17663,34 @@ func (s *StartFixRequest) SetConfirm(val bool) {
 // SetDisk sets the value of Disk.
 func (s *StartFixRequest) SetDisk(val OptInt32) {
 	s.Disk = val
+}
+
+type StartMigrationScanReq struct {
+	// The Flash Backup zip, its root being `/boot`.
+	File ht.MultipartFile `json:"file"`
+	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
+	// (Q24).
+	UnverifiedLayout OptBool `json:"unverifiedLayout"`
+}
+
+// GetFile returns the value of File.
+func (s *StartMigrationScanReq) GetFile() ht.MultipartFile {
+	return s.File
+}
+
+// GetUnverifiedLayout returns the value of UnverifiedLayout.
+func (s *StartMigrationScanReq) GetUnverifiedLayout() OptBool {
+	return s.UnverifiedLayout
+}
+
+// SetFile sets the value of File.
+func (s *StartMigrationScanReq) SetFile(val ht.MultipartFile) {
+	s.File = val
+}
+
+// SetUnverifiedLayout sets the value of UnverifiedLayout.
+func (s *StartMigrationScanReq) SetUnverifiedLayout(val OptBool) {
+	s.UnverifiedLayout = val
 }
 
 // Ref: #/components/schemas/StartRebalanceRequest
