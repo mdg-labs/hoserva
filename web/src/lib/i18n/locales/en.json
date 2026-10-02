@@ -356,6 +356,12 @@
       "checkFailed": "Could not check the Compose file.",
       "notAppliedInvalid": "Nothing was applied: the Compose file is not valid",
       "saveFailed": "Could not store the Compose file. Nothing was changed.",
+      "saveUnknown": {
+        "title": "Could not confirm whether the Compose file was stored",
+        "loading": "The connection ended before the server answered, so the file may or may not have been stored. Loading the file the server has now.",
+        "done": "The editor now shows the file the server has. If you want the stack started with a different file, edit it and apply again.",
+        "failed": "The file may or may not have been stored, and the file the server has now could not be loaded."
+      },
       "startFailed": "Could not start the stack.",
       "notStarted": "The file was stored, but the stack was not started",
       "notStartedDescription": "The stack keeps running from its previous definition until it is started again. Your text is kept in the editor.",
@@ -395,6 +401,10 @@
       "manuallyEdited": "Manually edited",
       "manuallyEditedHelp": "This app's Compose file was changed by hand. Applying settings only changes these values and never rewrites the Compose file.",
       "none": "This app has no settings to change.",
+      "notFound": {
+        "title": "App not found",
+        "description": "There is no app stack named {{name}} on this server any more, so there are no settings to show. It may have been removed."
+      },
       "noTemplate": {
         "title": "No settings form for this app",
         "unmanaged": "{{name}} is not part of an app stack that Hoserva manages, so there are no settings to change here.",
@@ -422,6 +432,12 @@
         "description": "Hoserva saves these values and starts the app with them. Every container whose settings changed is recreated, so it restarts and is briefly unavailable."
       },
       "saveFailed": "Could not save the settings. Nothing was changed.",
+      "saveUnknown": {
+        "title": "Could not confirm whether the settings were saved",
+        "loading": "The connection ended before the server answered, so the settings may or may not have been saved. Loading the settings the server has now.",
+        "done": "The form now shows the settings the server has. If they are not the ones you want, change them and apply again.",
+        "failed": "The settings may or may not have been saved, and the settings the server has now could not be loaded."
+      },
       "startFailed": "Could not start the app.",
       "notStarted": "The settings were saved, but the app was not restarted",
       "notStartedDescription": "The app keeps running with its previous settings until it is started again.",

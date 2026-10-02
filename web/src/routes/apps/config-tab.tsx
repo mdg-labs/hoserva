@@ -3,12 +3,14 @@
 // decided by the API: `updateStackConfig` checks it with the rules the install
 // form uses and writes only the stack's .env, and the page applies it by
 // starting the stack again.
-import { useMemo, useState } from "react";
+import { Boxes } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { Banner } from "@/components/patterns/banner";
 import { ConfirmDialog } from "@/components/patterns/confirm";
+import { EmptyState } from "@/components/patterns/empty-state";
 import { InlineNote } from "@/components/patterns/inline-note";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { SecretInput } from "@/components/patterns/secret-input";
@@ -41,24 +43,46 @@ import { InputField } from "@/routes/apps/install";
 
 type Job = components["schemas"]["Job"];
 
-const NO_TEMPLATE_CODES = ["stack_has_no_template", "stack_not_found"];
+const NO_TEMPLATE_CODE = "stack_has_no_template";
+const NOT_FOUND_CODE = "stack_not_found";
+const APPS_PATH = "/apps";
 const OFF = "off";
 const NEW_PASSWORD = "new-password";
 
-type Loaded = { kind: "config"; config: StackConfig } | { kind: "noTemplate" };
+type Loaded = { kind: "config"; config: StackConfig } | { kind: "noTemplate" } | { kind: "notFound" };
 type Failure = { message: string };
 type Start = { kind: "queued"; job: Job } | { kind: "notStarted"; message: string };
-type Phase = "idle" | "saving" | "starting";
+type Phase = "idle" | "saving" | "starting" | "reloading";
+type Unknown = { message: string | null; reload: "loading" | "done" | "failed" };
 
 async function loadConfig(stack: string, signal: AbortSignal): Promise<ClientResult<Loaded>> {
   const result = await getStackConfig(stack, signal);
-  if (result.error !== undefined && NO_TEMPLATE_CODES.includes(result.error.code)) {
+  if (result.error?.code === NO_TEMPLATE_CODE) {
     return { data: { kind: "noTemplate" }, response: { ok: true } };
+  }
+  if (result.error?.code === NOT_FOUND_CODE) {
+    return { data: { kind: "notFound" }, response: { ok: true } };
   }
   if (result.error !== undefined || result.response?.ok === false || result.data === undefined) {
     return { error: result.error, response: { ok: false } };
   }
   return { data: { kind: "config", config: result.data }, response: { ok: true } };
+}
+
+function NotFoundState({ name }: { name: string }): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <EmptyState
+      icon={Boxes}
+      title={t("apps.config.notFound.title")}
+      description={t("apps.config.notFound.description", { name })}
+      action={
+        <Link to={APPS_PATH} className={buttonVariants()}>
+          {t("apps.detail.notFound.action")}
+        </Link>
+      }
+    />
+  );
 }
 
 function NoTemplateNote({ app }: { app: App }): React.ReactElement {
@@ -173,6 +197,15 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [start, setStart] = useState<Start | null>(null);
+  const [unknown, setUnknown] = useState<Unknown | null>(null);
+  const alive = useRef(true);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const body = useMemo(() => buildConfigRequest(config.inputs, edits), [config.inputs, edits]);
   const busy = phase !== "idle";
@@ -215,30 +248,56 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
     }
   }
 
+  async function reload(message: string | null): Promise<void> {
+    setPhase("reloading");
+    setUnknown({ message, reload: "loading" });
+    let outcome: Unknown["reload"] = "failed";
+    try {
+      const parsed = parseClientResult(await getStackConfig(stack), t("apps.config.loadFailed"));
+      if (parsed.error === null && parsed.data !== undefined) {
+        setConfig(parsed.data);
+        setEdits(NO_EDITS);
+        outcome = "done";
+      }
+    } catch {
+      outcome = "failed";
+    }
+    if (alive.current) {
+      setUnknown({ message, reload: outcome });
+      setPhase("idle");
+    }
+  }
+
   async function handleApply(): Promise<void> {
     if (body === null || busy) {
       return;
     }
     setFailure(null);
     setStart(null);
+    setUnknown(null);
     setPhase("saving");
     let saved: StackConfig | undefined;
+    let unanswered: string | null | undefined;
     try {
       const result = await updateStackConfig(stack, body);
       const parsed = parseClientResult(result, t("apps.config.saveFailed"));
-      if (parsed.error !== null || parsed.data === undefined) {
-        setFailure({ message: parsed.error ?? t("apps.config.saveFailed") });
+      if (parsed.error !== null) {
+        setFailure({ message: parsed.error });
+      } else if (parsed.data === undefined) {
+        unanswered = null;
       } else {
         saved = parsed.data;
       }
     } catch (err: unknown) {
-      if (!isAbortError(err)) {
-        setFailure({ message: err instanceof Error ? err.message : t("apps.config.saveFailed") });
-      }
+      unanswered = isAbortError(err) || !(err instanceof Error) ? null : err.message;
     }
     if (saved === undefined) {
-      setPhase("idle");
       setConfirmOpen(false);
+      if (unanswered !== undefined && alive.current) {
+        await reload(unanswered);
+      } else {
+        setPhase("idle");
+      }
       return;
     }
     setConfig(saved);
@@ -260,6 +319,25 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
 
       {failure !== null && failedField === null ? (
         <Banner tone="error" title={t("apps.config.saveFailed")} description={failure.message} />
+      ) : null}
+      {unknown !== null ? (
+        <Banner
+          tone="warning"
+          title={t("apps.config.saveUnknown.title")}
+          description={
+            <>
+              <span className="block">{t(`apps.config.saveUnknown.${unknown.reload}`)}</span>
+              {unknown.message !== null ? <span className="block break-words">{unknown.message}</span> : null}
+            </>
+          }
+          action={
+            unknown.reload === "failed" ? (
+              <Button size="xs" variant="outline" onClick={() => void reload(unknown.message)}>
+                {t("apps.installed.retry")}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : null}
       {start?.kind === "notStarted" ? (
         <Banner
@@ -379,6 +457,9 @@ export function ConfigTab({ app }: { app: App }): React.ReactElement {
   }
   if (query.data === null) {
     return <LoadingBlock rows={3} />;
+  }
+  if (query.data.kind === "notFound") {
+    return <NotFoundState name={app.name} />;
   }
   if (query.data.kind === "noTemplate") {
     return <NoTemplateNote app={app} />;

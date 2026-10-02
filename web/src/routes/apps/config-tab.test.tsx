@@ -164,6 +164,17 @@ describe("Config tab", () => {
     expect(screen.queryByRole("button", { name: "Apply changes" })).not.toBeInTheDocument();
   });
 
+  it("shows a not-found state, not the no-form note, for a stack that no longer exists", async () => {
+    mockGet.mockImplementation(() => fail("stack_not_found", "no stack"));
+    renderTab();
+
+    expect(await screen.findByText("App not found")).toBeInTheDocument();
+    expect(screen.getByText(/no app stack named notes on this server any more/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to installed apps" })).toHaveAttribute("href", "/apps");
+    expect(screen.queryByText(/was not installed from an app template/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open the Compose editor" })).not.toBeInTheDocument();
+  });
+
   it("reports a settings request that failed, and tries again on request", async () => {
     mockGet.mockImplementationOnce(() => fail("stack_action_failed", "the .env cannot be opened"));
     renderTab();
@@ -256,21 +267,50 @@ describe("Applying", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("reports a save that never got an answer, and does not start the stack", async () => {
+  it("says the outcome is unknown when a save got no response, reloads the settings and does not start the stack", async () => {
     mockPut.mockImplementation(() => Promise.reject(new Error("network down")));
     renderTab();
     fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
+    mockGet.mockImplementation((path: string) =>
+      path === "/stacks/{name}/config"
+        ? ok(config({}, [{ name: "SITE_NAME", kind: "string", label: "Site name", value: "Team", readOnly: false }]))
+        : fail("unexpected", path),
+    );
+    const getsBefore = mockGet.mock.calls.length;
 
     const dialog = await applyDialog();
     fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
 
-    expect(await screen.findByText("network down")).toBeInTheDocument();
-    expect(screen.getByText("Could not save the settings. Nothing was changed.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not confirm whether the settings were saved")).toBeInTheDocument();
+    expect(await screen.findByText(/The form now shows the settings the server has/)).toBeInTheDocument();
+    expect(screen.getByText("network down")).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was changed/)).not.toBeInTheDocument();
+    expect(mockGet.mock.calls.length).toBe(getsBefore + 1);
     expect(mockPost).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Site name")).toHaveValue("Team");
+    expect(screen.queryByLabelText("Web interface port")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply changes" })).toBeDisabled();
   });
 
-  it("ignores an aborted save without reporting an error", async () => {
+  it("says so when the settings cannot be reloaded after a save with no response, and reloads on request", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderTab();
+    fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
+    mockGet.mockImplementationOnce(() => Promise.reject(new Error("still down")));
+
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText(/the settings the server has now could not be loaded/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was changed/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Site name")).toHaveValue("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/The form now shows the settings the server has/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Site name")).toHaveValue("Notes");
+  });
+
+  it("treats an abort after the request was sent as an unknown outcome and reloads", async () => {
     mockPut.mockImplementation(() => Promise.reject(new DOMException("aborted", "AbortError")));
     renderTab();
     fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
@@ -278,8 +318,10 @@ describe("Applying", () => {
     const dialog = await applyDialog();
     fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
 
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.queryByText("Could not save the settings. Nothing was changed.")).not.toBeInTheDocument();
+    expect(await screen.findByText("Could not confirm whether the settings were saved")).toBeInTheDocument();
+    expect(await screen.findByText(/The form now shows the settings the server has/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was changed/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Site name")).toHaveValue("Notes");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
