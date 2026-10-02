@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/App";
 import { AppShell } from "@/components/patterns/app-shell";
@@ -152,6 +152,15 @@ beforeEach(() => {
   mockPost.mockImplementation((_path: string, options: { params: { path: { id: string } } }) =>
     ok(container(options.params.path.id.replace("id-", ""), "running")),
   );
+});
+
+// Vitest globals are off, so Testing Library registers no cleanup of its own.
+// The last test's commit leaves React's passive-effect flush queued on
+// setImmediate; letting it run here keeps it from firing after jsdom is
+// torn down ("window is not defined", issue #539).
+afterEach(async () => {
+  cleanup();
+  await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
 describe("the /apps route", () => {
