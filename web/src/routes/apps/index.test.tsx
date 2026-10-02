@@ -177,6 +177,20 @@ describe("Installed apps", () => {
     expect(screen.queryByText(/up to date/i)).not.toBeInTheDocument();
   });
 
+  it("badges an update with no version detail as Update available, not Available version", async () => {
+    installGet(defaultFixture(), {
+      "/apps/updates": () =>
+        ok({
+          available: true,
+          updates: [{ container: "jellyfin", image: "example/jellyfin", tag: "1.0", status: "update_available" }],
+        }),
+    });
+    renderPage();
+
+    expect(await screen.findByText("Update available")).toBeInTheDocument();
+    expect(screen.queryByText("Available version")).not.toBeInTheDocument();
+  });
+
   it("says nothing about updates, and names the failure, when the update status cannot be loaded", async () => {
     installGet(defaultFixture(), { "/apps/updates": () => fail("internal", "registry index unreachable") });
     renderPage();

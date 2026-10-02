@@ -118,6 +118,8 @@ describe("Update tab", () => {
     expect(await screen.findByText("1.1")).toBeInTheDocument();
     expect(screen.getByText("1.0")).toBeInTheDocument();
     expect(screen.getByText("Newer version available (1.1)")).toBeInTheDocument();
+    expect(screen.getByText("Available version")).toBeInTheDocument();
+    expect(screen.queryByText("Update available")).not.toBeInTheDocument();
     expect(screen.getByText(new Date("2026-10-01T06:00:00Z").toLocaleString())).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /changelog/i })).not.toBeInTheDocument();
   });

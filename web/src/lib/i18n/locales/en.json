@@ -78,7 +78,7 @@
       "loadFailed": "Could not load the update status. Updates may be available.",
       "title": "Version",
       "current": "Installed version",
-      "available": "Available version",
+      "availableVersion": "Available version",
       "sameTagRebuilt": "{{tag}}, rebuilt",
       "status": "Update check",
       "checkedAt": "Last checked",

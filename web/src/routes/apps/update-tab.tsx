@@ -248,7 +248,7 @@ export function UpdateTab({ app, onChanged }: { app: App; onChanged: () => void 
                 <Fact label={t("apps.update.current")}>
                   <span className="break-all">{tag || t("apps.detail.notKnown")}</span>
                 </Fact>
-                <Fact label={t("apps.update.available")}>
+                <Fact label={t("apps.update.availableVersion")}>
                   {entry?.status === "update_available" && entry.kind === "new_version" ? (
                     <span className="break-all">{entry.availableTag}</span>
                   ) : entry?.status === "update_available" ? (
