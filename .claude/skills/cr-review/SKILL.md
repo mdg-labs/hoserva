@@ -179,11 +179,18 @@ to orchestrate's executor and verifier templates, which stay issue-based.
    gets a verifier of its own, `model: "opus"`. A failed finding gets
    orchestrate's fix round (step 9: at most three attempts, blocking
    findings verbatim). One that is still failing is not landed and not
-   replied to as fixed; say so in its reply and in your report.
+   replied to as fixed; say so in its reply and in your report. The fix
+   round amends in the executor's own clone, which the verifier does not
+   read: after each amend, rebuild the review clone as step 3 above does, with the amended
+   commit in place of the rejected one, and dispatch the fix-round verifier
+   against the SHA it now has there. A SHA that failed verification is never
+   landed.
 5. **Land only what passed.** For each passed commit, in order:
    `git fetch <review clone> <sha>`, `git cherry-pick -n FETCH_HEAD`, then
    `git commit` with the executor's message (the hook adds the trailer).
-   Read the landed diff yourself; a PASS does not replace that.
+   `<review clone>` is the latest rebuild and `<sha>` is the SHA the verifier
+   passed there, never the executor's original or a rejected one. Read the
+   landed diff yourself; a PASS does not replace that.
 
 Then continue with the known-escapes file, `make test`, the push and the
 replies below. On this path each reply is the executor's draft, edited
