@@ -451,7 +451,8 @@
         "title": "Could not confirm whether the Compose file was stored",
         "loading": "The connection ended before the server answered, so the file may or may not have been stored. Loading the file the server has now.",
         "done": "The editor now shows the file the server has. If you want the stack started with a different file, edit it and apply again.",
-        "failed": "The file may or may not have been stored, and the file the server has now could not be loaded."
+        "failed": "The file may or may not have been stored, and the file the server has now could not be loaded.",
+        "restore": "Put your edits back"
       },
       "startFailed": "Could not start the stack.",
       "notStarted": "The file was stored, but the stack was not started",

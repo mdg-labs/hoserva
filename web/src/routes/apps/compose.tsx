@@ -218,7 +218,7 @@ type Status =
   | { kind: "checked" }
   | { kind: "checkFailed"; code?: string; message: string }
   | { kind: "saveFailed"; code?: string; message: string }
-  | { kind: "saveUnknown"; message: string | null; reload: "loading" | "done" | "failed" }
+  | { kind: "saveUnknown"; message: string | null; reload: "loading" | "done" | "failed"; draft: string | null }
   | { kind: "notStarted"; message: string }
   | { kind: "queued"; job: Job };
 
@@ -227,11 +227,13 @@ function StatusBanners({
   onRetryStart,
   retrying,
   onRetryReload,
+  onRestoreDraft,
 }: {
   status: Status | null;
   onRetryStart: () => void;
   retrying: boolean;
   onRetryReload: (message: string | null) => void;
+  onRestoreDraft: (draft: string) => void;
 }): React.ReactElement | null {
   const { t } = useTranslation();
   if (status === null) {
@@ -259,7 +261,8 @@ function StatusBanners({
           description={detail(status.message)}
         />
       );
-    case "saveUnknown":
+    case "saveUnknown": {
+      const draft = status.draft;
       return (
         <Banner
           tone="warning"
@@ -275,10 +278,15 @@ function StatusBanners({
               <Button size="xs" variant="outline" onClick={() => onRetryReload(status.message)}>
                 {t("apps.installed.retry")}
               </Button>
+            ) : status.reload === "done" && draft !== null ? (
+              <Button size="xs" variant="outline" onClick={() => onRestoreDraft(draft)}>
+                {t("apps.compose.saveUnknown.restore")}
+              </Button>
             ) : undefined
           }
         />
       );
+    }
     case "notStarted":
       return (
         <Banner
@@ -415,9 +423,11 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
     }
   }
 
-  async function reloadStored(message: string | null): Promise<void> {
+  // The save may not have been stored, so the text the editor held when the
+  // reload began stays recoverable once the server's file replaces it.
+  async function reloadStored(message: string | null, draft: string): Promise<void> {
     setPhase("saving");
-    setStatus({ kind: "saveUnknown", message, reload: "loading" });
+    setStatus({ kind: "saveUnknown", message, reload: "loading", draft: null });
     const loaded = await call(() => getStack(stack.name), t("apps.compose.loadFailed"));
     if (!alive.current) {
       return;
@@ -426,11 +436,21 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
       setStack(loaded.data);
       setText(loaded.data.compose);
       setBaseline(loaded.data.compose);
-      setStatus({ kind: "saveUnknown", message, reload: "done" });
+      setStatus({
+        kind: "saveUnknown",
+        message,
+        reload: "done",
+        draft: draft === loaded.data.compose ? null : draft,
+      });
     } else {
-      setStatus({ kind: "saveUnknown", message, reload: "failed" });
+      setStatus({ kind: "saveUnknown", message, reload: "failed", draft: null });
     }
     setPhase("idle");
+  }
+
+  function restoreDraft(draft: string): void {
+    setText(draft);
+    setStatus(null);
   }
 
   async function handleApply(): Promise<void> {
@@ -444,7 +464,7 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
         setPhase("idle");
         setStatus({ kind: "saveFailed", code: stored.code, message: stored.message });
       } else if (alive.current) {
-        await reloadStored(stored.ok || stored.aborted ? null : stored.message);
+        await reloadStored(stored.ok || stored.aborted ? null : stored.message, submitted);
       }
       return;
     }
@@ -502,7 +522,8 @@ function ComposeEditor({ initial, compose }: { initial: Stack; compose: string }
         status={status}
         retrying={phase === "starting"}
         onRetryStart={() => void handleStart()}
-        onRetryReload={(message) => void reloadStored(message)}
+        onRetryReload={(message) => void reloadStored(message, text)}
+        onRestoreDraft={restoreDraft}
       />
       {startedJob !== null ? <JobFollow queued={startedJob} stackName={stack.name} /> : null}
 
