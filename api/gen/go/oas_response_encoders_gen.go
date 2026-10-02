@@ -28,6 +28,19 @@ func encodeAcknowledgeDegradedArrayResponse(response *SystemStatus, w http.Respo
 	return nil
 }
 
+func encodeAddCatalogSourceResponse(response *CatalogSource, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeAddDiskResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -153,6 +166,19 @@ func encodeConfirmNetworkSettingsResponse(response *NetworkSettings, w http.Resp
 
 func encodeConfirmTotpResponse(response *ConfirmTotpNoContent, w http.ResponseWriter, span trace.Span) error {
 	w.WriteHeader(204)
+
+	return nil
+}
+
+func encodeConvertUnraidTemplateResponse(response *UnraidConversion, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
 
 	return nil
 }
@@ -969,6 +995,19 @@ func encodeGetStackResponse(response *Stack, w http.ResponseWriter, span trace.S
 	return nil
 }
 
+func encodeGetStackTemplateUpdateResponse(response *StackTemplateUpdate, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeGetStatusResponse(response *SystemStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -1139,6 +1178,19 @@ func encodeListBackupDestinationsResponse(response *ListBackupDestinationsOK, w 
 }
 
 func encodeListCatalogResponse(response *CatalogList, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeListCatalogSourcesResponse(response *CatalogSourceList, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 
@@ -1540,6 +1592,19 @@ func encodeRefreshCatalogResponse(response *CatalogRefresh, w http.ResponseWrite
 	return nil
 }
 
+func encodeRefreshCatalogSourceResponse(response *CatalogRefresh, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeRegenerateTLSCertificateResponse(response *NetworkSettings, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -1575,6 +1640,12 @@ func encodeRemoveAppResponse(response *RemoveAppResult, w http.ResponseWriter, s
 	if _, err := e.WriteTo(w); err != nil {
 		return errors.Wrap(err, "write")
 	}
+
+	return nil
+}
+
+func encodeRemoveCatalogSourceResponse(response *RemoveCatalogSourceNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
 
 	return nil
 }

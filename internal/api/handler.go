@@ -206,6 +206,11 @@ type Handler struct {
 	// reports the last one on /catalog (doc 04 §7). Nil returns 501 from
 	// refreshCatalog and leaves the list without check fields.
 	CatalogRefresh CatalogRefresher
+	// CatalogSources adds, refreshes, lists and removes the user-added
+	// catalog sources behind /catalog-sources (doc 04 §4) and resolves the
+	// source a stack was installed from for
+	// /stacks/{name}/template-update. Nil returns 501 from those operations.
+	CatalogSources CatalogSourceService
 	// CatalogSettings stores the catalog refresh settings behind
 	// /settings/catalog. Nil returns 501 from those operations.
 	CatalogSettings CatalogSettingsStore

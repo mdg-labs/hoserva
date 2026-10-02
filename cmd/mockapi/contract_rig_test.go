@@ -773,6 +773,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	h.Catalog = mockCatalog()
 	h.CatalogRefresh = &scriptedCatalogRefresher{}
 	h.CatalogSettings = store.NewCatalogSettingsStore(db)
+	h.CatalogSources = contractCatalogSources(t, db, h.CatalogRefresh.(*scriptedCatalogRefresher))
 	h.TemplateInstall = &template.Installer{
 		Catalog: mockCatalog(),
 		Stacks:  stacks,

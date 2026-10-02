@@ -73,7 +73,7 @@ func startedTemplatesIn(t *testing.T, stateDir string, notifier catalogPublisher
 	if withSettings {
 		settings = store.NewCatalogSettingsStore(db)
 	}
-	startTemplates(h, stateDir, apps, shares, notifier, settings)
+	startTemplates(h, stateDir, apps, shares, notifier, settings, store.NewCatalogSourceStore(db))
 	if h.TemplateInstall == nil {
 		t.Fatal("startTemplates left Handler.TemplateInstall nil, so every /templates operation would 501")
 	}

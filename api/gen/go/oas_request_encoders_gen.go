@@ -15,6 +15,20 @@ import (
 	"github.com/ogen-go/ogen/uri"
 )
 
+func encodeAddCatalogSourceRequest(
+	req *AddCatalogSourceRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeAddDiskRequest(
 	req *AddDiskRequest,
 	r *http.Request,
@@ -101,6 +115,20 @@ func encodeConfigureLetsEncryptRequest(
 
 func encodeConfirmTotpRequest(
 	req *TotpConfirmRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeConvertUnraidTemplateRequest(
+	req *UnraidConvertRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

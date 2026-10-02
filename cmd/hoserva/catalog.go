@@ -63,6 +63,7 @@ func catalogCmd() *cobra.Command {
 		},
 	})
 	cmd.AddCommand(catalogSettingsCmd())
+	cmd.AddCommand(catalogSourceCmd())
 	cmd.AddCommand(&cobra.Command{
 		Use:   "show TEMPLATE-ID",
 		Short: "Show a template's details, the privileges it asks for and its Compose file",
@@ -138,13 +139,13 @@ func catalogListSummary(list *apiv1.CatalogList) string {
 		fmt.Fprintf(&sb, "Last checked %s: %s.\n", at.UTC().Format("2006-01-02 15:04 UTC"), list.LastOutcome.Or(""))
 	}
 	tw := tabwriter.NewWriter(&sb, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tTITLE\tREVISION\tCATEGORIES\tSOURCE\tINSTALLED")
+	_, _ = fmt.Fprintln(tw, "ID\tTITLE\tREVISION\tCATEGORIES\tSOURCE\tTRUST\tINSTALLED")
 	for _, e := range list.Templates {
 		installed := "no"
 		if e.Installed {
 			installed = "yes"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", e.ID, e.Title, e.Revision, strings.Join(e.Categories, ","), e.Source, installed)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", e.ID, e.Title, e.Revision, strings.Join(e.Categories, ","), e.Source, catalogSourceBadge(e.SourceKind, e.Signed), installed)
 	}
 	_ = tw.Flush()
 	return sb.String()
@@ -152,7 +153,10 @@ func catalogListSummary(list *apiv1.CatalogList) string {
 
 func catalogTemplateSummary(t *apiv1.CatalogTemplate) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s (%s), revision %d, from the %s source.\n", t.Title, t.ID, t.Revision, t.Source)
+	fmt.Fprintf(&sb, "%s (%s), revision %d, from the %s source (%s).\n", t.Title, t.ID, t.Revision, t.Source, catalogSourceBadge(t.SourceKind, t.Signed))
+	if t.SourceKind == apiv1.CatalogSourceKindUserAdded && !t.Signed {
+		fmt.Fprintln(&sb, "This source is unsigned: nothing proves the template came from its publisher.")
+	}
 	fmt.Fprintf(&sb, "Categories: %s\nDocumentation: %s\n", strings.Join(t.Categories, ", "), t.Docs)
 	if len(t.Privileges) == 0 {
 		fmt.Fprintln(&sb, "Privileges: none beyond an ordinary container.")

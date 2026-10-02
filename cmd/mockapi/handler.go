@@ -120,6 +120,14 @@ type handler struct {
 	catalogMu     sync.Mutex
 	catalogChecks int
 	catalogLast   *apiv1.CatalogRefresh
+	// sourcesMu guards catalogSources, the user-added catalog sources added
+	// through this mock instance in the order they were added after the seeded one, and
+	// nextSourceID, which numbers them. It starts with one unsigned source
+	// that supplies a template (mockExtrasCatalog); a source added through
+	// this mock supplies none.
+	sourcesMu      sync.Mutex
+	catalogSources []apiv1.CatalogSource
+	nextSourceID   int
 	// catalogSettings are the catalog refresh settings (guarded by
 	// catalogMu); the mock never checks by itself, whatever they say.
 	catalogSettings store.CatalogSettings
@@ -207,6 +215,7 @@ func newHandler(scenario string) (*handler, error) {
 		bulkExcluded:    make(map[string]bool),
 		imageKeepDays:   store.DefaultImageKeepDays,
 		catalogSettings: store.DefaultCatalogSettings,
+		catalogSources:  mockSeededSources(),
 
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),

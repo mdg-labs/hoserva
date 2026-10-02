@@ -111,11 +111,115 @@ var mockIcons = map[string][]byte{
 	"risky-agent": []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2 22 22H2z" fill="#cd5c5c"/></svg>`),
 }
 
+// mockExtrasTemplates are the templates of the one user-added source the
+// mock starts with. That source has no public key, so its entries are
+// badged user-added and unsigned.
+var mockExtrasTemplates = map[string]string{
+	"quickpaste": `services:
+  paste:
+    image: registry.example.org/quickpaste/quickpaste:2.1.0
+    network_mode: host
+    volumes:
+      - ${APPDATA}/quickpaste:/data
+x-hoserva:
+  schema: 1
+  id: quickpaste
+  revision: 2
+  title: Quick Paste
+  categories: [tools]
+  icon: icon.svg
+  docs: https://example.org/quickpaste/docs
+  inputs:
+    APPDATA: { kind: path, role: appdata, default: /mnt/cache/appdata }
+`,
+}
+
+var mockExtrasIcons = map[string][]byte{
+	"quickpaste": []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2" fill="#b8860b"/></svg>`),
+}
+
+// mockExtrasCatalog is what the mock's seeded user-added source supplies.
+func mockExtrasCatalog() template.MapCatalog {
+	return template.MapCatalog{
+		Source:      mockExtrasSourceID,
+		Kind:        store.CatalogSourceUserAdded,
+		Signed:      false,
+		Serial:      1,
+		GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		Templates:   mockExtrasTemplates,
+		Icons:       mockExtrasIcons,
+	}
+}
+
+// mockMerged is the catalog as the daemon serves it: the curated catalog's
+// templates first, then the user-added sources' in the order they were
+// added, and a template id an earlier one lists is never supplied by a later
+// one. A source added through this mock supplies no templates of its own;
+// only the seeded one does.
+type mockMerged struct{ catalogs []template.Catalog }
+
+func (h *handler) mockCatalogs() mockMerged {
+	merged := mockMerged{catalogs: []template.Catalog{mockCatalog()}}
+	h.sourcesMu.Lock()
+	defer h.sourcesMu.Unlock()
+	for _, s := range h.catalogSources {
+		if s.ID == mockExtrasSourceID {
+			merged.catalogs = append(merged.catalogs, mockExtrasCatalog())
+		}
+	}
+	return merged
+}
+
+func (m mockMerged) Name() string { return template.SourceCurated }
+
+func (m mockMerged) Index(ctx context.Context) (template.Index, error) {
+	var out template.Index
+	seen := map[string]bool{}
+	for i, c := range m.catalogs {
+		idx, err := c.Index(ctx)
+		if err != nil {
+			return template.Index{}, err
+		}
+		if i == 0 {
+			out.Serial, out.GeneratedAt = idx.Serial, idx.GeneratedAt
+		}
+		for _, t := range idx.Templates {
+			if !seen[t.ID] {
+				seen[t.ID] = true
+				out.Templates = append(out.Templates, t)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (m mockMerged) Entry(ctx context.Context, id string) (template.Entry, error) {
+	for _, c := range m.catalogs {
+		e, err := c.Entry(ctx, id)
+		if !errors.Is(err, template.ErrTemplateNotFound) {
+			return e, err
+		}
+	}
+	return template.Entry{}, fmt.Errorf("%w: %q", template.ErrTemplateNotFound, id)
+}
+
+func (m mockMerged) Icon(ctx context.Context, id string) (template.Icon, error) {
+	for _, c := range m.catalogs {
+		ic, err := c.Icon(ctx, id)
+		if !errors.Is(err, template.ErrTemplateNotFound) {
+			return ic, err
+		}
+	}
+	return template.Icon{}, fmt.Errorf("%w: %q", template.ErrTemplateNotFound, id)
+}
+
 // mockCatalog is this mock's catalog source: the curated source's name over
 // the mock templates and their icons.
 func mockCatalog() template.MapCatalog {
 	return template.MapCatalog{
 		Source:      template.SourceCurated,
+		Kind:        store.CatalogSourceCurated,
+		Signed:      true,
 		Serial:      1,
 		GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		Templates:   mockTemplates,
@@ -249,7 +353,7 @@ func (m mockStackCreator) Create(_ context.Context, n container.NewStack) (conta
 
 func (h *handler) templateInstaller() *template.Installer {
 	return &template.Installer{
-		Catalog: mockCatalog(),
+		Catalog: h.mockCatalogs(),
 		Stacks:  mockStackCreator{h},
 		Ports:   mockPorts{h},
 		Shares: func(context.Context) ([]string, error) {
@@ -297,8 +401,7 @@ func mapMockTemplateError(name string, err error) error {
 }
 
 func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
-	catalog := mockCatalog()
-	index, err := catalog.Index(ctx)
+	index, err := h.mockCatalogs().Index(ctx)
 	if err != nil {
 		return nil, mapMockTemplateError("", err)
 	}
@@ -315,9 +418,10 @@ func (h *handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 		out.GeneratedAt = apiv1.NewOptDateTime(index.GeneratedAt)
 	}
 	for i, t := range index.Templates {
+		kind, signed := mockBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
 			ID: t.ID, Revision: t.Revision, Title: t.Title, Categories: t.Categories, Docs: t.Docs,
-			Source: catalog.Name(), Installed: installed[t.ID],
+			Source: t.Source, SourceKind: kind, Signed: signed, Installed: installed[t.ID],
 		}
 	}
 	h.catalogMu.Lock()
@@ -386,13 +490,14 @@ func (h *handler) UpdateCatalogSettings(_ context.Context, req *apiv1.CatalogSet
 }
 
 func (h *handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalogTemplateParams) (*apiv1.CatalogTemplate, error) {
-	d, err := template.Show(ctx, mockCatalog(), params.ID)
+	d, err := template.Show(ctx, h.mockCatalogs(), params.ID)
 	if err != nil {
 		return nil, mapMockTemplateError(params.ID, err)
 	}
+	kind, signed := mockBadge(d.Kind, d.Signed)
 	out := &apiv1.CatalogTemplate{
 		ID: d.ID, Revision: d.Revision, Title: d.Title, Categories: d.Categories, Docs: d.Docs,
-		Source: d.Source, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
+		Source: d.Source, SourceKind: kind, Signed: signed, Compose: d.Compose, Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
 	}
 	for i, pr := range d.Privileges {
 		tp := apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description}
@@ -410,7 +515,7 @@ const (
 )
 
 func (h *handler) GetCatalogTemplateIcon(ctx context.Context, params apiv1.GetCatalogTemplateIconParams) (apiv1.GetCatalogTemplateIconRes, error) {
-	icon, err := mockCatalog().Icon(ctx, params.ID)
+	icon, err := h.mockCatalogs().Icon(ctx, params.ID)
 	if err != nil {
 		return nil, mapMockTemplateError(params.ID, err)
 	}
@@ -492,4 +597,51 @@ func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 		out.Privileges[i] = tp
 	}
 	return out
+}
+
+// ConvertUnraidTemplate runs the production converter over the posted
+// template, so the mock refuses and warns exactly as the daemon does.
+func (h *handler) ConvertUnraidTemplate(_ context.Context, req *apiv1.UnraidConvertRequest) (*apiv1.UnraidConversion, error) {
+	conv, err := template.ConvertUnraid([]byte(req.XML), template.ConvertOptions{})
+	if err != nil {
+		if errors.Is(err, template.ErrInvalidUnraidTemplate) {
+			return nil, &mockError{code: "invalid_unraid_template", statusCode: 400, message: err.Error()}
+		}
+		return nil, err
+	}
+	opt := func(s string) apiv1.OptString {
+		if s == "" {
+			return apiv1.OptString{}
+		}
+		return apiv1.NewOptString(s)
+	}
+	out := &apiv1.UnraidConversion{
+		Source:     conv.Source,
+		Compose:    conv.Compose,
+		Clean:      conv.Clean(),
+		Warnings:   make([]apiv1.ConversionWarning, len(conv.Warnings)),
+		Privileges: make([]apiv1.TemplatePrivilege, len(conv.Privileges)),
+		Metadata: apiv1.UnraidTemplateMetadata{
+			Title:      conv.Metadata.Title,
+			Overview:   opt(conv.Metadata.Overview),
+			Category:   opt(conv.Metadata.Category),
+			Support:    opt(conv.Metadata.Support),
+			Project:    opt(conv.Metadata.Project),
+			Webui:      opt(conv.Metadata.WebUI),
+			Icon:       opt(conv.Metadata.Icon),
+			Requires:   opt(conv.Metadata.Requires),
+			DonateLink: opt(conv.Metadata.DonateLink),
+			Variables:  make([]apiv1.UnraidVariable, len(conv.Metadata.Variables)),
+		},
+	}
+	for i, w := range conv.Warnings {
+		out.Warnings[i] = apiv1.ConversionWarning{Class: apiv1.ConversionWarningClass(w.Class), Message: w.Message, Detail: opt(w.Detail), Command: opt(w.Command)}
+	}
+	for i, pr := range conv.Privileges {
+		out.Privileges[i] = apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description, Detail: opt(pr.Detail)}
+	}
+	for i, v := range conv.Metadata.Variables {
+		out.Metadata.Variables[i] = apiv1.UnraidVariable{Name: v.Name, Value: v.Value, Description: opt(v.Description), Secret: v.Secret}
+	}
+	return out, nil
 }

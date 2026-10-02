@@ -85,13 +85,16 @@ func (h *Handler) ListCatalog(ctx context.Context) (*apiv1.CatalogList, error) {
 		out.GeneratedAt = apiv1.NewOptDateTime(index.GeneratedAt)
 	}
 	for i, t := range index.Templates {
+		kind, signed := sourceBadge(t.Kind, t.Signed)
 		out.Templates[i] = apiv1.CatalogEntry{
 			ID:         t.ID,
 			Revision:   t.Revision,
 			Title:      t.Title,
 			Categories: t.Categories,
 			Docs:       t.Docs,
-			Source:     h.Catalog.Name(),
+			Source:     t.Source,
+			SourceKind: kind,
+			Signed:     signed,
 			Installed:  installed[t.ID],
 		}
 	}
@@ -112,6 +115,10 @@ func (h *Handler) RefreshCatalog(ctx context.Context) (*apiv1.CatalogRefresh, er
 	if err != nil {
 		return nil, fmt.Errorf("waiting for the catalog check: %w", err)
 	}
+	return checkResultToAPI(res), nil
+}
+
+func checkResultToAPI(res template.CheckResult) *apiv1.CatalogRefresh {
 	out := &apiv1.CatalogRefresh{CheckedAt: res.CheckedAt, Outcome: apiv1.CatalogCheckOutcome(res.Outcome)}
 	switch res.Outcome {
 	case template.OutcomeUpdated:
@@ -121,7 +128,7 @@ func (h *Handler) RefreshCatalog(ctx context.Context) (*apiv1.CatalogRefresh, er
 		out.Reason = apiv1.NewOptCatalogRefreshReason(apiv1.CatalogRefreshReason(res.Reason))
 		out.Message = apiv1.NewOptString(res.Message)
 	}
-	return out, nil
+	return out
 }
 
 func catalogSettingsToAPI(s store.CatalogSettings) *apiv1.CatalogSettings {
@@ -169,6 +176,7 @@ func (h *Handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalo
 	if err != nil {
 		return nil, mapCatalogError(err)
 	}
+	kind, signed := sourceBadge(d.Kind, d.Signed)
 	out := &apiv1.CatalogTemplate{
 		ID:         d.ID,
 		Revision:   d.Revision,
@@ -176,6 +184,8 @@ func (h *Handler) GetCatalogTemplate(ctx context.Context, params apiv1.GetCatalo
 		Categories: d.Categories,
 		Docs:       d.Docs,
 		Source:     d.Source,
+		SourceKind: kind,
+		Signed:     signed,
 		Compose:    d.Compose,
 		Privileges: make([]apiv1.TemplatePrivilege, len(d.Privileges)),
 	}

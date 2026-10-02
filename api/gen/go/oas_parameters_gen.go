@@ -2329,6 +2329,72 @@ func decodeGetStackParams(args [1]string, argsEscaped bool, r *http.Request) (pa
 	return params, nil
 }
 
+// GetStackTemplateUpdateParams is parameters of getStackTemplateUpdate operation.
+type GetStackTemplateUpdateParams struct {
+	// The stack's name.
+	Name string
+}
+
+func unpackGetStackTemplateUpdateParams(packed middleware.Parameters) (params GetStackTemplateUpdateParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetStackTemplateUpdateParams(args [1]string, argsEscaped bool, r *http.Request) (params GetStackTemplateUpdateParams, _ error) {
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetUserSharePermissionsParams is parameters of getUserSharePermissions operation.
 type GetUserSharePermissionsParams struct {
 	UserId uuid.UUID
@@ -2989,6 +3055,72 @@ func decodeRecreateAppParams(args [1]string, argsEscaped bool, r *http.Request) 
 	return params, nil
 }
 
+// RefreshCatalogSourceParams is parameters of refreshCatalogSource operation.
+type RefreshCatalogSourceParams struct {
+	// The source's id, as listed by `listCatalogSources`.
+	ID string
+}
+
+func unpackRefreshCatalogSourceParams(packed middleware.Parameters) (params RefreshCatalogSourceParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "id",
+			In:   "path",
+		}
+		params.ID = packed[key].(string)
+	}
+	return params
+}
+
+func decodeRefreshCatalogSourceParams(args [1]string, argsEscaped bool, r *http.Request) (params RefreshCatalogSourceParams, _ error) {
+	// Decode path: id.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "id",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.ID = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // RemoveAppParams is parameters of removeApp operation.
 type RemoveAppParams struct {
 	// Also delete the container's appdata. Never implied by anything else; absent means false.
@@ -3065,6 +3197,72 @@ func decodeRemoveAppParams(args [1]string, argsEscaped bool, r *http.Request) (p
 			Err:  err,
 		}
 	}
+	// Decode path: id.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "id",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.ID = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// RemoveCatalogSourceParams is parameters of removeCatalogSource operation.
+type RemoveCatalogSourceParams struct {
+	// The source's id, as listed by `listCatalogSources`.
+	ID string
+}
+
+func unpackRemoveCatalogSourceParams(packed middleware.Parameters) (params RemoveCatalogSourceParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "id",
+			In:   "path",
+		}
+		params.ID = packed[key].(string)
+	}
+	return params
+}
+
+func decodeRemoveCatalogSourceParams(args [1]string, argsEscaped bool, r *http.Request) (params RemoveCatalogSourceParams, _ error) {
 	// Decode path: id.
 	if err := func() error {
 		param := args[0]

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/App";
 import { AppShell } from "@/components/patterns/app-shell";
@@ -154,6 +154,15 @@ beforeEach(() => {
   );
 });
 
+// Vitest globals are off, so Testing Library registers no cleanup of its own.
+// The last test's commit leaves React's passive-effect flush queued on
+// setImmediate; letting it run here keeps it from firing after jsdom is
+// torn down ("window is not defined", issue #539).
+afterEach(async () => {
+  cleanup();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
 describe("the /apps route", () => {
   it("renders the Installed page from the application's route tree", async () => {
     installGet(defaultFixture());
@@ -175,6 +184,20 @@ describe("Installed apps", () => {
     expect(screen.getByText("Not checked")).toBeInTheDocument();
     expect(screen.getByText("the registry is rate limiting requests")).toBeInTheDocument();
     expect(screen.queryByText(/up to date/i)).not.toBeInTheDocument();
+  });
+
+  it("badges an update with no version detail as Update available, not Available version", async () => {
+    installGet(defaultFixture(), {
+      "/apps/updates": () =>
+        ok({
+          available: true,
+          updates: [{ container: "jellyfin", image: "example/jellyfin", tag: "1.0", status: "update_available" }],
+        }),
+    });
+    renderPage();
+
+    expect(await screen.findByText("Update available")).toBeInTheDocument();
+    expect(screen.queryByText("Available version")).not.toBeInTheDocument();
   });
 
   it("says nothing about updates, and names the failure, when the update status cannot be loaded", async () => {

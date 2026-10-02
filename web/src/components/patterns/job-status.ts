@@ -39,3 +39,7 @@ export function jobStatusLabel(
       return t("jobs.status.unknown");
   }
 }
+
+export function isJobFinished(status: JobStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "interrupted";
+}

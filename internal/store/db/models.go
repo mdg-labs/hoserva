@@ -112,6 +112,16 @@ type CacheUsageBreakdown struct {
 	ComputedAt        string `json:"computed_at"`
 }
 
+type CatalogSource struct {
+	ID                string `json:"id"`
+	Url               string `json:"url"`
+	Kind              string `json:"kind"`
+	PublicKey         string `json:"public_key"`
+	SignatureVerified int64  `json:"signature_verified"`
+	LastRefreshedAt   string `json:"last_refreshed_at"`
+	AddedAt           string `json:"added_at"`
+}
+
 type ContainerImageHistory struct {
 	ID                  int64  `json:"id"`
 	Container           string `json:"container"`

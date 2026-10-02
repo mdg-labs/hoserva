@@ -105,3 +105,62 @@ func privilegeToAPI(pr template.Privilege) apiv1.TemplatePrivilege {
 	}
 	return tp
 }
+
+// ConvertUnraidTemplate converts an Unraid XML template to a Compose file for
+// review (doc 04 §5). It needs nothing from the daemon: the conversion is a
+// pure function of the template text, and nothing is created or run.
+func (h *Handler) ConvertUnraidTemplate(_ context.Context, req *apiv1.UnraidConvertRequest) (*apiv1.UnraidConversion, error) {
+	conv, err := template.ConvertUnraid([]byte(req.XML), template.ConvertOptions{})
+	if err != nil {
+		if errors.Is(err, template.ErrInvalidUnraidTemplate) {
+			return nil, &apiError{code: "invalid_unraid_template", statusCode: 400, message: err.Error()}
+		}
+		return nil, err
+	}
+	out := conversionToAPI(conv)
+	return &out, nil
+}
+
+func conversionToAPI(c *template.Conversion) apiv1.UnraidConversion {
+	out := apiv1.UnraidConversion{
+		Source:     c.Source,
+		Compose:    c.Compose,
+		Clean:      c.Clean(),
+		Warnings:   make([]apiv1.ConversionWarning, len(c.Warnings)),
+		Privileges: make([]apiv1.TemplatePrivilege, len(c.Privileges)),
+		Metadata: apiv1.UnraidTemplateMetadata{
+			Title:      c.Metadata.Title,
+			Overview:   optString(c.Metadata.Overview),
+			Category:   optString(c.Metadata.Category),
+			Support:    optString(c.Metadata.Support),
+			Project:    optString(c.Metadata.Project),
+			Webui:      optString(c.Metadata.WebUI),
+			Icon:       optString(c.Metadata.Icon),
+			Requires:   optString(c.Metadata.Requires),
+			DonateLink: optString(c.Metadata.DonateLink),
+			Variables:  make([]apiv1.UnraidVariable, len(c.Metadata.Variables)),
+		},
+	}
+	for i, w := range c.Warnings {
+		out.Warnings[i] = apiv1.ConversionWarning{
+			Class:   apiv1.ConversionWarningClass(w.Class),
+			Message: w.Message,
+			Detail:  optString(w.Detail),
+			Command: optString(w.Command),
+		}
+	}
+	for i, p := range c.Privileges {
+		out.Privileges[i] = privilegeToAPI(p)
+	}
+	for i, v := range c.Metadata.Variables {
+		out.Metadata.Variables[i] = apiv1.UnraidVariable{Name: v.Name, Value: v.Value, Description: optString(v.Description), Secret: v.Secret}
+	}
+	return out
+}
+
+func optString(s string) apiv1.OptString {
+	if s == "" {
+		return apiv1.OptString{}
+	}
+	return apiv1.NewOptString(s)
+}

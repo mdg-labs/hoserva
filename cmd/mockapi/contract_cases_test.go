@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	ht "github.com/ogen-go/ogen/http"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/template"
 )
 
 // contractCases is #272's request table: every entry names the operation
@@ -778,6 +781,31 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Unraid template converter (#69) ---
+	{
+		op:   "ConvertUnraidTemplate",
+		name: "valid_template_with_untranslated_flag",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConvertUnraidTemplate(ctx, &apiv1.UnraidConvertRequest{XML: `<Container><Name>a</Name><Repository>x/y:1</Repository><ExtraParams>--exotic=1</ExtraParams></Container>`})
+			return err
+		},
+	},
+	{
+		op:   "ConvertUnraidTemplate",
+		name: "not_a_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConvertUnraidTemplate(ctx, &apiv1.UnraidConvertRequest{XML: `<Compose/>`})
+			return err
+		},
+	},
+	{
+		op:   "ConvertUnraidTemplate",
+		name: "template_without_an_image",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConvertUnraidTemplate(ctx, &apiv1.UnraidConvertRequest{XML: `<Container><Name>a</Name></Container>`})
+			return err
+		},
+	},
 	// --- Template install (#280) ---
 	{
 		op:   "PreviewTemplateInstall",
@@ -997,6 +1025,239 @@ var contractCases = []contractCase{
 		name: "unknown_template_is_not_found",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.GetCatalogTemplateIcon(ctx, apiv1.GetCatalogTemplateIconParams{ID: "nope"})
+			return err
+		},
+	},
+	// --- Catalog sources and the template-update check (#283) ---
+	{
+		op:   "ListCatalogSources",
+		name: "valid_list_with_an_added_source",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com/hoserva"}); err != nil {
+				return err
+			}
+			_, err := h.ListCatalogSources(ctx)
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "valid_unsigned_source",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com/hoserva/"})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "valid_signed_source",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com", PublicKey: apiv1.NewOptString(mockSourcePublicKey())})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "http_url_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "http://catalog.example.com"})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "url_with_credentials_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://user:secret@catalog.example.com"})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "github_api_url_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://api.github.com/repos/x/y"})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "unreadable_public_key_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com", PublicKey: apiv1.NewOptString("not a key")})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "blank_public_key_is_invalid_not_unsigned",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com", PublicKey: apiv1.NewOptString("  ")})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "unreachable_host_is_bad_gateway",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://" + mockDownHost})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "archive_not_signed_by_the_given_key_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			other := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, ed25519.PublicKeySize))
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com", PublicKey: apiv1.NewOptString(other)})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "second_add_of_the_same_url_conflicts",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com/x"}); err != nil {
+				return err
+			}
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://Catalog.Example.com/x/"})
+			return err
+		},
+	},
+	{
+		op:   "AddCatalogSource",
+		name: "the_curated_catalogs_own_url_conflicts",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: template.DefaultCatalogURL})
+			return err
+		},
+	},
+	{
+		op:   "RefreshCatalogSource",
+		name: "valid_user_added_source",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			src, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com"})
+			if err != nil {
+				return err
+			}
+			_, err = h.RefreshCatalogSource(ctx, apiv1.RefreshCatalogSourceParams{ID: src.ID})
+			return err
+		},
+	},
+	{
+		op:   "RefreshCatalogSource",
+		name: "valid_curated_catalog",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RefreshCatalogSource(ctx, apiv1.RefreshCatalogSourceParams{ID: template.SourceCurated})
+			return err
+		},
+	},
+	{
+		op:   "RefreshCatalogSource",
+		name: "unknown_source_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RefreshCatalogSource(ctx, apiv1.RefreshCatalogSourceParams{ID: "src-0123456789"})
+			return err
+		},
+	},
+	{
+		op:   "RefreshCatalogSource",
+		name: "path_traversal_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RefreshCatalogSource(ctx, apiv1.RefreshCatalogSourceParams{ID: "../catalog"})
+			return err
+		},
+	},
+	{
+		op:   "RemoveCatalogSource",
+		name: "valid_user_added_source",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			src, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com"})
+			if err != nil {
+				return err
+			}
+			return h.RemoveCatalogSource(ctx, apiv1.RemoveCatalogSourceParams{ID: src.ID})
+		},
+	},
+	{
+		op:   "RemoveCatalogSource",
+		name: "the_curated_catalog_cannot_be_removed",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.RemoveCatalogSource(ctx, apiv1.RemoveCatalogSourceParams{ID: template.SourceCurated})
+		},
+	},
+	{
+		op:   "RemoveCatalogSource",
+		name: "unknown_source_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.RemoveCatalogSource(ctx, apiv1.RemoveCatalogSourceParams{ID: "src-0123456789"})
+		},
+	},
+	{
+		op:   "RemoveCatalogSource",
+		name: "second_removal_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			src, err := h.AddCatalogSource(ctx, &apiv1.AddCatalogSourceRequest{URL: "https://catalog.example.com"})
+			if err != nil {
+				return err
+			}
+			if err := h.RemoveCatalogSource(ctx, apiv1.RemoveCatalogSourceParams{ID: src.ID}); err != nil {
+				return err
+			}
+			return h.RemoveCatalogSource(ctx, apiv1.RemoveCatalogSourceParams{ID: src.ID})
+		},
+	},
+	{
+		op:   "GetStackTemplateUpdate",
+		name: "valid_stack_installed_from_a_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "jellyfin"}); err != nil {
+				return err
+			}
+			_, err := h.GetStackTemplateUpdate(ctx, apiv1.GetStackTemplateUpdateParams{Name: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackTemplateUpdate",
+		name: "valid_stack_with_no_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "by-hand", Compose: "services: {}\n"}); err != nil {
+				return err
+			}
+			_, err := h.GetStackTemplateUpdate(ctx, apiv1.GetStackTemplateUpdateParams{Name: "by-hand"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackTemplateUpdate",
+		name: "valid_stack_whose_source_is_gone",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{
+				Name:     "orphan",
+				Compose:  "services: {}\n",
+				Template: apiv1.NewOptStackTemplate(apiv1.StackTemplate{Source: "src-0123456789", ID: "jellyfin", Revision: "1"}),
+			})
+			if err != nil {
+				return err
+			}
+			_, err = h.GetStackTemplateUpdate(ctx, apiv1.GetStackTemplateUpdateParams{Name: "orphan"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackTemplateUpdate",
+		name: "unknown_stack_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStackTemplateUpdate(ctx, apiv1.GetStackTemplateUpdateParams{Name: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "GetStackTemplateUpdate",
+		name: "invalid_stack_name_is_rejected",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetStackTemplateUpdate(ctx, apiv1.GetStackTemplateUpdateParams{Name: "../etc"})
 			return err
 		},
 	},

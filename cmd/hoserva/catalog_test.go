@@ -16,8 +16,8 @@ func testCatalogList() *apiv1.CatalogList {
 		Serial:      42,
 		GeneratedAt: apiv1.NewOptDateTime(time.Date(2026, 10, 1, 11, 14, 0, 0, time.UTC)),
 		Templates: []apiv1.CatalogEntry{
-			{ID: "jellyfin", Revision: 4, Title: "Jellyfin", Categories: []string{"media"}, Docs: "https://example.com/jf", Source: "hoserva", Installed: true},
-			{ID: "gitea", Revision: 1, Title: "Gitea", Categories: []string{"development", "git"}, Docs: "https://example.com/gitea", Source: "hoserva"},
+			{ID: "jellyfin", Revision: 4, Title: "Jellyfin", Categories: []string{"media"}, Docs: "https://example.com/jf", Source: "hoserva", SourceKind: apiv1.CatalogSourceKindCurated, Signed: true, Installed: true},
+			{ID: "gitea", Revision: 1, Title: "Gitea", Categories: []string{"development", "git"}, Docs: "https://example.com/gitea", Source: "hoserva", SourceKind: apiv1.CatalogSourceKindCurated, Signed: true},
 		},
 	}
 }
@@ -77,8 +77,10 @@ func TestCatalogShowPrintsThePrivilegesAndTheComposeText(t *testing.T) {
 		gotRequest = r.Method + " " + r.URL.Path
 		writeJSON(t, w, http.StatusOK, &apiv1.CatalogTemplate{
 			ID: "risky-agent", Revision: 2, Title: "Risky agent", Categories: []string{"system"}, Docs: "https://example.com/agent",
-			Source:  "hoserva",
-			Compose: "services:\n  agent:\n    privileged: true\n",
+			Source:     "hoserva",
+			SourceKind: apiv1.CatalogSourceKindCurated,
+			Signed:     true,
+			Compose:    "services:\n  agent:\n    privileged: true\n",
 			Privileges: []apiv1.TemplatePrivilege{
 				{Kind: apiv1.TemplatePrivilegeKindPrivileged, Service: "agent", Description: "Runs with full access to the server."},
 				{Kind: apiv1.TemplatePrivilegeKindDockerSocket, Service: "agent", Detail: apiv1.NewOptString("/var/run/docker.sock"), Description: "Can control Docker itself."},
@@ -93,7 +95,7 @@ func TestCatalogShowPrintsThePrivilegesAndTheComposeText(t *testing.T) {
 		t.Errorf("request = %q", gotRequest)
 	}
 	for _, want := range []string{
-		"Risky agent (risky-agent), revision 2, from the hoserva source.",
+		"Risky agent (risky-agent), revision 2, from the hoserva source (curated, signed).",
 		"- privileged (service agent): Runs with full access to the server.",
 		"- docker_socket /var/run/docker.sock (service agent): Can control Docker itself.",
 		"compose.yaml:\nservices:\n  agent:\n    privileged: true\n",

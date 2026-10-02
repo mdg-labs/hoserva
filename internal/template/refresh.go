@@ -77,8 +77,10 @@ type CheckResult struct {
 }
 
 // Trigger is what started a check. A manual check always reports a
-// verification failure; an automatic one (the interval, check-on-open) does
-// not repeat a notification for a failure already raised.
+// verification failure and always fetches the archive in full; an automatic
+// one (the interval, check-on-open) does not repeat a notification for a
+// failure already raised, and does not download an archive again that already
+// failed verification.
 type Trigger int
 
 const (
@@ -90,7 +92,9 @@ const (
 // Refresher fetches the latest signed catalog and installs it into Store
 // (doc 04 §7). One check is one conditional request for the archive and, only
 // after a 200, one for its signature; a signature that fails verification
-// makes the check fetch the pair once more before it reports the failure.
+// makes the check fetch the pair once more before it reports the failure. An
+// automatic check that remembers a bad_signature failure also asks whether the
+// signature changed when the archive answers 304.
 type Refresher struct {
 	Store CatalogStore
 	// URL is the directory the archive and signature are served from; empty
@@ -112,6 +116,28 @@ type Refresher struct {
 	flight   *checkFlight
 	last     *CheckResult
 	reported string
+	rejected *rejection
+}
+
+// served is what the last download of the archive and its signature brought:
+// the hex SHA-256 of the archive and of the signature, and the validators the
+// host sent with each.
+type served struct {
+	archive           string
+	archiveValidators Validators
+	sig               string
+	sigValidators     Validators
+}
+
+// rejection is the last archive that failed verification: what the host
+// served and the failure it produced. An automatic check sends the archive's
+// validators, so a host still serving that archive answers 304 and the check
+// reports the same failure without downloading it again. A bad_signature
+// failure may lie in the signature alone, so the check first asks whether the
+// signature is still the one that failed.
+type rejection struct {
+	served served
+	result CheckResult
 }
 
 type checkFlight struct {
@@ -167,20 +193,22 @@ func (r *Refresher) begin() (f *checkFlight, leader bool) {
 }
 
 func (r *Refresher) run(ctx context.Context, f *checkFlight, trigger Trigger) {
-	defer func() {
-		r.mu.Lock()
-		r.flight = nil
-		if f.result.Outcome != "" {
-			res := f.result
-			r.last = &res
-		}
-		r.mu.Unlock()
-		close(f.done)
-	}()
+	defer close(f.done)
 	// A caller that goes away must not abort a check others are waiting on.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
 	defer cancel()
 	f.result = r.check(runCtx, trigger)
+	// The check is over, and Last and the next Check see that, before
+	// Finished announces it: whoever reacts to the announcement by asking
+	// for the last result or by starting another check must not find this
+	// one still in flight.
+	r.mu.Lock()
+	r.flight = nil
+	if f.result.Outcome != "" {
+		res := f.result
+		r.last = &res
+	}
+	r.mu.Unlock()
 	if r.Finished != nil {
 		r.Finished(f.result)
 	}
@@ -212,22 +240,48 @@ func (r *Refresher) baseURL() string {
 }
 
 func (r *Refresher) check(ctx context.Context, trigger Trigger) CheckResult {
-	res, served := r.fetchAndInstall(ctx)
+	res, got := r.fetchAndInstall(ctx, trigger)
 	res.CheckedAt = r.now().UTC()
 	switch {
 	case res.Outcome != OutcomeFailed:
 		r.setReported("")
-	case res.Reason.verification() && r.Notify != nil:
-		key := string(res.Reason) + "/" + served
-		if trigger == TriggerManual || !r.isReported(key) {
-			if err := r.Notify(ctx, res); err != nil {
-				res.Message = fmt.Sprintf("%s (the notification could not be raised: %v)", res.Message, err)
-			} else {
-				r.setReported(key)
-			}
+		r.setRejected(nil)
+		return res
+	case !res.Reason.verification():
+		return res
+	}
+	if got.archiveValidators.empty() {
+		r.setRejected(nil)
+	} else {
+		r.setRejected(&rejection{served: got, result: res})
+	}
+	if r.Notify == nil {
+		return res
+	}
+	key := string(res.Reason) + "/" + got.archive
+	if trigger == TriggerManual || !r.isReported(key) {
+		if err := r.Notify(ctx, res); err != nil {
+			res.Message = fmt.Sprintf("%s (the notification could not be raised: %v)", res.Message, err)
+		} else {
+			r.setReported(key)
 		}
 	}
 	return res
+}
+
+// getRejected and setRejected keep the archive that last failed verification.
+// A check that installs or confirms the catalog clears it; a check that could
+// not reach the host, or could not install, leaves it.
+func (r *Refresher) getRejected() *rejection {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rejected
+}
+
+func (r *Refresher) setRejected(rj *rejection) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rejected = rj
 }
 
 // isReported and setReported keep the failure the last notification was
@@ -251,58 +305,109 @@ func failure(reason FailReason, err error) CheckResult {
 }
 
 // fetchAndInstall runs the check and returns its result and, when an archive
-// was downloaded, the hex SHA-256 of the last one served.
-func (r *Refresher) fetchAndInstall(ctx context.Context) (CheckResult, string) {
+// was downloaded, what the last download brought. An automatic check that
+// remembers an archive that failed verification asks for the catalog
+// conditioned on that archive's validators instead of the installed catalog's,
+// so the host answering 304 means the same archive is still being served and
+// the same failure is the result, unless the failure was a bad signature and
+// the signature has changed since: then the pair is fetched in full.
+func (r *Refresher) fetchAndInstall(ctx context.Context, trigger Trigger) (CheckResult, served) {
 	archiveURL, err := catalogURL(r.baseURL(), catalogArchiveName)
 	if err != nil {
-		return failure(ReasonFetchFailed, err), ""
+		return failure(ReasonFetchFailed, err), served{}
 	}
 	sigURL, err := catalogURL(r.baseURL(), catalogSignatureName)
 	if err != nil {
-		return failure(ReasonFetchFailed, err), ""
+		return failure(ReasonFetchFailed, err), served{}
 	}
 	client := r.httpClient()
 	prior := r.Store.Validators()
+	var rejected *rejection
+	if trigger != TriggerManual {
+		if rejected = r.getRejected(); rejected != nil {
+			prior = rejected.served.archiveValidators
+		}
+	}
 
-	var served string
+	var got served
 	// The archive and its signature are two files a static host caches
 	// separately, so during a publish one can be new and the other old. A
 	// signature that does not verify is fetched, with its archive, once more
 	// before it is reported.
-	for attempt := 0; ; attempt++ {
-		archive, got, notModified, err := fetch(ctx, client, archiveURL, maxFetchArchiveBytes, prior)
+	retried := false
+	for {
+		archive, archiveValidators, notModified, err := fetch(ctx, client, archiveURL, maxFetchArchiveBytes, prior)
 		if err != nil {
-			return failure(ReasonFetchFailed, err), served
+			return failure(ReasonFetchFailed, err), got
 		}
 		if notModified {
-			return CheckResult{Outcome: OutcomeUnchanged}, served
+			if rejected == nil {
+				return CheckResult{Outcome: OutcomeUnchanged}, got
+			}
+			changed, err := r.signatureChanged(ctx, client, sigURL, rejected)
+			if err != nil {
+				return failure(ReasonFetchFailed, err), got
+			}
+			if !changed {
+				return rejected.result, rejected.served
+			}
+			rejected, prior = nil, Validators{}
+			continue
 		}
 		sum := sha256.Sum256(archive)
-		served = hex.EncodeToString(sum[:])
-		sig, _, _, err := fetch(ctx, client, sigURL, maxFetchSigBytes, Validators{})
-		if err != nil {
-			return failure(ReasonFetchFailed, err), served
+		got = served{archive: hex.EncodeToString(sum[:]), archiveValidators: archiveValidators}
+		var sig []byte
+		if !r.Store.Unsigned {
+			var sigValidators Validators
+			sig, sigValidators, _, err = fetch(ctx, client, sigURL, maxFetchSigBytes, Validators{})
+			if err != nil {
+				return failure(ReasonFetchFailed, err), got
+			}
+			sigSum := sha256.Sum256(sig)
+			got.sig, got.sigValidators = hex.EncodeToString(sigSum[:]), sigValidators
 		}
 
-		fetched, err := r.Store.InstallFetched(archive, sig, got)
+		fetched, err := r.Store.InstallFetched(archive, sig, archiveValidators)
 		switch {
-		case errors.Is(err, ErrBadSignature) && attempt == 0:
+		case errors.Is(err, ErrBadSignature) && !retried:
+			retried = true
 			continue
 		case errors.Is(err, ErrBadSignature):
-			return failure(ReasonBadSignature, err), served
+			return failure(ReasonBadSignature, err), got
 		case errors.Is(err, ErrNotNewer):
-			return failure(ReasonNotNewer, err), served
+			return failure(ReasonNotNewer, err), got
 		case errors.Is(err, ErrBadArchive):
-			return failure(ReasonBadArchive, err), served
+			return failure(ReasonBadArchive, err), got
 		case err != nil:
-			return failure(ReasonInstallFailed, err), served
+			return failure(ReasonInstallFailed, err), got
 		}
 		if !fetched.Installed {
-			return CheckResult{Outcome: OutcomeUnchanged}, served
+			return CheckResult{Outcome: OutcomeUnchanged}, got
 		}
 		added, changed := diffIndexes(fetched.Previous, fetched.Current)
-		return CheckResult{Outcome: OutcomeUpdated, New: added, Updated: changed}, served
+		return CheckResult{Outcome: OutcomeUpdated, New: added, Updated: changed}, got
 	}
+}
+
+// signatureChanged reports whether the signature the host serves is no longer
+// the one that failed verification, once the archive that failed with it is
+// unchanged. Only a bad_signature failure can be cured by the signature alone;
+// the other reasons are properties of the archive. The signature is asked for
+// conditioned on the validators it was served with; a host that sent none, or
+// that answers 200 anyway, is told apart by comparing the body's digest.
+func (r *Refresher) signatureChanged(ctx context.Context, client *http.Client, sigURL string, rejected *rejection) (bool, error) {
+	if rejected.result.Reason != ReasonBadSignature {
+		return false, nil
+	}
+	sig, _, notModified, err := fetch(ctx, client, sigURL, maxFetchSigBytes, rejected.served.sigValidators)
+	if err != nil {
+		return false, err
+	}
+	if notModified {
+		return false, nil
+	}
+	sum := sha256.Sum256(sig)
+	return hex.EncodeToString(sum[:]) != rejected.served.sig, nil
 }
 
 // diffIndexes counts the templates of current that previous does not list,

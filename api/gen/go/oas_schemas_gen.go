@@ -17,6 +17,37 @@ func (s *ErrorStatusCode) Error() string {
 	return fmt.Sprintf("code %d: %+v", s.StatusCode, s.Response)
 }
 
+// Ref: #/components/schemas/AddCatalogSourceRequest
+type AddCatalogSourceRequest struct {
+	// An `https` address with no credentials, query or fragment; the archive and its signature are fetched
+	// from beneath it.
+	URL string `json:"url"`
+	// The Ed25519 public key the archive is signed with, as PEM or the base64 of the raw 32 bytes. Absent
+	// means the source is unsigned; a key that is present but blank is refused with 400, never read as
+	// unsigned.
+	PublicKey OptString `json:"publicKey"`
+}
+
+// GetURL returns the value of URL.
+func (s *AddCatalogSourceRequest) GetURL() string {
+	return s.URL
+}
+
+// GetPublicKey returns the value of PublicKey.
+func (s *AddCatalogSourceRequest) GetPublicKey() OptString {
+	return s.PublicKey
+}
+
+// SetURL sets the value of URL.
+func (s *AddCatalogSourceRequest) SetURL(val string) {
+	s.URL = val
+}
+
+// SetPublicKey sets the value of PublicKey.
+func (s *AddCatalogSourceRequest) SetPublicKey(val OptString) {
+	s.PublicKey = val
+}
+
 // Ref: #/components/schemas/AddDiskPlan
 type AddDiskPlan struct {
 	Device string `json:"device"`
@@ -2718,8 +2749,12 @@ type CatalogEntry struct {
 	Categories []string `json:"categories"`
 	// The upstream documentation the template was written from.
 	Docs string `json:"docs"`
-	// Where the entry came from: `hoserva` for the curated catalog.
-	Source string `json:"source"`
+	// Where the entry came from: `hoserva` for the curated catalog, a source id for a user-added source.
+	Source     string            `json:"source"`
+	SourceKind CatalogSourceKind `json:"sourceKind"`
+	// The source's badge as data: true only when the source's installed archive passed a signature check.
+	// False for every entry of an unsigned user-added source.
+	Signed bool `json:"signed"`
 	// A stack of this template id exists.
 	Installed bool `json:"installed"`
 }
@@ -2752,6 +2787,16 @@ func (s *CatalogEntry) GetDocs() string {
 // GetSource returns the value of Source.
 func (s *CatalogEntry) GetSource() string {
 	return s.Source
+}
+
+// GetSourceKind returns the value of SourceKind.
+func (s *CatalogEntry) GetSourceKind() CatalogSourceKind {
+	return s.SourceKind
+}
+
+// GetSigned returns the value of Signed.
+func (s *CatalogEntry) GetSigned() bool {
+	return s.Signed
 }
 
 // GetInstalled returns the value of Installed.
@@ -2787,6 +2832,16 @@ func (s *CatalogEntry) SetDocs(val string) {
 // SetSource sets the value of Source.
 func (s *CatalogEntry) SetSource(val string) {
 	s.Source = val
+}
+
+// SetSourceKind sets the value of SourceKind.
+func (s *CatalogEntry) SetSourceKind(val CatalogSourceKind) {
+	s.SourceKind = val
+}
+
+// SetSigned sets the value of Signed.
+func (s *CatalogEntry) SetSigned(val bool) {
+	s.Signed = val
 }
 
 // SetInstalled sets the value of Installed.
@@ -3123,6 +3178,141 @@ func (s *CatalogSettingsUpdate) SetCheckOnOpen(val OptBool) {
 	s.CheckOnOpen = val
 }
 
+// Ref: #/components/schemas/CatalogSource
+type CatalogSource struct {
+	// `hoserva` for the curated catalog, otherwise the id its entries carry as `source`.
+	ID string `json:"id"`
+	// The address the archive is fetched from beneath.
+	URL  string            `json:"url"`
+	Kind CatalogSourceKind `json:"kind"`
+	// True only when the source's installed archive passed a signature check: always for the curated
+	// catalog, and for a user-added source only when it was added with a public key.
+	Signed bool `json:"signed"`
+	// The installed catalog's serial; absent when it cannot be read.
+	Serial OptInt64 `json:"serial"`
+	// When the source's archive was last installed or confirmed unchanged; absent before the first time.
+	LastRefreshedAt OptDateTime `json:"lastRefreshedAt"`
+}
+
+// GetID returns the value of ID.
+func (s *CatalogSource) GetID() string {
+	return s.ID
+}
+
+// GetURL returns the value of URL.
+func (s *CatalogSource) GetURL() string {
+	return s.URL
+}
+
+// GetKind returns the value of Kind.
+func (s *CatalogSource) GetKind() CatalogSourceKind {
+	return s.Kind
+}
+
+// GetSigned returns the value of Signed.
+func (s *CatalogSource) GetSigned() bool {
+	return s.Signed
+}
+
+// GetSerial returns the value of Serial.
+func (s *CatalogSource) GetSerial() OptInt64 {
+	return s.Serial
+}
+
+// GetLastRefreshedAt returns the value of LastRefreshedAt.
+func (s *CatalogSource) GetLastRefreshedAt() OptDateTime {
+	return s.LastRefreshedAt
+}
+
+// SetID sets the value of ID.
+func (s *CatalogSource) SetID(val string) {
+	s.ID = val
+}
+
+// SetURL sets the value of URL.
+func (s *CatalogSource) SetURL(val string) {
+	s.URL = val
+}
+
+// SetKind sets the value of Kind.
+func (s *CatalogSource) SetKind(val CatalogSourceKind) {
+	s.Kind = val
+}
+
+// SetSigned sets the value of Signed.
+func (s *CatalogSource) SetSigned(val bool) {
+	s.Signed = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *CatalogSource) SetSerial(val OptInt64) {
+	s.Serial = val
+}
+
+// SetLastRefreshedAt sets the value of LastRefreshedAt.
+func (s *CatalogSource) SetLastRefreshedAt(val OptDateTime) {
+	s.LastRefreshedAt = val
+}
+
+// `curated`: Hoserva's own catalog (doc 04 §7). `user_added`: a source URL the user added (doc 04
+// §4).
+// Ref: #/components/schemas/CatalogSourceKind
+type CatalogSourceKind string
+
+const (
+	CatalogSourceKindCurated   CatalogSourceKind = "curated"
+	CatalogSourceKindUserAdded CatalogSourceKind = "user_added"
+)
+
+// AllValues returns all CatalogSourceKind values.
+func (CatalogSourceKind) AllValues() []CatalogSourceKind {
+	return []CatalogSourceKind{
+		CatalogSourceKindCurated,
+		CatalogSourceKindUserAdded,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CatalogSourceKind) MarshalText() ([]byte, error) {
+	switch s {
+	case CatalogSourceKindCurated:
+		return []byte(s), nil
+	case CatalogSourceKindUserAdded:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CatalogSourceKind) UnmarshalText(data []byte) error {
+	switch CatalogSourceKind(data) {
+	case CatalogSourceKindCurated:
+		*s = CatalogSourceKindCurated
+		return nil
+	case CatalogSourceKindUserAdded:
+		*s = CatalogSourceKindUserAdded
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/CatalogSourceList
+type CatalogSourceList struct {
+	Sources []CatalogSource `json:"sources"`
+}
+
+// GetSources returns the value of Sources.
+func (s *CatalogSourceList) GetSources() []CatalogSource {
+	return s.Sources
+}
+
+// SetSources sets the value of Sources.
+func (s *CatalogSourceList) SetSources(val []CatalogSource) {
+	s.Sources = val
+}
+
 // Ref: #/components/schemas/CatalogTemplate
 type CatalogTemplate struct {
 	ID         string   `json:"id"`
@@ -3130,8 +3320,13 @@ type CatalogTemplate struct {
 	Title      string   `json:"title"`
 	Categories []string `json:"categories"`
 	Docs       string   `json:"docs"`
-	// Where the template came from: `hoserva` for the curated catalog.
-	Source string `json:"source"`
+	// Where the template came from: `hoserva` for the curated catalog, a source id for a user-added
+	// source.
+	Source     string            `json:"source"`
+	SourceKind CatalogSourceKind `json:"sourceKind"`
+	// True only when the source's installed archive passed a signature check; false for a template of an
+	// unsigned user-added source.
+	Signed bool `json:"signed"`
 	// The template's `compose.yaml` text, with its `x-hoserva` block.
 	Compose string `json:"compose"`
 	// Empty when the template asks for nothing beyond an ordinary container.
@@ -3166,6 +3361,16 @@ func (s *CatalogTemplate) GetDocs() string {
 // GetSource returns the value of Source.
 func (s *CatalogTemplate) GetSource() string {
 	return s.Source
+}
+
+// GetSourceKind returns the value of SourceKind.
+func (s *CatalogTemplate) GetSourceKind() CatalogSourceKind {
+	return s.SourceKind
+}
+
+// GetSigned returns the value of Signed.
+func (s *CatalogTemplate) GetSigned() bool {
+	return s.Signed
 }
 
 // GetCompose returns the value of Compose.
@@ -3206,6 +3411,16 @@ func (s *CatalogTemplate) SetDocs(val string) {
 // SetSource sets the value of Source.
 func (s *CatalogTemplate) SetSource(val string) {
 	s.Source = val
+}
+
+// SetSourceKind sets the value of SourceKind.
+func (s *CatalogTemplate) SetSourceKind(val CatalogSourceKind) {
+	s.SourceKind = val
+}
+
+// SetSigned sets the value of Signed.
+func (s *CatalogTemplate) SetSigned(val bool) {
+	s.Signed = val
 }
 
 // SetCompose sets the value of Compose.
@@ -4503,7 +4718,8 @@ type ConfigImportReport struct {
 	// Everything the import did not restore, each with why. Empty when everything in the archive was
 	// restored.
 	NotRestored []ConfigImportNotRestored `json:"notRestored"`
-	Secrets     ConfigImportSecretsStatus `json:"secrets"`
+	// The status of the imported archive's `secrets.age`.
+	Secrets ConfigImportSecretsStatus `json:"secrets"`
 	// The name of the archive of the configuration as it was before the import, which a restore can go
 	// back to. Empty when no backup destination was written to.
 	PreImportArchive string                       `json:"preImportArchive"`
@@ -4714,6 +4930,7 @@ func (s *ConfigImportRestoredCategory) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/ConfigImportSecrets
 type ConfigImportSecrets struct {
+	// The status of the archive's `secrets.age`, which holds its database secrets and stack `.env` files.
 	Status ConfigImportSecretsStatus `json:"status"`
 	// The same status for the archive's `identity.age`, the backup recipient's private identity: `opened`
 	// means a bare-metal restore adopts the archive's recipient; otherwise this box keeps its own. Always
@@ -4753,9 +4970,10 @@ func (s *ConfigImportSecrets) SetStacks(val []string) {
 	s.Stacks = val
 }
 
-// `none`: the archive has no passphrase-protected section (it was built without a backup passphrase).
-// `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is
-// available. `passphrase_incorrect`: it has one and the passphrase available does not open it.
+// The state of one of the archive's passphrase-protected files, `secrets.age` or `identity.age`; the
+// field using it says which. `none`: the archive has no such file. `opened`: the file is there and the
+// passphrase available opens it. `no_passphrase`: the file is there and no passphrase is available.
+// `passphrase_incorrect`: the file is there and the passphrase available does not open it.
 // Ref: #/components/schemas/ConfigImportSecretsStatus
 type ConfigImportSecretsStatus string
 
@@ -4933,6 +5151,144 @@ func (s *ConfirmUpdateRequest) GetConfirm() bool {
 // SetConfirm sets the value of Confirm.
 func (s *ConfirmUpdateRequest) SetConfirm(val bool) {
 	s.Confirm = val
+}
+
+// Ref: #/components/schemas/ConversionWarning
+type ConversionWarning struct {
+	// `untranslated_flag` is an `ExtraParams` flag or word that has no Compose equivalent here.
+	// `untranslated_field` is a template field or entry that could not be carried over. `flagged_path` is
+	// a host path outside the pool and the cache. `missing_network` is a custom network the template
+	// names. `conflict` is two entries for one target with different values. `writable_layer` is the
+	// warning every conversion carries about state inside the source container. `note` is informational.
+	Class ConversionWarningClass `json:"class"`
+	// Plain-language explanation.
+	Message string `json:"message"`
+	// The flag, path, network name or entry concerned.
+	Detail OptString `json:"detail"`
+	// Only on `missing_network`: the `docker network create` command. It holds `<PLACEHOLDER>` values for
+	// what the template does not say.
+	Command OptString `json:"command"`
+}
+
+// GetClass returns the value of Class.
+func (s *ConversionWarning) GetClass() ConversionWarningClass {
+	return s.Class
+}
+
+// GetMessage returns the value of Message.
+func (s *ConversionWarning) GetMessage() string {
+	return s.Message
+}
+
+// GetDetail returns the value of Detail.
+func (s *ConversionWarning) GetDetail() OptString {
+	return s.Detail
+}
+
+// GetCommand returns the value of Command.
+func (s *ConversionWarning) GetCommand() OptString {
+	return s.Command
+}
+
+// SetClass sets the value of Class.
+func (s *ConversionWarning) SetClass(val ConversionWarningClass) {
+	s.Class = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConversionWarning) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetDetail sets the value of Detail.
+func (s *ConversionWarning) SetDetail(val OptString) {
+	s.Detail = val
+}
+
+// SetCommand sets the value of Command.
+func (s *ConversionWarning) SetCommand(val OptString) {
+	s.Command = val
+}
+
+// `untranslated_flag` is an `ExtraParams` flag or word that has no Compose equivalent here.
+// `untranslated_field` is a template field or entry that could not be carried over. `flagged_path` is
+// a host path outside the pool and the cache. `missing_network` is a custom network the template
+// names. `conflict` is two entries for one target with different values. `writable_layer` is the
+// warning every conversion carries about state inside the source container. `note` is informational.
+type ConversionWarningClass string
+
+const (
+	ConversionWarningClassUntranslatedFlag  ConversionWarningClass = "untranslated_flag"
+	ConversionWarningClassUntranslatedField ConversionWarningClass = "untranslated_field"
+	ConversionWarningClassFlaggedPath       ConversionWarningClass = "flagged_path"
+	ConversionWarningClassMissingNetwork    ConversionWarningClass = "missing_network"
+	ConversionWarningClassConflict          ConversionWarningClass = "conflict"
+	ConversionWarningClassWritableLayer     ConversionWarningClass = "writable_layer"
+	ConversionWarningClassNote              ConversionWarningClass = "note"
+)
+
+// AllValues returns all ConversionWarningClass values.
+func (ConversionWarningClass) AllValues() []ConversionWarningClass {
+	return []ConversionWarningClass{
+		ConversionWarningClassUntranslatedFlag,
+		ConversionWarningClassUntranslatedField,
+		ConversionWarningClassFlaggedPath,
+		ConversionWarningClassMissingNetwork,
+		ConversionWarningClassConflict,
+		ConversionWarningClassWritableLayer,
+		ConversionWarningClassNote,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConversionWarningClass) MarshalText() ([]byte, error) {
+	switch s {
+	case ConversionWarningClassUntranslatedFlag:
+		return []byte(s), nil
+	case ConversionWarningClassUntranslatedField:
+		return []byte(s), nil
+	case ConversionWarningClassFlaggedPath:
+		return []byte(s), nil
+	case ConversionWarningClassMissingNetwork:
+		return []byte(s), nil
+	case ConversionWarningClassConflict:
+		return []byte(s), nil
+	case ConversionWarningClassWritableLayer:
+		return []byte(s), nil
+	case ConversionWarningClassNote:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConversionWarningClass) UnmarshalText(data []byte) error {
+	switch ConversionWarningClass(data) {
+	case ConversionWarningClassUntranslatedFlag:
+		*s = ConversionWarningClassUntranslatedFlag
+		return nil
+	case ConversionWarningClassUntranslatedField:
+		*s = ConversionWarningClassUntranslatedField
+		return nil
+	case ConversionWarningClassFlaggedPath:
+		*s = ConversionWarningClassFlaggedPath
+		return nil
+	case ConversionWarningClassMissingNetwork:
+		*s = ConversionWarningClassMissingNetwork
+		return nil
+	case ConversionWarningClassConflict:
+		*s = ConversionWarningClassConflict
+		return nil
+	case ConversionWarningClassWritableLayer:
+		*s = ConversionWarningClassWritableLayer
+		return nil
+	case ConversionWarningClassNote:
+		*s = ConversionWarningClassNote
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/CreateApiTokenRequest
@@ -10826,6 +11182,52 @@ func (o OptCatalogRefreshReason) Or(d CatalogRefreshReason) CatalogRefreshReason
 	return d
 }
 
+// NewOptCatalogSourceKind returns new OptCatalogSourceKind with value set to v.
+func NewOptCatalogSourceKind(v CatalogSourceKind) OptCatalogSourceKind {
+	return OptCatalogSourceKind{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCatalogSourceKind is optional CatalogSourceKind.
+type OptCatalogSourceKind struct {
+	Value CatalogSourceKind
+	Set   bool
+}
+
+// IsSet returns true if OptCatalogSourceKind was set.
+func (o OptCatalogSourceKind) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCatalogSourceKind) Reset() {
+	var v CatalogSourceKind
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCatalogSourceKind) SetTo(v CatalogSourceKind) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCatalogSourceKind) Get() (v CatalogSourceKind, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCatalogSourceKind) Or(d CatalogSourceKind) CatalogSourceKind {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptConfigImportBareMetal returns new OptConfigImportBareMetal with value set to v.
 func NewOptConfigImportBareMetal(v ConfigImportBareMetal) OptConfigImportBareMetal {
 	return OptConfigImportBareMetal{
@@ -13879,6 +14281,9 @@ func (s *RemoveAppResult) SetDeletedPaths(val []string) {
 	s.DeletedPaths = val
 }
 
+// RemoveCatalogSourceNoContent is response for RemoveCatalogSource operation.
+type RemoveCatalogSourceNoContent struct{}
+
 // Ref: #/components/schemas/RemoveStackResult
 type RemoveStackResult struct {
 	// The appdata directories and the stack directory deleted. Empty unless `deleteAppdata` was requested.
@@ -15564,6 +15969,181 @@ func (s *StackTemplate) SetRevision(val string) {
 	s.Revision = val
 }
 
+// Ref: #/components/schemas/StackTemplateUpdate
+type StackTemplateUpdate struct {
+	Status StackTemplateUpdateStatus `json:"status"`
+	// The source the stack records; absent when it records none.
+	Source OptString `json:"source"`
+	// The template the stack records; absent when it records none.
+	TemplateId OptString `json:"templateId"`
+	// The revision the stack was installed from; absent for `not_from_template`.
+	InstalledRevision OptInt `json:"installedRevision"`
+	// The revision the source lists now; present for `update_available` and `up_to_date`.
+	AvailableRevision OptInt               `json:"availableRevision"`
+	SourceKind        OptCatalogSourceKind `json:"sourceKind"`
+	// The source's badge, present with `availableRevision`: true only when the source's installed archive
+	// passed a signature check.
+	Signed OptBool `json:"signed"`
+	// The stack's Compose text was saved by hand, so `diff` is against the edited file and applying the
+	// update would overwrite the edit.
+	ManuallyEdited bool `json:"manuallyEdited"`
+	// Present only for `update_available`: a unified diff from the stack's `docker-compose.yml` to the
+	// newer revision's `compose.yaml`.
+	Diff OptString `json:"diff"`
+}
+
+// GetStatus returns the value of Status.
+func (s *StackTemplateUpdate) GetStatus() StackTemplateUpdateStatus {
+	return s.Status
+}
+
+// GetSource returns the value of Source.
+func (s *StackTemplateUpdate) GetSource() OptString {
+	return s.Source
+}
+
+// GetTemplateId returns the value of TemplateId.
+func (s *StackTemplateUpdate) GetTemplateId() OptString {
+	return s.TemplateId
+}
+
+// GetInstalledRevision returns the value of InstalledRevision.
+func (s *StackTemplateUpdate) GetInstalledRevision() OptInt {
+	return s.InstalledRevision
+}
+
+// GetAvailableRevision returns the value of AvailableRevision.
+func (s *StackTemplateUpdate) GetAvailableRevision() OptInt {
+	return s.AvailableRevision
+}
+
+// GetSourceKind returns the value of SourceKind.
+func (s *StackTemplateUpdate) GetSourceKind() OptCatalogSourceKind {
+	return s.SourceKind
+}
+
+// GetSigned returns the value of Signed.
+func (s *StackTemplateUpdate) GetSigned() OptBool {
+	return s.Signed
+}
+
+// GetManuallyEdited returns the value of ManuallyEdited.
+func (s *StackTemplateUpdate) GetManuallyEdited() bool {
+	return s.ManuallyEdited
+}
+
+// GetDiff returns the value of Diff.
+func (s *StackTemplateUpdate) GetDiff() OptString {
+	return s.Diff
+}
+
+// SetStatus sets the value of Status.
+func (s *StackTemplateUpdate) SetStatus(val StackTemplateUpdateStatus) {
+	s.Status = val
+}
+
+// SetSource sets the value of Source.
+func (s *StackTemplateUpdate) SetSource(val OptString) {
+	s.Source = val
+}
+
+// SetTemplateId sets the value of TemplateId.
+func (s *StackTemplateUpdate) SetTemplateId(val OptString) {
+	s.TemplateId = val
+}
+
+// SetInstalledRevision sets the value of InstalledRevision.
+func (s *StackTemplateUpdate) SetInstalledRevision(val OptInt) {
+	s.InstalledRevision = val
+}
+
+// SetAvailableRevision sets the value of AvailableRevision.
+func (s *StackTemplateUpdate) SetAvailableRevision(val OptInt) {
+	s.AvailableRevision = val
+}
+
+// SetSourceKind sets the value of SourceKind.
+func (s *StackTemplateUpdate) SetSourceKind(val OptCatalogSourceKind) {
+	s.SourceKind = val
+}
+
+// SetSigned sets the value of Signed.
+func (s *StackTemplateUpdate) SetSigned(val OptBool) {
+	s.Signed = val
+}
+
+// SetManuallyEdited sets the value of ManuallyEdited.
+func (s *StackTemplateUpdate) SetManuallyEdited(val bool) {
+	s.ManuallyEdited = val
+}
+
+// SetDiff sets the value of Diff.
+func (s *StackTemplateUpdate) SetDiff(val OptString) {
+	s.Diff = val
+}
+
+type StackTemplateUpdateStatus string
+
+const (
+	StackTemplateUpdateStatusUpdateAvailable StackTemplateUpdateStatus = "update_available"
+	StackTemplateUpdateStatusUpToDate        StackTemplateUpdateStatus = "up_to_date"
+	StackTemplateUpdateStatusNotFromTemplate StackTemplateUpdateStatus = "not_from_template"
+	StackTemplateUpdateStatusSourceRemoved   StackTemplateUpdateStatus = "source_removed"
+	StackTemplateUpdateStatusTemplateRemoved StackTemplateUpdateStatus = "template_removed"
+)
+
+// AllValues returns all StackTemplateUpdateStatus values.
+func (StackTemplateUpdateStatus) AllValues() []StackTemplateUpdateStatus {
+	return []StackTemplateUpdateStatus{
+		StackTemplateUpdateStatusUpdateAvailable,
+		StackTemplateUpdateStatusUpToDate,
+		StackTemplateUpdateStatusNotFromTemplate,
+		StackTemplateUpdateStatusSourceRemoved,
+		StackTemplateUpdateStatusTemplateRemoved,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StackTemplateUpdateStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case StackTemplateUpdateStatusUpdateAvailable:
+		return []byte(s), nil
+	case StackTemplateUpdateStatusUpToDate:
+		return []byte(s), nil
+	case StackTemplateUpdateStatusNotFromTemplate:
+		return []byte(s), nil
+	case StackTemplateUpdateStatusSourceRemoved:
+		return []byte(s), nil
+	case StackTemplateUpdateStatusTemplateRemoved:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StackTemplateUpdateStatus) UnmarshalText(data []byte) error {
+	switch StackTemplateUpdateStatus(data) {
+	case StackTemplateUpdateStatusUpdateAvailable:
+		*s = StackTemplateUpdateStatusUpdateAvailable
+		return nil
+	case StackTemplateUpdateStatusUpToDate:
+		*s = StackTemplateUpdateStatusUpToDate
+		return nil
+	case StackTemplateUpdateStatusNotFromTemplate:
+		*s = StackTemplateUpdateStatusNotFromTemplate
+		return nil
+	case StackTemplateUpdateStatusSourceRemoved:
+		*s = StackTemplateUpdateStatusSourceRemoved
+		return nil
+	case StackTemplateUpdateStatusTemplateRemoved:
+		*s = StackTemplateUpdateStatusTemplateRemoved
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/StartAppUpdatesOK
 type StartAppUpdatesOK struct {
 	Job OptJob `json:"job"`
@@ -16804,6 +17384,268 @@ func (s *UPSSettings) SetRuntimeSeconds(val OptInt32) {
 
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
+
+// Ref: #/components/schemas/UnraidConversion
+type UnraidConversion struct {
+	// The template XML as it was sent, to show beside `compose`.
+	Source string `json:"source"`
+	// The generated Compose file. Not applied anywhere: a service named after the template and, where the
+	// template needs them, the top-level `networks` and `volumes` it refers to.
+	Compose string `json:"compose"`
+	// True when the Compose file needs no manual action (Q36): no warning of class `untranslated_flag`,
+	// `untranslated_field`, `flagged_path`, `missing_network` or `conflict`.
+	Clean    bool                `json:"clean"`
+	Warnings []ConversionWarning `json:"warnings"`
+	// The privilege summary of the generated Compose content. Empty when it asks for nothing beyond an
+	// ordinary container.
+	Privileges []TemplatePrivilege    `json:"privileges"`
+	Metadata   UnraidTemplateMetadata `json:"metadata"`
+}
+
+// GetSource returns the value of Source.
+func (s *UnraidConversion) GetSource() string {
+	return s.Source
+}
+
+// GetCompose returns the value of Compose.
+func (s *UnraidConversion) GetCompose() string {
+	return s.Compose
+}
+
+// GetClean returns the value of Clean.
+func (s *UnraidConversion) GetClean() bool {
+	return s.Clean
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *UnraidConversion) GetWarnings() []ConversionWarning {
+	return s.Warnings
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *UnraidConversion) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// GetMetadata returns the value of Metadata.
+func (s *UnraidConversion) GetMetadata() UnraidTemplateMetadata {
+	return s.Metadata
+}
+
+// SetSource sets the value of Source.
+func (s *UnraidConversion) SetSource(val string) {
+	s.Source = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *UnraidConversion) SetCompose(val string) {
+	s.Compose = val
+}
+
+// SetClean sets the value of Clean.
+func (s *UnraidConversion) SetClean(val bool) {
+	s.Clean = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *UnraidConversion) SetWarnings(val []ConversionWarning) {
+	s.Warnings = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *UnraidConversion) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
+}
+
+// SetMetadata sets the value of Metadata.
+func (s *UnraidConversion) SetMetadata(val UnraidTemplateMetadata) {
+	s.Metadata = val
+}
+
+// Ref: #/components/schemas/UnraidConvertRequest
+type UnraidConvertRequest struct {
+	// The text of one Unraid container template (an XML file). The converter takes at most 49152 bytes of
+	// UTF-8; `maxLength` counts characters, so a template with multi-byte characters can be refused under
+	// it.
+	XML string `json:"xml"`
+}
+
+// GetXML returns the value of XML.
+func (s *UnraidConvertRequest) GetXML() string {
+	return s.XML
+}
+
+// SetXML sets the value of XML.
+func (s *UnraidConvertRequest) SetXML(val string) {
+	s.XML = val
+}
+
+// Ref: #/components/schemas/UnraidTemplateMetadata
+type UnraidTemplateMetadata struct {
+	// The template's `<Name>`.
+	Title    string    `json:"title"`
+	Overview OptString `json:"overview"`
+	Category OptString `json:"category"`
+	Support  OptString `json:"support"`
+	Project  OptString `json:"project"`
+	// The template's `<WebUI>` as written, Unraid placeholders included.
+	Webui OptString `json:"webui"`
+	// The template's `<Icon>` address as written. Never fetched here.
+	Icon       OptString `json:"icon"`
+	Requires   OptString `json:"requires"`
+	DonateLink OptString `json:"donateLink"`
+	// The template's environment variables with their descriptions, for an install form.
+	Variables []UnraidVariable `json:"variables"`
+}
+
+// GetTitle returns the value of Title.
+func (s *UnraidTemplateMetadata) GetTitle() string {
+	return s.Title
+}
+
+// GetOverview returns the value of Overview.
+func (s *UnraidTemplateMetadata) GetOverview() OptString {
+	return s.Overview
+}
+
+// GetCategory returns the value of Category.
+func (s *UnraidTemplateMetadata) GetCategory() OptString {
+	return s.Category
+}
+
+// GetSupport returns the value of Support.
+func (s *UnraidTemplateMetadata) GetSupport() OptString {
+	return s.Support
+}
+
+// GetProject returns the value of Project.
+func (s *UnraidTemplateMetadata) GetProject() OptString {
+	return s.Project
+}
+
+// GetWebui returns the value of Webui.
+func (s *UnraidTemplateMetadata) GetWebui() OptString {
+	return s.Webui
+}
+
+// GetIcon returns the value of Icon.
+func (s *UnraidTemplateMetadata) GetIcon() OptString {
+	return s.Icon
+}
+
+// GetRequires returns the value of Requires.
+func (s *UnraidTemplateMetadata) GetRequires() OptString {
+	return s.Requires
+}
+
+// GetDonateLink returns the value of DonateLink.
+func (s *UnraidTemplateMetadata) GetDonateLink() OptString {
+	return s.DonateLink
+}
+
+// GetVariables returns the value of Variables.
+func (s *UnraidTemplateMetadata) GetVariables() []UnraidVariable {
+	return s.Variables
+}
+
+// SetTitle sets the value of Title.
+func (s *UnraidTemplateMetadata) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetOverview sets the value of Overview.
+func (s *UnraidTemplateMetadata) SetOverview(val OptString) {
+	s.Overview = val
+}
+
+// SetCategory sets the value of Category.
+func (s *UnraidTemplateMetadata) SetCategory(val OptString) {
+	s.Category = val
+}
+
+// SetSupport sets the value of Support.
+func (s *UnraidTemplateMetadata) SetSupport(val OptString) {
+	s.Support = val
+}
+
+// SetProject sets the value of Project.
+func (s *UnraidTemplateMetadata) SetProject(val OptString) {
+	s.Project = val
+}
+
+// SetWebui sets the value of Webui.
+func (s *UnraidTemplateMetadata) SetWebui(val OptString) {
+	s.Webui = val
+}
+
+// SetIcon sets the value of Icon.
+func (s *UnraidTemplateMetadata) SetIcon(val OptString) {
+	s.Icon = val
+}
+
+// SetRequires sets the value of Requires.
+func (s *UnraidTemplateMetadata) SetRequires(val OptString) {
+	s.Requires = val
+}
+
+// SetDonateLink sets the value of DonateLink.
+func (s *UnraidTemplateMetadata) SetDonateLink(val OptString) {
+	s.DonateLink = val
+}
+
+// SetVariables sets the value of Variables.
+func (s *UnraidTemplateMetadata) SetVariables(val []UnraidVariable) {
+	s.Variables = val
+}
+
+// Ref: #/components/schemas/UnraidVariable
+type UnraidVariable struct {
+	Name        string    `json:"name"`
+	Value       string    `json:"value"`
+	Description OptString `json:"description"`
+	// The template marks the value as masked.
+	Secret bool `json:"secret"`
+}
+
+// GetName returns the value of Name.
+func (s *UnraidVariable) GetName() string {
+	return s.Name
+}
+
+// GetValue returns the value of Value.
+func (s *UnraidVariable) GetValue() string {
+	return s.Value
+}
+
+// GetDescription returns the value of Description.
+func (s *UnraidVariable) GetDescription() OptString {
+	return s.Description
+}
+
+// GetSecret returns the value of Secret.
+func (s *UnraidVariable) GetSecret() bool {
+	return s.Secret
+}
+
+// SetName sets the value of Name.
+func (s *UnraidVariable) SetName(val string) {
+	s.Name = val
+}
+
+// SetValue sets the value of Value.
+func (s *UnraidVariable) SetValue(val string) {
+	s.Value = val
+}
+
+// SetDescription sets the value of Description.
+func (s *UnraidVariable) SetDescription(val OptString) {
+	s.Description = val
+}
+
+// SetSecret sets the value of Secret.
+func (s *UnraidVariable) SetSecret(val bool) {
+	s.Secret = val
+}
 
 // Ref: #/components/schemas/UpdateBackupDestinationRequest
 type UpdateBackupDestinationRequest struct {

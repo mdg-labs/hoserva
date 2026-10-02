@@ -844,3 +844,24 @@ CREATE TABLE container_update_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     image_keep_days INTEGER NOT NULL CHECK (image_keep_days >= 1 AND image_keep_days <= 365)
 ) STRICT;
+
+-- Template catalog sources (#283, doc 04 §4, §7): one row per source the
+-- catalog is read from. The curated catalog ('hoserva', kind 'curated') has
+-- a row written at startup and is never removed; every other row is a
+-- source URL the user added (kind 'user_added'). public_key is the
+-- base64 Ed25519 public key the user gave for a user-added source, empty
+-- for an unsigned one, and is always empty for the curated row, whose key
+-- is compiled in. signature_verified is 1 only while the installed copy
+-- passed a signature check, so a user-added source with no key can never
+-- be 1. last_refreshed_at is empty until the source's archive has been
+-- installed or confirmed once.
+CREATE TABLE catalog_sources (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL CHECK (kind IN ('curated', 'user_added')),
+    public_key TEXT NOT NULL,
+    signature_verified INTEGER NOT NULL CHECK (signature_verified IN (0, 1)),
+    last_refreshed_at TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    CHECK (kind = 'curated' OR signature_verified = 0 OR public_key != '')
+) STRICT;

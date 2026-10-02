@@ -414,7 +414,12 @@ describe("Settings pages", () => {
       ],
       conflicts: [],
     };
-    mockGet.mockResolvedValue({ data: schedulesPayload, response: { ok: true } });
+    mockGet.mockImplementation((path: string) =>
+      Promise.resolve({
+        data: path === "/settings/catalog" ? { refreshInterval: "24h", checkOnOpen: true } : schedulesPayload,
+        response: { ok: true },
+      }),
+    );
     mockPut.mockResolvedValue({
       data: {
         ...schedulesPayload,
@@ -1578,6 +1583,61 @@ describe("Config restore on the backup page", () => {
     if (stacks.length === 0) {
       expect(screen.queryByText("The .env files of these apps would not be restored:")).not.toBeInTheDocument();
     }
+  });
+
+  it("says an archive with an opened identity.age and no secrets.age holds no sealed secrets, not that it had no passphrase", async () => {
+    mockRestoreApi({
+      preview: apiOk(importPreview({ secrets: { status: "none", identity: "opened", stacks: [] } })),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText(/This archive holds no sealed secrets/)).toBeInTheDocument();
+    expect(screen.queryByText(/without a backup passphrase/)).not.toBeInTheDocument();
+    expect(screen.getByText("Backup recipient")).toBeInTheDocument();
+    expect(screen.getByText("Backup recipient opens")).toBeInTheDocument();
+    expect(screen.getByText(/A restore on a server that is already set up keeps/)).toBeInTheDocument();
+  });
+
+  it("tells a fresh box's preview that the archive's backup recipient is adopted when identity.age opens", async () => {
+    mockRestoreApi({
+      preview: apiOk(
+        importPreview({ secrets: { status: "none", identity: "opened", stacks: [] }, bareMetal: bareMetalPreview() }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText(/so this server adopts it when the restore finishes/)).toBeInTheDocument();
+  });
+
+  it("shows no backup recipient for an archive with neither secrets.age nor identity.age", async () => {
+    mockRestoreApi({
+      preview: apiOk(importPreview({ secrets: { status: "none", identity: "none", stacks: [] } })),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText(/This archive holds no sealed secrets/)).toBeInTheDocument();
+    expect(screen.getByText("No backup recipient")).toBeInTheDocument();
+    expect(screen.getByText("The archive holds no backup recipient, so this server keeps its own.")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["no_passphrase", /no passphrase is available to open it, so this server keeps its own/],
+    ["passphrase_incorrect", /This passphrase does not open the archive's backup recipient/],
+  ])("shows identity status %s in plain language", async (identity, hint) => {
+    mockRestoreApi({
+      preview: apiOk(importPreview({ secrets: { status: "none", identity, stacks: [] } })),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText(hint)).toBeInTheDocument();
   });
 
   it("restores in place through a typed confirmation, without a disk mapping, and shows the report", async () => {

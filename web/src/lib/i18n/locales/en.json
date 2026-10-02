@@ -34,6 +34,133 @@
         "action": "Browse the catalog"
       }
     },
+    "catalog": {
+      "title": "App catalog",
+      "description": "Apps you can install on this server, from Hoserva's catalog and from any sources you added.",
+      "loadFailed": "Could not load the app catalog.",
+      "search": "Search apps",
+      "categoryFilter": "Filter by category",
+      "installedFilter": "Installed on this server",
+      "installed": "Installed",
+      "notInstalled": "Not installed",
+      "verifiedFilter": "Where the app comes from",
+      "verified": "Verified (signed)",
+      "community": "Community (unsigned)",
+      "lastChecked": "Last checked {{time}}",
+      "neverChecked": "Not checked since the server started",
+      "lastCheckFailed": "Last check failed",
+      "categories": {
+        "media": "Media",
+        "productivity": "Productivity",
+        "system": "System",
+        "tools": "Tools"
+      },
+      "check": {
+        "action": "Check for updates",
+        "updated": "{{new}} new, {{updated}} updated",
+        "unchanged": "Catalog is up to date",
+        "failed": "The catalog check failed",
+        "failedUnknown": "The catalog check did not finish.",
+        "reasons": {
+          "fetch_failed": "The catalog host could not be reached.",
+          "bad_signature": "The catalog's signature could not be verified, so it was not installed.",
+          "not_newer": "The catalog offered is not newer than the one installed.",
+          "bad_archive": "The catalog archive could not be read, so it was not installed.",
+          "install_failed": "The new catalog could not be written to disk."
+        }
+      },
+      "empty": {
+        "title": "The catalog is empty",
+        "description": "No apps are listed yet. Check for updates to fetch the latest catalog."
+      },
+      "noMatches": {
+        "title": "No apps match",
+        "description": "Nothing in the catalog fits this search and these filters.",
+        "clear": "Clear search and filters"
+      }
+    },
+    "install": {
+      "back": "Back to the app",
+      "title": "Install {{title}}",
+      "loadFailed": "Could not load this app from the catalog.",
+      "previewFailed": "Could not work out what installing this app would do.",
+      "installFailed": "Could not install the app.",
+      "installUnconfirmed": "The app may have been installed anyway: check Installed apps before trying again.",
+      "optional": "Optional",
+      "submit": "Install {{title}}",
+      "tabs": {
+        "basic": "Basic",
+        "advanced": "Advanced"
+      },
+      "settings": {
+        "title": "Settings",
+        "none": "This app has no settings to choose."
+      },
+      "port": {
+        "unit": "port",
+        "taken": "Port {{port}} is already used by something on this server.",
+        "useNext": "Use free port {{port}}",
+        "blocked": "Choose a free port before installing."
+      },
+      "secret": {
+        "placeholder": "Made up for you when installed",
+        "help": "Leave this empty and Hoserva makes up a strong value. It is kept only in the app's settings file on the server and is never shown again."
+      },
+      "device": {
+        "none": "No graphics device was found on this server.",
+        "useNone": "Do not use a graphics device"
+      },
+      "name": {
+        "label": "Name of the app's setup",
+        "help": "The app is stored under this name. Leave it empty to use \"{{name}}\"."
+      },
+      "review": {
+        "title": "Before it runs",
+        "description": "Nothing is created until you press Install. This is the setup file that will be written and what it asks for, worked out with the values above.",
+        "compose": "Setup file (docker-compose.yml)"
+      },
+      "run": {
+        "title": "Installing {{name}}",
+        "installed": "{{name}} is installed.",
+        "installedHelp": "Its setup is saved on the server. Installing it again from here would clash with it.",
+        "portMoved": "Port {{requested}} was taken in the meantime, so port {{used}} is used instead.",
+        "starting": "Asking the server to start {{name}}…",
+        "running": "{{name}} is running.",
+        "runningHelp": "Open it from Installed apps.",
+        "notStartedTitle": "{{name}} is installed but not running",
+        "startRequestFailed": "Could not ask the server to start the app.",
+        "startFailedTitle": "{{name}} is installed but did not start",
+        "startFailedHelp": "The start ended without finishing. The output below says why.",
+        "retryStart": "Try starting again",
+        "followFailed": "Could not follow the progress of the start.",
+        "logFailed": "Could not read the output of the start.",
+        "followAgain": "Check again",
+        "viewJob": "View job",
+        "toInstalled": "Go to Installed apps",
+        "openCompose": "Open the setup file"
+      }
+    },
+    "catalogDetail": {
+      "back": "Back to the catalog",
+      "loadFailed": "Could not load this app from the catalog.",
+      "missing": {
+        "title": "\"{{id}}\" is not in the catalog",
+        "description": "The catalog no longer lists this app, or the address is wrong."
+      },
+      "revision": "Version {{revision}} of the template",
+      "docs": "Documentation",
+      "install": "Install",
+      "source": {
+        "curated": "From Hoserva's own catalog, which is checked against Hoserva's signing key.",
+        "userAddedSigned": "From the source you added ({{source}}). Its catalog's signature was checked against the key you gave.",
+        "userAddedUnsigned": "From the source you added ({{source}}). It has no signature, so nothing confirms who wrote it. Read what it asks for before installing."
+      },
+      "privileges": {
+        "title": "What this app asks for",
+        "description": "Read from the app's setup file, not from anything the app says about itself. Every item is listed whether it is harmless or not."
+      },
+      "rawTemplate": "Raw template (compose.yaml)"
+    },
     "docker": {
       "title": "Docker is not available",
       "description": "Apps run in Docker, and Hoserva could not reach it, so no apps can be listed or started."
@@ -78,7 +205,7 @@
       "loadFailed": "Could not load the update status. Updates may be available.",
       "title": "Version",
       "current": "Installed version",
-      "available": "Available version",
+      "availableVersion": "Available version",
       "sameTagRebuilt": "{{tag}}, rebuilt",
       "status": "Update check",
       "checkedAt": "Last checked",
@@ -1012,6 +1139,9 @@
     "next": "Next",
     "stepProgress": "Step {{current}} of {{total}}"
   },
+  "pathPicker": {
+    "choose": "Choose from the shares on this server"
+  },
   "copyValue": {
     "label": "Value to copy",
     "copy": "Copy",
@@ -1480,6 +1610,25 @@
         "weekly": "Weekly",
         "monthly": "Monthly"
       },
+      "catalogRefresh": {
+        "title": "Catalog refresh",
+        "description": "How the app catalog looks for new and updated apps. Check for updates on the catalog page always works, whatever is set here.",
+        "loadFailed": "Could not load the catalog refresh settings.",
+        "saveFailed": "Could not save the catalog refresh settings.",
+        "retry": "Try again",
+        "interval": "Check in the background",
+        "intervals": {
+          "off": "Off",
+          "1h": "Every hour",
+          "6h": "Every 6 hours",
+          "12h": "Every 12 hours",
+          "24h": "Daily"
+        },
+        "checkOnOpen": {
+          "label": "Check when the catalog is opened",
+          "description": "Opening the catalog looks for updates first if the last check is more than 15 minutes old."
+        }
+      },
       "chainSteps": {
         "mover": {
           "title": "Mover",
@@ -1823,10 +1972,26 @@
             "passphrase_incorrect": "Passphrase does not open it"
           },
           "hints": {
-            "none": "This archive was made without a backup passphrase, so it holds no secrets. Everything else is restored.",
+            "none": "This archive holds no sealed secrets, so there are no .env files to restore. Everything else is restored.",
             "opened": "The passphrase opens the archive's secrets, so the .env files of your apps are restored too.",
             "no_passphrase": "The archive holds secrets, and no passphrase is available to open them. Enter the passphrase above, or everything else is restored without them.",
             "passphrase_incorrect": "This server's backup passphrase does not open the archive's secrets. Enter the passphrase the archive was made with, or everything else is restored without them."
+          },
+          "identity": {
+            "title": "Backup recipient",
+            "statuses": {
+              "none": "No backup recipient",
+              "opened": "Backup recipient opens",
+              "no_passphrase": "No passphrase available",
+              "passphrase_incorrect": "Passphrase does not open it"
+            },
+            "hints": {
+              "none": "The archive holds no backup recipient, so this server keeps its own.",
+              "openedAdopted": "The passphrase opens the archive's backup recipient, so this server adopts it when the restore finishes.",
+              "openedKept": "The passphrase opens the archive's backup recipient. A restore on a server that is already set up keeps that server's own recipient.",
+              "no_passphrase": "The archive holds a backup recipient, and no passphrase is available to open it, so this server keeps its own.",
+              "passphrase_incorrect": "This passphrase does not open the archive's backup recipient, so this server keeps its own."
+            }
           }
         },
         "disks": {
@@ -2102,6 +2267,38 @@
   "listInput": {
     "add": "Add",
     "remove": "Remove {{value}}"
+  },
+  "sourceBadge": {
+    "curatedSigned": "Hoserva catalog",
+    "curatedUnsigned": "Hoserva catalog, unsigned",
+    "userAddedSigned": "Added by you, signed",
+    "userAddedUnsigned": "Added by you, unsigned"
+  },
+  "privilegeSummary": {
+    "noneTitle": "Nothing beyond an ordinary container",
+    "noneDescription": "This app does not ask for extra access to the server.",
+    "service": "Asked for by {{service}}",
+    "kinds": {
+      "privileged": "Full access to the server",
+      "host_network": "Shares the server's network",
+      "host_pid": "Can see the server's processes",
+      "host_cgroup": "Sees how the server's processes are limited",
+      "device_cgroup_rules": "Can use whole classes of devices",
+      "added_capabilities": "Extra Linux permissions",
+      "confinement_disabled": "Security protections switched off or replaced",
+      "group_add": "Joins extra groups",
+      "docker_socket": "Can control Docker, which is full control of the server",
+      "host_path": "Reaches folders outside the storage pool"
+    }
+  },
+  "pagination": {
+    "label": "Pages",
+    "range": "{{first}}-{{last}} of {{total}}",
+    "page": "Page {{page}} of {{pageCount}}",
+    "pageSize": "Items per page",
+    "perPage": "{{count}} per page",
+    "previous": "Previous",
+    "next": "Next"
   },
   "multiPick": {
     "empty": "No matches",

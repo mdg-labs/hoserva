@@ -53,6 +53,26 @@ type Invoker interface {
 	//
 	// POST /array/degraded/acknowledge
 	AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error)
+	// AddCatalogSource invokes addCatalogSource operation.
+	//
+	// Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
+	// from beneath `url` in the same format as the curated catalog and installed, and only then is the
+	// source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva
+	// contacts the URL only because the user added it, and only again when the user refreshes it. The URL
+	// must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source`
+	// otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is
+	// size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519
+	// key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that
+	// key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature
+	// is requested and every entry it supplies is badged `signed` false. A template of an unsigned source
+	// still goes through the same privilege summary and warnings at install. Refused with 409
+	// `catalog_source_exists` when a source with that URL (the curated one included) exists, 502
+	// `catalog_source_unreachable` when the archive could not be fetched, and 422
+	// `catalog_source_rejected` when the archive was fetched but refused (a signature that does not
+	// verify, a malformed archive).
+	//
+	// POST /catalog-sources
+	AddCatalogSource(ctx context.Context, request *AddCatalogSourceRequest) (*CatalogSource, error)
 	// AddDisk invokes addDisk operation.
 	//
 	// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
@@ -166,6 +186,25 @@ type Invoker interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error
+	// ConvertUnraidTemplate invokes convertUnraidTemplate operation.
+	//
+	// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
+	// created, written or run: the result is the generated `compose` beside the `source` XML as it was
+	// sent, every warning, and the privilege summary computed from the generated Compose content, so the
+	// caller reads all of it before it acts on any of it. Every part of the template that is not
+	// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
+	// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
+	// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
+	// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
+	// warning carrying the `docker network create` command, with placeholders for what the template does
+	// not say; two entries for the same target with different values are a `conflict`; the possibility of
+	// state inside the source container that no template expresses is always a `writable_layer` warning.
+	// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
+	// `note` never count against it). A body that is not an Unraid container template is refused with 400
+	// `invalid_unraid_template`.
+	//
+	// POST /apps/convert
+	ConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (*UnraidConversion, error)
 	// CreateApiToken invokes createApiToken operation.
 	//
 	// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
@@ -478,7 +517,10 @@ type Invoker interface {
 	// what its Compose content asks for beyond an ordinary container, computed with each input's default
 	// (a secret, which has none, with a generated-shaped value) and never from anything the template
 	// declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
-	// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+	// template rules with 422 `template_invalid`, as `previewTemplateInstall` does. The template's source
+	// and its badge (`sourceKind`, `signed`) come with it; the privilege summary is the same for an
+	// unsigned source's template as for a curated one, because an unsigned template can ask for any
+	// privilege.
 	//
 	// GET /catalog/{id}
 	GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (*CatalogTemplate, error)
@@ -629,6 +671,24 @@ type Invoker interface {
 	//
 	// GET /stacks/{name}
 	GetStack(ctx context.Context, params GetStackParams) (*Stack, error)
+	// GetStackTemplateUpdate invokes getStackTemplateUpdate operation.
+	//
+	// Compares the template revision the stack was installed from (its `stacks` row) with the revision the
+	// stack's own source lists now, and never changes the stack, its files or its row: a catalog update is
+	// only ever offered, and applying it is the user's action. `update_available` carries `diff`, a
+	// unified diff from the stack's stored `docker-compose.yml` to the newer revision's `compose.yaml`,
+	// and the source's badge (`sourceKind`, `signed`). A stack that was edited by hand is marked with
+	// `manuallyEdited` and its diff is against the edited file, never as if it were the pristine install.
+	// The other statuses carry no diff: `up_to_date` (the source lists the installed revision or an older
+	// one), `not_from_template` (the stack records no template or no revision number), `source_removed`
+	// (the source the stack was installed from is no longer one of the sources) and `template_removed`
+	// (the source no longer lists the template). A catalog that cannot be read is an error (503
+	// `catalog_unavailable`), never `up_to_date`. A GPU device a template install added to the stack's
+	// Compose file shows in the diff as removed lines. An unknown stack is 404 `stack_not_found`; a name
+	// that is not a valid stack name is 400 `invalid_stack_name`.
+	//
+	// GET /stacks/{name}/template-update
+	GetStackTemplateUpdate(ctx context.Context, params GetStackTemplateUpdateParams) (*StackTemplateUpdate, error)
 	// GetStatus invokes getStatus operation.
 	//
 	// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -811,20 +871,35 @@ type Invoker interface {
 	// ListCatalog invokes listCatalog operation.
 	//
 	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-	// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
-	// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
-	// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
-	// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
-	// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
-	// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
-	// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
-	// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
-	// run since the daemon started, also starts one catalog check in the background, never a second while
-	// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
-	// `catalog` event on `/api/v1/events`.
+	// waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated
+	// catalog's. The curated catalog's entries come first, then those of each user-added source
+	// (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that
+	// order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated
+	// one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for
+	// a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of
+	// an unsigned source has `signed` false. Every entry says whether a stack of that template id already
+	// exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging
+	// are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check
+	// (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that
+	// is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`,
+	// never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when
+	// the last check is older than 15 minutes, or when none has run since the daemon started, also starts
+	// one catalog check in the background, never a second while one is running. The answer is the on-disk
+	// copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
+	// ListCatalogSources invokes listCatalogSources operation.
+	//
+	// The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added
+	// (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a
+	// source whose installed archive passed a signature check: always for the curated catalog, and for a
+	// user-added source only when it was added with a public key. `serial` is the installed catalog's
+	// serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive
+	// was installed or confirmed unchanged, and is absent before the first.
+	//
+	// GET /catalog-sources
+	ListCatalogSources(ctx context.Context) (*CatalogSourceList, error)
 	// ListDisks invokes listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -1149,6 +1224,19 @@ type Invoker interface {
 	//
 	// POST /catalog/refresh
 	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
+	// RefreshCatalogSource invokes refreshCatalogSource operation.
+	//
+	// Runs one check of the source and returns how it ended, as `refreshCatalog` does for the curated
+	// catalog (the curated id runs that same check). A user-added source is only ever fetched when it is
+	// added or refreshed here, never by the background interval. A newer archive replaces the source's
+	// copy only if it verifies the way the source was added (against its public key, or well-formed for an
+	// unsigned source) and its serial is strictly higher. Any other outcome keeps the installed copy and
+	// everything recorded about the source, and is `failed` with a `reason` and a `message` (200). A
+	// remembered rejection never carries over from one source to another. An unknown id is 404
+	// `catalog_source_not_found`.
+	//
+	// POST /catalog-sources/{id}/refresh
+	RefreshCatalogSource(ctx context.Context, params RefreshCatalogSourceParams) (*CatalogRefresh, error)
 	// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 	//
 	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -1181,6 +1269,16 @@ type Invoker interface {
 	//
 	// DELETE /apps/{id}
 	RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error)
+	// RemoveCatalogSource invokes removeCatalogSource operation.
+	//
+	// Removes one user-added source: its on-disk copy and its record, and nothing of any other source.
+	// Stacks already installed from it are not touched: their Compose files and rows stay as they are, and
+	// they only report `source_removed` from `getStackTemplateUpdate`. The curated catalog cannot be
+	// removed: 409 `catalog_source_curated`. An unknown id is 404 `catalog_source_not_found`. A removal
+	// that fails part way leaves a source the next call finishes removing.
+	//
+	// DELETE /catalog-sources/{id}
+	RemoveCatalogSource(ctx context.Context, params RemoveCatalogSourceParams) error
 	// RemoveStack invokes removeStack operation.
 	//
 	// Runs `docker compose down` for the stack (its containers and networks are removed; named volumes are
@@ -1912,6 +2010,148 @@ func (c *Client) sendAcknowledgeDegradedArray(ctx context.Context) (res *SystemS
 
 	stage = "DecodeResponse"
 	result, err := decodeAcknowledgeDegradedArrayResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// AddCatalogSource invokes addCatalogSource operation.
+//
+// Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
+// from beneath `url` in the same format as the curated catalog and installed, and only then is the
+// source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva
+// contacts the URL only because the user added it, and only again when the user refreshes it. The URL
+// must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source`
+// otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is
+// size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519
+// key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that
+// key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature
+// is requested and every entry it supplies is badged `signed` false. A template of an unsigned source
+// still goes through the same privilege summary and warnings at install. Refused with 409
+// `catalog_source_exists` when a source with that URL (the curated one included) exists, 502
+// `catalog_source_unreachable` when the archive could not be fetched, and 422
+// `catalog_source_rejected` when the archive was fetched but refused (a signature that does not
+// verify, a malformed archive).
+//
+// POST /catalog-sources
+func (c *Client) AddCatalogSource(ctx context.Context, request *AddCatalogSourceRequest) (*CatalogSource, error) {
+	res, err := c.sendAddCatalogSource(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendAddCatalogSource(ctx context.Context, request *AddCatalogSourceRequest) (res *CatalogSource, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("addCatalogSource"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/catalog-sources"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, AddCatalogSourceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/catalog-sources"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeAddCatalogSourceRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, AddCatalogSourceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, AddCatalogSourceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeAddCatalogSourceResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -3417,6 +3657,147 @@ func (c *Client) sendConfirmTotp(ctx context.Context, request *TotpConfirmReques
 
 	stage = "DecodeResponse"
 	result, err := decodeConfirmTotpResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConvertUnraidTemplate invokes convertUnraidTemplate operation.
+//
+// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
+// created, written or run: the result is the generated `compose` beside the `source` XML as it was
+// sent, every warning, and the privilege summary computed from the generated Compose content, so the
+// caller reads all of it before it acts on any of it. Every part of the template that is not
+// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
+// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
+// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
+// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
+// warning carrying the `docker network create` command, with placeholders for what the template does
+// not say; two entries for the same target with different values are a `conflict`; the possibility of
+// state inside the source container that no template expresses is always a `writable_layer` warning.
+// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
+// `note` never count against it). A body that is not an Unraid container template is refused with 400
+// `invalid_unraid_template`.
+//
+// POST /apps/convert
+func (c *Client) ConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (*UnraidConversion, error) {
+	res, err := c.sendConvertUnraidTemplate(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (res *UnraidConversion, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("convertUnraidTemplate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/apps/convert"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ConvertUnraidTemplateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/apps/convert"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConvertUnraidTemplateRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ConvertUnraidTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ConvertUnraidTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeConvertUnraidTemplateResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -7896,7 +8277,10 @@ func (c *Client) sendGetCatalogSettings(ctx context.Context) (res *CatalogSettin
 // what its Compose content asks for beyond an ordinary container, computed with each input's default
 // (a secret, which has none, with a generated-shaped value) and never from anything the template
 // declares. An unknown template is refused with 404 `template_not_found`; an entry that fails the
-// template rules with 422 `template_invalid`, as `previewTemplateInstall` does.
+// template rules with 422 `template_invalid`, as `previewTemplateInstall` does. The template's source
+// and its badge (`sourceKind`, `signed`) come with it; the privilege summary is the same for an
+// unsigned source's template as for a curated one, because an unsigned template can ask for any
+// privilege.
 //
 // GET /catalog/{id}
 func (c *Client) GetCatalogTemplate(ctx context.Context, params GetCatalogTemplateParams) (*CatalogTemplate, error) {
@@ -10619,6 +11003,162 @@ func (c *Client) sendGetStack(ctx context.Context, params GetStackParams) (res *
 	return result, nil
 }
 
+// GetStackTemplateUpdate invokes getStackTemplateUpdate operation.
+//
+// Compares the template revision the stack was installed from (its `stacks` row) with the revision the
+// stack's own source lists now, and never changes the stack, its files or its row: a catalog update is
+// only ever offered, and applying it is the user's action. `update_available` carries `diff`, a
+// unified diff from the stack's stored `docker-compose.yml` to the newer revision's `compose.yaml`,
+// and the source's badge (`sourceKind`, `signed`). A stack that was edited by hand is marked with
+// `manuallyEdited` and its diff is against the edited file, never as if it were the pristine install.
+// The other statuses carry no diff: `up_to_date` (the source lists the installed revision or an older
+// one), `not_from_template` (the stack records no template or no revision number), `source_removed`
+// (the source the stack was installed from is no longer one of the sources) and `template_removed`
+// (the source no longer lists the template). A catalog that cannot be read is an error (503
+// `catalog_unavailable`), never `up_to_date`. A GPU device a template install added to the stack's
+// Compose file shows in the diff as removed lines. An unknown stack is 404 `stack_not_found`; a name
+// that is not a valid stack name is 400 `invalid_stack_name`.
+//
+// GET /stacks/{name}/template-update
+func (c *Client) GetStackTemplateUpdate(ctx context.Context, params GetStackTemplateUpdateParams) (*StackTemplateUpdate, error) {
+	res, err := c.sendGetStackTemplateUpdate(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetStackTemplateUpdate(ctx context.Context, params GetStackTemplateUpdateParams) (res *StackTemplateUpdate, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getStackTemplateUpdate"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/stacks/{name}/template-update"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetStackTemplateUpdateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/stacks/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/template-update"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetStackTemplateUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetStackTemplateUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetStackTemplateUpdateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetStatus invokes getStatus operation.
 //
 // One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -12413,17 +12953,21 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 // ListCatalog invokes listCatalog operation.
 //
 // The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-// waiting on the network, with the catalog's `serial` and `generatedAt`. Every entry names the
-// `source` it came from (`hoserva`, the curated catalog, is the only source) and says whether a stack
-// of that template id already exists (`installed`, from the `stacks` table). Entries are in the
-// index's order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report
-// the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any
-// check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with
-// 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on
-// (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has
-// run since the daemon started, also starts one catalog check in the background, never a second while
-// one is running. The answer is the on-disk copy as it is now; the finished check is announced as a
-// `catalog` event on `/api/v1/events`.
+// waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated
+// catalog's. The curated catalog's entries come first, then those of each user-added source
+// (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that
+// order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated
+// one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for
+// a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of
+// an unsigned source has `signed` false. Every entry says whether a stack of that template id already
+// exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging
+// are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check
+// (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that
+// is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`,
+// never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when
+// the last check is older than 15 minutes, or when none has run since the daemon started, also starts
+// one catalog check in the background, never a second while one is running. The answer is the on-disk
+// copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
 //
 // GET /catalog
 func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
@@ -12539,6 +13083,136 @@ func (c *Client) sendListCatalog(ctx context.Context) (res *CatalogList, err err
 
 	stage = "DecodeResponse"
 	result, err := decodeListCatalogResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListCatalogSources invokes listCatalogSources operation.
+//
+// The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added
+// (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a
+// source whose installed archive passed a signature check: always for the curated catalog, and for a
+// user-added source only when it was added with a public key. `serial` is the installed catalog's
+// serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive
+// was installed or confirmed unchanged, and is absent before the first.
+//
+// GET /catalog-sources
+func (c *Client) ListCatalogSources(ctx context.Context) (*CatalogSourceList, error) {
+	res, err := c.sendListCatalogSources(ctx)
+	return res, err
+}
+
+func (c *Client) sendListCatalogSources(ctx context.Context) (res *CatalogSourceList, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listCatalogSources"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/catalog-sources"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListCatalogSourcesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/catalog-sources"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListCatalogSourcesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListCatalogSourcesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListCatalogSourcesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -16064,6 +16738,157 @@ func (c *Client) sendRefreshCatalog(ctx context.Context) (res *CatalogRefresh, e
 	return result, nil
 }
 
+// RefreshCatalogSource invokes refreshCatalogSource operation.
+//
+// Runs one check of the source and returns how it ended, as `refreshCatalog` does for the curated
+// catalog (the curated id runs that same check). A user-added source is only ever fetched when it is
+// added or refreshed here, never by the background interval. A newer archive replaces the source's
+// copy only if it verifies the way the source was added (against its public key, or well-formed for an
+// unsigned source) and its serial is strictly higher. Any other outcome keeps the installed copy and
+// everything recorded about the source, and is `failed` with a `reason` and a `message` (200). A
+// remembered rejection never carries over from one source to another. An unknown id is 404
+// `catalog_source_not_found`.
+//
+// POST /catalog-sources/{id}/refresh
+func (c *Client) RefreshCatalogSource(ctx context.Context, params RefreshCatalogSourceParams) (*CatalogRefresh, error) {
+	res, err := c.sendRefreshCatalogSource(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendRefreshCatalogSource(ctx context.Context, params RefreshCatalogSourceParams) (res *CatalogRefresh, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("refreshCatalogSource"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/catalog-sources/{id}/refresh"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RefreshCatalogSourceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/catalog-sources/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/refresh"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RefreshCatalogSourceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RefreshCatalogSourceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRefreshCatalogSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 //
 // Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -16488,6 +17313,153 @@ func (c *Client) sendRemoveApp(ctx context.Context, params RemoveAppParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeRemoveAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RemoveCatalogSource invokes removeCatalogSource operation.
+//
+// Removes one user-added source: its on-disk copy and its record, and nothing of any other source.
+// Stacks already installed from it are not touched: their Compose files and rows stay as they are, and
+// they only report `source_removed` from `getStackTemplateUpdate`. The curated catalog cannot be
+// removed: 409 `catalog_source_curated`. An unknown id is 404 `catalog_source_not_found`. A removal
+// that fails part way leaves a source the next call finishes removing.
+//
+// DELETE /catalog-sources/{id}
+func (c *Client) RemoveCatalogSource(ctx context.Context, params RemoveCatalogSourceParams) error {
+	_, err := c.sendRemoveCatalogSource(ctx, params)
+	return err
+}
+
+func (c *Client) sendRemoveCatalogSource(ctx context.Context, params RemoveCatalogSourceParams) (res *RemoveCatalogSourceNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("removeCatalogSource"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/catalog-sources/{id}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RemoveCatalogSourceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/catalog-sources/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RemoveCatalogSourceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RemoveCatalogSourceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRemoveCatalogSourceResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
