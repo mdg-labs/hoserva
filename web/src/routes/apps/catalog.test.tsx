@@ -308,6 +308,24 @@ describe("CatalogPage", () => {
     expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
   });
 
+  it("toasts the generic failure for a reason this build has no words for", async () => {
+    installGet(() => ok(catalog([JELLYFIN])));
+    mockPost.mockResolvedValue({
+      data: { checkedAt: "2026-10-02T08:00:00Z", outcome: "failed", reason: "rate_limited" },
+      response: { ok: true },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        type: "error",
+        title: "The catalog check failed",
+        description: "The catalog check did not finish.",
+      }),
+    );
+  });
+
   it("toasts an API error and a rejected request as failures", async () => {
     installGet(() => ok(catalog([JELLYFIN])));
     mockPost.mockResolvedValueOnce({ error: { code: "forbidden", message: "admins only" }, response: { ok: false } });

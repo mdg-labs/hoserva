@@ -62,7 +62,9 @@ function checkToast(
     title: t("apps.catalog.check.failed"),
     description:
       result.message ??
-      (result.reason ? t(`apps.catalog.check.reasons.${result.reason}`) : t("apps.catalog.check.failedUnknown")),
+      (result.reason
+        ? t(`apps.catalog.check.reasons.${result.reason}`, { defaultValue: t("apps.catalog.check.failedUnknown") })
+        : t("apps.catalog.check.failedUnknown")),
   };
 }
 
