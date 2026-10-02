@@ -262,6 +262,9 @@ func run(cfg config) error {
 	if err := os.MkdirAll(cfg.stateDir, 0o700); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
+	if err := usePrivateTempDir(cfg.stateDir); err != nil {
+		return err
+	}
 
 	db, err := openDatabase(cfg.stateDir)
 	if err != nil {
@@ -1082,6 +1085,41 @@ func withSourceAddrMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(api.WithSourceAddr(r.Context(), host)))
 	})
+}
+
+// usePrivateTempDir points the process temp directory at <stateDir>/tmp, a
+// 0700 directory emptied here, so a multipart part past the generated
+// server's memory limit (a Flash Backup zip, a config archive) spills beside
+// the state it belongs to and never into the system /tmp. Any failure is
+// returned: there is no fallback to the old temp directory.
+func usePrivateTempDir(stateDir string) error {
+	abs, err := filepath.Abs(stateDir)
+	if err != nil {
+		return fmt.Errorf("resolving state directory: %w", err)
+	}
+	dir := filepath.Join(abs, "tmp")
+	if info, err := os.Lstat(dir); err == nil && !info.IsDir() {
+		return fmt.Errorf("private temp directory %s is not a directory", dir)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating private temp directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("securing private temp directory: %w", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("emptying private temp directory: %w", err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("emptying private temp directory: %w", err)
+		}
+	}
+	if err := os.Setenv("TMPDIR", dir); err != nil {
+		return fmt.Errorf("setting TMPDIR: %w", err)
+	}
+	return nil
 }
 
 func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService *api.AuthService, hub *job.Hub, notifyHub *notify.Hub, webRoot fs.FS) (*http.Server, error) {
