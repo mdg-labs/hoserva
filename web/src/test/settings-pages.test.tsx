@@ -414,7 +414,12 @@ describe("Settings pages", () => {
       ],
       conflicts: [],
     };
-    mockGet.mockResolvedValue({ data: schedulesPayload, response: { ok: true } });
+    mockGet.mockImplementation((path: string) =>
+      Promise.resolve({
+        data: path === "/settings/catalog" ? { refreshInterval: "24h", checkOnOpen: true } : schedulesPayload,
+        response: { ok: true },
+      }),
+    );
     mockPut.mockResolvedValue({
       data: {
         ...schedulesPayload,

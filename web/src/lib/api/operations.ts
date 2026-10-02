@@ -22,6 +22,7 @@ type ScheduleFrequency = components["schemas"]["ScheduleFrequency"];
 type UpdateGeneralSettingsRequest = components["schemas"]["UpdateGeneralSettingsRequest"];
 type UpdateUPSSettingsRequest = components["schemas"]["UpdateUPSSettingsRequest"];
 type ApplyHostConfigRequest = components["schemas"]["ApplyHostConfigRequest"];
+type CatalogSettingsUpdate = components["schemas"]["CatalogSettingsUpdate"];
 
 export function getStatus(signal?: AbortSignal) {
   return hoservaClient.GET("/status", { signal });
@@ -835,4 +836,32 @@ export function postConfigImport(args: {
     body: { archive: args.archive.name, confirm: true },
     bodySerializer: () => form,
   });
+}
+
+// App catalog.
+
+export function getCatalog(signal?: AbortSignal) {
+  return hoservaClient.GET("/catalog", { signal });
+}
+
+export function getCatalogTemplate(id: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/catalog/{id}", { params: { path: { id } }, signal });
+}
+
+// An <img> loads the icon itself, so this is the one address built by hand:
+// the response is an image the browser decodes, not JSON for the client.
+export function catalogIconPath(id: string): string {
+  return `/api/v1/catalog/${encodeURIComponent(id)}/icon`;
+}
+
+export function postCatalogRefresh() {
+  return hoservaClient.POST("/catalog/refresh");
+}
+
+export function getCatalogSettings(signal?: AbortSignal) {
+  return hoservaClient.GET("/settings/catalog", { signal });
+}
+
+export function putCatalogSettings(body: CatalogSettingsUpdate) {
+  return hoservaClient.PUT("/settings/catalog", { body });
 }

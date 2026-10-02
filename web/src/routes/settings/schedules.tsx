@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Banner } from "@/components/patterns/banner";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { SettingSwitch } from "@/components/patterns/setting-switch";
+import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Frame, FramePanel } from "@/components/ui/frame";
@@ -16,7 +17,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { components } from "@/lib/api/client";
-import { getSchedules, putMaintenanceChainSchedule, putScheduledJob } from "@/lib/api/operations";
+import {
+  getCatalogSettings,
+  getSchedules,
+  putCatalogSettings,
+  putMaintenanceChainSchedule,
+  putScheduledJob,
+} from "@/lib/api/operations";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import {
@@ -28,8 +35,20 @@ import {
 
 type Schedules = components["schemas"]["Schedules"];
 type ScheduleFrequency = components["schemas"]["ScheduleFrequency"];
+type CatalogSettings = components["schemas"]["CatalogSettings"];
+type CatalogSettingsUpdate = components["schemas"]["CatalogSettingsUpdate"];
+type CatalogRefreshInterval = components["schemas"]["CatalogRefreshInterval"];
 
 const OTHER_FREQUENCY_OPTIONS: ScheduleFrequency[] = ["daily", "weekly", "monthly"];
+// Keyed by the API's enum, so a new interval fails the type check here until
+// it has an option.
+const CATALOG_INTERVALS = Object.keys({
+  off: 0,
+  "1h": 0,
+  "6h": 0,
+  "12h": 0,
+  "24h": 0,
+} satisfies Record<CatalogRefreshInterval, 0>) as CatalogRefreshInterval[];
 
 function formatNextRun(iso: string, locale: string): string {
   return new Intl.DateTimeFormat(locale, {
@@ -46,6 +65,110 @@ function conflictDescription(
     jobA: t(`settings.schedules.conflictJobs.${conflict.jobA}`, { defaultValue: conflict.jobA }),
     jobB: t(`settings.schedules.conflictJobs.${conflict.jobB}`, { defaultValue: conflict.jobB }),
   });
+}
+
+// Shows what the daemon holds: a value is never displayed as saved until the
+// save succeeded and the settings were read back.
+function CatalogRefreshCard(): React.ReactElement {
+  const { t } = useTranslation();
+  const settingsQuery = useApiQuery<CatalogSettings>({
+    queryKey: "catalog-settings",
+    queryFn: (signal) => getCatalogSettings(signal),
+    fallbackError: t("settings.schedules.catalogRefresh.loadFailed"),
+  });
+  const saveMutation = useApiMutation<CatalogSettingsUpdate, CatalogSettings>({
+    mutationFn: (body) => putCatalogSettings(body),
+    fallbackError: t("settings.schedules.catalogRefresh.saveFailed"),
+  });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const settings = settingsQuery.data;
+
+  async function save(update: CatalogSettingsUpdate): Promise<void> {
+    setSaveError(null);
+    const result = await saveMutation.mutate(update);
+    if (!result.ok) {
+      if (!result.aborted) {
+        setSaveError(result.error);
+      }
+      return;
+    }
+    await settingsQuery.refresh();
+  }
+
+  const loadError = settingsQuery.error ? (
+    <Banner
+      tone="error"
+      title={t("settings.schedules.catalogRefresh.loadFailed")}
+      description={settingsQuery.error}
+      action={
+        <Button size="xs" variant="outline" onClick={() => void settingsQuery.refresh()}>
+          {t("settings.schedules.catalogRefresh.retry")}
+        </Button>
+      }
+    />
+  ) : null;
+
+  let body: React.ReactElement | null;
+  if (settings === null) {
+    body = settingsQuery.error ? null : <LoadingBlock rows={2} />;
+  } else {
+    body = (
+      <>
+        {saveError ? (
+          <Banner
+            tone="error"
+            title={t("settings.schedules.catalogRefresh.saveFailed")}
+            description={saveError}
+          />
+        ) : null}
+        <Field>
+          <FieldLabel>{t("settings.schedules.catalogRefresh.interval")}</FieldLabel>
+          <Select
+            value={settings.refreshInterval}
+            disabled={saveMutation.pending}
+            items={CATALOG_INTERVALS.map((interval) => ({
+              value: interval,
+              label: t(`settings.schedules.catalogRefresh.intervals.${interval}`),
+            }))}
+            onValueChange={(value) =>
+              value && void save({ refreshInterval: value as CatalogRefreshInterval })
+            }
+          >
+            <SelectTrigger className="sm:w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              {CATALOG_INTERVALS.map((interval) => (
+                <SelectItem key={interval} value={interval}>
+                  {t(`settings.schedules.catalogRefresh.intervals.${interval}`)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </Field>
+        <SettingSwitch
+          label={t("settings.schedules.catalogRefresh.checkOnOpen.label")}
+          description={t("settings.schedules.catalogRefresh.checkOnOpen.description")}
+          checked={settings.checkOnOpen}
+          disabled={saveMutation.pending}
+          onCheckedChange={(checkOnOpen) => void save({ checkOnOpen })}
+        />
+      </>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("settings.schedules.catalogRefresh.title")}</CardTitle>
+      </CardHeader>
+      <CardPanel className="flex flex-col gap-4">
+        <p className="text-muted-foreground text-sm">{t("settings.schedules.catalogRefresh.description")}</p>
+        {loadError}
+        {body}
+      </CardPanel>
+    </Card>
+  );
 }
 
 export function SchedulesSettingsPage(): React.ReactElement {
@@ -136,11 +259,14 @@ export function SchedulesSettingsPage(): React.ReactElement {
 
   if (!schedules) {
     return (
-      <Banner
-        tone="error"
-        title={t("settings.schedules.loadErrorTitle")}
-        description={schedulesQuery.error ?? t("settings.schedules.loadErrorDescription")}
-      />
+      <div className="flex flex-col gap-4">
+        <Banner
+          tone="error"
+          title={t("settings.schedules.loadErrorTitle")}
+          description={schedulesQuery.error ?? t("settings.schedules.loadErrorDescription")}
+        />
+        <CatalogRefreshCard />
+      </div>
     );
   }
 
@@ -265,6 +391,8 @@ export function SchedulesSettingsPage(): React.ReactElement {
           );
         })}
       </div>
+
+      <CatalogRefreshCard />
     </div>
   );
 }

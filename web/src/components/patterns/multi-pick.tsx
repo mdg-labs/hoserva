@@ -26,12 +26,14 @@ export function MultiPick({
   options,
   placeholder,
   emptyLabel,
+  label,
 }: {
   value: string[];
   onChange: (value: string[]) => void;
   options: MultiPickOption[];
   placeholder?: string;
   emptyLabel?: string;
+  label?: string;
 }): React.ReactElement {
   const { t } = useTranslation();
   const labelByValue = new Map(options.map((option) => [option.value, option.label]));
@@ -50,7 +52,7 @@ export function MultiPick({
             <ComboboxChipRemove aria-label={t("multiPick.remove", { value: labelByValue.get(entry) ?? entry })} />
           </ComboboxChip>
         ))}
-        <ComboboxInput placeholder={value.length === 0 ? placeholder : undefined} />
+        <ComboboxInput aria-label={label ?? placeholder} placeholder={value.length === 0 ? placeholder : undefined} />
       </ComboboxChips>
       <ComboboxPopup>
         <ComboboxEmpty>{emptyLabel ?? t("multiPick.empty")}</ComboboxEmpty>

@@ -385,7 +385,7 @@ Filters: category, maintainer, installed / not installed, verified / community.
 
 **Source indicator** on every entry — Hoserva curated or user-added repository. Users should know where a template came from.
 
-**Check for updates.** A header action runs one conditional catalog request now and shows the time of the last check beside it. The result appears as a toast: new templates, updated templates, unchanged, or failed with the reason. It works even when both automatic refresh triggers are off (doc 04 §7, Q65), and the grid refreshes when the check completes, whether it was started here or by the background interval or check-on-open (announced on `/api/v1/events`).
+**Check for updates.** A header action runs one catalog check now and shows the time of the last check beside it. The result appears as a toast: new templates, updated templates, unchanged, or failed with the reason. It works even when both automatic refresh triggers are off (doc 04 §7, Q65), and the grid refreshes when the check completes, whether it was started here or by the background interval or check-on-open (announced on `/api/v1/events`).
 
 **Components:** search InputGroup (`p-input-group-20`); *Check for updates* Button in the page header with the last-checked time as muted text and the outcome as a promise `feedback-toast`; category `multi-pick`; installed and verified filters as a ToggleGroup (`p-toggle-group-4`), since they are clearable filters; a grid of Cards (`p-card-1`) with the app icon as an Avatar with fallback (`p-avatar-1`) and a source `status-badge`; Pagination with page size (`p-pagination-3`); `empty-state` for no results.
 

@@ -9,6 +9,8 @@ import { DashboardPage } from "@/routes/dashboard";
 import { JobDetailPage } from "@/routes/jobs/detail";
 import { JobsPage } from "@/routes/jobs/index";
 import { AppsPage } from "@/routes/apps/index";
+import { CatalogPage } from "@/routes/apps/catalog";
+import { CatalogDetailPage } from "@/routes/apps/catalog-detail";
 import { ComposePage } from "@/routes/apps/compose";
 import { AppDetailPage } from "@/routes/apps/detail";
 import { LoginPage } from "@/routes/login";
@@ -91,9 +93,9 @@ function AuthenticatedRoutes(): React.ReactElement {
 
         <Route element={<SectionLayout items={APPS_NAV(t)} />}>
           <Route path="apps" element={<AppsPage />} />
-          <Route path="apps/catalog" element={<PlaceholderPage titleKey="appsNav.catalog" />} />
+          <Route path="apps/catalog" element={<CatalogPage />} />
         </Route>
-        <Route path="apps/catalog/:appId" element={<PlaceholderPage titleKey="appsNav.catalog" />} />
+        <Route path="apps/catalog/:appId" element={<CatalogDetailPage />} />
         <Route path="apps/install/:appId" element={<PlaceholderPage titleKey="appsNav.installed" />} />
         <Route path="apps/:name" element={<AppDetailPage />} />
         <Route path="apps/:name/compose" element={<ComposePage />} />

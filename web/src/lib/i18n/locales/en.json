@@ -34,6 +34,72 @@
         "action": "Browse the catalog"
       }
     },
+    "catalog": {
+      "title": "App catalog",
+      "description": "Apps you can install on this server, from Hoserva's catalog and from any sources you added.",
+      "loadFailed": "Could not load the app catalog.",
+      "search": "Search apps",
+      "categoryFilter": "Filter by category",
+      "installedFilter": "Installed on this server",
+      "installed": "Installed",
+      "notInstalled": "Not installed",
+      "verifiedFilter": "Where the app comes from",
+      "verified": "Verified (signed)",
+      "community": "Community (unsigned)",
+      "lastChecked": "Last checked {{time}}",
+      "neverChecked": "Not checked since the server started",
+      "lastCheckFailed": "Last check failed",
+      "categories": {
+        "media": "Media",
+        "productivity": "Productivity",
+        "system": "System",
+        "tools": "Tools"
+      },
+      "check": {
+        "action": "Check for updates",
+        "updated": "{{new}} new, {{updated}} updated",
+        "unchanged": "Catalog is up to date",
+        "failed": "The catalog check failed",
+        "failedUnknown": "The catalog check did not finish.",
+        "reasons": {
+          "fetch_failed": "The catalog host could not be reached.",
+          "bad_signature": "The catalog's signature could not be verified, so it was not installed.",
+          "not_newer": "The catalog offered is not newer than the one installed.",
+          "bad_archive": "The catalog archive could not be read, so it was not installed.",
+          "install_failed": "The new catalog could not be written to disk."
+        }
+      },
+      "empty": {
+        "title": "The catalog is empty",
+        "description": "No apps are listed yet. Check for updates to fetch the latest catalog."
+      },
+      "noMatches": {
+        "title": "No apps match",
+        "description": "Nothing in the catalog fits this search and these filters.",
+        "clear": "Clear search and filters"
+      }
+    },
+    "catalogDetail": {
+      "back": "Back to the catalog",
+      "loadFailed": "Could not load this app from the catalog.",
+      "missing": {
+        "title": "\"{{id}}\" is not in the catalog",
+        "description": "The catalog no longer lists this app, or the address is wrong."
+      },
+      "revision": "Version {{revision}} of the template",
+      "docs": "Documentation",
+      "install": "Install",
+      "source": {
+        "curated": "From Hoserva's own catalog, which is checked against Hoserva's signing key.",
+        "userAddedSigned": "From the source you added ({{source}}). Its catalog's signature was checked against the key you gave.",
+        "userAddedUnsigned": "From the source you added ({{source}}). It has no signature, so nothing confirms who wrote it. Read what it asks for before installing."
+      },
+      "privileges": {
+        "title": "What this app asks for",
+        "description": "Read from the app's setup file, not from anything the app says about itself. Every item is listed whether it is harmless or not."
+      },
+      "rawTemplate": "Raw template (compose.yaml)"
+    },
     "docker": {
       "title": "Docker is not available",
       "description": "Apps run in Docker, and Hoserva could not reach it, so no apps can be listed or started."
@@ -1480,6 +1546,25 @@
         "weekly": "Weekly",
         "monthly": "Monthly"
       },
+      "catalogRefresh": {
+        "title": "Catalog refresh",
+        "description": "How the app catalog looks for new and updated apps. Check for updates on the catalog page always works, whatever is set here.",
+        "loadFailed": "Could not load the catalog refresh settings.",
+        "saveFailed": "Could not save the catalog refresh settings.",
+        "retry": "Try again",
+        "interval": "Check in the background",
+        "intervals": {
+          "off": "Off",
+          "1h": "Every hour",
+          "6h": "Every 6 hours",
+          "12h": "Every 12 hours",
+          "24h": "Daily"
+        },
+        "checkOnOpen": {
+          "label": "Check when the catalog is opened",
+          "description": "Opening the catalog looks for updates first if the last check is more than 15 minutes old."
+        }
+      },
       "chainSteps": {
         "mover": {
           "title": "Mover",
@@ -2118,6 +2203,38 @@
   "listInput": {
     "add": "Add",
     "remove": "Remove {{value}}"
+  },
+  "sourceBadge": {
+    "curatedSigned": "Hoserva catalog",
+    "curatedUnsigned": "Hoserva catalog, unsigned",
+    "userAddedSigned": "Added by you, signed",
+    "userAddedUnsigned": "Added by you, unsigned"
+  },
+  "privilegeSummary": {
+    "noneTitle": "Nothing beyond an ordinary container",
+    "noneDescription": "This app does not ask for extra access to the server.",
+    "service": "Asked for by {{service}}",
+    "kinds": {
+      "privileged": "Full access to the server",
+      "host_network": "Shares the server's network",
+      "host_pid": "Can see the server's processes",
+      "host_cgroup": "Sees how the server's processes are limited",
+      "device_cgroup_rules": "Can use whole classes of devices",
+      "added_capabilities": "Extra Linux permissions",
+      "confinement_disabled": "Security protections switched off or replaced",
+      "group_add": "Joins extra groups",
+      "docker_socket": "Can control Docker, which is full control of the server",
+      "host_path": "Reaches folders outside the storage pool"
+    }
+  },
+  "pagination": {
+    "label": "Pages",
+    "range": "{{first}}-{{last}} of {{total}}",
+    "page": "Page {{page}} of {{pageCount}}",
+    "pageSize": "Items per page",
+    "perPage": "{{count}} per page",
+    "previous": "Previous",
+    "next": "Next"
   },
   "multiPick": {
     "empty": "No matches",

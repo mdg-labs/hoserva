@@ -22,6 +22,11 @@ const (
 	// mockDownHost is a catalog host the mock cannot reach, so a page built
 	// on the mock meets a failed add.
 	mockDownHost = "down.example.org"
+	// mockExtrasSourceID and mockExtrasSourceURL are the user-added source
+	// the mock starts with: unsigned, so a page built on the mock can show
+	// that badge on a real entry.
+	mockExtrasSourceID  = "src-0000000000"
+	mockExtrasSourceURL = "https://extras.example.org/catalog"
 )
 
 // mockSourceKey is the one key the mock's imaginary publishers sign with: a
@@ -35,6 +40,18 @@ var mockSourceKey = ed25519.NewKeyFromSeed([]byte("hoserva-mock-source-signing-s
 // with it.
 func mockSourcePublicKey() string {
 	return base64.StdEncoding.EncodeToString(mockSourceKey.Public().(ed25519.PublicKey))
+}
+
+// mockSeededSources is the source list a new mock starts with.
+func mockSeededSources() []apiv1.CatalogSource {
+	return []apiv1.CatalogSource{{
+		ID:              mockExtrasSourceID,
+		URL:             mockExtrasSourceURL,
+		Kind:            apiv1.CatalogSourceKindUserAdded,
+		Signed:          false,
+		Serial:          apiv1.NewOptInt64(1),
+		LastRefreshedAt: apiv1.NewOptDateTime(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)),
+	}}
 }
 
 func mockSourceError(code string, status int, err error) error {
@@ -131,8 +148,8 @@ func (h *handler) RefreshCatalogSource(ctx context.Context, params apiv1.Refresh
 }
 
 // mockSourceCatalogs resolves the source a mock stack records: the mock's
-// curated catalog, or a source added through this mock, which supplies no
-// templates of its own.
+// curated catalog, the seeded user-added source, or a source added through
+// this mock, which supplies no templates of its own.
 type mockSourceCatalogs struct{ h *handler }
 
 func (m mockSourceCatalogs) From(_ context.Context, source string) (template.Catalog, error) {
@@ -143,6 +160,9 @@ func (m mockSourceCatalogs) From(_ context.Context, source string) (template.Cat
 	defer m.h.sourcesMu.Unlock()
 	for _, s := range m.h.catalogSources {
 		if s.ID == source {
+			if s.ID == mockExtrasSourceID {
+				return mockExtrasCatalog(), nil
+			}
 			return template.MapCatalog{Source: s.ID, Kind: store.CatalogSourceUserAdded, Signed: s.Signed}, nil
 		}
 	}

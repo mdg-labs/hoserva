@@ -106,7 +106,7 @@ func TestMockPreviewReportsThePrivilegesAndKeepsSecretsOut(t *testing.T) {
 	}
 }
 
-func TestMockCatalogMarksAnInstalledTemplateAndNamesTheCuratedSource(t *testing.T) {
+func TestMockCatalogMarksAnInstalledTemplateAndNamesItsSource(t *testing.T) {
 	h, err := newHandler("healthy")
 	if err != nil {
 		t.Fatal(err)
@@ -121,14 +121,14 @@ func TestMockCatalogMarksAnInstalledTemplateAndNamesTheCuratedSource(t *testing.
 		out := map[string]bool{}
 		for _, e := range list.Templates {
 			out[e.ID] = e.Installed
-			if e.Source != template.SourceCurated {
-				t.Errorf("%s: source = %q", e.ID, e.Source)
+			if want := map[bool]string{true: mockExtrasSourceID, false: template.SourceCurated}[e.ID == "quickpaste"]; e.Source != want {
+				t.Errorf("%s: source = %q, want %q", e.ID, e.Source, want)
 			}
 		}
 		return out
 	}
 	before := installed()
-	if len(before) != 3 || before["aio-notes"] || before["risky-agent"] {
+	if len(before) != 4 || before["aio-notes"] || before["risky-agent"] {
 		t.Fatalf("before = %v", before)
 	}
 	if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("notes")}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
