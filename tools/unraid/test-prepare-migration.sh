@@ -226,6 +226,13 @@ assert_nofile "$(cap networks.json)" "docker error: networks.json is absent"
 assert_eq "$(jq -r .docker.state "$(cap capture.json)")" error "docker error: the capture says so"
 assert_has "$(report)" "!! Docker did not answer completely" "docker error: the report says so"
 
+note "case: Docker answers but prints a warning on stderr"
+new_root
+STUB_DOCKER_WARN=1 run
+assert_eq "$STATUS" 0 "docker warning: exit status"
+assert_eq "$(jq -r .docker.state "$(cap capture.json)")" running "docker warning: the capture is not marked as an error"
+assert_eq "$(jq -S . "$(cap containers.json)")" "$(jq -S . "$data/docker/containers.json")" "docker warning: containers.json is still docker's own inspect output"
+
 # --------------------------------------------------------------------
 note "case: containers by origin, templates matched on <Name>"
 new_root

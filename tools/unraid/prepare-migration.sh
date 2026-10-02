@@ -269,7 +269,7 @@ collect_docker() {
     DOCKER_DETAIL="the docker command is not available"
     return 0
   fi
-  if ! out=$(docker ps -aq 2>&1); then
+  if ! out=$(docker ps -aq 2>/dev/null); then
     DOCKER_DETAIL="docker ps failed: the Docker service is not running"
     return 0
   fi

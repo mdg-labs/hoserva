@@ -25,6 +25,10 @@ if [ "${STUB_DOCKER_MODE:-running}" = stopped ]; then
   exit 1
 fi
 
+if [ -n "${STUB_DOCKER_WARN:-}" ]; then
+  echo "WARNING: Error loading config file: /root/.docker/config.json: unexpected end of JSON input" >&2
+fi
+
 args="$*"
 sub=${1:-}
 case $sub in
