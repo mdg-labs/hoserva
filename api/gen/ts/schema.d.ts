@@ -2041,7 +2041,7 @@ export interface paths {
         };
         /**
          * Container update status
-         * @description What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`). The check asks each registry for manifests and tag names only, never a pull. `skipped` means the registry was rate limiting requests and is asked again at the next check, `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or that it could not look: the registry wants a login (registries are checked anonymously only) or the container is pinned to an image digest, so there is no tag to update. The `message` says which. None of them means up to date. available is false, with no error, whenever Docker itself is not reachable.
+         * @description What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`). The check asks each registry for manifests and tag names only, never a pull. `skipped` means the registry was rate limiting requests and is asked again at the next check, `failed` that the check could not tell (including a registry whose saved credential cannot be used or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached the image yet or that it could not look: the registry wants a login and no credential is saved for it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to update. The `message` says which. None of them means up to date. available is false, with no error, whenever Docker itself is not reachable.
          */
         get: operations["listAppUpdates"];
         put?: never;
@@ -2071,6 +2071,53 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/registry-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the registries that have a saved credential
+         * @description The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never returned: only the host is. A host listed here whose credential was cleared by a restore without the backup passphrase makes the update check report its images as `failed` until `putRegistryCredential` saves it again.
+         */
+        get: operations["listRegistryCredentials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/registry-credentials/{registry}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry host as an image reference names it, with its port if it has one: `ghcr.io`, `registry.example.com:5000`. `index.docker.io` and `registry-1.docker.io` are `docker.io`. */
+                registry: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save a registry's credential
+         * @description Saves the username and password the update check logs in to this registry with, replacing any it already has, sealed under the machine key (Q28). The password is write-only: no operation returns it and it is never logged. The credential is sent only to this registry's own host (and, for Docker Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on another host, is not logged in to and its images are reported `failed`. It is carried in a config archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the credential is cleared and the restore report names it. A host that is not a registry host name, or an empty username or password, a username with a colon, or a value with control characters is 400 `invalid_registry_credential`.
+         */
+        put: operations["putRegistryCredential"];
+        post?: never;
+        /**
+         * Delete a registry's credential
+         * @description Deletes the credential saved for this registry; the update check asks it anonymously again. A registry with none is 404 `registry_credential_not_found`.
+         */
+        delete: operations["deleteRegistryCredential"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4084,6 +4131,19 @@ export interface components {
             /** @description The container's name. */
             container: string;
             bulkExcluded: boolean;
+        };
+        RegistryCredentialList: {
+            /** @description Registry hosts that have a saved credential, sorted. */
+            registries: string[];
+        };
+        PutRegistryCredentialRequest: {
+            /** @description The account name; it cannot contain a colon. */
+            username: string;
+            /**
+             * Format: password
+             * @description The password or access token. Write-only: it is stored sealed and no operation returns it.
+             */
+            password: string;
         };
         AppSettings: {
             /** @description How many days the image a container ran before an update is kept locally for a revert. */
@@ -8060,6 +8120,75 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ListAppUpdateHistoryOK"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listRegistryCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registry hosts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryCredentialList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putRegistryCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry host as an image reference names it, with its port if it has one: `ghcr.io`, `registry.example.com:5000`. `index.docker.io` and `registry-1.docker.io` are `docker.io`. */
+                registry: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRegistryCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description The credential was saved. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteRegistryCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry host as an image reference names it, with its port if it has one: `ghcr.io`, `registry.example.com:5000`. `index.docker.io` and `registry-1.docker.io` are `docker.io`. */
+                registry: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credential was deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,10 +62,11 @@ func (r ImageRef) String() string {
 }
 
 // RegistryClient is the registry access the update check sits behind: it
-// reads manifests and tag names, never a layer, so nothing is pulled (Q81),
-// and asks anonymously: a registry that wants a login answers
-// ErrRegistryDenied. The real client is HTTPRegistry; tests use
-// FakeRegistry.
+// reads manifests and tag names, never a layer, so nothing is pulled (Q81).
+// A registry that wants a login and has no saved credential answers
+// ErrRegistryDenied; one whose saved credential cannot be used or is refused
+// answers ErrCredentialUnusable or ErrCredentialRejected. The real client is
+// HTTPRegistry; tests use FakeRegistry.
 type RegistryClient interface {
 	// ManifestDigest returns the digest the registry serves for ref's tag,
 	// from a manifest HEAD. It returns ErrRateLimited for a registry that
@@ -86,9 +88,14 @@ var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // HTTPRegistry is the real RegistryClient, speaking the Docker Registry
 // HTTP API v2 with the anonymous bearer token every public registry hands
-// out.
+// out. A registry that has a credential in Credentials is logged in to
+// instead, and only over https: the credential goes to the registry's own
+// host, and to its token service only when that is the same host (or Docker
+// Hub's auth.docker.io), never to another host or over plain HTTP, and a
+// credential that cannot be used is never replaced by an anonymous request.
 type HTTPRegistry struct {
-	Client *http.Client
+	Client      *http.Client
+	Credentials CredentialSource
 }
 
 var _ RegistryClient = (*HTTPRegistry)(nil)
@@ -128,7 +135,7 @@ func sameOrigin(to, from *url.URL) error {
 
 func (h *HTTPRegistry) ManifestDigest(ctx context.Context, ref ImageRef) (string, error) {
 	u := registryURL(ref.Registry) + "/v2/" + ref.Repository + "/manifests/" + url.PathEscape(ref.Tag)
-	resp, err := h.do(ctx, http.MethodHead, u, manifestAccept)
+	resp, err := h.do(ctx, ref.Registry, http.MethodHead, u, manifestAccept)
 	if err != nil {
 		return "", err
 	}
@@ -147,7 +154,7 @@ func (h *HTTPRegistry) Tags(ctx context.Context, ref ImageRef) ([]string, error)
 		if page == maxTagPages {
 			return nil, fmt.Errorf("the tag list of %s has more than %d pages, so newer tags may be missing", ref.Repository, maxTagPages)
 		}
-		resp, err := h.do(ctx, http.MethodGet, next, "application/json")
+		resp, err := h.do(ctx, ref.Registry, http.MethodGet, next, "application/json")
 		if err != nil {
 			return nil, err
 		}
@@ -208,10 +215,20 @@ func isLoopbackHost(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// do sends one request and, on a bearer challenge, sends it again with an
-// anonymous token from the challenge's realm. It returns the open response for a 2xx answer and a
+// do sends one request and, on a challenge, sends it again with an
+// Authorization header: the saved credential's basic login or its bearer
+// token when registry has one, an anonymous token from the challenge's
+// realm otherwise. It returns the open response for a 2xx answer and a
 // classified error otherwise.
-func (h *HTTPRegistry) do(ctx context.Context, method, rawURL, accept string) (*http.Response, error) {
+func (h *HTTPRegistry) do(ctx context.Context, registry, method, rawURL, accept string) (*http.Response, error) {
+	registry = credentialKey(registry)
+	cred, hasCred, err := h.credential(ctx, registry)
+	if err != nil {
+		return nil, err
+	}
+	if hasCred && !strings.HasPrefix(rawURL, "https://") {
+		return nil, fmt.Errorf("%w: the credential saved for %s is sent over https only, and %s is not", ErrCredentialUnusable, registry, rawURL)
+	}
 	resp, err := h.send(ctx, method, rawURL, accept, "")
 	if err != nil {
 		return nil, err
@@ -221,7 +238,11 @@ func (h *HTTPRegistry) do(ctx context.Context, method, rawURL, accept string) (*
 	}
 	challenge := resp.Header.Get("WWW-Authenticate")
 	_ = resp.Body.Close()
-	auth, err := h.authorize(ctx, challenge)
+	var login *Credential
+	if hasCred {
+		login = &cred
+	}
+	auth, err := h.authorize(ctx, registry, rawURL, challenge, login)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +250,22 @@ func (h *HTTPRegistry) do(ctx context.Context, method, rawURL, accept string) (*
 	if err != nil {
 		return nil, err
 	}
-	return classify(resp)
+	resp, err = classify(resp)
+	if errors.Is(err, ErrRegistryDenied) && hasCred {
+		return nil, credentialRejected(registry)
+	}
+	return resp, err
+}
+
+func (h *HTTPRegistry) credential(ctx context.Context, registry string) (Credential, bool, error) {
+	if h.Credentials == nil {
+		return Credential{}, false, nil
+	}
+	return h.Credentials.Credential(ctx, registry)
+}
+
+func credentialRejected(registry string) error {
+	return fmt.Errorf("%w: the registry %s refused the credential saved for it, or the account has no access to the image", ErrCredentialRejected, registry)
 }
 
 func (h *HTTPRegistry) send(ctx context.Context, method, rawURL, accept, authorization string) (*http.Response, error) {
@@ -264,15 +300,27 @@ func classify(resp *http.Response) (*http.Response, error) {
 	return nil, fmt.Errorf("registry %s answered %s", resp.Request.URL.Host, resp.Status)
 }
 
-// authorize turns a 401's challenge into an Authorization header value: an
-// anonymous bearer token from the challenge's realm. A registry that wants
-// a login (a basic challenge) answers ErrRegistryDenied.
-func (h *HTTPRegistry) authorize(ctx context.Context, challenge string) (string, error) {
+// authorize turns a 401's challenge into an Authorization header value. With
+// a saved credential that is the basic login for a basic challenge, and a
+// bearer token fetched from the challenge's realm with the basic login for a
+// bearer one, but only when the realm is on the registry's own host (Docker
+// Hub's token service excepted) and https; the credential is never sent
+// anywhere else, and a challenge that cannot be answered with it is an error,
+// not a reason to ask anonymously. Without one, a bearer challenge is
+// answered with an anonymous token and a basic one with ErrRegistryDenied.
+func (h *HTTPRegistry) authorize(ctx context.Context, registry, rawURL, challenge string, login *Credential) (string, error) {
 	scheme, params, _ := strings.Cut(challenge, " ")
+	var basicLogin string
+	if login != nil {
+		basicLogin = "Basic " + base64.StdEncoding.EncodeToString([]byte(login.Username+":"+login.Password))
+	}
 	switch strings.ToLower(scheme) {
 	case "bearer":
 	case "basic":
-		return "", ErrRegistryDenied
+		if login == nil {
+			return "", ErrRegistryDenied
+		}
+		return basicLogin, nil
 	default:
 		return "", fmt.Errorf("the registry asked for an unsupported login (%q)", scheme)
 	}
@@ -281,6 +329,11 @@ func (h *HTTPRegistry) authorize(ctx context.Context, challenge string) (string,
 	if err != nil || !usableRealm(realm) {
 		return "", fmt.Errorf("the registry's token service %q is not usable", attrs["realm"])
 	}
+	if login != nil {
+		if err := credentialRealm(registry, rawURL, realm); err != nil {
+			return "", err
+		}
+	}
 	q := realm.Query()
 	for _, k := range []string{"service", "scope"} {
 		if v := attrs[k]; v != "" {
@@ -288,11 +341,14 @@ func (h *HTTPRegistry) authorize(ctx context.Context, challenge string) (string,
 		}
 	}
 	realm.RawQuery = q.Encode()
-	resp, err := h.send(ctx, http.MethodGet, realm.String(), "application/json", "")
+	resp, err := h.send(ctx, http.MethodGet, realm.String(), "application/json", basicLogin)
 	if err != nil {
 		return "", err
 	}
 	resp, err = classify(resp)
+	if errors.Is(err, ErrRegistryDenied) && login != nil {
+		return "", credentialRejected(registry)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -312,6 +368,26 @@ func (h *HTTPRegistry) authorize(ctx context.Context, challenge string) (string,
 		return "", errors.New("the registry's token service sent no token")
 	}
 	return "Bearer " + token, nil
+}
+
+// dockerHubTokenService is the host Docker Hub's registry sends a bearer
+// challenge to.
+const dockerHubTokenService = "auth.docker.io"
+
+// credentialRealm refuses a token service the credential must not be sent
+// to: one that is not https, or not on the host the request goes to.
+func credentialRealm(registry, rawURL string, realm *url.URL) error {
+	if realm.Scheme != "https" {
+		return fmt.Errorf("%w: the token service of %s is not https, and the credential saved for it is sent over https only", ErrCredentialUnusable, registry)
+	}
+	request, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", rawURL, err)
+	}
+	if strings.EqualFold(realm.Host, request.Host) || (registry == "docker.io" && realm.Host == dockerHubTokenService) {
+		return nil
+	}
+	return fmt.Errorf("%w: the token service of %s is on %s, and the credential saved for it is sent to the registry's own host only", ErrCredentialUnusable, registry, realm.Host)
 }
 
 // usableRealm is an https token service, or a plain-HTTP one on loopback.

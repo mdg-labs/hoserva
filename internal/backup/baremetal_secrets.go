@@ -22,18 +22,19 @@ const NotRestoredRecipient = "backup_recipient"
 type secretKey struct{ table, column, rowID string }
 
 // restorableSecrets are the columns secrets.age carries a database entry for,
-// each keyed by the id column every one of these tables has. A bare-metal
+// each keyed by its table's row key (the id column, or `registry` for registry_credentials). A bare-metal
 // restore writes them under this installation's machine key, and refuses an
 // entry for any other column, so nothing in the file ever names a statement.
 // A stack's .env is not among them: secrets.age carries it as a stack entry,
 // and the restore seals it into stacks.env.
 var restorableSecrets = map[string]bool{
-	"acme_config.dns_secret":      true,
-	"acme_config.account_key":     true,
-	"ups_config.monitor_password": true,
-	"ups_config.network_password": true,
-	"backup_destinations.secrets": true,
-	"notify_channels.secret":      true,
+	"acme_config.dns_secret":          true,
+	"acme_config.account_key":         true,
+	"ups_config.monitor_password":     true,
+	"ups_config.network_password":     true,
+	"backup_destinations.secrets":     true,
+	"notify_channels.secret":          true,
+	"registry_credentials.credential": true,
 }
 
 // sealedRestore is what a bare-metal restore writes from the opened archive,

@@ -749,6 +749,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	// the rest, so no update is ever recorded here.
 	updateChecker := &container.UpdateChecker{Provider: containers, Results: store.NewUpdateStore(db)}
 	h.AppUpdates = updateChecker
+	h.RegistryCredentials = &container.RegistryCredentials{Store: store.NewRegistryCredentialStore(db), Cipher: contractCipher{}}
 	h.AppUpdater = &container.Updater{
 		Lifecycle: h.Lifecycle,
 		History:   store.NewImageHistoryStore(db),

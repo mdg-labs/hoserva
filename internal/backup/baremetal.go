@@ -395,11 +395,12 @@ var sealedColumns = []sealedColumn{
 	{"backup_destinations", "secrets", "name", "X''"},
 	{"schema_info", "backup_passphrase", "''", "NULL"},
 	{"stacks", "env", "name", "X''"},
+	{"registry_credentials", "credential", "registry", "X''"},
 }
 
 // sealedRowKeys names the column that identifies a row, for the sealed
 // columns whose table has no id column.
-var sealedRowKeys = map[string]string{"stacks": "name"}
+var sealedRowKeys = map[string]string{"stacks": "name", "registry_credentials": "registry"}
 
 func (c sealedColumn) rowKey() string { return rowKey(c.table) }
 
@@ -647,8 +648,11 @@ func clearSealedColumns(ctx context.Context, tx *sql.Tx, keep sealedRestore) ([]
 				name += " (" + r.label + ")"
 			}
 			message := fmt.Sprintf("%s was sealed under the machine key of the installation the archive came from and is cleared; enter it again", name)
-			if c.table == "stacks" {
+			switch c.table {
+			case "stacks":
 				message = fmt.Sprintf("the .env of stack %s was sealed under the machine key of the installation the archive came from and is cleared from the database; the stack keeps the .env file in its directory, and with none there it cannot be started, so remove the stack and install it again", r.id)
+			case "registry_credentials":
+				message = fmt.Sprintf("the container registry credential for %s was sealed under the machine key of the installation the archive came from and is cleared; until it is saved again with `hoserva app registry-credential-set %s` (putRegistryCredential), the daily update check reports that registry's images as failed", r.id, r.id)
 			}
 			out = append(out, NotRestored{Kind: NotRestoredDatabaseSecret, Name: name, Reason: NotRestoredSealedUnderOtherKey, Message: message})
 		}

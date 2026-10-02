@@ -490,3 +490,64 @@ func TestUpdateChecker_BulkUpdateIncludesAContainerWhoseTagMoved(t *testing.T) {
 		t.Fatalf("bulk targets = %v, want b included", sel.Containers)
 	}
 }
+
+// A private registry's image is checked with the credential saved for its
+// host, through the same HTTPRegistry and RegistryCredentials hoservad
+// builds.
+func TestUpdateChecker_AnImageOnAPrivateRegistryIsCheckedWithItsSavedCredential(t *testing.T) {
+	ctx := context.Background()
+	lr := newLoginRegistry(t, `Basic realm="registry"`, basicHeader("me", "secret"), nil)
+	creds, _ := newCredentials()
+	if err := creds.PutCredential(ctx, "example.com", Credential{Username: "me", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	r := newUpdateRig()
+	r.checker.Registry = &HTTPRegistry{Client: lr.client, Credentials: creds}
+	r.provider.AddContainer(Container{ID: "id-private", Name: "private", Image: "example.com/acme/app", Tag: "latest", ImageID: "sha256:img-private"})
+	r.provider.AddImage(Image{ID: "sha256:img-private", RepoDigests: []string{"example.com/acme/app@" + digestOld}})
+	r.check(t)
+
+	got := r.result(t, "example.com/acme/app:latest")
+	if got.Status != store.UpdateAvailable || got.Kind != store.UpdateKindNewBuild {
+		t.Fatalf("result = %+v, want a new build found through the saved credential", got)
+	}
+}
+
+// The credential cannot be opened, so the image is reported failed with the
+// reason, and the registry is never asked anonymously instead.
+func TestUpdateChecker_ACredentialThatCannotBeOpenedFailsTheImageNeverChecksItAnonymously(t *testing.T) {
+	ctx := context.Background()
+	lr := newLoginRegistry(t, `Basic realm="registry"`, "anything", nil)
+	creds, st := newCredentials()
+	st.rows["example.com"] = store.RegistryCredential{Registry: "example.com"}
+	r := newUpdateRig()
+	r.checker.Registry = &HTTPRegistry{Client: lr.client, Credentials: creds}
+	r.provider.AddContainer(Container{ID: "id-private", Name: "private", Image: "example.com/acme/app", Tag: "1.2", ImageID: "sha256:img-private"})
+	r.provider.AddImage(Image{ID: "sha256:img-private", RepoDigests: []string{"example.com/acme/app@" + digestOld}})
+	// A stale up_to_date from before the credential was cleared.
+	r.results.checks["example.com/acme/app:1.2"] = store.ImageUpdateCheck{Image: "example.com/acme/app:1.2", Status: store.UpdateUpToDate}
+	r.check(t)
+
+	got := r.result(t, "example.com/acme/app:1.2")
+	if got.Status != store.UpdateFailed || !strings.Contains(got.Message, "cleared by a restore") || !strings.Contains(got.Message, "registry-credential-set example.com") {
+		t.Fatalf("result = %+v, want failed, naming why and how to save the credential again", got)
+	}
+	if reqs := lr.requests(); len(reqs) != 0 {
+		t.Fatalf("the registry was asked %v, want no request at all", reqs)
+	}
+	statuses, err := r.checker.Statuses(ctx)
+	if err != nil || len(statuses) != 1 || statuses[0].Status != store.UpdateFailed {
+		t.Fatalf("Statuses = %+v, %v, want failed", statuses, err)
+	}
+}
+
+func TestUpdateChecker_ARefusedCredentialFailsTheImageWithThatReason(t *testing.T) {
+	r := newUpdateRig()
+	ref := r.run(t, "private", "acme/private", "latest", digestOld, "")
+	r.registry.SetImageError(ref, ErrCredentialRejected)
+	r.check(t)
+	got := r.result(t, "acme/private:latest")
+	if got.Status != store.UpdateFailed || !strings.Contains(got.Message, "refused the saved credential") {
+		t.Fatalf("result = %+v, want failed with the refusal as the reason", got)
+	}
+}

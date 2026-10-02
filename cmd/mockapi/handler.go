@@ -101,6 +101,12 @@ type handler struct {
 	imageKeepDays int
 	updateRecords []apiv1.AppUpdateRecord
 
+	// registryMu guards registryCredentials (#488): the registry hosts a
+	// credential was saved for through this mock instance. The credentials
+	// themselves are never kept, like production never returns them.
+	registryMu          sync.Mutex
+	registryCredentials map[string]bool
+
 	// stacksMu guards stacks (#278): the Compose stacks this mock instance
 	// lists, starting with the stacks the scenario's apps name (mockStacksFor).
 	// CreateStack and RemoveStack change them.
@@ -212,10 +218,11 @@ func newHandler(scenario string) (*handler, error) {
 		appsDown:     appsDown,
 		stacks:       mockStacksFor(apps),
 
-		bulkExcluded:    make(map[string]bool),
-		imageKeepDays:   store.DefaultImageKeepDays,
-		catalogSettings: store.DefaultCatalogSettings,
-		catalogSources:  mockSeededSources(),
+		bulkExcluded:        make(map[string]bool),
+		registryCredentials: make(map[string]bool),
+		imageKeepDays:       store.DefaultImageKeepDays,
+		catalogSettings:     store.DefaultCatalogSettings,
+		catalogSources:      mockSeededSources(),
 
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),

@@ -196,6 +196,9 @@ type Handler struct {
 	// returns 501 from them; one with no Lifecycle (no Docker client) still
 	// serves the settings.
 	AppUpdater *container.Updater
+	// RegistryCredentials stores the registry logins behind
+	// /registry-credentials (Q81). Nil returns 501 from those operations.
+	RegistryCredentials RegistryCredentialService
 	// Stacks is the Compose stack model (doc 04 §2, D4) behind /stacks.
 	// Nil returns 501 from those operations.
 	Stacks *container.StackService

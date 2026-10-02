@@ -7,12 +7,14 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // backupSecretSource is what a config archive's secrets.age is built from
 // (Q28): the backup passphrase, and every sealed credential the database
-// holds — ACME, UPS, backup destinations and notification channels.
-func backupSecretSource(settings *api.SettingsService, acmeStore *acme.Store, upsStore *api.UPSStore, destinations *api.BackupDestinationStore, notifyStore *notify.Store) *backup.ServiceSecretSource {
+// holds — ACME, UPS, backup destinations, notification channels and
+// registry credentials.
+func backupSecretSource(settings *api.SettingsService, acmeStore *acme.Store, upsStore *api.UPSStore, destinations *api.BackupDestinationStore, notifyStore *notify.Store, registryCredentials *store.RegistryCredentialStore) *backup.ServiceSecretSource {
 	return &backup.ServiceSecretSource{
 		BackupPassphraseFn: settings.BackupPassphrase,
 		DatabaseSecretsFn: func(ctx context.Context) ([]backup.DatabaseSecret, error) {
@@ -32,9 +34,14 @@ func backupSecretSource(settings *api.SettingsService, acmeStore *acme.Store, up
 			if err != nil {
 				return nil, err
 			}
+			registrySecrets, err := registryCredentialSecrets(ctx, registryCredentials)
+			if err != nil {
+				return nil, err
+			}
 			out := append(acmeSecrets, upsSecrets...)
 			out = append(out, destinationSecrets...)
-			return append(out, notifySecrets...), nil
+			out = append(out, notifySecrets...)
+			return append(out, registrySecrets...), nil
 		},
 	}
 }

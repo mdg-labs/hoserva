@@ -196,7 +196,7 @@ func isRecreateTemp(name string) bool {
 
 const pinnedMessage = "the container is pinned to an image digest, so there is no tag to look for an update of"
 
-const deniedMessage = "the registry wants a login, and Hoserva checks registries anonymously only"
+const deniedMessage = "the registry wants a login, and no credential is saved for it"
 
 const noLocalDigestMessage = "the image %s has no registry digest recorded locally (built locally?), so it cannot be compared"
 

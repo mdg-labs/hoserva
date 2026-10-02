@@ -865,3 +865,16 @@ CREATE TABLE catalog_sources (
     added_at TEXT NOT NULL,
     CHECK (kind = 'curated' OR signature_verified = 0 OR public_key != '')
 ) STRICT;
+
+-- Container registry credentials (#488, Q81): one row per registry host the
+-- daily update check logs in to. registry is the host as an image reference
+-- names it ("docker.io", "ghcr.io", "registry.example.com:5000").
+-- credential is a JSON object holding the username and password, sealed
+-- under the machine key (Q28) and carried in a config archive's secrets.age;
+-- a restore without the backup passphrase clears it to an empty value, and
+-- the row stays so the registry still lists.
+CREATE TABLE registry_credentials (
+    registry TEXT PRIMARY KEY,
+    credential BLOB NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;

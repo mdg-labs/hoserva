@@ -363,6 +363,53 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Registry credentials (#488) ---
+	{
+		op:   "ListRegistryCredentials",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListRegistryCredentials(ctx)
+			return err
+		},
+	},
+	{
+		op:   "PutRegistryCredential",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.PutRegistryCredential(ctx, &apiv1.PutRegistryCredentialRequest{Username: "me", Password: "s3cret"}, apiv1.PutRegistryCredentialParams{Registry: "ghcr.io"})
+		},
+	},
+	{
+		op:   "PutRegistryCredential",
+		name: "a_name_that_is_not_a_registry_host_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.PutRegistryCredential(ctx, &apiv1.PutRegistryCredentialRequest{Username: "me", Password: "s3cret"}, apiv1.PutRegistryCredentialParams{Registry: "ghcr"})
+		},
+	},
+	{
+		op:   "PutRegistryCredential",
+		name: "a_username_with_a_colon_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.PutRegistryCredential(ctx, &apiv1.PutRegistryCredentialRequest{Username: "a:b", Password: "s3cret"}, apiv1.PutRegistryCredentialParams{Registry: "ghcr.io"})
+		},
+	},
+	{
+		op:   "DeleteRegistryCredential",
+		name: "valid_saved_credential",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := h.PutRegistryCredential(ctx, &apiv1.PutRegistryCredentialRequest{Username: "me", Password: "s3cret"}, apiv1.PutRegistryCredentialParams{Registry: "registry.example.com:5000"}); err != nil {
+				return err
+			}
+			return h.DeleteRegistryCredential(ctx, apiv1.DeleteRegistryCredentialParams{Registry: "registry.example.com:5000"})
+		},
+	},
+	{
+		op:   "DeleteRegistryCredential",
+		name: "a_registry_with_none_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.DeleteRegistryCredential(ctx, apiv1.DeleteRegistryCredentialParams{Registry: "ghcr.io"})
+		},
+	},
 	// --- Container update execution (#284) ---
 	{
 		op:   "UpdateApp",

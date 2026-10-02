@@ -265,6 +265,12 @@ type NotifyRoute struct {
 	ChannelID string `json:"channel_id"`
 }
 
+type RegistryCredential struct {
+	Registry   string `json:"registry"`
+	Credential []byte `json:"credential"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
 type RelocationManifest struct {
 	ID         int64  `json:"id"`
 	RelPath    string `json:"rel_path"`

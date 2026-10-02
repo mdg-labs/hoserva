@@ -454,6 +454,73 @@ func decodeDeleteNotificationChannelParams(args [1]string, argsEscaped bool, r *
 	return params, nil
 }
 
+// DeleteRegistryCredentialParams is parameters of deleteRegistryCredential operation.
+type DeleteRegistryCredentialParams struct {
+	// The registry host as an image reference names it, with its port if it has one: `ghcr.io`,
+	// `registry.example.com:5000`. `index.docker.io` and `registry-1.docker.io` are `docker.io`.
+	Registry string
+}
+
+func unpackDeleteRegistryCredentialParams(packed middleware.Parameters) (params DeleteRegistryCredentialParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "registry",
+			In:   "path",
+		}
+		params.Registry = packed[key].(string)
+	}
+	return params
+}
+
+func decodeDeleteRegistryCredentialParams(args [1]string, argsEscaped bool, r *http.Request) (params DeleteRegistryCredentialParams, _ error) {
+	// Decode path: registry.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "registry",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Registry = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "registry",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // DeleteShareParams is parameters of deleteShare operation.
 type DeleteShareParams struct {
 	Name ShareName
@@ -2982,6 +3049,73 @@ func decodePreviewTemplateInstallParams(args [1]string, argsEscaped bool, r *htt
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// PutRegistryCredentialParams is parameters of putRegistryCredential operation.
+type PutRegistryCredentialParams struct {
+	// The registry host as an image reference names it, with its port if it has one: `ghcr.io`,
+	// `registry.example.com:5000`. `index.docker.io` and `registry-1.docker.io` are `docker.io`.
+	Registry string
+}
+
+func unpackPutRegistryCredentialParams(packed middleware.Parameters) (params PutRegistryCredentialParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "registry",
+			In:   "path",
+		}
+		params.Registry = packed[key].(string)
+	}
+	return params
+}
+
+func decodePutRegistryCredentialParams(args [1]string, argsEscaped bool, r *http.Request) (params PutRegistryCredentialParams, _ error) {
+	// Decode path: registry.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "registry",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Registry = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "registry",
 			In:   "path",
 			Err:  err,
 		}

@@ -367,6 +367,16 @@ func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, param
 	return ht.ErrNotImplemented
 }
 
+// DeleteRegistryCredential implements deleteRegistryCredential operation.
+//
+// Deletes the credential saved for this registry; the update check asks it anonymously again. A
+// registry with none is 404 `registry_credential_not_found`.
+//
+// DELETE /registry-credentials/{registry}
+func (UnimplementedHandler) DeleteRegistryCredential(ctx context.Context, params DeleteRegistryCredentialParams) error {
+	return ht.ErrNotImplemented
+}
+
 // DeleteShare implements deleteShare operation.
 //
 // Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
@@ -1046,11 +1056,12 @@ func (UnimplementedHandler) ListAppUpdateHistory(ctx context.Context) (r *ListAp
 // of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
 // `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
 // `skipped` means the registry was rate limiting requests and is asked again at the next check,
-// `failed` that the check could not tell, and `not_checked` that no check has reached the image yet or
-// that it could not look: the registry wants a login (registries are checked anonymously only) or the
-// container is pinned to an image digest, so there is no tag to update. The `message` says which. None
-// of them means up to date. available is false, with no error, whenever Docker itself is not
-// reachable.
+// `failed` that the check could not tell (including a registry whose saved credential cannot be used
+// or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached
+// the image yet or that it could not look: the registry wants a login and no credential is saved for
+// it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
+// update. The `message` says which. None of them means up to date. available is false, with no error,
+// whenever Docker itself is not reachable.
 //
 // GET /apps/updates
 func (UnimplementedHandler) ListAppUpdates(ctx context.Context) (r *ListAppUpdatesOK, _ error) {
@@ -1176,6 +1187,19 @@ func (UnimplementedHandler) ListNotificationChannels(ctx context.Context) (r *Li
 //
 // GET /notifications
 func (UnimplementedHandler) ListNotifications(ctx context.Context) (r *ListNotificationsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListRegistryCredentials implements listRegistryCredentials operation.
+//
+// The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image
+// references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never
+// returned: only the host is. A host listed here whose credential was cleared by a restore without the
+// backup passphrase makes the update check report its images as `failed` until `putRegistryCredential`
+// saves it again.
+//
+// GET /registry-credentials
+func (UnimplementedHandler) ListRegistryCredentials(ctx context.Context) (r *RegistryCredentialList, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1481,6 +1505,24 @@ func (UnimplementedHandler) PreviewConfigImport(ctx context.Context, req *Previe
 // POST /templates/{id}/preview
 func (UnimplementedHandler) PreviewTemplateInstall(ctx context.Context, req *TemplateInstallRequest, params PreviewTemplateInstallParams) (r *TemplateInstallPlan, _ error) {
 	return r, ht.ErrNotImplemented
+}
+
+// PutRegistryCredential implements putRegistryCredential operation.
+//
+// Saves the username and password the update check logs in to this registry with, replacing any it
+// already has, sealed under the machine key (Q28). The password is write-only: no operation returns it
+// and it is never logged. The credential is sent only to this registry's own host (and, for Docker
+// Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another
+// host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
+// another host, is not logged in to and its images are reported `failed`. It is carried in a config
+// archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the
+// credential is cleared and the restore report names it. A host that is not a registry host name, or
+// an empty username or password, a username with a colon, or a value with control characters is 400
+// `invalid_registry_credential`.
+//
+// PUT /registry-credentials/{registry}
+func (UnimplementedHandler) PutRegistryCredential(ctx context.Context, req *PutRegistryCredentialRequest, params PutRegistryCredentialParams) error {
+	return ht.ErrNotImplemented
 }
 
 // RebootHost implements rebootHost operation.
