@@ -230,6 +230,12 @@ push `origin dev` (see "Authorization to commit and push"). Per
 only reason to hold a commit back is a fresh `blockedBy` added to a tracked
 issue during this same run; that's the maintainer's call, not a default.
 
+`git push` carries every unpushed ancestor along, so a held-back commit
+would go out with the next push. Before each push, run
+`git log origin/dev..dev --oneline`; if it lists a commit this run held
+back, don't push — leave the round local and say why in your report, as
+`orchestrate` step 8 does.
+
 Never `gh pr merge`, never close the PR, never touch `status:*` labels by
 hand — this skill only fixes code and answers review comments.
 
