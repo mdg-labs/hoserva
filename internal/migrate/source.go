@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // MaxZipBytes bounds the Flash Backup zip a session accepts. A real flash is a
@@ -38,6 +39,11 @@ type FlashSource interface {
 	List(dir string) []string
 	// Read returns one file's content, or an error wrapping fs.ErrNotExist.
 	Read(name string) ([]byte, error)
+	// ModTime returns when the file was last modified, and false when the
+	// source does not know or the file is not there. A zip stores the time of
+	// the flash's file; a FAT stick and a zip carry no time zone, so a time is
+	// good to a day at best.
+	ModTime(name string) (time.Time, bool)
 }
 
 // ZipSource is a FlashSource over a zip, read in memory entry by entry.
@@ -154,6 +160,15 @@ func (z *ZipSource) Read(name string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s is larger than %d bytes", ErrInvalidZip, name, maxEntryBytes)
 	}
 	return data, nil
+}
+
+// ModTime implements FlashSource.
+func (z *ZipSource) ModTime(name string) (time.Time, bool) {
+	f, ok := z.files[name]
+	if !ok || f.Modified.IsZero() {
+		return time.Time{}, false
+	}
+	return f.Modified, true
 }
 
 // OpenZipFile opens the zip at path, for a session's stored source.
@@ -278,4 +293,16 @@ func (d *DirSource) Read(name string) ([]byte, error) {
 		return nil, fmt.Errorf("%s is larger than %d bytes", name, maxEntryBytes)
 	}
 	return data, nil
+}
+
+// ModTime implements FlashSource.
+func (d *DirSource) ModTime(name string) (time.Time, bool) {
+	st, err := d.root.Stat(name)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+			d.fail(err)
+		}
+		return time.Time{}, false
+	}
+	return st.ModTime(), true
 }

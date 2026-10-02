@@ -489,6 +489,8 @@ func TestService_TheReportNeverQuotesFileContent(t *testing.T) {
 	files["config/shadow"] = []byte("root:$6$SECRETHASH$abcdef:19000:0:99999:7:::\n")
 	files["config/ident.cfg"] = []byte("NAME=\"tower\"\nPASSWORD=\"hunter2-SECRET\"\n")
 	files["config/network.cfg"] = []byte("SECRETKEY=\"wg-private-SECRET\"\n")
+	files["config/plugins/user.scripts/customSchedule.cron"] = append(files["config/plugins/user.scripts/customSchedule.cron"],
+		[]byte("0 * * * * curl -fsS -u admin:cron-SECRET https://hc-ping.example/ping\n")...)
 	if err := scanNow(s, zipOf(t, files, false), ScanOptions{}); err != nil {
 		t.Fatal(err)
 	}

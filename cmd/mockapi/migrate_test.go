@@ -109,6 +109,43 @@ func TestMockMigration_StartsEmptyExceptInTheMigrationPendingScenario(t *testing
 	}
 }
 
+// The migration-pending report carries a row of every part of the configuration
+// inventory, in both the operation's answer and the downloadable document.
+func TestMockMigration_TheReportIncludesTheConfigurationInventory(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	m, _ := h.GetMigration(ctx)
+	report, _ := m.Report.Get()
+	checks := map[string]apiv1.MigrationCheckStatus{}
+	flagged := map[string]bool{}
+	for _, row := range report.Rows {
+		checks[row.Check] = row.Status
+		if row.Status == apiv1.MigrationCheckStatusFlag {
+			flagged[row.Subject.Or("")] = true
+		}
+	}
+	for _, check := range []string{"parity_history", "shares", "cache_contents", "users", "docker_templates", "containers", "user_scripts", "plugins", "custom_config", "settings"} {
+		if _, ok := checks[check]; !ok {
+			t.Errorf("the report has no %s row", check)
+		}
+	}
+	for _, subject := range []string{"media", "dbtool", "handmade"} {
+		if !flagged[subject] {
+			t.Errorf("%s is not a flagged row", subject)
+		}
+	}
+	doc, err := h.GetMigrationReport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := io.ReadAll(doc.Data)
+	for _, heading := range []string{"## Share configuration", "## Docker templates", "## User Scripts (plugin)", "## Last Unraid parity check"} {
+		if !strings.Contains(string(md), heading) {
+			t.Errorf("the document lacks %q", heading)
+		}
+	}
+}
+
 func TestMockMigration_ScanQueuesAFinishedTopologyJobAndForgetClearsTheSession(t *testing.T) {
 	ctx := context.Background()
 	h, _ := newHandler("healthy")

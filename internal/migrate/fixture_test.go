@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
@@ -230,8 +231,12 @@ func fixtureDisks(spec fixtureSpec) *disk.FakeProvider {
 
 func noUID(int) (string, error) { return "", nil }
 
+// scanTime is the clock the scans in these tests run at: eight days after the
+// fixtures' last parity check, so its age never depends on the day tests run.
+var scanTime = time.Date(2026, time.October, 3, 12, 0, 0, 0, time.UTC)
+
 func scanner(p disk.Provider) *Scanner {
-	return &Scanner{Disks: p, UIDOwner: noUID}
+	return &Scanner{Disks: p, UIDOwner: noUID, Now: func() time.Time { return scanTime }}
 }
 
 func rowsFor(r *Report, check string) []Row {

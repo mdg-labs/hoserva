@@ -64,7 +64,8 @@ func errNoMigrationReport() error {
 
 // mockMigrationReport is a completed scan of a healthy single-parity array:
 // what the UI shows after a scan, with one SMART finding so a flagged row has
-// something to render.
+// something to render, and one row group per part of the configuration
+// inventory, including the flagged containers and shares.
 func mockMigrationReport(version string, unverified bool, at time.Time) *migrate.Report {
 	r := &migrate.Report{GeneratedAt: at, UnraidVersion: version, UnverifiedLayout: unverified, BootMode: "usb"}
 	add := func(check string, st migrate.Status, subject, detail string) {
@@ -84,6 +85,23 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckParitySize, migrate.StatusPass, "", "The smallest parity disk (8.0 TiB) is at least as large as the largest data disk (4.0 TiB).")
 	add(migrate.CheckSMART, migrate.StatusPass, "parity", "/dev/sdb has no reallocated or pending sectors.")
 	add(migrate.CheckSMART, migrate.StatusFlag, "disk1", "Recommend aborting: /dev/sdc has 8 reallocated and 0 pending sectors, and the unprotected window of the migration is when a marginal disk fails.")
+	add(migrate.CheckParityHistory, migrate.StatusPass, "", "The last parity check, on 2026-09-25 (from the capture's var.ini), completed clean with 0 errors.")
+	add(migrate.CheckShares, migrate.StatusInfo, "", "3 shares configured. Each share's allocation method and cache setting are mapped below (Q11).")
+	add(migrate.CheckShares, migrate.StatusFlag, "media", "allocation High-water: no exact equivalent, mapped to Balance across disks (mfs) (Q11); cache setting no maps to array-only; exported over SMB (e); directory on disk1.")
+	add(migrate.CheckShares, migrate.StatusInfo, "backup", "allocation Fill-up maps to Fill disks in order (ff); cache setting no maps to array-only; not exported over SMB; directory on disk1.")
+	add(migrate.CheckShares, migrate.StatusInfo, "documents", "allocation Most-free maps to Balance across disks (mfs); cache setting yes maps to cache-then-move; exported over SMB (e); directory on disk1.")
+	add(migrate.CheckCache, migrate.StatusWarn, "appdata", "Docker keeps container data under /mnt/user/appdata/; cache setting prefer; its directory is on disk1, pool cache. Phase A step 5 must move it to the array before the cache is re-created.")
+	add(migrate.CheckCache, migrate.StatusInfo, "Docker storage", "Docker's directory (/mnt/user/system/docker/dockerdir) is on the cache. It is not moved: images are pulled again when containers are recreated. What does not come back is each container's writable layer (doc 04 §5). No container's writable layer holds data.")
+	add(migrate.CheckUsers, migrate.StatusInfo, "", "2 user accounts: alice, bob. Names only are read; passwords cannot be carried over, so each is set again at the import (doc 05 §4 step 4).")
+	add(migrate.CheckTemplates, migrate.StatusInfo, "", "7 templates parsed: 3 autostart, 1 running, 1 stopped, 2 template only. 5 are installed; a template with no container is a record of an app once installed.")
+	add(migrate.CheckContainers, migrate.StatusInfo, "", "8 containers in the capture: 6 from the Docker page (dockerMan), 1 from Compose Manager, 1 created by hand.")
+	add(migrate.CheckContainers, migrate.StatusFlag, "dbtool", "A dockerMan container with no template whose <Name> matches. It cannot be converted: open it on the Docker page, edit it and apply to save its template, then run the prepare script again (doc 05 §4 step 2).")
+	add(migrate.CheckContainers, migrate.StatusFlag, "handmade", "Created by hand (docker run), so it has no template to convert. Recreate it from its run command.")
+	add(migrate.CheckUserScripts, migrate.StatusInfo, "", "1 User Scripts entry found. They are listed, never executed or translated (Q83): recreate what is still wanted as a cron job or systemd timer (doc 05 §4 step 24).")
+	add(migrate.CheckUserScripts, migrate.StatusInfo, "nightly-report", "Scheduled in customSchedule.cron (30 2 * * *), so it runs while enabled.")
+	add(migrate.CheckPlugins, migrate.StatusInfo, "user.scripts", "Installed. Hoserva counterpart: its scripts are listed, never executed or translated (Q83).")
+	add(migrate.CheckCustomConfig, migrate.StatusWarn, "smb-extra.conf", "2 lines of custom Samba configuration. It is not imported: look at the lines on the Unraid server and recreate any that are still wanted.")
+	add(migrate.CheckSettings, migrate.StatusInfo, "mover schedule", "40 3 * * *. It can be offered as Hoserva's mover schedule.")
 	add(migrate.CheckUID99, migrate.StatusPass, "", "UID 99 is free for the hoserva-apps user.")
 	add(migrate.CheckSyncEstimate, migrate.StatusInfo, "", "About 2.8 hours for 4.0 TiB of data disks, if they are full, at an assumed 400 MB/s. It is a planning figure, not a measurement: the first sync is a long job, and it runs only when you start it.")
 	r.Verdict = migrate.VerdictGoWithWarnings

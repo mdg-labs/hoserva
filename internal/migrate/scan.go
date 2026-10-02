@@ -39,6 +39,10 @@ type ScanOptions struct {
 // already has, and writes nothing.
 type Scanner struct {
 	Disks disk.Provider
+	// Dirs lists the top-level directories of a matched disk, to tell a share
+	// from the config of one that no longer exists. Nil means the scan does not
+	// read the disks' contents.
+	Dirs DiskDirs
 	// UIDOwner returns the account holding uid on this host, or "" when it is
 	// free. Nil asks the system's user database.
 	UIDOwner func(uid int) (string, error)
@@ -138,6 +142,9 @@ func (s *Scanner) Scan(ctx context.Context, src FlashSource, opts ScanOptions) (
 	}
 	s.checkUID(r)
 	checkSyncEstimate(r, f, members)
+	if err := s.inventory(ctx, r, src, f, members, r.GeneratedAt); err != nil {
+		return nil, err
+	}
 	r.conclude()
 	return r, nil
 }

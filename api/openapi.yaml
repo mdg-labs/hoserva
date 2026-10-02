@@ -10372,9 +10372,12 @@ components:
           type: string
           description: >-
             Which check the row belongs to, such as `unraid_version`,
-            `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`,
-            `parity_size`, `smart`, `uid_99` or `sync_estimate`. Later parts
-            of the scan add checks without changing this shape.
+            `capture`, `boot_device`, `disk_mapping`, `disk_identity`,
+            `parity_config`, `parity_size`, `smart`, `parity_history`,
+            `shares`, `cache_contents`, `users`, `docker_templates`,
+            `containers`, `user_scripts`, `plugins`, `custom_config`,
+            `settings`, `uid_99` or `sync_estimate`. Later parts of the scan
+            add checks without changing this shape.
         status:
           $ref: '#/components/schemas/MigrationCheckStatus'
         subject:

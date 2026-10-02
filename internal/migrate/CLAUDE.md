@@ -57,3 +57,14 @@ implementation of this package loses a user's data.
   capture's boot mode; `internal` offers no stick and refuses a stick scan, and so
   does a stick whose own capture says `internal`, which is a copy Unraid no longer
   writes.
+- **The configuration inventory reads names and settings, never content.** Share
+  configs, templates, User Scripts, plugins, accounts and notification agents are
+  reported by name and count. A template is read for its `<Name>` only (its
+  settings carry secrets), a User Script's `script` and an agent's file are never
+  read, `config/shadow` and `config/smbpasswd` are never read, and the lines of
+  `smb-extra.conf` and `go` are counted, not quoted. What the later steps seed
+  from is `Report.Import`, kept in the session row with the report and not served
+  by the API. A file or key that is absent reads as "not available" or "not
+  found", never as none or off, and a config is called an orphan only when every
+  disk it could be on was matched and listed: keeping an orphan is cheaper than
+  dropping a real share.

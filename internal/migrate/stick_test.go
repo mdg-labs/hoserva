@@ -24,6 +24,11 @@ const (
 
 var fixedNow = func() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) }
 
+// savedAt is when the files of a mounted flash were last saved: before the
+// committed captures, which are dated 2026-10-02, so no template reads as newer
+// than its capture.
+var savedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // writeTree lays files out under where, as a mounted flash holds them.
 func writeTree(where string, files map[string][]byte) error {
 	for name, data := range files {
@@ -32,6 +37,9 @@ func writeTree(where string, files map[string][]byte) error {
 			return err
 		}
 		if err := os.WriteFile(p, data, 0o644); err != nil {
+			return err
+		}
+		if err := os.Chtimes(p, savedAt, savedAt); err != nil {
 			return err
 		}
 	}

@@ -9910,9 +9910,11 @@ func (s *MigrationReport) SetRows(val []MigrationReportRow) {
 
 // Ref: #/components/schemas/MigrationReportRow
 type MigrationReportRow struct {
-	// Which check the row belongs to, such as `unraid_version`, `boot_device`, `disk_mapping`,
-	// `disk_identity`, `parity_config`, `parity_size`, `smart`, `uid_99` or `sync_estimate`. Later parts
-	// of the scan add checks without changing this shape.
+	// Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`,
+	// `disk_identity`, `parity_config`, `parity_size`, `smart`, `parity_history`, `shares`,
+	// `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`,
+	// `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without
+	// changing this shape.
 	Check  string               `json:"check"`
 	Status MigrationCheckStatus `json:"status"`
 	// A slot, pool or device the row is about. Absent for the whole system.

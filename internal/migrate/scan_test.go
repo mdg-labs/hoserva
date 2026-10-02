@@ -75,11 +75,12 @@ func TestScan_EveryVariantFixtureProducesItsReport(t *testing.T) {
 			if r.Verdict != VerdictGoWithWarnings && r.Verdict != VerdictGo {
 				t.Errorf("verdict = %s on a healthy fixture: %+v", r.Verdict, r.Rows)
 			}
-			// The only thing the healthy fixture's scan flags is what the fixture
-			// genuinely lacks: no boot mode in a capture... which the committed
-			// captures do carry, so nothing is flagged at all.
+			// The disk checks flag nothing on a healthy fixture. The configuration
+			// inventory flags what the fixtures hold on purpose: High-water shares,
+			// a dockerMan container with no template and one created by hand.
 			for _, row := range r.Rows {
-				if row.Status == StatusRefuse || row.Status == StatusFlag {
+				flagOK := row.Status == StatusFlag && (row.Check == CheckShares || row.Check == CheckContainers)
+				if (row.Status == StatusRefuse || row.Status == StatusFlag) && !flagOK {
 					t.Errorf("unexpected %s row on a healthy fixture: %+v", row.Status, row)
 				}
 			}

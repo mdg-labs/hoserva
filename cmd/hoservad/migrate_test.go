@@ -229,6 +229,96 @@ func TestMigrationWiring_ScanIsReachableOverHTTP(t *testing.T) {
 	}
 }
 
+// The configuration inventory is part of the report the daemon serves: the rows
+// in GET /migrate and the document GET /migrate/report downloads.
+func TestMigrationWiring_TheConfigurationInventoryIsInTheServedReport(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	disks := disk.NewFakeProvider()
+	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "WIREDSERIAL", Size: 1 << 40})
+	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+		t.Fatal(err)
+	}
+	inspect := func(name, label string) string {
+		return `{"Name":"/` + name + `","State":{"Status":"running","Running":true},"Config":{"Labels":{` + label + `}}}`
+	}
+	zipData := flashBackupZipWith(t, "7.3.2", map[string]string{
+		"config/share.cfg":                                     "shareMoverSchedule=\"40 3 * * *\"\n",
+		"config/shares/media.cfg":                              "shareAllocator=\"highwater\"\nshareUseCache=\"no\"\nshareExport=\"e\"\n",
+		"config/shares/backup.cfg":                             "shareAllocator=\"fillup\"\nshareUseCache=\"no\"\nshareExport=\"-\"\n",
+		"config/passwd":                                        "root:x:0:0:r:/root:/bin/bash\nalice:x:1000:100:a:/dev/null:/bin/false\n",
+		"config/parity-checks.log":                             "2020 Jan 05 03:00:02|31845|125.6 MB/s|0|0\n",
+		"config/hoserva/capture.json":                          `{"unraid_version":"7.3.2","captured_at":"2026-10-02T17:56:07Z","boot":{"mode":"usb"},"docker":{"state":"running","directory_location":"array","writable_layers":[]},"libvirt_img_location":"none"}`,
+		"config/hoserva/containers.json":                       "[" + inspect("notes", `"net.unraid.docker.managed":"dockerman"`) + "," + inspect("handmade", "") + "]",
+		"config/hoserva/autostart":                             "notes 30\n",
+		"config/plugins/dockerMan/templates-user/my-notes.xml": `<Container version="2"><Name>notes</Name></Container>`,
+		"config/plugins/user.scripts/scripts/nightly/script":   "#!/bin/bash\n",
+		"config/plugins/user.scripts/customSchedule.cron":      "30 2 * * * /usr/local/emhttp/plugins/user.scripts/startCustom.php /boot/config/plugins/user.scripts/scripts/nightly/script\n",
+	})
+	status, body := w.uploadScan(t, zipData, false)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/scan = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil {
+		t.Fatal(err)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("scan job = %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.do(t, http.MethodGet, "/migrate")
+	var got struct {
+		Report struct {
+			Rows []struct {
+				Check   string `json:"check"`
+				Status  string `json:"status"`
+				Subject string `json:"subject"`
+				Detail  string `json:"detail"`
+			} `json:"rows"`
+		} `json:"report"`
+	}
+	if err := json.Unmarshal(body, &got); status != http.StatusOK || err != nil {
+		t.Fatalf("GET /migrate = %d %s (%v)", status, body, err)
+	}
+	has := func(check, status, subject, detail string) bool {
+		for _, row := range got.Report.Rows {
+			if row.Check == check && row.Status == status && row.Subject == subject && strings.Contains(row.Detail, detail) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []struct{ check, status, subject, detail string }{
+		{"shares", "flag", "media", "High-water: no exact equivalent, mapped to Balance across disks (mfs)"},
+		{"shares", "info", "backup", "Fill-up maps to Fill disks in order (ff)"},
+		{"docker_templates", "info", "", "1 template parsed: 1 autostart, 0 running, 0 stopped, 0 template only"},
+		{"containers", "flag", "handmade", "Created by hand"},
+		{"user_scripts", "info", "nightly", "30 2 * * *"},
+		{"parity_history", "warn", "", "days old"},
+		{"users", "info", "", "1 user account: alice"},
+		{"settings", "info", "mover schedule", "40 3 * * *"},
+	} {
+		if !has(want.check, want.status, want.subject, want.detail) {
+			t.Errorf("GET /migrate has no %s %s row for %q containing %q: %s", want.check, want.status, want.subject, want.detail, body)
+		}
+	}
+	if bytes.Contains(body, []byte(`"import"`)) {
+		t.Errorf("the parsed import model is in the API report: %s", body)
+	}
+
+	status, body = w.do(t, http.MethodGet, "/migrate/report")
+	if status != http.StatusOK {
+		t.Fatalf("GET /migrate/report = %d %s", status, body)
+	}
+	for _, want := range []string{"## Share configuration", "| flag | media |", "## User Scripts (plugin)", "| info | nightly |", "## Last Unraid parity check"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the downloadable report lacks %q:\n%s", want, body)
+		}
+	}
+}
+
 // A scan the previous process left running is failed at start, never shown as
 // running forever.
 func TestMigrationWiring_AScanLeftRunningByThePreviousProcessIsFailedAtStart(t *testing.T) {

@@ -91,11 +91,30 @@ type Boot struct {
 	SharedWithDataPool bool         `json:"shared_with_data_pool"`
 }
 
+// WritableLayer is one container's writable-layer size from the capture;
+// Bytes is nil when the prepare script could not measure it.
+type WritableLayer struct {
+	Container string `json:"container"`
+	Bytes     *int64 `json:"bytes"`
+}
+
+// CaptureDocker is the capture's account of Docker: whether it was running,
+// where its storage sat ("cache", "array", "boot-pool", "other", "none" or
+// "unknown") and the writable-layer size per container. The layers are empty
+// when Docker was not running.
+type CaptureDocker struct {
+	State             string          `json:"state"`
+	DirectoryLocation string          `json:"directory_location"`
+	WritableLayers    []WritableLayer `json:"writable_layers"`
+}
+
 // Capture is config/hoserva/capture.json, written by the Phase A prepare script.
 type Capture struct {
-	UnraidVersion string `json:"unraid_version"`
-	CapturedAt    string `json:"captured_at"`
-	Boot          Boot   `json:"boot"`
+	UnraidVersion      string        `json:"unraid_version"`
+	CapturedAt         string        `json:"captured_at"`
+	Boot               Boot          `json:"boot"`
+	Docker             CaptureDocker `json:"docker"`
+	LibvirtImgLocation string        `json:"libvirt_img_location"`
 }
 
 // DiskCfg is config/disk.cfg: the array's global settings and per-slot

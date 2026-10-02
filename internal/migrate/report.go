@@ -40,6 +40,17 @@ const (
 	CheckMapping      = "disk_mapping"
 	CheckUID99        = "uid_99"
 	CheckSyncEstimate = "sync_estimate"
+
+	CheckShares        = "shares"
+	CheckCache         = "cache_contents"
+	CheckUsers         = "users"
+	CheckTemplates     = "docker_templates"
+	CheckContainers    = "containers"
+	CheckUserScripts   = "user_scripts"
+	CheckParityHistory = "parity_history"
+	CheckPlugins       = "plugins"
+	CheckCustomConfig  = "custom_config"
+	CheckSettings      = "settings"
 )
 
 // checkTitles gives each check its heading, in the order the document lists
@@ -53,6 +64,16 @@ var checkTitles = []struct{ check, title string }{
 	{CheckParity, "Parity configuration"},
 	{CheckParitySize, "Parity disk size"},
 	{CheckSMART, "SMART status"},
+	{CheckParityHistory, "Last Unraid parity check"},
+	{CheckShares, "Share configuration"},
+	{CheckCache, "What would be lost with the cache"},
+	{CheckUsers, "User accounts"},
+	{CheckTemplates, "Docker templates"},
+	{CheckContainers, "Containers"},
+	{CheckUserScripts, "User Scripts (plugin)"},
+	{CheckPlugins, "Plugins"},
+	{CheckCustomConfig, "Custom configuration that is not imported"},
+	{CheckSettings, "Schedules and settings to carry over"},
 	{CheckUID99, "File ownership: UID 99"},
 	{CheckSyncEstimate, "Estimated initial sync duration"},
 }
@@ -81,6 +102,9 @@ type Report struct {
 	BootMode string  `json:"bootMode,omitempty"`
 	Verdict  Verdict `json:"verdict"`
 	Rows     []Row   `json:"rows"`
+	// Import is the parsed configuration the later steps seed from. It is kept
+	// with the report in the session and is not part of the API's report.
+	Import Import `json:"import"`
 }
 
 func (r *Report) add(check string, st Status, subject, format string, args ...any) {
