@@ -27,8 +27,8 @@ func errRebalanceNotConfigured() error {
 // wraps them with the share/path/entry that tripped them) rather than a
 // raw I/O error. PlanEvacuation walks the disk being evacuated with plain
 // os.Stat/os.Lstat, os.ReadDir and filepath.WalkDir
-// (nonShareTopLevelEntries, refuseUnsupportedEntries and enumerateFiles,
-// internal/cache/evacuate.go and mover.go) while it is still being
+// (nonShareTopLevelEntries, refuseUnsupportedEntries and enumerateEntries,
+// internal/cache/evacuate.go and entry.go) while it is still being
 // planned for removal — a failing disk can return a raw I/O error (EIO,
 // and other errors that are not documented refusals) that has nothing to
 // do with the plan being invalid, and reporting it as invalid_plan would

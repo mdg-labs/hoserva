@@ -587,36 +587,42 @@ func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps D
 		}
 		return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultFailed, Err: statErr.Error()}, nil
 	}
-	if !srcInfo.Mode().IsRegular() {
-		return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultSkippedNotRegular}, nil
+	kind := entryKind(srcInfo.Mode())
+	if srcInfo.Mode()&fs.ModeSocket != 0 {
+		return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultSkippedSocket, Reason: socketReason}, nil
+	}
+	if kind == "other" {
+		return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultSkippedNotRegular}, nil
 	}
 
 	if dstInfo, derr := os.Lstat(dst); derr == nil {
 		same, checkErr := isSamePendingCopy(src, dst, srcInfo, dstInfo, cfg.VerifyChecksum)
 		if checkErr != nil {
-			return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultFailed, Err: checkErr.Error()}, nil
+			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: checkErr.Error()}, nil
 		}
 		if !same {
-			return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultConflict}, nil
+			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultConflict}, nil
 		}
 		return nil, &parity.ManifestEntry{RelPath: filepath.Join(mv.Share, mv.RelPath), Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: sourceDisk, TargetDisk: targetDisk}
 	} else if !errors.Is(derr, fs.ErrNotExist) {
-		return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultFailed, Err: derr.Error()}, nil
+		return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: derr.Error()}, nil
 	}
 
-	open, oerr := preCopyOpen.IsOpen(ctx, src)
-	if oerr != nil {
-		return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultFailed, Err: oerr.Error()}, nil
-	}
-	if open {
-		return &Entry{Share: mv.Share, Path: mv.RelPath, Bytes: srcInfo.Size(), Result: ResultSkippedOpen}, nil
+	if canBeOpen(srcInfo.Mode()) {
+		open, oerr := preCopyOpen.IsOpen(ctx, src)
+		if oerr != nil {
+			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: oerr.Error()}, nil
+		}
+		if open {
+			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Bytes: srcInfo.Size(), Result: ResultSkippedOpen}, nil
+		}
 	}
 
 	if err := copyMoveFile(src, dst, srcInfo, cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
-			return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultConflict}, nil
+			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultConflict}, nil
 		}
-		return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultFailed, Err: err.Error()}, nil
+		return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: err.Error()}, nil
 	}
 
 	return nil, &parity.ManifestEntry{RelPath: filepath.Join(mv.Share, mv.RelPath), Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: sourceDisk, TargetDisk: targetDisk}
@@ -658,17 +664,17 @@ func finishRebalanceDelete(ctx context.Context, me parity.ManifestEntry, deps De
 	share, rel := splitManifestRelPath(me.RelPath)
 	src := filepath.Join(me.SourceDisk, me.RelPath)
 
-	open, err := deps.Open.IsOpen(ctx, src)
-	if err != nil {
-		return Entry{Share: share, Path: rel, Bytes: me.Size, Result: ResultMovedPendingDelete, Err: err.Error()}
+	entry := Entry{Share: share, Path: rel, Bytes: me.Size}
+	var note string
+	if info, err := os.Lstat(src); err == nil {
+		entry.Kind = entryKind(info.Mode())
+		note = hardLinkNote(info)
 	}
-	if open {
-		return Entry{Share: share, Path: rel, Bytes: me.Size, Result: ResultMovedPendingDelete}
+	entry = removeSource(ctx, src, deps, entry)
+	if entry.Result == ResultMoved && entry.Reason == "" {
+		entry.Reason = note
 	}
-	if err := os.Remove(src); err != nil {
-		return Entry{Share: share, Path: rel, Bytes: me.Size, Result: ResultFailed, Err: err.Error()}
-	}
-	return Entry{Share: share, Path: rel, Bytes: me.Size, Result: ResultMoved}
+	return entry
 }
 
 // splitManifestRelPath splits a ManifestEntry.RelPath ("<share>/<rel>",

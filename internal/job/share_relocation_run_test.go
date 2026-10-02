@@ -3,8 +3,10 @@ package job
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -442,6 +444,75 @@ func TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted(t *
 	}
 }
 
+// TestRunShareRelocation_ToCache_UnreadableLeftoverAfterFinalSync_ClearsManifestAndEndsIncomplete
+// covers the end-of-job check of what is left on the array: once the
+// trailing sync has succeeded the manifest is spent, so a directory the
+// check cannot read must neither keep the manifest persisted nor turn a
+// finished relocation into a plain failure. It ends failed with
+// relocation_incomplete, naming the path and the error.
+func TestRunShareRelocation_ToCache_UnreadableLeftoverAfterFinalSync_ClearsManifestAndEndsIncomplete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory without permission")
+	}
+	ctx := context.Background()
+	db := newTestDB(t)
+	store := parity.NewRelocationManifestStore(db)
+
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+	locked := filepath.Join(share.Branches[0], "locked")
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	var calls int
+	sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		calls++
+		if err := syncFuncFromEngine(eng)(ctx, manifest); err != nil {
+			return err
+		}
+		if calls == 2 {
+			mustWriteFile(t, filepath.Join(locked, "hidden.db"), "x")
+			if err := os.Chmod(locked, 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		}
+		return nil
+	}
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     sync,
+		Manifest: store,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed || finished.ErrorCode != "relocation_incomplete" {
+		t.Fatalf("status = %s, code = %q (%s), want failed / relocation_incomplete", finished.Status, finished.ErrorCode, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "locked") || !strings.Contains(finished.ErrorMessage, "permission denied") {
+		t.Fatalf("ErrorMessage = %q, want it to name the unreadable path and its error", finished.ErrorMessage)
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 sync calls (pre-delete, trailing), got %d", calls)
+	}
+
+	manifest, _, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(manifest) != 0 {
+		t.Fatalf("manifest after the trailing sync succeeded = %+v, want it cleared", manifest)
+	}
+}
+
 // TestRunShareRelocation_ToCache_ManifestSurvivesInterruption_ThenClearsOnResume
 // proves the resumed/checkpoint-continuation path this issue's own
 // acceptance criteria call out explicitly: a run interrupted right after
@@ -759,5 +830,194 @@ func TestValidateParams_ShareRelocationRequiresShareAndValidDirection(t *testing
 	}
 	if err := ValidateParams(TypeShareRelocation, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"})); err != nil {
 		t.Fatalf("ValidateParams(share_relocation, valid) = %v, want nil", err)
+	}
+}
+
+// TestRunShareRelocation_ToCache_LeftBehindEntryFailsTheJobAndClearsTheManifest
+// proves a relocation that finished but could not move every entry ends
+// failed with its own code, names the entry left behind and why, and still
+// clears the persisted relocation manifest, so nothing stale is left to
+// exempt a later removal from the guard.
+func TestRunShareRelocation_ToCache_LeftBehindEntryFailsTheJobAndClearsTheManifest(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	moved := filepath.Join(share.Branches[0], "report.pdf")
+	held := filepath.Join(share.Branches[0], "held.db")
+	mustWriteFile(t, moved, "report bytes")
+	mustWriteFile(t, held, "database bytes")
+
+	open := fakeOpen()
+	open.SetOpen(held, true)
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	manifestStore := &fakeRelocationManifestStore{}
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     open,
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     syncFuncFromEngine(eng),
+		Manifest: manifestStore,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed || finished.ErrorCode != "relocation_incomplete" {
+		t.Fatalf("status = %s, code = %q (%s), want failed / relocation_incomplete", finished.Status, finished.ErrorCode, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "held.db") || !strings.Contains(finished.ErrorMessage, "skipped_open") {
+		t.Fatalf("ErrorMessage = %q, want the entry left behind and why", finished.ErrorMessage)
+	}
+	if strings.Contains(finished.ErrorMessage, "report.pdf") {
+		t.Fatalf("ErrorMessage = %q names an entry that was moved", finished.ErrorMessage)
+	}
+	if _, err := os.Stat(held); err != nil {
+		t.Fatalf("the held file must stay on the array: %v", err)
+	}
+	calls, manifest, _ := manifestStore.snapshot()
+	if calls < 2 || manifest != nil {
+		t.Fatalf("manifest store: %d Replace calls, final manifest %+v, want it persisted then cleared", calls, manifest)
+	}
+}
+
+func TestRunShareRelocation_ToArray_LeftBehindEntryFailsTheJob(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	base := t.TempDir()
+	share := cache.Share{
+		Name:      "docs",
+		CachePath: filepath.Join(base, "cache", "docs"),
+		ArrayPath: filepath.Join(base, "array", "docs"),
+	}
+	held := filepath.Join(share.CachePath, "held.db")
+	mustWriteFile(t, held, "database bytes")
+	open := fakeOpen()
+	open.SetOpen(held, true)
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  open,
+		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
+	}))
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "array"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed || finished.ErrorCode != "relocation_incomplete" || !strings.Contains(finished.ErrorMessage, "held.db") {
+		t.Fatalf("status = %s, code = %q (%s), want failed / relocation_incomplete naming held.db", finished.Status, finished.ErrorCode, finished.ErrorMessage)
+	}
+}
+
+// TestRunShareRelocation_ToArray_OnlyASocketLeftStillSucceeds: a socket is
+// runtime-only, so leaving it behind does not make the relocation incomplete.
+func TestRunShareRelocation_ToArray_OnlyASocketLeftStillSucceeds(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	base := t.TempDir()
+	share := cache.Share{
+		Name:      "docs",
+		CachePath: filepath.Join(base, "cache", "docs"),
+		ArrayPath: filepath.Join(base, "array", "docs"),
+	}
+	mustWriteFile(t, filepath.Join(share.CachePath, "report.pdf"), "report bytes")
+	dir, err := os.Open(share.CachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dir.Close() }()
+	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: fmt.Sprintf("/proc/self/fd/%d/app.sock", dir.Fd()), Net: "unix"})
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	l.SetUnlinkOnClose(false)
+	_ = l.Close()
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  fakeOpen(),
+		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
+	}))
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "array"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if finished := await(t, s, j.ID); finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	if _, err := os.Lstat(filepath.Join(share.CachePath, "app.sock")); err != nil {
+		t.Fatalf("the socket must be left in place: %v", err)
+	}
+}
+
+// TestRunShareRelocation_ToCache_ResumedRunStillFailsOnWhatAnEarlierRunLeftBehind:
+// held.db is skipped as open in the first run, which is interrupted once the
+// copy phase is done. The resumed run starts after the copy phase, so only
+// the end-of-job check of the array side can still name held.db.
+func TestRunShareRelocation_ToCache_ResumedRunStillFailsOnWhatAnEarlierRunLeftBehind(t *testing.T) {
+	ctx := context.Background()
+	share := newShareRelocationShare(t, "docs")
+	held := filepath.Join(share.Branches[0], "held.db")
+	mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+	mustWriteFile(t, held, "database bytes")
+	open := fakeOpen()
+	open.SetOpen(held, true)
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	fn := RunShareRelocation(ShareRelocationDeps{
+		Open:  open,
+		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:  syncFuncFromEngine(eng),
+	})
+	params := mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"})
+
+	stop := make(chan struct{})
+	var last []byte
+	rc1 := &RunContext{
+		ctx:           ctx,
+		out:           &bytes.Buffer{},
+		params:        params,
+		stopRequested: stop,
+		saveCheckpoint: func(data []byte) error {
+			last = data
+			var cp cache.RelocateCheckpoint
+			if err := json.Unmarshal(data, &cp); err != nil {
+				return err
+			}
+			if cp.Phase == cache.RelocatePhaseSyncing {
+				close(stop)
+			}
+			return nil
+		},
+		setProgress: func(int) {},
+	}
+	if err := fn(ctx, rc1); err != nil {
+		t.Fatalf("interrupted run: %v", err)
+	}
+	if last == nil {
+		t.Fatal("interrupted run never saved a checkpoint")
+	}
+
+	rc2 := &RunContext{
+		ctx:            ctx,
+		out:            &bytes.Buffer{},
+		params:         params,
+		checkpoint:     last,
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func([]byte) error { return nil },
+		setProgress:    func(int) {},
+	}
+	err := fn(ctx, rc2)
+	var outcome *OutcomeError
+	if !errors.As(err, &outcome) || outcome.Status != StatusFailed || outcome.Code != relocationIncompleteCode {
+		t.Fatalf("resumed run error = %v, want failed / %s", err, relocationIncompleteCode)
+	}
+	if !strings.Contains(outcome.Error(), "held.db") {
+		t.Fatalf("error = %q, want it to name held.db", outcome.Error())
+	}
+	if _, err := os.Stat(held); err != nil {
+		t.Fatalf("the held file must stay on the array: %v", err)
 	}
 }

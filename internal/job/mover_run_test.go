@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/mdg-labs/hoserva/internal/cache"
 )
 
@@ -267,5 +269,42 @@ func TestRunMover_PersistsResultWhenContextIsCancelled(t *testing.T) {
 	}
 	if run.StartedAt.IsZero() {
 		t.Fatal("cancelled run was not persisted")
+	}
+}
+
+// TestRunMover_JobLogNamesEachEntryTypeItMoved proves the mover job's log
+// carries the per-type result of a symlink and a FIFO, not only regular
+// files (doc 09 §2, "What is moved, by file type").
+func TestRunMover_JobLogNamesEachEntryTypeItMoved(t *testing.T) {
+	share := newTestMoverShare(t)
+	old := time.Now().Add(-time.Hour)
+	link := filepath.Join(share.CachePath, "current")
+	if err := os.Symlink("movie.mkv", link); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(share.CachePath, "queue")
+	if err := unix.Mkfifo(fifo, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{link, fifo} {
+		ts := unix.NsecToTimespec(old.UnixNano())
+		if err := unix.UtimesNanoAt(unix.AT_FDCWD, p, []unix.Timespec{ts, ts}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fn := RunMover(MoverDeps{
+		Open:   fakeOpen(),
+		Shares: func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
+	})
+	var out bytes.Buffer
+	rc := &RunContext{ctx: context.Background(), out: &out, stopRequested: make(chan struct{}), saveCheckpoint: func([]byte) error { return nil }, setProgress: func(int) {}}
+	if err := fn(context.Background(), rc); err != nil {
+		t.Fatalf("RunMover: %v", err)
+	}
+	for _, want := range []string{"moved movies/current (symlink)", "moved movies/queue (fifo)", "moved movies/movie.mkv\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("job log lacks %q:\n%s", want, out.String())
+		}
 	}
 }

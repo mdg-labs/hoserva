@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sys/unix"
 )
 
 // tempSuffix marks an in-flight copy (doc 09 §2): a file named
@@ -35,6 +36,12 @@ const DefaultGracePeriod = 5 * time.Minute
 // ResultConflict rather than ResultFailed, since it is the same
 // never-auto-resolved conflict the earlier check exists to catch.
 var errTargetAppeared = errors.New("cache: array target appeared during copy")
+
+// leftBehindReason is the Reason of every ResultLeftBehind entry.
+const leftBehindReason = "still on the source; an earlier run of this job left it and its reason was not carried across the resume"
+
+// socketReason is the Reason of every skipped socket entry.
+const socketReason = "runtime-only: its owner recreates it when it starts"
 
 // Share is what one mover pass needs about a single cache-then-move
 // share. ArrayPath is the share's own array-only mergerfs mount (doc 02
@@ -89,6 +96,10 @@ type Deps struct {
 	Now      func() time.Time
 	UUID     func() string
 	FsyncDir func(dir string) error
+	// Mknod creates a FIFO or device node (mknod(2)); defaults to
+	// unix.Mknod. A filesystem or a missing capability can refuse it, and
+	// the entry is then reported as failed.
+	Mknod func(path string, mode uint32, dev int) error
 	// Sync is RelocateToCache's own dependency (#54): a caller-supplied
 	// adapter onto parity.Engine.Sync, kept out of this package's own
 	// imports the same way RunHooks avoids importing internal/job (see
@@ -163,6 +174,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.Usage == nil {
 		d.Usage = UsageBytes
+	}
+	if d.Mknod == nil {
+		d.Mknod = unix.Mknod
 	}
 	return d
 }
@@ -263,7 +277,7 @@ func Run(ctx context.Context, shares []Share, cfg Config, deps Deps, hooks RunHo
 	plan := make([][]string, len(shares))
 	total := 0
 	for i, s := range shares {
-		rels, err := enumerateFiles(s.CachePath)
+		rels, err := enumerateEntries(s.CachePath)
 		if err != nil {
 			return report, fmt.Errorf("cache: enumerate share %q: %w", s.Name, err)
 		}
@@ -357,7 +371,6 @@ func shareOpenChecker(ctx context.Context, open OpenChecker) (OpenChecker, error
 // always uses deps.Open directly instead, never preCopyOpen.
 func processFile(ctx context.Context, s Share, rel string, grace time.Duration, cfg Config, deps Deps, preCopyOpen OpenChecker) Entry {
 	src := filepath.Join(s.CachePath, rel)
-	dst := filepath.Join(s.ArrayPath, rel)
 
 	if matchExclude(s.Exclude, rel) {
 		return Entry{Share: s.Name, Path: rel, Result: ResultSkippedExcluded}
@@ -370,7 +383,24 @@ func processFile(ctx context.Context, s Share, rel string, grace time.Duration, 
 		}
 		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 	}
-	if !srcInfo.Mode().IsRegular() {
+	entry := moveEntry(ctx, s, rel, srcInfo, grace, cfg, deps, preCopyOpen)
+	entry.Kind = entryKind(srcInfo.Mode())
+	if entry.Reason == "" && (entry.Result == ResultMoved || entry.Result == ResultMovedPendingDelete) {
+		entry.Reason = hardLinkNote(srcInfo)
+	}
+	return entry
+}
+
+// moveEntry is processFile past the Lstat: srcInfo is src's own metadata,
+// never followed through a symlink.
+func moveEntry(ctx context.Context, s Share, rel string, srcInfo os.FileInfo, grace time.Duration, cfg Config, deps Deps, preCopyOpen OpenChecker) Entry {
+	src := filepath.Join(s.CachePath, rel)
+	dst := filepath.Join(s.ArrayPath, rel)
+
+	if srcInfo.Mode()&fs.ModeSocket != 0 {
+		return Entry{Share: s.Name, Path: rel, Result: ResultSkippedSocket, Reason: socketReason}
+	}
+	if entryKind(srcInfo.Mode()) == "other" {
 		return Entry{Share: s.Name, Path: rel, Result: ResultSkippedNotRegular}
 	}
 	if deps.Now().Sub(srcInfo.ModTime()) < grace {
@@ -400,12 +430,14 @@ func processFile(ctx context.Context, s Share, rel string, grace time.Duration, 
 		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 	}
 
-	open, err := preCopyOpen.IsOpen(ctx, src)
-	if err != nil {
-		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
-	}
-	if open {
-		return Entry{Share: s.Name, Path: rel, Bytes: srcInfo.Size(), Result: ResultSkippedOpen}
+	if canBeOpen(srcInfo.Mode()) {
+		open, err := preCopyOpen.IsOpen(ctx, src)
+		if err != nil {
+			return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
+		}
+		if open {
+			return Entry{Share: s.Name, Path: rel, Bytes: srcInfo.Size(), Result: ResultSkippedOpen}
+		}
 	}
 
 	if !spaceAvailable(s, srcInfo.Size(), deps) {
@@ -428,17 +460,32 @@ func processFile(ctx context.Context, s Share, rel string, grace time.Duration, 
 // place: both copies are complete and correct, so nothing is lost, and a
 // later run completes the delete.
 func finishPendingDelete(ctx context.Context, s Share, rel, src string, size int64, deps Deps) Entry {
-	open, err := deps.Open.IsOpen(ctx, src)
-	if err != nil {
-		return Entry{Share: s.Name, Path: rel, Bytes: size, Result: ResultMovedPendingDelete, Err: err.Error()}
-	}
-	if open {
-		return Entry{Share: s.Name, Path: rel, Bytes: size, Result: ResultMovedPendingDelete}
+	return removeSource(ctx, src, deps, Entry{Share: s.Name, Path: rel, Bytes: size})
+}
+
+// removeSource is the shared last step of every relocation: re-check src
+// for an open handle and, only when it is clear, unlink it. entry carries
+// the identifying fields; its Result is set here. A symlink is never
+// "open" — the checker would stat through it to its target — so it is
+// unlinked without that check.
+func removeSource(ctx context.Context, src string, deps Deps, entry Entry) Entry {
+	if info, err := os.Lstat(src); err != nil || canBeOpen(info.Mode()) {
+		open, err := deps.Open.IsOpen(ctx, src)
+		if err != nil {
+			entry.Result, entry.Err = ResultMovedPendingDelete, err.Error()
+			return entry
+		}
+		if open {
+			entry.Result = ResultMovedPendingDelete
+			return entry
+		}
 	}
 	if err := os.Remove(src); err != nil {
-		return Entry{Share: s.Name, Path: rel, Bytes: size, Result: ResultFailed, Err: err.Error()}
+		entry.Result, entry.Err = ResultFailed, err.Error()
+		return entry
 	}
-	return Entry{Share: s.Name, Path: rel, Bytes: size, Result: ResultMoved}
+	entry.Result = ResultMoved
+	return entry
 }
 
 // isSamePendingCopy reports whether dst is very likely this mover's own
@@ -455,6 +502,12 @@ func finishPendingDelete(ctx context.Context, s Share, rel, src string, size int
 // else in this package, and the pending-delete check is no exception.
 func isSamePendingCopy(src, dst string, srcInfo, dstInfo os.FileInfo, verifyChecksum bool) (bool, error) {
 	if dstInfo.Size() != srcInfo.Size() || !dstInfo.ModTime().Equal(srcInfo.ModTime()) {
+		return false, nil
+	}
+	if !srcInfo.Mode().IsRegular() {
+		return sameNode(src, dst, srcInfo, dstInfo)
+	}
+	if !dstInfo.Mode().IsRegular() {
 		return false, nil
 	}
 	if !verifyChecksum {
@@ -508,21 +561,35 @@ func spaceAvailable(s Share, size int64, deps Deps) bool {
 	return false
 }
 
-// copyMoveFile performs doc 09 §2's copy step: write a temp-suffixed
-// copy through dst's directory (so mergerfs places it), preserve mode,
-// ownership, xattrs and timestamps, verify, fsync, then atomically
-// rename it into place. It never touches src.
+// copyMoveFile performs doc 09 §2's copy step for one entry: write a
+// temp-suffixed copy through dst's directory (so mergerfs places it),
+// preserve mode, ownership, xattrs and timestamps, verify, fsync, then
+// atomically rename it into place. A regular file is copied with its holes
+// intact; a symlink, FIFO or device node is recreated and never followed.
+// It never touches src.
 func copyMoveFile(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
+	if srcInfo.Mode().IsRegular() {
+		return copyRegular(src, dst, srcInfo, cfg, deps)
+	}
+	return copyNode(src, dst, srcInfo, deps)
+}
+
+func copyRegular(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("create target directory: %w", err)
 	}
 	tmp := dst + tempSuffix + deps.UUID()
 
-	in, err := os.Open(src)
+	in, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}
 	defer func() { _ = in.Close() }()
+	if st, err := in.Stat(); err != nil {
+		return fmt.Errorf("stat source: %w", err)
+	} else if !st.Mode().IsRegular() {
+		return fmt.Errorf("source is no longer a regular file")
+	}
 
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, srcInfo.Mode().Perm())
 	if err != nil {
@@ -537,18 +604,16 @@ func copyMoveFile(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) e
 	}()
 
 	var srcHash hashWriter
-	var w io.Writer = out
+	var hash io.Writer
 	if cfg.VerifyChecksum {
 		srcHash = sha256.New()
-		w = io.MultiWriter(out, srcHash)
+		hash = srcHash
 	}
-
-	n, err := io.Copy(w, in)
-	if err != nil {
+	if err := copySparse(out, in, srcInfo.Size(), hash, hasHoles(srcInfo)); err != nil {
 		return fmt.Errorf("copy: %w", err)
 	}
-	if n != srcInfo.Size() {
-		return fmt.Errorf("copy: wrote %d bytes, source was %d", n, srcInfo.Size())
+	if end, err := in.Seek(0, io.SeekEnd); err != nil || end != srcInfo.Size() {
+		return fmt.Errorf("copy: source is %d bytes now, was %d when it was chosen", end, srcInfo.Size())
 	}
 
 	if st, ok := srcInfo.Sys().(*syscall.Stat_t); ok {
@@ -581,13 +646,23 @@ func copyMoveFile(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) e
 		return fmt.Errorf("preserve timestamps: %w", err)
 	}
 
+	renamed, err := publishTemp(tmp, dst, deps)
+	if renamed {
+		cleanTemp = false
+	}
+	return err
+}
+
+// publishTemp renames tmp to dst without replacing anything and makes the
+// rename durable. renamed reports whether the rename happened, so a caller
+// whose cleanup removes tmp stops once it is gone.
+func publishTemp(tmp, dst string, deps Deps) (renamed bool, err error) {
 	if err := renameNoReplace(tmp, dst); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return errTargetAppeared
+			return false, errTargetAppeared
 		}
-		return fmt.Errorf("rename into place: %w", err)
+		return false, fmt.Errorf("rename into place: %w", err)
 	}
-	cleanTemp = false
 
 	// dst and src live on independent filesystems with independent
 	// journals: a rename can commit to the array's journal while the
@@ -600,9 +675,9 @@ func copyMoveFile(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) e
 	// sweepStrayTemps discards as a stray copy — losing the file rather
 	// than merely duplicating it (doc 09 §2).
 	if err := deps.FsyncDir(filepath.Dir(dst)); err != nil {
-		return fmt.Errorf("fsync target directory: %w", err)
+		return true, fmt.Errorf("fsync target directory: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // fsyncDir fsyncs dir itself, not any file in it, so a rename or create

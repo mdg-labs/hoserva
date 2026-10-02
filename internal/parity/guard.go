@@ -373,13 +373,23 @@ func ConfirmManifestTargets(ctx context.Context, lister Engine, diff DiffReport,
 	if err != nil {
 		return nil, fmt.Errorf("parity: confirming relocation manifest targets: %w", err)
 	}
-	tracked := make(map[fileKey]bool, len(list.Files))
+	tracked := make(map[fileKey]bool, len(list.Files)+len(list.Links))
 	for _, f := range list.Files {
 		mount, ok := list.DataMounts[f.Disk]
 		if !ok {
 			continue
 		}
 		tracked[fileKey{filepath.Clean(mount), f.RelPath}] = true
+	}
+	// A relocated symlink is a removal and an addition in SnapRAID's diff
+	// like a file, but `snapraid list` reports it as a link line, not a
+	// file line.
+	for _, l := range list.Links {
+		mount, ok := list.DataMounts[l.Disk]
+		if !ok {
+			continue
+		}
+		tracked[fileKey{filepath.Clean(mount), l.RelPath}] = true
 	}
 
 	confirmed := make([]ManifestEntry, len(manifest))

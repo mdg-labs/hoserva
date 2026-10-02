@@ -33,7 +33,72 @@ type SyncFunc func(ctx context.Context, manifest []parity.ManifestEntry) error
 // minutes" caution.
 func RelocateToArray(ctx context.Context, share Share, cfg Config, deps Deps, hooks RunHooks, initialCheckpoint []byte) (Report, error) {
 	cfg.SkipGracePeriod = true
-	return Run(ctx, []Share{share}, cfg, deps, hooks, initialCheckpoint)
+	report, err := Run(ctx, []Share{share}, cfg, deps, hooks, initialCheckpoint)
+	report.Relocation = true
+	if err == nil && !report.Interrupted {
+		recordUnreportedSources(&report, share, []string{share.CachePath})
+	}
+	return report, err
+}
+
+// recordUnreportedSources adds an entry for every entry still under one of
+// roots that report does not already name as left behind. A resumed
+// relocation only decides the entries after its checkpoint again, and
+// neither checkpoint carries what an earlier run of the job left behind, so
+// the end of the job asks the source side itself: whatever is still there
+// was not moved, and the job is incomplete unless it is only sockets.
+//
+// It cannot fail the relocation: by the time it runs everything that could
+// move has moved and synced, so a path it cannot read is recorded as a
+// failed entry naming the path and the error, which makes the job
+// incomplete, rather than returned over a finished relocation. A path that
+// vanishes while it walks has nothing left to report and is skipped.
+func recordUnreportedSources(report *Report, share Share, roots []string) {
+	named := make(map[string]bool)
+	for _, e := range report.LeftBehind() {
+		named[e.Path] = true
+	}
+	record := func(e Entry) {
+		if named[e.Path] {
+			return
+		}
+		named[e.Path] = true
+		report.add(e)
+	}
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				rel = path
+			}
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					record(Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: fmt.Sprintf("check what is left on the source: %v", err)})
+				}
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() || strings.Contains(d.Name(), tempSuffix) {
+				return nil
+			}
+			info, err := os.Lstat(path)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				record(Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: fmt.Sprintf("check what is left on the source: %v", err)})
+				return nil
+			}
+			e := Entry{Share: share.Name, Path: rel, Bytes: info.Size(), Kind: entryKind(info.Mode()), Result: ResultLeftBehind, Reason: leftBehindReason}
+			if info.Mode()&fs.ModeSocket != 0 {
+				e.Result, e.Reason = ResultSkippedSocket, socketReason
+			}
+			record(e)
+			return nil
+		})
+	}
 }
 
 // RelocatePhase is where a RelocateToCache run currently is in Q14's
@@ -121,7 +186,7 @@ func RelocateToCache(ctx context.Context, share Share, cfg Config, deps Deps, ho
 		cp.Phase = RelocatePhaseCopying
 	}
 
-	report := Report{StartedAt: deps.Now()}
+	report := Report{StartedAt: deps.Now(), Relocation: true}
 	defer func() {
 		if report.FinishedAt.IsZero() {
 			report.FinishedAt = deps.Now()
@@ -199,6 +264,8 @@ func RelocateToCache(ctx context.Context, share Share, cfg Config, deps Deps, ho
 		}
 	}
 
+	recordUnreportedSources(&report, share, share.Branches)
+
 	report.FinishedAt = deps.Now()
 	return report, nil
 }
@@ -216,7 +283,7 @@ func relocateCopyPhase(ctx context.Context, share Share, cfg Config, deps Deps, 
 	plan := make([][]string, len(share.Branches))
 	total := 0
 	for i, b := range share.Branches {
-		rels, e := enumerateFiles(b)
+		rels, e := enumerateEntries(b)
 		if e != nil {
 			return nil, false, fmt.Errorf("cache: enumerate branch %q: %w", b, e)
 		}
@@ -302,8 +369,12 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 		}
 		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: statErr.Error()}, nil
 	}
-	if !srcInfo.Mode().IsRegular() {
-		return &Entry{Share: share.Name, Path: rel, Result: ResultSkippedNotRegular}, nil
+	kind := entryKind(srcInfo.Mode())
+	if srcInfo.Mode()&fs.ModeSocket != 0 {
+		return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultSkippedSocket, Reason: socketReason}, nil
+	}
+	if kind == "other" {
+		return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultSkippedNotRegular}, nil
 	}
 
 	// A previous, interrupted run may have already copied and verified
@@ -314,29 +385,31 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 	if dstInfo, derr := os.Lstat(dst); derr == nil {
 		same, checkErr := isSamePendingCopy(src, dst, srcInfo, dstInfo, cfg.VerifyChecksum)
 		if checkErr != nil {
-			return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: checkErr.Error()}, nil
+			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: checkErr.Error()}, nil
 		}
 		if !same {
-			return &Entry{Share: share.Name, Path: rel, Result: ResultConflict}, nil
+			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultConflict}, nil
 		}
 		return nil, &parity.ManifestEntry{RelPath: filepath.Join(share.Name, rel), Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: disk, TargetDisk: filepath.Dir(share.CachePath)}
 	} else if !errors.Is(derr, fs.ErrNotExist) {
-		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: derr.Error()}, nil
+		return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: derr.Error()}, nil
 	}
 
-	open, oerr := preCopyOpen.IsOpen(ctx, src)
-	if oerr != nil {
-		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: oerr.Error()}, nil
-	}
-	if open {
-		return &Entry{Share: share.Name, Path: rel, Bytes: srcInfo.Size(), Result: ResultSkippedOpen}, nil
+	if canBeOpen(srcInfo.Mode()) {
+		open, oerr := preCopyOpen.IsOpen(ctx, src)
+		if oerr != nil {
+			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: oerr.Error()}, nil
+		}
+		if open {
+			return &Entry{Share: share.Name, Path: rel, Kind: kind, Bytes: srcInfo.Size(), Result: ResultSkippedOpen}, nil
+		}
 	}
 
 	if err := copyMoveFile(src, dst, srcInfo, cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
-			return &Entry{Share: share.Name, Path: rel, Result: ResultConflict}, nil
+			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultConflict}, nil
 		}
-		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: err.Error()}, nil
+		return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: err.Error()}, nil
 	}
 
 	return nil, &parity.ManifestEntry{RelPath: filepath.Join(share.Name, rel), Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: disk, TargetDisk: filepath.Dir(share.CachePath)}
@@ -380,17 +453,17 @@ func finishRelocateDelete(ctx context.Context, share Share, me parity.ManifestEn
 	src := filepath.Join(me.SourceDisk, me.RelPath)
 	rel := strings.TrimPrefix(me.RelPath, share.Name+"/")
 
-	open, err := deps.Open.IsOpen(ctx, src)
-	if err != nil {
-		return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultMovedPendingDelete, Err: err.Error()}
+	entry := Entry{Share: share.Name, Path: rel, Bytes: me.Size}
+	var note string
+	if info, err := os.Lstat(src); err == nil {
+		entry.Kind = entryKind(info.Mode())
+		note = hardLinkNote(info)
 	}
-	if open {
-		return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultMovedPendingDelete}
+	entry = removeSource(ctx, src, deps, entry)
+	if entry.Result == ResultMoved && entry.Reason == "" {
+		entry.Reason = note
 	}
-	if err := os.Remove(src); err != nil {
-		return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultFailed, Err: err.Error()}
-	}
-	return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultMoved}
+	return entry
 }
 
 // PrecheckResult is what a caller shows before starting a relocation

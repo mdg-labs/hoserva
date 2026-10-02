@@ -72,8 +72,8 @@ Relocate files from the cache to the array on a schedule, so the cache stays fas
 
 ```
 for each share with mode = cache-then-move:
-  enumerate files under /mnt/cache/<share>
-  for each file:
+  enumerate entries under /mnt/cache/<share> (every file type, see "What is moved")
+  for each entry:
     skip if open by any process — including mergerfs itself (see below)
     skip if modified within grace period (default 5 min)
     skip if in an excluded pattern
@@ -108,6 +108,25 @@ for each share with mode = cache-then-move:
 **Free-space awareness.** Check the target has room *including* `minfreespace` before starting each file, not just at the start of the run. Re-check as the run progresses — the pool is a moving target.
 
 **Honest reporting.** Every run logs: files moved, bytes, duration, files skipped and why. "Skipped 14 files because they were open" is information the user needs; silent skipping is how people discover a year later that their cache never empties.
+
+### What is moved, by file type
+
+The mover, share relocation and evacuation share one copy routine, so every entry is treated the same way by all three: copied to a `<name>.hoserva-moving-<uuid>` sibling, verified, renamed into place, and its source unlinked only afterwards (and, on the array side, after the sync — Q14).
+
+| Entry | What the target gets | Verify |
+|---|---|---|
+| Regular file | The same bytes, mode, owner, xattrs (POSIX ACLs included) and mtime. **Holes stay holes**: only the data extents are written (`SEEK_DATA`/`SEEK_HOLE`), so a sparse VM image or database does not grow to its full size. A file allocated in full, such as a preallocated one, is copied densely and stays allocated | Size always; with checksum on, a SHA-256 of the whole logical content, holes read as zeros |
+| Symlink | A symlink with the same target string (relative, absolute or dangling), owner and mtime. It is never followed, so a link to a directory moves the link, not the directory; xattrs are not copied (Linux does not allow `user.*` on a symlink) | Type, target, owner, mtime |
+| FIFO | A FIFO (`mknod`) with the same mode, owner, xattrs and mtime | Type, mode, owner, mtime |
+| Character or block device node | A node with the same device number, mode, owner, xattrs and mtime. Creating one needs `CAP_MKNOD` and a target filesystem that allows it; when it is refused the entry is reported as **failed**, never silently skipped | Type, device number, mode, owner, mtime |
+| Unix socket | Nothing. A socket is runtime state its owner recreates when it starts, so it is left where it is and reported as `skipped_socket` (runtime-only) | — |
+| Hard-linked file | **Split.** Hard links cannot cross branches: each name becomes an independent file on the target, and the first one moved is reported with how many links the source had. The target needs space for each name | As a regular file |
+
+A symlink is never checked for open handles: it cannot be held open, and the open check works on the inode a path leads to, which for a link is its target's.
+
+**Parity accounting.** SnapRAID tracks regular files, symlinks and hard-linked names, and does not track FIFOs, device nodes or sockets. An array-to-array move (evacuation, rebalance) shows a moved symlink as a removal on the source disk and an addition on the target, like a file, and the trailing sync's guard confirms the target through `snapraid list`, which reports a symlink on a `link_symlink:` line rather than a `file:` line; the confirmation reads both, so a moved symlink is accounted for exactly as a moved file is. A FIFO or device node never appears in a SnapRAID diff, so its removal is never counted against the guard. A move to the cache needs no target confirmation, since the cache is not a tracked data disk.
+
+A relocation ends with a list of every entry it did not move, each with its reason (`skipped_open`, `skipped_no_space`, `conflict`, `failed`, and so on, plus `skipped_socket`). A relocation is **complete** when nothing but sockets is left behind; otherwise the share relocation job ends **failed** with the error code `relocation_incomplete`, its error text names the entries left behind and why, and its log ends "relocation incomplete: N left behind" above the full per-entry list. The relocation manifest (Q15) is cleared either way once the trailing sync has run. A share's cache mode is never changed by the relocation itself, so an incomplete relocation leaves the share's files split across the two sides until the left-behind entries are dealt with and the relocation is run again. The end of a relocation also looks at the source side itself: any entry still there that this run did not report (one an earlier run of the same job left behind before it was interrupted and resumed) is added as `left_behind`, so a resumed relocation cannot end complete while entries remain. A path that check cannot read is added as a `failed` entry naming the path and the error, so the job ends `relocation_incomplete` and the manifest is cleared as for any finished relocation; a directory that disappears during the check is skipped. Evacuation cannot proceed past a socket: it refuses at planning time, naming the path, because the post-check only accepts empty directories (§4 step 6).
 
 ### Triggers
 
@@ -209,6 +228,8 @@ Every one of these runs on the loop-device harness:
 - Mover respects the create policy — files land where mergerfs would have put them (it writes through mergerfs)
 - Mover refuses to start when the target has insufficient space
 - Mover preserves ownership, permissions, xattrs, and timestamps exactly
+- Mover, share relocation (both directions) and evacuation carry symlinks (relative, absolute, dangling), FIFOs, character and block device nodes, a sparse file and a hard-linked pair: the target has the same type, link target, device number, mode, owner, xattrs and timestamps, the sparse file's allocated blocks stay within a block of the source, the pair is two independent files reported as split, a socket is left behind and reported, and no source is deleted before its verify (and the sync, on the array side)
+- Evacuation and relocation to the cache of that same tree run against a real `SnapraidEngine` whose guard allows one unaccounted removal: every removal is in the manifest, so the final sync is never blocked, whatever the entry type
 - `*.hoserva-moving-*` temp files never appear in a SnapRAID diff
 - Rebalance evens out a deliberately skewed pool
 - **Rebalance and evacuation never delete a source before the sync that covers its copy** — kill the job between copy and sync, fail a *different* data disk, and assert full reconstruction (Q14)

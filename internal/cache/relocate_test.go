@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -579,5 +580,40 @@ func TestPrecheck_ReusesOneSnapshotAcrossAllRoots(t *testing.T) {
 	}
 	if snapshotter.snapshots != 1 {
 		t.Fatalf("Snapshot called %d times, want exactly 1 across the cache path and every branch", snapshotter.snapshots)
+	}
+}
+
+func TestRecordUnreportedSources_UnreadableDirectoryIsAFailedEntry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory without permission")
+	}
+	s := newShare(t, "appdata")
+	root := s.CachePath
+	locked := filepath.Join(root, "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "hidden"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "left.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	report := Report{Relocation: true}
+	recordUnreportedSources(&report, s, []string{root, filepath.Join(root, "missing")})
+
+	if e, ok := resultFor(report, "locked"); !ok || e.Result != ResultFailed || !strings.Contains(e.Err, "permission denied") {
+		t.Fatalf("entry for the unreadable directory = %+v (found %v), want a failed entry naming the error", e, ok)
+	}
+	if e, ok := resultFor(report, "left.txt"); !ok || e.Result != ResultLeftBehind {
+		t.Fatalf("entry for the readable file = %+v (found %v), want it left behind", e, ok)
+	}
+	if len(report.Entries) != 2 || !report.Incomplete() {
+		t.Fatalf("entries = %+v, want exactly the two above and an incomplete relocation", report.Entries)
 	}
 }
