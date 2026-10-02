@@ -185,19 +185,24 @@ func unitWhats(path string) ([]string, error) {
 // A label is compared with partLabel, the partition's udev
 // ID_PART_ENTRY_NAME; when udev reports none, or the name cannot be
 // decoded, the spec cannot be ruled out, so it counts as naming the
-// partition.
+// partition. A PARTLABEL= or PARTUUID= value may be wrapped in one pair of
+// matching quotes, the way blkid prints it; an unbalanced quote leaves the
+// value unreadable, so it counts as naming the partition too.
 func specNamesPartition(spec, dev, partUUID, partLabel string, byIDNames []string) bool {
 	spec = strings.TrimSpace(spec)
 	if label, ok := strings.CutPrefix(spec, "PARTLABEL="); ok {
-		return partLabelMayMatch(label, partLabel)
+		label, balanced := unquoteTagValue(label)
+		return !balanced || partLabelMayMatch(label, partLabel)
+	}
+	if id, ok := strings.CutPrefix(spec, "PARTUUID="); ok {
+		id, balanced := unquoteTagValue(id)
+		return !balanced || strings.EqualFold(id, partUUID)
 	}
 	if label, ok := strings.CutPrefix(spec, "/dev/disk/by-partlabel/"); ok && partLabelMayMatch(label, partLabel) {
 		return true
 	}
 	switch {
 	case spec == dev:
-		return true
-	case strings.EqualFold(spec, "PARTUUID="+partUUID):
 		return true
 	case strings.EqualFold(spec, "/dev/disk/by-partuuid/"+partUUID):
 		return true
@@ -212,6 +217,24 @@ func specNamesPartition(spec, dev, partUUID, partLabel string, byIDNames []strin
 		}
 	}
 	return false
+}
+
+// unquoteTagValue strips one pair of matching single or double quotes from
+// a tag value. It reports false for a value with a quote on only one end,
+// or with two different ones.
+func unquoteTagValue(v string) (string, bool) {
+	isQuote := func(c byte) bool { return c == '"' || c == '\'' }
+	if v == "" {
+		return v, true
+	}
+	first, last := v[0], v[len(v)-1]
+	switch {
+	case len(v) >= 2 && isQuote(first) && first == last:
+		return v[1 : len(v)-1], true
+	case isQuote(first) || isQuote(last):
+		return v, false
+	}
+	return v, true
 }
 
 // partLabelMayMatch reports whether a PARTLABEL or by-partlabel name can
