@@ -83,12 +83,15 @@ existing line by adding its PR number.
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
 - **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357, 527, 531
 - **i18n** — a count-bearing catalog key with no `_one`/`_other` forms, so a count of one reads "1 files" — PR 370
+- **i18n** — a catalog key built from an API value (`reasons.${reason}`) with no `defaultValue`, so a value the catalog lacks shows the raw key path — PR 542
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
 ## Validation and contracts
 - **validation** — duplicate entries accepted (same device in two roles, repeated mount path, duplicate grant ids) — PR 150, 221
 - **validation** — an "exact duplicate" rule compares only some fields, so entries that differ in access mode or bind address count as identical and one is silently dropped — PR 491
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
+- **validation** — a helper carrying a single-value side effect (a "given more than once, the last is used" note) reused for a field that accumulates a list, so the operator is told kept values were dropped — PR 542
+- **contract** — a size limit set on a decoded value (48 KiB of template text) under a transport limit (64 KiB request body) that the encoding can inflate past, so a valid maximum input is refused before the handler sees it — PR 542
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
