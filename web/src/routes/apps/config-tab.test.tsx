@@ -327,6 +327,36 @@ describe("Applying", () => {
     expect(screen.getByLabelText("Site name")).toHaveValue("Notes");
   });
 
+  it("shows the not-found state when the reload after a save with no response finds the stack gone", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderTab();
+    fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
+    mockGet.mockImplementation(() => fail("stack_not_found", "no stack"));
+
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText("App not found")).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Site name")).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("points to the Compose editor when the reload after a save with no response finds no template", async () => {
+    mockPut.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderTab();
+    fireEvent.change(await screen.findByLabelText("Site name"), { target: { value: "Team" } });
+    mockGet.mockImplementation(() => fail("stack_has_no_template", "no template"));
+
+    const dialog = await applyDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText(/was not installed from an app template/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply changes" })).not.toBeInTheDocument();
+  });
+
   it("treats an abort after the request was sent as an unknown outcome and reloads", async () => {
     mockPut.mockImplementation(() => Promise.reject(new DOMException("aborted", "AbortError")));
     renderTab();

@@ -57,8 +57,9 @@ type Start = { kind: "queued"; job: Job } | { kind: "notStarted"; message: strin
 type Phase = "idle" | "saving" | "starting" | "reloading";
 type Unknown = { message: string | null; reload: "loading" | "done" | "failed"; restartable: boolean };
 type ConfirmKind = typeof APPLY | typeof RESTART;
+type Gone = Exclude<Loaded, { kind: "config" }>["kind"];
 
-async function loadConfig(stack: string, signal: AbortSignal): Promise<ClientResult<Loaded>> {
+async function loadConfig(stack: string, signal?: AbortSignal): Promise<ClientResult<Loaded>> {
   const result = await getStackConfig(stack, signal);
   if (result.error?.code === NO_TEMPLATE_CODE) {
     return { data: { kind: "noTemplate" }, response: { ok: true } };
@@ -192,7 +193,17 @@ function DeviceField({ input }: { input: StackConfigInput }): React.ReactElement
   );
 }
 
-function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: StackConfig }): React.ReactElement {
+function ConfigForm({
+  app,
+  stack,
+  loaded,
+  onGone,
+}: {
+  app: App;
+  stack: string;
+  loaded: StackConfig;
+  onGone: (kind: Gone) => void;
+}): React.ReactElement {
   const { t } = useTranslation();
   const [config, setConfig] = useState(loaded);
   const [edits, setEdits] = useState<ConfigEdits>(NO_EDITS);
@@ -259,9 +270,15 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
     setUnknown({ message, reload: "loading", restartable: false });
     let outcome: Unknown["reload"] = "failed";
     try {
-      const parsed = parseClientResult(await getStackConfig(stack), t("apps.config.loadFailed"));
+      const parsed = parseClientResult(await loadConfig(stack), t("apps.config.loadFailed"));
       if (parsed.error === null && parsed.data !== undefined) {
-        setConfig(parsed.data);
+        if (parsed.data.kind !== "config") {
+          if (alive.current) {
+            onGone(parsed.data.kind);
+          }
+          return;
+        }
+        setConfig(parsed.data.config);
         setEdits(NO_EDITS);
         outcome = "done";
       }
@@ -457,6 +474,9 @@ function ConfigForm({ app, stack, loaded }: { app: App; stack: string; loaded: S
 export function ConfigTab({ app }: { app: App }): React.ReactElement {
   const { t } = useTranslation();
   const stack = app.stack;
+  // A reload after a save with no answer can find the stack gone or without
+  // its template; that answer replaces the form just as it would on first load.
+  const [gone, setGone] = useState<{ stack: string; kind: Gone } | null>(null);
   const query = useApiQuery<Loaded>({
     queryKey: ["stack-config", stack],
     queryFn: (signal) => loadConfig(stack ?? "", signal),
@@ -465,6 +485,13 @@ export function ConfigTab({ app }: { app: App }): React.ReactElement {
   });
 
   if (stack === undefined) {
+    return <NoTemplateNote app={app} />;
+  }
+  const goneKind = gone?.stack === stack ? gone.kind : null;
+  if (goneKind === "notFound") {
+    return <NotFoundState name={app.name} />;
+  }
+  if (goneKind === "noTemplate") {
     return <NoTemplateNote app={app} />;
   }
   if (query.error) {
@@ -490,5 +517,13 @@ export function ConfigTab({ app }: { app: App }): React.ReactElement {
   if (query.data.kind === "noTemplate") {
     return <NoTemplateNote app={app} />;
   }
-  return <ConfigForm key={stack} app={app} stack={stack} loaded={query.data.config} />;
+  return (
+    <ConfigForm
+      key={stack}
+      app={app}
+      stack={stack}
+      loaded={query.data.config}
+      onGone={(kind) => setGone({ stack, kind })}
+    />
+  );
 }
