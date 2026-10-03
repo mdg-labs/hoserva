@@ -34,6 +34,35 @@ else
   bad "the 7.x spec resolved to: $sizes"
 fi
 
+# an option names the build's output directory and snapshot: the variant itself
+# for the default option, <variant>-<option> for any other
+run_name() {  # variant, option
+  (
+    VARIANT=$1 OPTION=$2
+    unraid_require_variant
+    printf '%s|%s' "$UNRAID_RUN" "$UNRAID_OPTION_ARG"
+  )
+}
+for case in "unraid-with-vms||unraid-with-vms|" "unraid-with-vms|array|unraid-with-vms|--option 'array'" \
+  "unraid-with-vms|alt|unraid-with-vms-alt|--option 'alt'" "unraid-with-vms|cache|unraid-with-vms-cache|--option 'cache'" \
+  "unraid-no-cache||unraid-no-cache|"; do
+  IFS='|' read -r v o want_run want_arg <<<"$case"
+  if [[ $(run_name "$v" "$o") == "$want_run|$want_arg" ]]; then
+    ok "$v${o:+ option $o} builds as $want_run"
+  else
+    bad "$v${o:+ option $o} resolved to $(run_name "$v" "$o")"
+  fi
+done
+if out=$(run_name unraid-with-vms nope 2>&1); then bad "an option the variant does not have was accepted"; elif [[ $out == *"has no option 'nope'"* ]]; then ok "an option the variant does not have is refused"; else bad "an unknown option failed for another reason: $out"; fi
+if out=$(run_name unraid-no-cache cache 2>&1); then bad "an option of a variant without options was accepted"; elif [[ $out == *"has no options"* ]]; then ok "an option of a variant without options is refused"; else bad "an option of a variant without options failed for another reason: $out"; fi
+
+sizes=$(VARIANT=unraid-with-vms unraid_spec_sizes)
+if [[ $sizes == $'parity1 402653184\ndisk1 335544320\ndisk2 335544320\ndisk3 335544320\ncache 268435456' ]]; then
+  ok "the unraid-with-vms spec resolves to its own sizes, by target"
+else
+  bad "the unraid-with-vms spec resolved to: $sizes"
+fi
+
 # create-vm.sh must stop on each of these with the named message, and before
 # it creates any image.
 fixtures="$HOSERVA_VM_REPO_ROOT/testdata/unraid-fixtures"

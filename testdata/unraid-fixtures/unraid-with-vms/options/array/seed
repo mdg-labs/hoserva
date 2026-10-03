@@ -1,0 +1,2 @@
+libvirtimg|disk2|system/libvirt/libvirt.img|size=1G|tree=libvirt
+file|disk1|system/docker/dockerdir/layer-index.bin|size=64000

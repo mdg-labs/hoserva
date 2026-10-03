@@ -23,8 +23,12 @@ PREPARE="$GUEST_DIR/tools/unraid/prepare-migration.sh"
 source "$GUEST_DIR/scripts/devenv/unraid-fixture.sh"
 
 TIER=l3
+if [[ ${1:-} == --option ]]; then
+  OPTION=${2:-}
+  shift 2
+fi
 VARIANT=${1:-}
-[[ -n $VARIANT ]] || die "usage: unraid-capture-guest.sh <variant>"
+[[ -n $VARIANT ]] || die "usage: unraid-capture-guest.sh [--option <name>] <variant>"
 init_tier
 parse_spec "$VDIR/spec"
 [[ -d $FLASH/config ]] || die "$FLASH has no flash tree: build $VARIANT first"

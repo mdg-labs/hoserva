@@ -10,7 +10,13 @@
 #   - a tiny variant built in a scratch fixtures directory verifies clean, and
 #     then fails --verify when a manifest hash is changed, when the parity disk
 #     no longer holds the XOR of the data disks, and when a data file is
-#     changed on disk.
+#     changed on disk;
+#   - libvirt.img: the same variant holds a libvirt.img with one domain, its
+#     expected/domains.txt lists the domain's vdisk (sha256 equal to the
+#     manifest's), PCI and USB addresses, verify fails when domains.txt is
+#     changed or the capture places libvirt.img elsewhere than it is, and the
+#     builder refuses a domain whose vdisk is on no disk, an image placed
+#     elsewhere than IMAGE_FILE, and an option the variant does not have.
 #
 # Runs only inside the hoserva-lab container, only under this lab's own $LAB.
 set -euo pipefail
@@ -45,7 +51,7 @@ cleanup_test() {
     umount "$work/rw" 2>/dev/null
     losetup -d "$tdev" 2>/dev/null
   fi
-  rm -rf -- "${LAB:?}/unraid/$variant" "${LAB:?}/unraid/unraid-guard" "$work"
+  rm -rf -- "${LAB:?}/unraid/$variant" "${LAB:?}/unraid/$variant-missing" "${LAB:?}/unraid/$variant-image" "${LAB:?}/unraid/$variant-where" "${LAB:?}/unraid/unraid-guard" "$work"
 }
 trap cleanup_test EXIT
 
@@ -132,10 +138,41 @@ EOF
 cat >"$fixtures/$variant/seed" <<'EOF'
 file|disk1|media/a.bin|size=100000
 text|disk1|media/b.txt|content=hello\n
+file|disk1|domains/vm1/vdisk1.img|size=50000
+libvirtimg|disk1|system/libvirt/libvirt.img|size=1G|tree=libvirt
 EOF
+mkdir -p -- "$fixtures/$variant/libvirt/qemu" "$fixtures/$variant/flash/config/hoserva"
+printf 'SERVICE="enable"\nIMAGE_FILE="/mnt/user/system/libvirt/libvirt.img"\nIMAGE_SIZE="1"\n' >"$fixtures/$variant/flash/config/domain.cfg"
+cat >"$fixtures/$variant/libvirt/qemu/vm1.xml" <<'EOF'
+<domain type='kvm'>
+  <name>vm1</name>
+  <uuid>11111111-2222-3333-4444-555555555555</uuid>
+  <devices>
+    <disk type='file' device='disk'>
+      <source file='/mnt/user/domains/vm1/vdisk1.img'/>
+    </disk>
+    <interface type='bridge'>
+      <source bridge='br7'/>
+    </interface>
+    <hostdev mode='subsystem' type='pci' managed='yes'>
+      <source>
+        <address domain='0x0000' bus='0x02' slot='0x00' function='0x0'/>
+      </source>
+    </hostdev>
+    <hostdev mode='subsystem' type='usb' managed='no'>
+      <source>
+        <vendor id='0x1234'/>
+        <product id='0xabcd'/>
+      </source>
+    </hostdev>
+  </devices>
+</domain>
+EOF
+printf '[]\n' >"$fixtures/$variant/flash/config/hoserva/containers.json"
+printf '[]\n' >"$fixtures/$variant/flash/config/hoserva/networks.json"
+printf '{\n  "captured_at": "2026-10-01T00:00:00Z",\n  "libvirt_img_location": "array"\n}\n' >"$fixtures/$variant/flash/config/hoserva/capture.json"
 
 export HOSERVA_FIXTURES_DIR="$fixtures"
-export HOSERVA_FIXTURE_NO_CAPTURE=1
 rm -rf -- "${LAB:?}/unraid/$variant"
 
 run() { bash "$BUILDER" --tier l2 "$@" 2>&1; }
@@ -153,6 +190,47 @@ if out=$(run --verify "$variant"); then ok "an untouched build verifies"; else
 fi
 
 expected="$OUT/expected"
+
+# libvirt.img: what domains.txt lists, and how verify and the builder refuse
+want=$(awk -F'\t' '$6 == "domains/vm1/vdisk1.img" { print $1 }' "$expected/manifest.sha256")
+if [[ -n $want ]] && grep -qxF -- "vdisk"$'\t'"vm1"$'\t'"/mnt/user/domains/vm1/vdisk1.img"$'\t'"sha256=$want"$'\t'"bytes=50000" "$expected/domains.txt"; then
+  ok "domains.txt lists the vdisk with the manifest's sha256"
+else
+  bad "domains.txt does not list the vdisk with the manifest's sha256"
+fi
+if grep -qxF -- "pci"$'\t'"vm1"$'\t'"0000:02:00.0" "$expected/domains.txt" && grep -qxF -- "usb"$'\t'"vm1"$'\t'"1234:abcd" "$expected/domains.txt" \
+  && grep -q -- $'^domain\tvm1\t.*\tbridge=br7$' "$expected/domains.txt" && grep -qxF -- "expect-scan"$'\t'"libvirt.img"$'\t'"info" "$expected/domains.txt"; then
+  ok "domains.txt lists the PCI and USB addresses, the bridge and the scan's expected status"
+else
+  bad "domains.txt lacks the PCI or USB address, the bridge or the expected status"
+fi
+cp -- "$expected/domains.txt" "$work/domains.orig"
+sed -i $'s/^pci\tvm1\t0000:02:00.0$/pci\tvm1\t0000:03:00.0/' "$expected/domains.txt"
+if out=$(run --verify "$variant"); then bad "verify accepted a changed domains.txt"; else
+  if [[ $out == *"domains.txt differs"* ]]; then ok "verify fails when domains.txt is changed"; else bad "verify failed for another reason: $out"; fi
+fi
+cp -- "$work/domains.orig" "$expected/domains.txt"
+if out=$(run --verify "$variant"); then ok "verify passes again once domains.txt is restored"; else bad "verify did not pass after domains.txt was restored: $out"; fi
+
+vm_refusal() {  # variant-suffix, expected message, description
+  local out
+  if out=$(run "$variant-$1"); then bad "$3 was accepted"; elif [[ $out == *"$2"* ]]; then ok "$3 is refused"; else bad "$3 failed for another reason: $out"; fi
+}
+cp -a -- "$fixtures/$variant" "$fixtures/$variant-missing"
+sed -i "s#/mnt/user/domains/vm1/vdisk1.img#/mnt/user/domains/vm1/gone.img#" "$fixtures/$variant-missing/libvirt/qemu/vm1.xml"
+vm_refusal missing "is not on exactly one disk" "a domain whose vdisk is on no disk"
+cp -a -- "$fixtures/$variant" "$fixtures/$variant-image"
+sed -i 's#^libvirtimg|disk1|system/libvirt/#libvirtimg|disk1|system/elsewhere/#' "$fixtures/$variant-image/seed"
+vm_refusal image "domain.cfg's IMAGE_FILE" "an image placed elsewhere than IMAGE_FILE"
+cp -a -- "$fixtures/$variant" "$fixtures/$variant-where"
+sed -i 's/"array"/"cache"/' "$fixtures/$variant-where/flash/config/hoserva/capture.json"
+if out=$(run "$variant-where") && out=$(run --verify "$variant-where"); then bad "verify accepted a capture that places libvirt.img on the cache"; else
+  if [[ $out == *"capture.json records libvirt.img as 'cache', but it is on the array"* ]]; then ok "verify fails when the capture places libvirt.img elsewhere than it is"; else bad "verify failed for another reason: $out"; fi
+fi
+if out=$(run --option nope "$variant"); then bad "an option of a variant without options was accepted"; else
+  if [[ $out == *"has no options"* ]]; then ok "an option of a variant without options is refused"; else bad "the option failed for another reason: $out"; fi
+fi
+
 cp -- "$expected/manifest.sha256" "$work/manifest.orig"
 first=$(grep -v '^#' "$expected/manifest.sha256" | head -n 1 | cut -c1)
 flip=a

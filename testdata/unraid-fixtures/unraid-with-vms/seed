@@ -1,0 +1,7 @@
+include|../common/seed-array
+include|../common/seed-cache-appdata
+# vdisks of the three domains, under the domains share on the array
+file|disk3|domains/debian-build/vdisk1.img|size=220000
+file|disk2|domains/debian-build/vdisk2.img|size=140000
+sparse|disk3|domains/Windows\004011/vdisk1.img|size=64M|data=65536@1M|data=65536@33M
+file|disk1|domains/homeauto/vdisk1.img|size=180000

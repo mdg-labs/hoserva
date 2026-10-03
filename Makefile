@@ -682,17 +682,19 @@ lab-snapraid-check: lab-require-id
 # The synthetic Unraid source (doc 06 §5, issue #74), built inside the lab on
 # loop devices backed by this lab's own images. VARIANT names a directory under
 # testdata/unraid-fixtures/ and is read from the environment, never spliced
-# into the recipe. lab-unraid-verify re-reads the build through read-only
-# norecovery mounts and diffs it against its manifest, then checks that the
-# builder refuses every device that is not this lab's own.
+# into the recipe. A variant with options (unraid-with-vms) also takes OPTION,
+# passed the same way as HOSERVA_FIXTURE_OPTION; unset builds its default.
+# lab-unraid-verify re-reads the build through read-only norecovery mounts and
+# diffs it against its manifest, then checks that the builder refuses every
+# device that is not this lab's own.
 lab-unraid-fixture: lab-require-id
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 "$$VARIANT"
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 "$$VARIANT"
 
 lab-unraid-verify: lab-require-id
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-verify VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-unraid-fixture.sh
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 --verify "$$VARIANT"
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 --verify "$$VARIANT"
 
 # doc 12 §3's planned integration target (issue #219): a Hoserva-generated
 # smb.conf, exercised against a real smbd, inside the lab. gen-smb-conf runs
@@ -794,7 +796,8 @@ vm-restore:
 # returns to it. The guest must come from `make vm-up VARIANT=<variant>`: each
 # target disk must be exactly its spec size=, and the build refuses any other
 # before it writes a disk, so the layout (MBR up to 2000G, GPT from 2T) is the
-# one the L2 build gives.
+# one the L2 build gives. A variant with options takes OPTION=<name> too; a
+# non-default one is built, copied and snapshotted as <variant>-<option>.
 vm-unraid-fixture:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
@@ -806,7 +809,9 @@ vm-unraid-fixture:
 # against the fixture's flash root there, and copies the result back into
 # testdata/unraid-fixtures/<variant>/flash/config/hoserva/. Like
 # vm-unraid-fixture, it needs a guest from `make vm-up VARIANT=<variant>`, so
-# the capture's disk sizes and fit figures are the spec's.
+# the capture's disk sizes and fit figures are the spec's. With OPTION=<name>
+# for a non-default option it regenerates only that option's capture.json and
+# report.txt, under options/<name>/flash/config/hoserva/.
 vm-unraid-capture:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }

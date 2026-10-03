@@ -10,6 +10,11 @@
 # `docker inspect` output of real containers, never hand-typed JSON. Container
 # ids and timestamps in it come from the guest, never from a real server.
 #
+# A variant with options captures one option at a time (OPTION=<name>). The
+# default option's capture is the variant's own; any other option keeps only
+# capture.json and report.txt, the files that depend on it, under
+# options/<name>/flash/config/hoserva/, laid over the variant's capture.
+#
 # It then builds and verifies the variant again with the new capture, so the
 # files that are about to be committed are known to be accepted.
 set -euo pipefail
@@ -29,15 +34,23 @@ unraid_guest_push
 unraid_guest_build "$VARIANT" no-capture
 
 echo "vm-unraid-capture[$HOSERVA_LAB_ID]: running the containers and the prepare script in the guest"
-vm_ssh "sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' bash '$UNRAID_GUEST_DIR/scripts/vm/unraid-capture-guest.sh' '$VARIANT'"
+vm_ssh "sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' bash '$UNRAID_GUEST_DIR/scripts/vm/unraid-capture-guest.sh' $UNRAID_OPTION_ARG '$VARIANT'"
 
 variant_dir="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT"
 dest="$variant_dir/flash/config/hoserva"
+only_option_files=false
+if [[ "$UNRAID_RUN" != "$VARIANT" ]]; then
+  dest="$variant_dir/options/$OPTION/flash/config/hoserva"
+  only_option_files=true
+fi
 echo "vm-unraid-capture[$HOSERVA_LAB_ID]: copying the capture to ${dest#"$VM_REPO_ROOT"/}"
 # beside flash/, not inside it: the builder copies all of flash/ into a fixture
 tmp_dest="$(mktemp -d -- "$variant_dir/.capture.XXXXXX")"
 trap 'rm -rf -- "$tmp_dest"' EXIT
-vm_ssh "sudo tar -C '$UNRAID_GUEST_OUT/$VARIANT/capture' -cf - ." | tar -C "$tmp_dest" --no-same-owner --no-same-permissions -xf -
+vm_ssh "sudo tar -C '$UNRAID_GUEST_OUT/$UNRAID_RUN/capture' -cf - ." | tar -C "$tmp_dest" --no-same-owner --no-same-permissions -xf -
+if [[ "$only_option_files" == true ]]; then
+  find "$tmp_dest" -mindepth 1 -maxdepth 1 ! -name capture.json ! -name report.txt -exec rm -rf -- {} +
+fi
 # the FAT32 flash has no permissions: keep them out of the committed files
 find "$tmp_dest" -type d -exec chmod 0755 {} +
 find "$tmp_dest" -type f -exec chmod 0644 {} +
@@ -48,4 +61,4 @@ mv -- "$tmp_dest" "$dest"
 unraid_guest_push
 unraid_guest_build "$VARIANT"
 unraid_guest_verify "$VARIANT"
-echo "vm-unraid-capture[$HOSERVA_LAB_ID]: done — review and commit testdata/unraid-fixtures/$VARIANT/flash/config/hoserva/"
+echo "vm-unraid-capture[$HOSERVA_LAB_ID]: done — review and commit ${dest#"$VM_REPO_ROOT"/}"
