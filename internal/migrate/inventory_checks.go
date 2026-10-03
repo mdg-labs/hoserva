@@ -184,14 +184,35 @@ func checkShares(r *Report, src FlashSource, imp *Import, dirs *dirIndex) error 
 		r.add(CheckShares, StatusInfo, o, "The config has no share behind it: no top-level directory of this name is on any matched disk. It is an orphan, and is not carried over.")
 	}
 	for _, sh := range shares {
-		addShareRow(r, sh, dirs)
+		warnings := addShareRow(r, sh, dirs)
+		r.Review.Shares = append(r.Review.Shares, sh.preview(warnings))
 	}
 	return nil
 }
 
-func addShareRow(r *Report, sh Share, dirs *dirIndex) {
+// preview is the share as the review's table shows it; warnings is what its
+// report row flagged.
+func (sh Share) preview(warnings int) SharePreview {
+	return SharePreview{
+		Name: sh.Name, AllocationMethod: sh.Allocator, HighWater: sh.Allocator == "highwater",
+		Include: nonNil(sh.Include), Exclude: nonNil(sh.Exclude), WarningCount: warnings,
+	}
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// addShareRow reports the share and returns how many things it flagged or
+// warned about.
+func addShareRow(r *Report, sh Share, dirs *dirIndex) int {
 	st := StatusInfo
+	warnings := 0
 	worse := func(s Status) {
+		warnings++
 		if s == StatusFlag || (s == StatusWarn && st == StatusInfo) {
 			st = s
 		}
@@ -251,6 +272,7 @@ func addShareRow(r *Report, sh Share, dirs *dirIndex) {
 		}
 	}
 	r.add(CheckShares, st, sh.Name, "%s.", strings.Join(parts, "; "))
+	return warnings
 }
 
 // checkCache reports what a re-created cache would lose, from the share configs,
@@ -483,13 +505,9 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 		data       []byte
 	}
 	var parsed []tmpl
-	var newest time.Time
 	for _, n := range directChildren(src, templatesDir) {
 		if !strings.HasSuffix(n, ".xml") {
 			continue
-		}
-		if mt, ok := src.ModTime(n); ok && mt.After(newest) {
-			newest = mt
 		}
 		data, err := src.Read(n)
 		if err != nil {
@@ -514,7 +532,7 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 	if err := readNetworks(r, src, imp); err != nil {
 		return err
 	}
-	checkStale(r, f, newest)
+	checkStale(r, f)
 
 	dockerMan := map[string]captureContainer{}
 	for _, c := range containers {
@@ -579,17 +597,16 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 	return nil
 }
 
-func checkStale(r *Report, f *Flash, newest time.Time) {
-	if f.Capture == nil || f.Capture.CapturedAt == "" || newest.IsZero() {
+func checkStale(r *Report, f *Flash) {
+	if f.Capture == nil || f.Capture.CapturedAt == "" || f.TemplatesSavedAt.IsZero() {
 		return
 	}
-	at, err := time.Parse(time.RFC3339, f.Capture.CapturedAt)
-	if err != nil {
+	at, ok := f.capturedAt()
+	switch {
+	case !ok:
 		r.add(CheckCapture, StatusWarn, "", "The capture's time (%q) is not a timestamp, so it is not known whether the capture is older than the templates.", f.Capture.CapturedAt)
-		return
-	}
-	if at.Before(newest) {
-		r.add(CheckCapture, StatusWarn, "", "The capture was taken %s, but a template on the flash was saved later (%s), so the capture may be stale. Run the prepare script again and take a new Flash Backup. (A flash carries no time zone, so a gap of hours can be that.)", at.UTC().Format(time.RFC3339), newest.UTC().Format(time.RFC3339))
+	case f.ReviewCapture().State == CaptureStale:
+		r.add(CheckCapture, StatusWarn, "", "The capture was taken %s, but a template on the flash was saved later (%s), so the capture may be stale. Run the prepare script again and take a new Flash Backup. (A flash carries no time zone, so a gap of hours can be that.)", at.Format(time.RFC3339), f.TemplatesSavedAt.UTC().Format(time.RFC3339))
 	}
 }
 

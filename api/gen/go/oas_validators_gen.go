@@ -5410,6 +5410,85 @@ func (s *Migration) Validate() error {
 	return nil
 }
 
+func (s *MigrationBoot) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.Mode.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "mode",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s MigrationBootMode) Validate() error {
+	switch s {
+	case "usb":
+		return nil
+	case "internal":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *MigrationCapture) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.State.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "state",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s MigrationCaptureState) Validate() error {
+	switch s {
+	case "present":
+		return nil
+	case "missing":
+		return nil
+	case "unreadable":
+		return nil
+	case "stale":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s MigrationCheckStatus) Validate() error {
 	switch s {
 	case "pass":
@@ -5461,6 +5540,72 @@ func (s *MigrationComposeProjectSummary) Validate() error {
 	return nil
 }
 
+func (s *MigrationDisk) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.UnraidRole.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "unraidRole",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.ProposedRole.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "proposedRole",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.RefusalCode.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "refusalCode",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s MigrationPhase) Validate() error {
 	switch s {
 	case "none":
@@ -5470,6 +5615,60 @@ func (s MigrationPhase) Validate() error {
 	case "scan_failed":
 		return nil
 	case "scanned":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s MigrationProposedRole) Validate() error {
+	switch s {
+	case "parity":
+		return nil
+	case "data":
+		return nil
+	case "cache":
+		return nil
+	case "ignore":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s MigrationRefusalCode) Validate() error {
+	switch s {
+	case "boot_device":
+		return nil
+	case "host_boot":
+		return nil
+	case "failed":
+		return nil
+	case "encrypted":
+		return nil
+	case "zfs":
+		return nil
+	case "unsupported_filesystem":
+		return nil
+	case "filesystem_mismatch":
+		return nil
+	case "no_filesystem":
+		return nil
+	case "no_filesystem_node":
+		return nil
+	case "duplicate_uuid":
+		return nil
+	case "multi_device_btrfs":
+		return nil
+	case "filesystem_unverified":
+		return nil
+	case "pending_log":
+		return nil
+	case "integrity_check":
+		return nil
+	case "unreadable":
+		return nil
+	case "weak_identity_parity":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -5521,6 +5720,24 @@ func (s *MigrationReport) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if value, ok := s.Review.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "review",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -5541,6 +5758,130 @@ func (s *MigrationReportRow) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "status",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *MigrationReview) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Disks == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.Disks {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "disks",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if s.Shares == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.Shares {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "shares",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Boot.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "boot",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Capture.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "capture",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *MigrationSharePreview) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Include == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "include",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if s.Exclude == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "exclude",
 			Error: err,
 		})
 	}
@@ -5803,6 +6144,23 @@ func (s *MigrationTemplates) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s MigrationUnraidRole) Validate() error {
+	switch s {
+	case "parity":
+		return nil
+	case "data":
+		return nil
+	case "cache":
+		return nil
+	case "boot":
+		return nil
+	case "unassigned":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s MigrationVerdict) Validate() error {

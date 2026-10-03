@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -148,6 +149,11 @@ type Flash struct {
 	// CaptureProblem then says which.
 	Capture        *Capture
 	CaptureProblem string
+
+	// TemplatesSavedAt is the newest modification time of a dockerMan template
+	// in the source, zero when it has none or the source keeps no times. It is
+	// what a capture's age is judged against.
+	TemplatesSavedAt time.Time
 }
 
 // ReadFlash reads everything the scan needs from src without touching a disk. A
@@ -192,7 +198,19 @@ func ReadFlash(src FlashSource) (*Flash, error) {
 	if err := f.readCapture(src); err != nil {
 		return nil, err
 	}
+	f.readTemplateTimes(src)
 	return f, nil
+}
+
+func (f *Flash) readTemplateTimes(src FlashSource) {
+	for _, n := range directChildren(src, templatesDir) {
+		if !strings.HasSuffix(n, ".xml") {
+			continue
+		}
+		if mt, ok := src.ModTime(n); ok && mt.After(f.TemplatesSavedAt) {
+			f.TemplatesSavedAt = mt
+		}
+	}
 }
 
 func (f *Flash) readDisksINI(src FlashSource) error {

@@ -181,6 +181,81 @@ func TestMigrationWiring_ADataDiskThatFailsItsCheckIsRefusedAndNeverMounted(t *t
 	}
 }
 
+// GET /migrate over the daemon's server carries the structured review beside the
+// rows: a disk that failed its check is refused with a code and no proposed
+// role, the boot mode and layout and the capture's state are fields, and a share
+// is a preview with its warning count.
+func TestMigrationWiring_GetMigrationServesTheStructuredReview(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	_, runner := wireDataDisk(t, w, func(where string) error { return writeFiles(where, map[string]string{"media/a": "a"}) })
+	runner.Script("xfs_repair", []string{"-n", "/dev/sdb1"}, nil, os.ErrInvalid)
+	status, body := w.uploadScan(t, flashBackupZipWith(t, "7.3.2", map[string]string{
+		"config/shares/media.cfg":     "shareAllocator=\"highwater\"\nshareUseCache=\"no\"\nshareInclude=\"disk1\"\n",
+		"config/hoserva/capture.json": `{"unraid_version":"7.3.2","captured_at":"2026-10-03T07:02:18Z","boot":{"mode":"internal","filesystem":"zfs","devices":[],"mirrored":false,"shared_with_data_pool":true}}`,
+	}), false)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/scan = %d %s", status, body)
+	}
+	var queued struct{ ID string }
+	_ = json.Unmarshal(body, &queued)
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("scan job = %s %s", done.Status, done.ErrorMessage)
+	}
+
+	_, body = w.do(t, http.MethodGet, "/migrate")
+	var got struct {
+		Report struct {
+			Review *struct {
+				Disks []struct {
+					Slot         string `json:"slot"`
+					Serial       string `json:"serial"`
+					UnraidID     string `json:"unraidId"`
+					UnraidRole   string `json:"unraidRole"`
+					ProposedRole string `json:"proposedRole"`
+					DiskNumber   int    `json:"diskNumber"`
+					Refused      bool   `json:"refused"`
+					RefusalCode  string `json:"refusalCode"`
+					Refusal      string `json:"refusal"`
+				} `json:"disks"`
+				Shares []struct {
+					Name         string   `json:"name"`
+					HighWater    bool     `json:"highWater"`
+					Include      []string `json:"include"`
+					WarningCount int      `json:"warningCount"`
+				} `json:"shares"`
+				Boot struct {
+					Mode            string `json:"mode"`
+					SharedWithCache *bool  `json:"sharedWithCache"`
+				} `json:"boot"`
+				Capture struct {
+					State      string `json:"state"`
+					CapturedAt string `json:"capturedAt"`
+				} `json:"capture"`
+			} `json:"review"`
+		} `json:"report"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil || got.Report.Review == nil {
+		t.Fatalf("GET /migrate has no review: %s (%v)", body, err)
+	}
+	rv := got.Report.Review
+	if len(rv.Disks) != 1 {
+		t.Fatalf("disks = %+v, want disk1", rv.Disks)
+	}
+	if d := rv.Disks[0]; d.Slot != "disk1" || d.DiskNumber != 1 || d.UnraidID != "M_WIREDSERIAL" || d.Serial != "WIREDSERIAL" || d.UnraidRole != "data" ||
+		!d.Refused || d.RefusalCode != "integrity_check" || !strings.Contains(d.Refusal, "disk1 is not adopted") || d.ProposedRole != "" {
+		t.Errorf("disk1 = %+v, want refused as integrity_check and proposed no role", d)
+	}
+	if len(rv.Shares) != 1 || rv.Shares[0].Name != "media" || !rv.Shares[0].HighWater || len(rv.Shares[0].Include) != 1 || rv.Shares[0].WarningCount < 1 {
+		t.Errorf("shares = %+v", rv.Shares)
+	}
+	if rv.Boot.Mode != "internal" || rv.Boot.SharedWithCache == nil || !*rv.Boot.SharedWithCache {
+		t.Errorf("boot = %+v", rv.Boot)
+	}
+	if rv.Capture.State != "present" || rv.Capture.CapturedAt != "2026-10-03T07:02:18Z" {
+		t.Errorf("capture = %+v", rv.Capture)
+	}
+}
+
 // The scan job is cancellable: cancelling it while a data disk is mounted stops
 // the read and releases the mount.
 func TestMigrationWiring_CancellingTheScanReleasesTheMountedDisk(t *testing.T) {

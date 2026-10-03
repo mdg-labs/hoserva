@@ -25,6 +25,7 @@ type fsVerdict struct {
 	fs disk.FilesystemType
 	// refusal is why the disk is not adopted, empty when it is.
 	refusal string
+	code    RefusalCode
 }
 
 // classifyFilesystem decides whether a data disk's filesystem is one Hoserva
@@ -44,22 +45,22 @@ func classifyFilesystem(flash, slot, udev string) fsVerdict {
 	inner := strings.TrimPrefix(strings.TrimPrefix(named, "luks:"), "luks-")
 	switch {
 	case encrypted || udev == "crypto_LUKS":
-		return fsVerdict{refusal: fmt.Sprintf("it is encrypted (LUKS; the flash says %s, the device says %s). Hoserva does not adopt encrypted disks: the recovery risk is too high (Q22). Decrypt it in Unraid first, or leave it out of the migration", orNone(named), orNone(udev))}
+		return fsVerdict{code: RefuseEncrypted, refusal: fmt.Sprintf("it is encrypted (LUKS; the flash says %s, the device says %s). Hoserva does not adopt encrypted disks: the recovery risk is too high (Q22). Decrypt it in Unraid first, or leave it out of the migration", orNone(named), orNone(udev))}
 	case named == "zfs" || strings.HasPrefix(named, "zfs") || udev == "zfs_member":
-		return fsVerdict{refusal: fmt.Sprintf("it is a ZFS disk (the flash says %s, the device says %s). Hoserva cannot read ZFS without OpenZFS and does not adopt it (Q23)", orNone(named), orNone(udev))}
+		return fsVerdict{code: RefuseZFS, refusal: fmt.Sprintf("it is a ZFS disk (the flash says %s, the device says %s). Hoserva cannot read ZFS without OpenZFS and does not adopt it (Q23)", orNone(named), orNone(udev))}
 	}
 	want, known := readableFS(inner)
 	if named != "" && !known {
-		return fsVerdict{refusal: fmt.Sprintf("the flash names the filesystem %q, which Hoserva does not adopt (xfs, ext4 or single-device btrfs, Q23)", named)}
+		return fsVerdict{code: RefuseUnsupportedFS, refusal: fmt.Sprintf("the flash names the filesystem %q, which Hoserva does not adopt (xfs, ext4 or single-device btrfs, Q23)", named)}
 	}
 	have, onDevice := readableFS(udev)
 	switch {
 	case udev == "":
-		return fsVerdict{refusal: "the device reports no filesystem, so there is nothing to adopt"}
+		return fsVerdict{code: RefuseNoFilesystem, refusal: "the device reports no filesystem, so there is nothing to adopt"}
 	case !onDevice:
-		return fsVerdict{refusal: fmt.Sprintf("the device holds %q, which Hoserva does not adopt (xfs, ext4 or single-device btrfs, Q23)", udev)}
+		return fsVerdict{code: RefuseUnsupportedFS, refusal: fmt.Sprintf("the device holds %q, which Hoserva does not adopt (xfs, ext4 or single-device btrfs, Q23)", udev)}
 	case named != "" && want != have:
-		return fsVerdict{refusal: fmt.Sprintf("the flash says the disk is %s and the device says it is %s; Hoserva does not guess which is right", want, have)}
+		return fsVerdict{code: RefuseFilesystemClash, refusal: fmt.Sprintf("the flash says the disk is %s and the device says it is %s; Hoserva does not guess which is right", want, have)}
 	}
 	return fsVerdict{fs: have}
 }
@@ -183,9 +184,19 @@ func briefly(err error) string {
 func slotName(m *member) string { return "disk" + strconv.Itoa(m.index) }
 
 // refuseDisk marks m as not adopted and says so in the report.
-func (r *Report) refuseDisk(m *member, check, format string, args ...any) {
+func (r *Report) refuseDisk(m *member, check string, code RefusalCode, format string, args ...any) {
 	m.refusal = fmt.Sprintf(format, args...)
-	r.add(check, StatusRefuse, m.subject, "%s is not adopted: %s", m.subject, m.refusal)
+	r.refuse(m, check, code, "%s is not adopted: %s", m.subject, m.refusal)
+}
+
+// refuse adds a refuse row for m's slot and keeps the first refusal of m for
+// the review's table, with the row's own text.
+func (r *Report) refuse(m *member, check string, code RefusalCode, format string, args ...any) {
+	text := fmt.Sprintf(format, args...)
+	r.add(check, StatusRefuse, m.subject, "%s", text)
+	if m.refusalCode == "" {
+		m.refusalCode, m.refusalText = code, text
+	}
 }
 
 // checkDataDisks runs the checks of doc 05 §3 that read the data disks: the
@@ -238,25 +249,25 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 		d := m.disk
 		switch {
 		case boot[strings.ToLower(d.Serial)]:
-			r.refuseDisk(m, CheckBootDevice, "serial %s is the boot device the capture names, which is never given a data role", d.Serial)
+			r.refuseDisk(m, CheckBootDevice, RefuseBootDevice, "serial %s is the boot device the capture names, which is never given a data role", d.Serial)
 			continue
 		case d.Boot:
-			r.refuseDisk(m, CheckDataDisks, "%s is the disk this machine boots from; it can never be an array disk", d.Device)
+			r.refuseDisk(m, CheckDataDisks, RefuseHostBoot, "%s is the disk this machine boots from; it can never be an array disk", d.Device)
 			continue
 		case d.UnraidBoot || disk.IsUnraidStick(*d):
-			r.refuseDisk(m, CheckBootDevice, "%s is an Unraid boot device, which is never given a data role", d.Device)
+			r.refuseDisk(m, CheckBootDevice, RefuseBootDevice, "%s is an Unraid boot device, which is never given a data role", d.Device)
 			continue
 		case d.Failed:
-			r.refuseDisk(m, CheckDataDisks, "%s is reported failed", d.Device)
+			r.refuseDisk(m, CheckDataDisks, RefuseFailed, "%s is reported failed", d.Device)
 			continue
 		}
 		v := classifyFilesystem(s.flashFs(f, m), m.slotFs, d.Filesystem)
 		if v.refusal != "" {
-			r.refuseDisk(m, CheckDataDisks, "%s", v.refusal)
+			r.refuseDisk(m, CheckDataDisks, v.code, "%s", v.refusal)
 			continue
 		}
 		if !strings.HasPrefix(d.FSDevice, "/dev/") || d.FSUUID == "" {
-			r.refuseDisk(m, CheckDataDisks, "udev reports no filesystem node or UUID for %s, and Hoserva mounts by filesystem UUID (Q21)", d.Device)
+			r.refuseDisk(m, CheckDataDisks, RefuseNoFilesystemNode, "udev reports no filesystem node or UUID for %s, and Hoserva mounts by filesystem UUID (Q21)", d.Device)
 			continue
 		}
 		m.fs = v.fs
@@ -274,7 +285,7 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 		}
 		if len(others) > 0 {
 			sort.Strings(others)
-			r.refuseDisk(m, CheckDataDisks, "its filesystem UUID is also on %s, and Hoserva mounts by filesystem UUID, which could not tell the two apart (Unraid mounts XFS with nouuid, so this can happen there)", joinNames(others))
+			r.refuseDisk(m, CheckDataDisks, RefuseDuplicateUUID, "its filesystem UUID is also on %s, and Hoserva mounts by filesystem UUID, which could not tell the two apart (Unraid mounts XFS with nouuid, so this can happen there)", joinNames(others))
 			continue
 		}
 		unique = append(unique, m)
@@ -289,14 +300,14 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 			}
 			switch {
 			case err != nil:
-				r.refuseDisk(m, CheckDataDisks, "it could not be shown to be a single-device btrfs filesystem with a clean log (%s)", briefly(err))
+				r.refuseDisk(m, CheckDataDisks, RefuseUnverifiedFS, "it could not be shown to be a single-device btrfs filesystem with a clean log (%s)", briefly(err))
 				continue
 			case sb.devices != 1:
-				r.refuseDisk(m, CheckDataDisks, "it is one of %d devices of a btrfs filesystem, which is not a self-contained filesystem per disk (Q23)", sb.devices)
+				r.refuseDisk(m, CheckDataDisks, RefuseMultiDeviceBtrfs, "it is one of %d devices of a btrfs filesystem, which is not a self-contained filesystem per disk (Q23)", sb.devices)
 				continue
 			}
 			if reason := sb.logReason(); reason != "" {
-				r.refuseDisk(m, CheckIntegrity, "%s.%s", reason, cleanStopAdvice)
+				r.refuseDisk(m, CheckIntegrity, RefusePendingLog, "%s.%s", reason, cleanStopAdvice)
 				continue
 			}
 		}
@@ -307,10 +318,10 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 			}
 			switch {
 			case err != nil:
-				r.refuseDisk(m, CheckIntegrity, "its ext4 journal could not be shown to be clean (%s)", briefly(err))
+				r.refuseDisk(m, CheckIntegrity, RefuseUnverifiedFS, "its ext4 journal could not be shown to be clean (%s)", briefly(err))
 				continue
 			case reason != "":
-				r.refuseDisk(m, CheckIntegrity, "%s.%s", reason, cleanStopAdvice)
+				r.refuseDisk(m, CheckIntegrity, RefusePendingLog, "%s.%s", reason, cleanStopAdvice)
 				continue
 			}
 		}
@@ -327,7 +338,7 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 			if m.fs == disk.XFS && strings.Contains(cause.Error(), "replay") {
 				hint = cleanStopAdvice
 			}
-			r.refuseDisk(m, CheckIntegrity, "its read-only %s check failed (%s). Computing parity over a damaged filesystem would keep the damage.%s", m.fs, briefly(cause), hint)
+			r.refuseDisk(m, CheckIntegrity, RefuseIntegrity, "its read-only %s check failed (%s). Computing parity over a damaged filesystem would keep the damage.%s", m.fs, briefly(cause), hint)
 			continue
 		}
 		agree := "the flash and the device agree on it"

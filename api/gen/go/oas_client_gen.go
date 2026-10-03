@@ -629,7 +629,10 @@ type Invoker interface {
 	// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
 	// true, once the session's report was made from a capture that says Unraid booted from an internal
 	// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
-	// no such disk is attached or this daemon cannot read one.
+	// no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review
+	// step shows as data: the disk mapping table, the share preview, the boot mode and the capture's
+	// state. It comes from the same scan as the rows, which stay as they are, and is absent from a report
+	// made before it existed.
 	//
 	// GET /migrate
 	GetMigration(ctx context.Context) (*Migration, error)
@@ -10144,7 +10147,10 @@ func (c *Client) sendGetMetrics(ctx context.Context, params GetMetricsParams) (r
 // `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
 // true, once the session's report was made from a capture that says Unraid booted from an internal
 // device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
-// no such disk is attached or this daemon cannot read one.
+// no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review
+// step shows as data: the disk mapping table, the share preview, the boot mode and the capture's
+// state. It comes from the same scan as the rows, which stay as they are, and is absent from a report
+// made before it existed.
 //
 // GET /migrate
 func (c *Client) GetMigration(ctx context.Context) (*Migration, error) {

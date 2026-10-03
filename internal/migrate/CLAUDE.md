@@ -83,7 +83,11 @@ implementation of this package loses a user's data.
   read, `config/shadow` and `config/smbpasswd` are never read, and the lines of
   `smb-extra.conf` and `go` are counted, not quoted. What the later steps seed
   from is `Report.Import`, kept in the session row with the report and not served
-  by the API. A file or key that is absent reads as "not available" or "not
+  by the API. What the Review step shows as data (the disk mapping table, the share preview,
+  the boot mode and the capture's state) is `Report.Review`, which the API does
+  serve: it is built from the scan's own results as the rows are, never from the
+  rows' text, and a field the scan could not determine is absent, never a
+  confident default. A file or key that is absent reads as "not available" or "not
   found", never as none or off, and a config is called an orphan only when every
   disk it could be on was matched and listed: keeping an orphan is cheaper than
   dropping a real share.

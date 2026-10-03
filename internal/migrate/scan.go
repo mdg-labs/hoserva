@@ -132,6 +132,11 @@ type member struct {
 	// passed; refusal says why it is not adopted instead.
 	fs      disk.FilesystemType
 	refusal string
+	// refusalCode and refusalText are the first refusal any check made of the
+	// disk, which the review's table carries. refusal above is only the data
+	// disk checks', and is what keeps a disk out of the directory index.
+	refusalCode RefusalCode
+	refusalText string
 	// free is the space free on the data disk, when the scan mounted it.
 	free      int64
 	freeKnown bool
@@ -161,6 +166,7 @@ func (s *Scanner) Scan(ctx context.Context, src FlashSource, opts ScanOptions) (
 	if f.Capture != nil {
 		r.BootMode = f.Capture.Boot.Mode
 	}
+	r.Review = &Review{Shares: []SharePreview{}, Boot: f.ReviewBoot(), Capture: f.ReviewCapture()}
 
 	s.checkVersion(r, f, opts)
 	checkCapture(r, f)
@@ -179,6 +185,7 @@ func (s *Scanner) Scan(ctx context.Context, src FlashSource, opts ScanOptions) (
 	if err := s.checkDataDisks(ctx, r, f, members, disks, opts); err != nil {
 		return nil, err
 	}
+	r.Review.Disks = reviewDisks(f, members, disks)
 	s.checkContentSpace(r, f, members)
 	if err := s.inventory(ctx, r, src, f, members, r.GeneratedAt); err != nil {
 		return nil, err
@@ -343,7 +350,15 @@ func checkMapping(r *Report, f *Flash, members []*member) {
 			continue
 		}
 		if boot[strings.ToLower(m.disk.Serial)] && m.role != RoleCache {
-			r.add(CheckMapping, StatusRefuse, m.subject, "serial %s is Unraid's boot device (%s), which is never given a data or parity role.", m.id, m.disk.Device)
+			r.refuse(m, CheckMapping, RefuseBootDevice, "serial %s is Unraid's boot device (%s), which is never given a data or parity role.", m.id, m.disk.Device)
+			continue
+		}
+		if m.role == RoleParity && m.disk.Boot {
+			r.refuse(m, CheckMapping, RefuseHostBoot, "%s is the disk this machine boots from; it can never be a parity disk.", m.disk.Device)
+			continue
+		}
+		if m.role == RoleParity && (m.disk.UnraidBoot || disk.IsUnraidStick(*m.disk)) {
+			r.refuse(m, CheckMapping, RefuseBootDevice, "%s is an Unraid boot device, which is never given a parity role.", m.disk.Device)
 			continue
 		}
 		r.add(CheckMapping, StatusPass, m.subject, "%s", mappingDetail(f, m))
@@ -375,7 +390,7 @@ func checkIdentity(r *Report, members []*member) {
 		}
 		switch {
 		case m.disk.WeakIdentity && m.role == RoleParity:
-			r.add(CheckIdentity, StatusRefuse, m.subject, "%s has only a weak identity (a USB enclosure hides its serial), and a parity disk must not (Q21).", m.disk.Device)
+			r.refuse(m, CheckIdentity, RefuseWeakIdentityParity, "%s has only a weak identity (a USB enclosure hides its serial), and a parity disk must not (Q21).", m.disk.Device)
 		case m.disk.WeakIdentity:
 			r.add(CheckIdentity, StatusFlag, m.subject, "%s has only a weak identity (a USB enclosure hides its serial): it can be a data disk, matched by filesystem UUID and size (Q21).", m.disk.Device)
 		default:

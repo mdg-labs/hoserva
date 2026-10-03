@@ -3,8 +3,10 @@ import type { components } from "@/lib/api/client";
 // The answers cmd/mockapi gives for GET /migrate and GET /migrate/templates in
 // its migration-pending scenario (a no-go report with a refused disk, flagged
 // containers, one clean and one warning template, a Compose project and an
-// Unraid stick), kept as they are served so the page tests run against the
-// shape the scenario's fixtures produce.
+// Unraid stick), with the structured review (a refused disk, a weak-identity
+// disk, a slot with no disk here, a High-water share and a fresh capture),
+// kept as they are served so the page tests run against the shape the
+// scenario's fixtures produce.
 export type Migration = components["schemas"]["Migration"];
 export type MigrationReportRow = components["schemas"]["MigrationReportRow"];
 export type MigrationTemplates = components["schemas"]["MigrationTemplates"];
@@ -63,10 +65,28 @@ export const migrationPending: Migration = {
         "detail": "serial EXAMPLE_DISK3 is Unraid disk 3 (xfs); this machine has it as /dev/sdd, 4.0 TiB."
       },
       {
+        "check": "disk_mapping",
+        "status": "pass",
+        "subject": "disk4",
+        "detail": "serial EXAMPLE_DISK4 is Unraid disk 4 (xfs); this machine has it as /dev/sde, 2.0 TiB."
+      },
+      {
+        "check": "disk_mapping",
+        "status": "pass",
+        "subject": "pool cache",
+        "detail": "serial EXAMPLE_CACHE is a pool device; this machine has it as /dev/nvme0n1, 500.0 GiB."
+      },
+      {
         "check": "disk_identity",
         "status": "pass",
         "subject": "parity",
         "detail": "/dev/sdb has a WWN or serial."
+      },
+      {
+        "check": "disk_identity",
+        "status": "flag",
+        "subject": "disk4",
+        "detail": "/dev/sde has only a weak identity (a USB enclosure hides its serial): it can be a data disk, matched by filesystem UUID and size (Q21)."
       },
       {
         "check": "data_disks",
@@ -87,6 +107,12 @@ export const migrationPending: Migration = {
         "detail": "xfs on /dev/sdd, a single filesystem; the flash and the device agree on it."
       },
       {
+        "check": "data_disks",
+        "status": "pass",
+        "subject": "disk4",
+        "detail": "xfs on /dev/sde, a single filesystem; the flash and the device agree on it."
+      },
+      {
         "check": "disk_integrity",
         "status": "pass",
         "subject": "disk1",
@@ -97,6 +123,12 @@ export const migrationPending: Migration = {
         "status": "refuse",
         "subject": "disk3",
         "detail": "disk3 is not adopted: its read-only xfs check failed (xfs_repair -n exit status 1: a bad free-space B-tree block in allocation group 0). Computing parity over a damaged filesystem would keep the damage. An XFS disk that was not unmounted cleanly has a log that needs replaying: start Unraid, stop the array cleanly, and scan again. Hoserva never replays a log on a disk it does not own yet."
+      },
+      {
+        "check": "disk_integrity",
+        "status": "pass",
+        "subject": "disk4",
+        "detail": "The read-only xfs check of /dev/sde is clean."
       },
       {
         "check": "baseline",
@@ -162,7 +194,7 @@ export const migrationPending: Migration = {
         "check": "shares",
         "status": "info",
         "subject": "backup",
-        "detail": "allocation Fill-up maps to Fill disks in order (ff); cache setting no maps to array-only; not exported over SMB; directory on disk1."
+        "detail": "allocation Fill-up maps to Fill disks in order (ff); cache setting no maps to array-only; not exported over SMB; never on disk3; directory on disk1."
       },
       {
         "check": "shares",
@@ -264,7 +296,151 @@ export const migrationPending: Migration = {
         "status": "info",
         "detail": "About 2.8 hours for 4.0 TiB of data disks, if they are full, at an assumed 400 MB/s. It is a planning figure, not a measurement: the first sync is a long job, and it runs only when you start it."
       }
-    ]
+    ],
+    "review": {
+      "disks": [
+        {
+          "slot": "parity",
+          "unraidId": "EXAMPLE_PARITY",
+          "unraidRole": "parity",
+          "proposedRole": "parity",
+          "device": "/dev/sdb",
+          "serial": "EXAMPLE_PARITY",
+          "wwn": "0x5000c500a1b2c3d4",
+          "byId": "ata-EXAMPLE_PARITY",
+          "model": "EXAMPLE 8TB",
+          "size": 8796093022208,
+          "filesystem": "xfs",
+          "weakIdentity": false,
+          "refused": false
+        },
+        {
+          "slot": "disk1",
+          "diskNumber": 1,
+          "unraidId": "EXAMPLE_DISK1",
+          "unraidRole": "data",
+          "proposedRole": "data",
+          "device": "/dev/sdc",
+          "serial": "EXAMPLE_DISK1",
+          "byId": "ata-EXAMPLE_DISK1",
+          "model": "EXAMPLE 4TB",
+          "size": 4398046511104,
+          "filesystem": "xfs",
+          "weakIdentity": false,
+          "refused": false
+        },
+        {
+          "slot": "disk2",
+          "diskNumber": 2,
+          "unraidId": "EXAMPLE_DISK2",
+          "unraidRole": "data",
+          "size": 4398046511104,
+          "problem": "no disk on this machine has this serial or WWN",
+          "refused": false
+        },
+        {
+          "slot": "disk3",
+          "diskNumber": 3,
+          "unraidId": "EXAMPLE_DISK3",
+          "unraidRole": "data",
+          "device": "/dev/sdd",
+          "serial": "EXAMPLE_DISK3",
+          "byId": "ata-EXAMPLE_DISK3",
+          "model": "EXAMPLE 4TB",
+          "size": 4398046511104,
+          "filesystem": "xfs",
+          "weakIdentity": false,
+          "refused": true,
+          "refusalCode": "integrity_check",
+          "refusal": "disk3 is not adopted: its read-only xfs check failed (xfs_repair -n exit status 1: a bad free-space B-tree block in allocation group 0). Computing parity over a damaged filesystem would keep the damage. An XFS disk that was not unmounted cleanly has a log that needs replaying: start Unraid, stop the array cleanly, and scan again. Hoserva never replays a log on a disk it does not own yet."
+        },
+        {
+          "slot": "disk4",
+          "diskNumber": 4,
+          "unraidId": "EXAMPLE_DISK4",
+          "unraidRole": "data",
+          "proposedRole": "data",
+          "device": "/dev/sde",
+          "serial": "EXAMPLE_DISK4",
+          "model": "EXAMPLE USB 2TB",
+          "size": 2199023255552,
+          "filesystem": "xfs",
+          "weakIdentity": true,
+          "refused": false
+        },
+        {
+          "slot": "pool cache",
+          "unraidId": "EXAMPLE_CACHE",
+          "unraidRole": "cache",
+          "proposedRole": "cache",
+          "device": "/dev/nvme0n1",
+          "serial": "EXAMPLE_CACHE",
+          "byId": "nvme-EXAMPLE_CACHE",
+          "model": "EXAMPLE NVMe 500GB",
+          "size": 536870912000,
+          "filesystem": "btrfs",
+          "weakIdentity": false,
+          "refused": false
+        },
+        {
+          "slot": "boot",
+          "unraidRole": "boot",
+          "proposedRole": "ignore",
+          "device": "/dev/sdu",
+          "serial": "4C530001240603119335",
+          "model": "SanDisk Cruzer Fit",
+          "size": 17179869184,
+          "filesystem": "vfat",
+          "weakIdentity": false,
+          "refused": false
+        },
+        {
+          "unraidRole": "unassigned",
+          "device": "/dev/sdf",
+          "serial": "EXAMPLE_SPARE",
+          "model": "EXAMPLE 1TB",
+          "size": 1099511627776,
+          "filesystem": "ext4",
+          "weakIdentity": false,
+          "refused": false
+        }
+      ],
+      "shares": [
+        {
+          "name": "media",
+          "allocationMethod": "highwater",
+          "highWater": true,
+          "include": [],
+          "exclude": [],
+          "warningCount": 1
+        },
+        {
+          "name": "backup",
+          "allocationMethod": "fillup",
+          "highWater": false,
+          "include": [],
+          "exclude": [
+            "disk3"
+          ],
+          "warningCount": 0
+        },
+        {
+          "name": "documents",
+          "allocationMethod": "mostfree",
+          "highWater": false,
+          "include": [],
+          "exclude": [],
+          "warningCount": 0
+        }
+      ],
+      "boot": {
+        "mode": "usb"
+      },
+      "capture": {
+        "state": "present",
+        "capturedAt": "2026-10-03T12:51:52Z"
+      }
+    }
   }
 };
 

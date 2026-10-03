@@ -89,7 +89,7 @@ func (s *Scanner) recordBaseline(ctx context.Context, r *Report, clean []*member
 		case ctx.Err() != nil:
 			return ctx.Err()
 		default:
-			r.refuseDisk(m, CheckBaseline, "it passed its checks but could not be read completely (%s)", briefly(err))
+			r.refuseDisk(m, CheckBaseline, RefuseUnreadable, "it passed its checks but could not be read completely (%s)", briefly(err))
 		}
 	}
 	if len(done) == 0 {

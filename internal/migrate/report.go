@@ -115,6 +115,9 @@ type Report struct {
 	// disk and share and the file the entries are in. It is nil when no disk was
 	// read.
 	Baseline *BaselineSummary `json:"baseline,omitempty"`
+	// Review is the structured data of the Review step, from the same scan as
+	// Rows. It is nil in a report made before it existed.
+	Review *Review `json:"review,omitempty"`
 	// Import is the parsed configuration the later steps seed from. It is kept
 	// with the report in the session and is not part of the API's report.
 	Import Import `json:"import"`

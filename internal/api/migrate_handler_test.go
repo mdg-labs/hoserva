@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	ht "github.com/ogen-go/ogen/http"
 
@@ -50,10 +51,16 @@ func flashZip(t *testing.T, version string, mutate func(map[string]string)) []by
 
 func migrationHandler(t *testing.T) (*api.Handler, *migrate.Service) {
 	t.Helper()
+	return migrationHandlerWith(t, func(*disk.FakeProvider) {})
+}
+
+func migrationHandlerWith(t *testing.T, more func(*disk.FakeProvider)) (*api.Handler, *migrate.Service) {
+	t.Helper()
 	h, _, registry := newTestHandler(t)
 	disks := disk.NewFakeProvider()
 	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "PARITYSERIAL", Size: 2 << 40})
 	disks.AddDisk("/dev/sdc", disk.Disk{Serial: "DATASERIAL", Size: 1 << 40})
+	more(disks)
 	svc := &migrate.Service{
 		Dir:      filepath.Join(t.TempDir(), "migrate"),
 		Scanner:  &migrate.Scanner{Disks: disks, UIDOwner: func(int) (string, error) { return "", nil }},
@@ -459,5 +466,154 @@ func TestHandler_StartMigrationDeviceScan_RefusedByTheSchedulerLeavesThePrevious
 	}
 	if got := mounter.MountedPaths(); len(got) != 0 {
 		t.Errorf("left mounted: %v", got)
+	}
+}
+
+func scanAndGet(t *testing.T, h *api.Handler, zipData []byte) *apiv1.Migration {
+	t.Helper()
+	ctx := context.Background()
+	j, err := h.StartMigrationScan(ctx, scanRequest(zipData, false))
+	if err != nil {
+		t.Fatalf("StartMigrationScan: %v", err)
+	}
+	if done, err := h.Scheduler.Await(ctx, j.ID.String()); err != nil || done.Status != job.StatusSucceeded {
+		t.Fatalf("scan job = %+v, %v", done, err)
+	}
+	got, err := h.GetMigration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// GetMigration serves the structured review beside the rows: the disk table with
+// its pre-filled roles, the share preview, the boot mode and layout, and the
+// capture's state, each read from the scan of the uploaded zip.
+func TestHandler_GetMigration_ServesTheStructuredReview(t *testing.T) {
+	h, _ := migrationHandler(t)
+	got := scanAndGet(t, h, flashZip(t, "7.3.2", func(f map[string]string) {
+		f["config/hoserva/capture.json"] = `{"unraid_version":"7.3.2","captured_at":"2026-10-03T07:02:18Z","boot":{"mode":"internal","filesystem":"zfs","devices":[{"name":"nvme0n1","serial":"BOOTSERIAL","model":"Boot SSD","size":"500G"}],"mirrored":false,"shared_with_data_pool":true}}`
+		f["config/shares/media.cfg"] = "shareAllocator=\"highwater\"\nshareUseCache=\"no\"\nshareExclude=\"disk1\"\n"
+	}))
+	report, ok := got.Report.Get()
+	review, hasReview := report.Review.Get()
+	if !ok || !hasReview {
+		t.Fatalf("GetMigration = %+v, want a report with a review", got)
+	}
+
+	bySlot := map[string]apiv1.MigrationDisk{}
+	for _, d := range review.Disks {
+		bySlot[d.Slot.Or("")] = d
+	}
+	parity, data, boot := bySlot["parity"], bySlot["disk1"], bySlot["boot"]
+	if parity.UnraidRole.Or("") != apiv1.MigrationUnraidRoleParity || parity.ProposedRole.Or("") != apiv1.MigrationProposedRoleParity ||
+		parity.Device.Or("") != "/dev/sdb" || parity.Serial.Or("") != "PARITYSERIAL" || parity.Size.Or(0) != 2<<40 || parity.Refused || !parity.WeakIdentity.Set || parity.WeakIdentity.Value {
+		t.Errorf("parity = %+v", parity)
+	}
+	if data.UnraidRole.Or("") != apiv1.MigrationUnraidRoleData || data.ProposedRole.Or("") != apiv1.MigrationProposedRoleData || data.DiskNumber.Or(0) != 1 ||
+		data.UnraidId.Or("") != "M_DATASERIAL" || data.Device.Or("") != "/dev/sdc" {
+		t.Errorf("disk1 = %+v", data)
+	}
+	if boot.UnraidRole.Or("") != apiv1.MigrationUnraidRoleBoot || boot.ProposedRole.Or("") != apiv1.MigrationProposedRoleIgnore || boot.Serial.Or("") != "BOOTSERIAL" || boot.Device.Set {
+		t.Errorf("the boot device the capture names = %+v, want a boot row that can only be ignored", boot)
+	}
+	if len(review.Disks) != 3 {
+		t.Errorf("disks = %d, want the parity, the data disk and the boot device: %+v", len(review.Disks), review.Disks)
+	}
+
+	if len(review.Shares) != 1 {
+		t.Fatalf("shares = %+v, want media", review.Shares)
+	}
+	media := review.Shares[0]
+	if media.Name != "media" || !media.HighWater || media.AllocationMethod.Or("") != "highwater" || media.WarningCount < 1 ||
+		len(media.Exclude) != 1 || media.Exclude[0] != "disk1" || media.Include == nil {
+		t.Errorf("media = %+v", media)
+	}
+
+	if review.Boot.Mode.Or("") != apiv1.MigrationBootModeInternal || !review.Boot.SharedWithCache.Set || !review.Boot.SharedWithCache.Value || !review.Boot.Mirrored.Set || review.Boot.Mirrored.Value {
+		t.Errorf("boot = %+v, want internal, sharing its disk with the cache, not mirrored", review.Boot)
+	}
+	if review.Capture.State != apiv1.MigrationCaptureStatePresent || review.Capture.CapturedAt.Or(time.Time{}).Format(time.RFC3339) != "2026-10-03T07:02:18Z" {
+		t.Errorf("capture = %+v", review.Capture)
+	}
+}
+
+// An internal boot that shares its disk with the cache is served as one disk:
+// the cache pool's row, proposed cache and marked as the Unraid boot device,
+// with no boot row of the same device beside it. A slot with no disk on this
+// machine is served with no proposed role.
+func TestHandler_GetMigration_ASharedInternalBootDeviceIsOneRowAndAnEmptySlotProposesNothing(t *testing.T) {
+	h, _ := migrationHandlerWith(t, func(p *disk.FakeProvider) {
+		p.AddDisk("/dev/nvme0n1", disk.Disk{Serial: "BOOTSERIAL", Size: 500 << 30, UnraidBoot: true})
+	})
+	got := scanAndGet(t, h, flashZip(t, "7.3.2", func(f map[string]string) {
+		f["config/hoserva/capture.json"] = `{"unraid_version":"7.3.2","boot":{"mode":"internal","filesystem":"zfs","devices":[{"name":"nvme0n1","serial":"BOOTSERIAL","model":"Boot SSD","size":"500G"}],"mirrored":false,"shared_with_data_pool":true}}`
+		f["config/pools/cache.cfg"] = "diskId=\"M_BOOTSERIAL\"\n"
+		f["config/disk.cfg"] += "diskIdSlot.2=\"-\"\n"
+		f["config/hoserva/disks.ini"] += "[\"disk2\"]\nidx=\"2\"\nid=\"M_GONESERIAL\"\nsize=\"900\"\nstatus=\"DISK_OK\"\ntype=\"Data\"\n"
+	}))
+	review, _ := got.Report.Value.Review.Get()
+	var onBootDisk []apiv1.MigrationDisk
+	bySlot := map[string]apiv1.MigrationDisk{}
+	for _, d := range review.Disks {
+		bySlot[d.Slot.Or("")] = d
+		if d.Device.Or("") == "/dev/nvme0n1" {
+			onBootDisk = append(onBootDisk, d)
+		}
+	}
+	if len(onBootDisk) != 1 {
+		t.Fatalf("the shared device is %d rows, want one: %+v", len(onBootDisk), review.Disks)
+	}
+	if d := onBootDisk[0]; d.Slot.Or("") != "pool cache" || d.ProposedRole.Or("") != apiv1.MigrationProposedRoleCache || !d.UnraidBoot.Value || !d.UnraidBoot.Set || d.Refused {
+		t.Errorf("the shared device = %+v, want the cache pool's row, proposed cache, marked as the Unraid boot device", d)
+	}
+	if gone := bySlot["disk2"]; gone.Device.Set || gone.ProposedRole.Set || gone.Problem.Or("") == "" {
+		t.Errorf("disk2 = %+v, want a slot with no disk here and no proposed role", gone)
+	}
+}
+
+// A zip with no capture reads as missing, and the boot mode it cannot tell is
+// absent rather than usb.
+func TestHandler_GetMigration_AMissingCaptureAndAnUnknownBootModeAreNotDefaulted(t *testing.T) {
+	h, _ := migrationHandler(t)
+	review, _ := scanAndGet(t, h, flashZip(t, "7.3.2", nil)).Report.Value.Review.Get()
+	if review.Capture.State != apiv1.MigrationCaptureStateMissing || review.Capture.CapturedAt.Set {
+		t.Errorf("capture = %+v, want missing", review.Capture)
+	}
+	if review.Boot.Mode.Set || review.Boot.Mirrored.Set || review.Boot.SharedWithCache.Set {
+		t.Errorf("boot = %+v, want nothing known", review.Boot)
+	}
+	if len(review.Disks) != 2 || review.Shares == nil {
+		t.Errorf("review = %+v", review)
+	}
+
+	h2, _ := migrationHandler(t)
+	review, _ = scanAndGet(t, h2, flashZip(t, "7.3.2", func(f map[string]string) {
+		f["config/hoserva/capture.json"] = "{not json"
+	})).Report.Value.Review.Get()
+	if review.Capture.State != apiv1.MigrationCaptureStateUnreadable {
+		t.Errorf("capture = %+v, want unreadable", review.Capture)
+	}
+}
+
+// A session saved before the review existed is served without one, not with an
+// empty review a client would read as "no disks".
+func TestHandler_GetMigration_AReportMadeBeforeTheReviewHasNone(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	sessions := store.NewMigrationSessionStore(openTestDB(t))
+	h.Migration = &migrate.Service{Dir: filepath.Join(t.TempDir(), "migrate"), Sessions: sessions}
+	err := sessions.Put(context.Background(), store.MigrationSession{
+		Report: []byte(`{"generatedAt":"2026-10-03T00:00:00Z","unraidVersion":"7.3.2","unverifiedLayout":false,"verdict":"go","rows":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.GetMigration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, ok := got.Report.Get()
+	if !ok || got.Phase != apiv1.MigrationPhaseScanned || report.Review.Set {
+		t.Errorf("GetMigration = %+v, want a scanned report with no review", got)
 	}
 }
