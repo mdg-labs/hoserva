@@ -138,6 +138,7 @@ hoserva vm passthrough list|check           # IOMMU groups, ACS report (doc 14 Â
 hoserva vm passthrough assign <name> --pci 01:00.0
 
 hoserva migrate scan --flash-backup <zip> [--unverified-layout]   # Unraid pre-flight (doc 05, Q25)
+hoserva migrate scan --flash-device <device> [--unverified-layout] # the same, read from the attached Unraid stick
 hoserva migrate status                          # the session's phase and the report's verdict
 hoserva migrate report [-o <file>]              # the go / no-go report as a document
 hoserva migrate forget                          # delete the session and the stored zip
