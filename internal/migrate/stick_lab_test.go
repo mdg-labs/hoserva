@@ -7,8 +7,13 @@
 // attached as one of the lab's own loop devices, and shows the device is not
 // written: its sha256 is the same before, during and after a full scan.
 //
-// The lab image has no mkfs.fat, so the image is formatted here, by writing the
-// FAT32 structures the kernel's driver reads directly into the image file.
+// The stick is laid out the way a real one is: an MBR with one partition, FAT32
+// inside it. The lab image has no mkfs.fat or partitioning tool, so the image is
+// built here, by writing the MBR and the FAT32 structures the kernel's driver
+// reads directly into the image file. The lab's device cgroup lets a container
+// open only loop devices, never the partition nodes the kernel makes of one
+// (--partscan), so the partition is a second loop device over the same image,
+// at the partition's offset.
 
 package migrate
 
@@ -22,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,8 +35,12 @@ import (
 )
 
 const (
-	labStickUUID  = "5A17-C0DE"
-	labStickBytes = 40 << 20
+	labStickUUID = "5A17-C0DE"
+	// labPartBytes is the FAT32 partition, which starts labPartStart bytes into
+	// the image, after the MBR, as the first partition of a stick does.
+	labPartBytes  = 40 << 20
+	labPartStart  = 2048 * 512
+	labStickBytes = labPartStart + labPartBytes
 )
 
 func labDir(t *testing.T) string {
@@ -42,10 +52,38 @@ func labDir(t *testing.T) string {
 	return filepath.Join("/lab", id)
 }
 
+// partitionedFAT32 writes an MBR with one FAT32 partition into img: the
+// partition starts at labPartStart, and the image is that and the volume long.
+func partitionedFAT32(t *testing.T, img string) {
+	t.Helper()
+	mbr := make([]byte, 512)
+	entry := mbr[446:462]
+	entry[0] = 0x00
+	copy(entry[1:4], []byte{0xFE, 0xFF, 0xFF})
+	entry[4] = 0x0C
+	copy(entry[5:8], []byte{0xFE, 0xFF, 0xFF})
+	binary.LittleEndian.PutUint32(entry[8:], labPartStart/512)
+	binary.LittleEndian.PutUint32(entry[12:], labPartBytes/512)
+	mbr[510], mbr[511] = 0x55, 0xAA
+	formatFAT32(t, img, labPartStart, labPartBytes)
+	f, err := os.OpenFile(img, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteAt(mbr, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Sync(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // formatFAT32 writes an empty FAT32 filesystem labelled UNRAID with volume id
-// 0x5A17C0DE into img: one sector per cluster, the smallest cluster count a
-// FAT32 volume may have (65525) or more, and a root directory in cluster 2.
-func formatFAT32(t *testing.T, img string, size int64) {
+// 0x5A17C0DE into img, size bytes long from offset: one sector per cluster, the
+// smallest cluster count a FAT32 volume may have (65525) or more, and a root
+// directory in cluster 2. The image is truncated to offset+size.
+func formatFAT32(t *testing.T, img string, offset, size int64) {
 	t.Helper()
 	const (
 		sector   = 512
@@ -68,6 +106,7 @@ func formatFAT32(t *testing.T, img string, size int64) {
 	boot[21] = 0xF8
 	binary.LittleEndian.PutUint16(boot[24:], 32)
 	binary.LittleEndian.PutUint16(boot[26:], 64)
+	binary.LittleEndian.PutUint32(boot[28:], uint32(offset/sector))
 	binary.LittleEndian.PutUint32(boot[32:], total)
 	binary.LittleEndian.PutUint32(boot[36:], fatSectors)
 	binary.LittleEndian.PutUint32(boot[44:], 2)
@@ -97,11 +136,11 @@ func formatFAT32(t *testing.T, img string, size int64) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := f.Truncate(size); err != nil {
+	if err := f.Truncate(offset + size); err != nil {
 		t.Fatal(err)
 	}
 	write := func(sectorNo uint32, b []byte) {
-		if _, err := f.WriteAt(b, int64(sectorNo)*sector); err != nil {
+		if _, err := f.WriteAt(b, offset+int64(sectorNo)*sector); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,22 +155,27 @@ func formatFAT32(t *testing.T, img string, size int64) {
 	}
 }
 
-// attachLoop attaches img as a loop device and detaches it when the test ends,
-// only while it still backs img: loop numbers are host-global, and another
-// lab may have taken the number by then (CLAUDE.md).
-func attachLoop(ctx context.Context, t *testing.T, r disk.Runner, img string) string {
+// attachLoop attaches the size bytes of img from offset (the whole image when
+// size is 0) as a loop device and detaches it when the test ends, only while it
+// still backs img: loop numbers are host-global, and another lab may have taken
+// the number by then (CLAUDE.md).
+func attachLoop(ctx context.Context, t *testing.T, r disk.Runner, img string, offset, size int64) string {
 	t.Helper()
-	out, err := r.Run(ctx, "losetup", "--find", "--show", img)
+	args := []string{"--find", "--show"}
+	if size > 0 {
+		args = append(args, "--offset", strconv.FormatInt(offset, 10), "--sizelimit", strconv.FormatInt(size, 10))
+	}
+	out, err := r.Run(ctx, "losetup", append(args, img)...)
 	if err != nil {
-		t.Fatalf("losetup --find --show %s: %v", img, err)
+		t.Fatalf("losetup %v %s: %v", args, img, err)
 	}
 	dev := strings.TrimSpace(string(out))
 	if !strings.HasPrefix(dev, "/dev/loop") {
 		t.Fatalf("losetup %s: got %q, want a /dev/loopN device", img, dev)
 	}
-	backing, err := r.Run(ctx, "losetup", "-j", img, "--output", "NAME", "--noheadings")
-	if err != nil || strings.TrimSpace(string(backing)) != dev {
-		t.Fatalf("losetup -j %s: got %q (err %v), want %q — refusing to trust a device this call did not just attach", img, backing, err, dev)
+	attached, err := r.Run(ctx, "losetup", "-j", img, "--output", "NAME,OFFSET", "--noheadings", "--raw")
+	if err != nil || !strings.Contains("\n"+string(attached), "\n"+dev+" "+strconv.FormatInt(offset, 10)+"\n") {
+		t.Fatalf("losetup -j %s: got %q (err %v), want %s at offset %d — refusing to trust a device this call did not just attach", img, attached, err, dev, offset)
 	}
 	t.Cleanup(func() {
 		raw, err := os.ReadFile(filepath.Join("/sys/block", filepath.Base(dev), "loop", "backing_file"))
@@ -144,8 +188,16 @@ func attachLoop(ctx context.Context, t *testing.T, r disk.Runner, img string) st
 	return dev
 }
 
+// sha256File hashes path. A device is first flushed, so its own cache does not
+// stand in for what the other loop device over the same image has written.
 func sha256File(t *testing.T, path string) string {
 	t.Helper()
+	if strings.HasPrefix(path, "/dev/") {
+		r := disk.CommandRunner{}
+		if out, err := r.Run(context.Background(), "blockdev", "--flushbufs", path); err != nil {
+			t.Fatalf("blockdev --flushbufs %s: %v: %s", path, err, out)
+		}
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -217,8 +269,8 @@ func (p *probeMounter) probe(where string) {
 	p.options = append(p.options, [2]string{m, s})
 }
 
-func (p *probeMounter) MountReadOnly(ctx context.Context, fsType, uuid, where string) error {
-	if err := p.ReadOnlyMounter.MountReadOnly(ctx, fsType, uuid, where); err != nil {
+func (p *probeMounter) MountReadOnly(ctx context.Context, fsType, device, uuid, where string) error {
+	if err := p.ReadOnlyMounter.MountReadOnly(ctx, fsType, device, uuid, where); err != nil {
 		return err
 	}
 	p.probe(where)
@@ -256,9 +308,13 @@ func TestLabStick_ScanNeverWritesTheStick(t *testing.T) {
 		t.Fatal(err)
 	}
 	img := filepath.Join(imgDir, "unraid-stick-297.img")
-	formatFAT32(t, img, labStickBytes)
+	partitionedFAT32(t, img)
 	t.Cleanup(func() { _ = os.Remove(img) })
-	dev := attachLoop(ctx, t, r, img)
+	// dev is the whole disk, as the inventory lists it and as the stick is
+	// hashed; part is the partition the filesystem is on, as the inventory
+	// reports it separately.
+	dev := attachLoop(ctx, t, r, img, 0, 0)
+	part := attachLoop(ctx, t, r, img, labPartStart, labPartBytes)
 
 	files, spec := flashTree(t, primary)
 	files["config/plugins/dockerMan/templates-user/my-Fotos-é.xml"] = []byte("<Container/>\n")
@@ -267,7 +323,7 @@ func TestLabStick_ScanNeverWritesTheStick(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(fill) })
-	if _, err := r.Run(ctx, "mount", "-t", "vfat", "-o", "utf8=1", dev, fill); err != nil {
+	if _, err := r.Run(ctx, "mount", "-t", "vfat", "-o", "utf8=1", part, fill); err != nil {
 		t.Fatalf("mounting the new image to fill it: %v", err)
 	}
 	filled := false
@@ -287,7 +343,7 @@ func TestLabStick_ScanNeverWritesTheStick(t *testing.T) {
 	before := sha256File(t, dev)
 
 	disks := fixtureDisks(spec)
-	disks.AddDisk(dev, disk.Disk{Size: labStickBytes, Filesystem: "vfat", Label: "UNRAID", FSUUID: labStickUUID})
+	disks.AddDisk(dev, disk.Disk{Size: labStickBytes, FSDevice: part, Filesystem: "vfat", Label: "UNRAID", FSUUID: labStickUUID})
 	svc := &Service{
 		Dir:      filepath.Join(lab, "stick-scan", "migrate"),
 		Scanner:  &Scanner{Disks: disks, UIDOwner: noUID, Now: fixedNow},
@@ -357,7 +413,7 @@ func TestLabStick_ScanNeverWritesTheStick(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(rw) })
-	if _, err := r.Run(ctx, "mount", "-t", "vfat", "-o", "rw", "-U", labStickUUID, rw); err != nil {
+	if _, err := r.Run(ctx, "mount", "-t", "vfat", "-o", "rw", part, rw); err != nil {
 		t.Fatalf("control: mounting read-write: %v", err)
 	}
 	t.Cleanup(func() { _, _ = r.Run(context.Background(), "umount", rw) })

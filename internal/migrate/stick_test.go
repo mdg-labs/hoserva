@@ -18,8 +18,11 @@ import (
 
 const (
 	stickDevice = "/dev/sdz"
-	stickUUID   = "ABCD-1234"
-	primary     = "unraid-6.12-xfs-single-parity"
+	// stickPartition is the node holding the stick's FAT filesystem: a real
+	// stick has a partition table with the filesystem on partition 1.
+	stickPartition = "/dev/sdz1"
+	stickUUID      = "ABCD-1234"
+	primary        = "unraid-6.12-xfs-single-parity"
 )
 
 var fixedNow = func() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) }
@@ -61,7 +64,7 @@ func newStickRig(t *testing.T, variant string) *stickRig {
 	t.Helper()
 	svc, spec, files := newService(t, variant)
 	disks := fixtureDisks(spec)
-	disks.AddDisk(stickDevice, disk.Disk{Size: 16 << 30, Model: "Flash Drive", Filesystem: "vfat", Label: "UNRAID", FSUUID: stickUUID})
+	disks.AddDisk(stickDevice, disk.Disk{Size: 16 << 30, Model: "Flash Drive", FSDevice: stickPartition, Filesystem: "vfat", Label: "UNRAID", FSUUID: stickUUID})
 	svc.Scanner = &Scanner{Disks: disks, UIDOwner: noUID, Now: fixedNow}
 	r := &stickRig{svc: svc, disks: disks, mounter: disk.NewFakeReadOnlyMounter(), files: files, spec: spec}
 	r.mounter.OnMount = func(where string) error { return writeTree(where, r.files) }
@@ -178,7 +181,7 @@ func TestStartDeviceScan_ReportEqualsTheZipsReport(t *testing.T) {
 	r.assertReleased(t)
 }
 
-func TestStartDeviceScan_MountsReadOnlyByUUIDAtThePrivateMountpointAndReleasesIt(t *testing.T) {
+func TestStartDeviceScan_MountsTheValidatedDeviceReadOnlyAtThePrivateMountpointAndReleasesIt(t *testing.T) {
 	r := newStickRig(t, primary)
 	if err := r.scanDeviceNow(t, ScanOptions{}); err != nil {
 		t.Fatal(err)
@@ -187,8 +190,8 @@ func TestStartDeviceScan_MountsReadOnlyByUUIDAtThePrivateMountpointAndReleasesIt
 		t.Fatalf("mounted %d times, want once to inspect when queuing and once for the job: %v", len(r.mounter.Mounts), r.mounter.Mounts)
 	}
 	for _, m := range r.mounter.Mounts {
-		if m.FSType != "vfat" || m.UUID != stickUUID || m.Where != r.mountpoint() {
-			t.Errorf("mount = %+v, want vfat %s at %s", m, stickUUID, r.mountpoint())
+		if m.FSType != "vfat" || m.Device != stickPartition || m.UUID != stickUUID || m.Where != r.mountpoint() {
+			t.Errorf("mount = %+v, want vfat %s (%s) at %s: the partition holding the filesystem, not the disk %s", m, stickPartition, stickUUID, r.mountpoint(), stickDevice)
 		}
 	}
 	if len(r.mounter.Unmounts) != 2 {
@@ -198,6 +201,109 @@ func TestStartDeviceScan_MountsReadOnlyByUUIDAtThePrivateMountpointAndReleasesIt
 	if info, err := os.Stat(r.svc.Dir); err != nil || info.Mode().Perm() != 0o700 {
 		t.Errorf("the mountpoint's parent = %v, %v; want 0700", info, err)
 	}
+}
+
+// A disk whose filesystem node the inventory did not report is not offered:
+// the scan never mounts the whole disk in its place.
+func TestFlashOffer_NoFilesystemNodeMeansNotOfferedAndNeverMountsTheWholeDisk(t *testing.T) {
+	r := newStickRig(t, primary)
+	r.svc.Scanner.Disks = withoutFSDevice{r.disks}
+
+	offer, err := r.svc.FlashOffer(ctx0)
+	if err != nil || len(offer.Devices) != 0 {
+		t.Fatalf("FlashOffer = %+v, %v; want no device without a filesystem node", offer, err)
+	}
+	if _, err := r.startDeviceScan(stickDevice, ScanOptions{}); !errors.Is(err, ErrNotFlashDevice) {
+		t.Fatalf("StartDeviceScan = %v, want %v", err, ErrNotFlashDevice)
+	}
+	if len(r.mounter.Mounts) != 0 {
+		t.Fatalf("mounted %v with no filesystem node to mount", r.mounter.Mounts)
+	}
+}
+
+// withoutFSDevice reports every disk as an inventory that gave no filesystem
+// node would.
+type withoutFSDevice struct{ disk.Provider }
+
+func (w withoutFSDevice) List(ctx context.Context) ([]disk.Disk, error) {
+	disks, err := w.Provider.List(ctx)
+	for i := range disks {
+		disks[i].FSDevice = ""
+	}
+	return disks, err
+}
+
+// listerProvider is a disk.Provider whose inventory is a real disk.Lister over
+// a synthetic sysfs and udev database.
+type listerProvider struct {
+	disk.Provider
+	l *disk.Lister
+}
+
+func (p listerProvider) List(ctx context.Context) ([]disk.Disk, error) { return p.l.List(ctx) }
+
+func writeSys(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The inventory as a real stick presents it: sdz has no filesystem of its own
+// and its partition sdz1 is the FAT volume labelled UNRAID. The scan mounts
+// sdz1, which is what the filesystem is on, and not the disk sdz it is offered
+// as.
+func TestStartDeviceScan_AStickWithItsFilesystemOnPartitionOneMountsThePartition(t *testing.T) {
+	root := t.TempDir()
+	sys, udev := filepath.Join(root, "sys"), filepath.Join(root, "udev")
+	writeSys(t, filepath.Join(sys, "sda", "size"), "1000000\n")
+	writeSys(t, filepath.Join(sys, "sda", "dev"), "8:0\n")
+	writeSys(t, filepath.Join(sys, "sda1", "size"), "999000\n")
+	writeSys(t, filepath.Join(sys, "sda1", "partition"), "1\n")
+	writeSys(t, filepath.Join(sys, "sda1", "dev"), "8:1\n")
+	writeSys(t, filepath.Join(sys, "sdz", "size"), "31266816\n")
+	writeSys(t, filepath.Join(sys, "sdz", "dev"), "8:32\n")
+	writeSys(t, filepath.Join(sys, "sdz", "device", "model"), "Flash Drive\n")
+	writeSys(t, filepath.Join(sys, "sdz1", "size"), "31264768\n")
+	writeSys(t, filepath.Join(sys, "sdz1", "partition"), "1\n")
+	writeSys(t, filepath.Join(sys, "sdz1", "dev"), "8:33\n")
+	writeSys(t, filepath.Join(udev, "b8:33"), "I:1\nE:ID_FS_TYPE=vfat\nE:ID_FS_LABEL=UNRAID\nE:ID_FS_UUID=ABCD-1234\n")
+	writeSys(t, filepath.Join(root, "mounts"), "/dev/sda1 / xfs rw 0 0\n")
+	if err := os.MkdirAll(filepath.Join(root, "by-id"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lister := &disk.Lister{SysBlockDir: sys, ByIDDir: filepath.Join(root, "by-id"), ProcMounts: filepath.Join(root, "mounts"), UdevDataDir: udev}
+
+	listed, err := lister.List(ctx0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stick *disk.Disk
+	for i := range listed {
+		if listed[i].Device == stickDevice {
+			stick = &listed[i]
+		}
+	}
+	if stick == nil || stick.FSDevice != stickPartition || stick.Filesystem != "vfat" {
+		t.Fatalf("the inventory reports %+v for %s, want the filesystem on %s", stick, stickDevice, stickPartition)
+	}
+
+	r := newStickRig(t, primary)
+	r.svc.Scanner = &Scanner{Disks: listerProvider{r.disks, lister}, UIDOwner: noUID, Now: fixedNow}
+	offer, err := r.svc.FlashOffer(ctx0)
+	if err != nil || len(offer.Devices) != 1 || offer.Devices[0].Device != stickDevice {
+		t.Fatalf("FlashOffer = %+v, %v; want the disk %s offered", offer, err, stickDevice)
+	}
+	if _, err := r.startDeviceScan(stickDevice, ScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.mounter.Mounts) != 1 || r.mounter.Mounts[0].Device != stickPartition {
+		t.Fatalf("mounts = %+v, want one mount of %s and none of %s", r.mounter.Mounts, stickPartition, stickDevice)
+	}
+	r.assertReleased(t)
 }
 
 func TestStartDeviceScan_RecordsTheDeviceAsTheSourceAndForgetKeepsNothing(t *testing.T) {

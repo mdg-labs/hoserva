@@ -41,16 +41,24 @@ implementation of this package loses a user's data.
 - **The Unraid stick is the rollback, so it is only ever read, mounted read-only.**
   A stick is offered only when udev reports a FAT filesystem labelled `UNRAID` on a
   disk that is not the boot disk, not in the array and whose UUID no other disk
-  shares (`mount -U` would be ambiguous). It is mounted through
-  `disk.ReadOnlyMounter` only (never `external.go`'s read-write path), by UUID, as an
-  argv, at `<Dir>/stick`, and a mount counts only once the kernel's mount table
-  shows it `ro` on both the mount and the superblock. It stays mounted for one read
+  shares (the post-mount UUID check could not tell the two apart). It is mounted
+  through `disk.ReadOnlyMounter` only (never `external.go`'s read-write path), as an
+  argv, by the device node the inventory validated and never by UUID (that lookup
+  needs udev's `/dev/disk/by-uuid`, absent in the lab and on a host udev has not
+  processed yet). That node is `Disk.FSDevice`, the one udev's record of the
+  filesystem belongs to: the stick's partition 1 on a real stick, not the whole
+  disk it is offered as (`FlashDevice.Device`); a disk with no `FSDevice` is not
+  offered and the whole disk is never a fallback. The mount is at `<Dir>/stick`,
+  and a mount counts only once the kernel's mount
+  table shows it `ro` on both the mount and the superblock and a direct probe of
+  that device (`blkid -p`) reports the validated UUID. It stays mounted for one read
   (the inspect when queuing, and the job's scan) and is unmounted after each; a
   stick that cannot be unmounted fails the scan, and the next mount refuses until
   the leftover is released, which `Recover` also tries at start. Nothing is copied
   from it, so a stick source has no file: the scan record's file is
   `device:<path>`, and `Forget` has nothing of it to remove. The lab test
-  (`stick_lab_test.go`) hashes the whole device before, during and after a scan,
+  (`stick_lab_test.go`) builds the stick as a real one is, an MBR with FAT32 on
+  partition 1, and hashes the whole disk before, during and after a scan,
   because FAT's dirty bit goes back on a clean unmount and a read-write mount
   would otherwise leave no trace afterwards.
 - **An internal-boot server's zip is the only source** (Q25). The report keeps the

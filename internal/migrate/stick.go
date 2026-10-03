@@ -49,10 +49,14 @@ var (
 // FlashDevice is a disk offered as the Unraid flash.
 type FlashDevice struct {
 	Device string
-	Size   int64
-	Model  string
-	Serial string
-	FSUUID string
+	// fsDevice is the node that holds the filesystem, the partition of a
+	// stick with a partition table. It is what is mounted; Device stays the
+	// disk the user sees.
+	fsDevice string
+	Size     int64
+	Model    string
+	Serial   string
+	FSUUID   string
 }
 
 // FlashOffer is what the session offers as a configuration source besides the
@@ -72,7 +76,11 @@ func isDeviceScan(file string) bool { return strings.HasPrefix(file, devicePrefi
 // stickCandidates is every disk that may be read as the Unraid flash: a FAT
 // filesystem labelled UNRAID that udev reports, on a disk that is neither the
 // boot disk nor in the array, whose UUID no other disk shares. A UUID shared
-// with another disk makes `mount -U` ambiguous, and so is refused.
+// with another disk could not tell which of the two was mounted, and so is
+// refused. A disk whose filesystem node udev did not report is not offered:
+// the whole disk is never mounted in its place. The node that holds the
+// filesystem (the stick's first partition, as a real stick has one) is what is
+// mounted; its UUID is confirmed after.
 func (s *Service) stickCandidates(ctx context.Context) ([]FlashDevice, error) {
 	disks, err := s.Scanner.Disks.List(ctx)
 	if err != nil {
@@ -101,7 +109,10 @@ func (s *Service) stickCandidates(ctx context.Context) ([]FlashDevice, error) {
 		if d.FSUUID == "" || uuids[strings.ToUpper(d.FSUUID)] != 1 {
 			continue
 		}
-		out = append(out, FlashDevice{Device: d.Device, Size: d.Size, Model: d.Model, Serial: d.Serial, FSUUID: d.FSUUID})
+		if !strings.HasPrefix(d.FSDevice, "/dev/") {
+			continue
+		}
+		out = append(out, FlashDevice{Device: d.Device, fsDevice: d.FSDevice, Size: d.Size, Model: d.Model, Serial: d.Serial, FSUUID: d.FSUUID})
 	}
 	return out, nil
 }
@@ -163,7 +174,7 @@ func (s *Service) withStick(ctx context.Context, dev FlashDevice, fn func(FlashS
 	if err := s.releaseStick(ctx); err != nil {
 		return err
 	}
-	if err := s.Mounter.MountReadOnly(ctx, stickFilesystem, dev.FSUUID, where); err != nil {
+	if err := s.Mounter.MountReadOnly(ctx, stickFilesystem, dev.fsDevice, dev.FSUUID, where); err != nil {
 		return fmt.Errorf("%w: %w", ErrFlashDevice, err)
 	}
 	defer func() {

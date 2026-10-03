@@ -20,14 +20,18 @@ import (
 //
 // A mount is judged from the kernel's mount table, never from the exit status
 // of the command that made it: MountReadOnly returns nil only once the table
-// shows the filesystem at where, with the filesystem UUID asked for, and
-// read-only both on the mount and on the superblock.
+// shows the filesystem at where, read-only both on the mount and on the
+// superblock, and a probe of the device itself reports the filesystem UUID asked
+// for.
 type ReadOnlyMounter interface {
-	// MountReadOnly mounts the filesystem of type fsType and UUID uuid at where.
-	// It refuses a where that is already a mountpoint, and an fsType whose
-	// no-write options are not known. When it cannot show the mount is
-	// read-only it unmounts again and returns an error.
-	MountReadOnly(ctx context.Context, fsType, uuid, where string) error
+	// MountReadOnly mounts the device node device, whose filesystem of type
+	// fsType has UUID uuid, at where. The device node is what is mounted, so
+	// nothing is looked up by UUID (that lookup needs udev's links); uuid is
+	// what the caller validated and is confirmed against the device after the
+	// mount. It refuses a where that is already a mountpoint, and an fsType
+	// whose no-write options are not known. When it cannot show the mount is
+	// read-only and of that UUID it unmounts again and returns an error.
+	MountReadOnly(ctx context.Context, fsType, device, uuid, where string) error
 	// Unmount unmounts where, which is success when it is not a mountpoint. It
 	// returns nil only once the mount table no longer lists where.
 	Unmount(ctx context.Context, where string) error
@@ -73,13 +77,16 @@ func (k KernelReadOnlyMounter) IsMounted(ctx context.Context, where string) (boo
 }
 
 // MountReadOnly implements ReadOnlyMounter.
-func (k KernelReadOnlyMounter) MountReadOnly(ctx context.Context, fsType, uuid, where string) error {
+func (k KernelReadOnlyMounter) MountReadOnly(ctx context.Context, fsType, device, uuid, where string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	opts, ok := readOnlyOptions[fsType]
 	if !ok {
 		return fmt.Errorf("%w: no read-only options are known for filesystem type %q", ErrReadOnlyMount, fsType)
+	}
+	if !strings.HasPrefix(device, "/dev/") || strings.ContainsAny(device, "\x00\n") {
+		return fmt.Errorf("%w: %q is not a device node", ErrReadOnlyMount, device)
 	}
 	if uuid == "" || strings.HasPrefix(uuid, "-") {
 		return fmt.Errorf("%w: %q is not a filesystem UUID", ErrReadOnlyMount, uuid)
@@ -98,8 +105,8 @@ func (k KernelReadOnlyMounter) MountReadOnly(ctx context.Context, fsType, uuid, 
 		return fmt.Errorf("%w: %s is already a mountpoint", ErrReadOnlyMount, where)
 	}
 
-	_, runErr := k.Runner.Run(ctx, "mount", "-t", fsType, "-o", opts, "-U", uuid, where)
-	if err := k.confirmReadOnly(ctx, fsType, uuid, where); err != nil {
+	_, runErr := k.Runner.Run(ctx, "mount", "-t", fsType, "-o", opts, device, where)
+	if err := k.confirmReadOnly(ctx, fsType, device, uuid, where); err != nil {
 		cause := err
 		if runErr != nil {
 			cause = fmt.Errorf("mount: %w; %v", runErr, err)
@@ -115,8 +122,9 @@ func (k KernelReadOnlyMounter) MountReadOnly(ctx context.Context, fsType, uuid, 
 }
 
 // confirmReadOnly reads the mount table: where must be a mountpoint of fsType,
-// read-only on the mount and on the superblock, and findmnt must report uuid.
-func (k KernelReadOnlyMounter) confirmReadOnly(ctx context.Context, fsType, uuid, where string) error {
+// read-only on the mount and on the superblock, and device, which is what was
+// mounted, must hold a filesystem whose UUID is uuid.
+func (k KernelReadOnlyMounter) confirmReadOnly(ctx context.Context, fsType, device, uuid, where string) error {
 	f, err := os.Open(k.mountInfo())
 	if err != nil {
 		return fmt.Errorf("reading the mount table: %w", err)
@@ -136,14 +144,33 @@ func (k KernelReadOnlyMounter) confirmReadOnly(ctx context.Context, fsType, uuid
 	case !hasOption(m.superOptions, "ro"):
 		return fmt.Errorf("%s's superblock is not read-only (%s)", where, m.superOptions)
 	}
-	got, err := MountedUUID(ctx, k.Runner, where)
+	got, err := ProbedUUID(ctx, k.Runner, device)
 	if err != nil {
 		return err
 	}
 	if !strings.EqualFold(got, uuid) {
-		return fmt.Errorf("%s holds filesystem UUID %s, want %s", where, got, uuid)
+		return fmt.Errorf("%s holds filesystem UUID %s, want %s", device, got, uuid)
 	}
 	return nil
+}
+
+// ProbedUUID reads the filesystem UUID on device by a direct probe of the
+// device (blkid -p), which needs neither udev's /dev/disk links nor blkid's
+// cache. It is read-only, and meant for a device that is already mounted: the
+// device is not woken for it.
+func ProbedUUID(ctx context.Context, r Runner, device string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	out, err := r.Run(ctx, "blkid", "-p", "-s", "UUID", "-o", "value", device)
+	if err != nil {
+		return "", fmt.Errorf("disk: probing the filesystem UUID of %s: %w", device, err)
+	}
+	uuid := strings.TrimSpace(string(out))
+	if uuid == "" {
+		return "", fmt.Errorf("disk: %s reported no filesystem UUID", device)
+	}
+	return uuid, nil
 }
 
 // Unmount implements ReadOnlyMounter.
@@ -227,7 +254,7 @@ func hasOption(options, want string) bool {
 
 // ReadOnlyMountCall is one MountReadOnly call a FakeReadOnlyMounter saw.
 type ReadOnlyMountCall struct {
-	FSType, UUID, Where string
+	FSType, Device, UUID, Where string
 }
 
 // FakeReadOnlyMounter is a scriptable ReadOnlyMounter. It mounts nothing: it
@@ -273,12 +300,12 @@ func (f *FakeReadOnlyMounter) MountedPaths() []string {
 }
 
 // MountReadOnly implements ReadOnlyMounter.
-func (f *FakeReadOnlyMounter) MountReadOnly(ctx context.Context, fsType, uuid, where string) error {
+func (f *FakeReadOnlyMounter) MountReadOnly(ctx context.Context, fsType, device, uuid, where string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	f.mu.Lock()
-	f.Mounts = append(f.Mounts, ReadOnlyMountCall{FSType: fsType, UUID: uuid, Where: where})
+	f.Mounts = append(f.Mounts, ReadOnlyMountCall{FSType: fsType, Device: device, UUID: uuid, Where: where})
 	if f.MountErr != nil {
 		f.mu.Unlock()
 		return f.MountErr

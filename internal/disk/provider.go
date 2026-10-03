@@ -103,15 +103,20 @@ const (
 // not, so a recorded cache partition can be found again whatever it holds
 // (BootPartition).
 type Disk struct {
-	Device          string
-	Size            int64
-	Model           string
-	Serial          string
-	WWN             string
-	WeakIdentity    bool
-	ByIDName        string
-	Boot            bool
-	Failed          bool
+	Device       string
+	Size         int64
+	Model        string
+	Serial       string
+	WWN          string
+	WeakIdentity bool
+	ByIDName     string
+	Boot         bool
+	Failed       bool
+	// FSDevice is the device node udev's record of Filesystem, Label and
+	// FSUUID belongs to: Device itself when the filesystem is on the whole
+	// disk, otherwise the partition that holds it. It is what a mount of
+	// that filesystem names, and is empty when no filesystem is known.
+	FSDevice        string
 	Filesystem      string
 	Label           string
 	FSUUID          string
