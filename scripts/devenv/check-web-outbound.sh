@@ -10,10 +10,16 @@
 # .invalid TLDs): they can never resolve, so a placeholder address in UI copy
 # is not a request. Every entry is anchored on the URL's host (and path, where
 # one is named), so `example.com.evil.io`, `notexample.com`,
-# `example.com@evil.io` and `evil.io/?x=localhost` still fail. A URL whose
-# whole host is a template interpolation (`http://${host}:${port}`, a link to
-# a container on the user's own server) embeds no host. The first scan cuts
-# such a URL short inside the interpolation, so it is read again up to the
+# `example.com@evil.io` and `evil.io/?x=localhost` still fail.
+# `hoserva.dev`, Hoserva's own documentation site, is exempted too: a docs link
+# the user follows is navigation, not a request Hoserva makes on its own (Q49).
+# The scan cannot tell a link from a fetch, so a fetch to `hoserva.dev` would
+# pass as well; review keeps that out, as with any other host. It is anchored
+# like the others, so `hoserva.dev.evil.io`, `nothoserva.dev` and
+# `hoserva.dev@evil.io` still fail.
+# A URL whose whole host is a template interpolation (`http://${host}:${port}`,
+# a link to a container on the user's own server) embeds no host. The first
+# scan cuts such a URL short inside the interpolation, so it is read again up to the
 # template literal's closing backtick and accepted only when its
 # interpolations close and nothing but a port (or another interpolation)
 # follows the host: `${h}.evil.io`, `${f()}.evil.io` and `${h}@evil.io` still
@@ -25,7 +31,7 @@ dist="${1:-$script_dir/../../web/dist}"
 
 label='[A-Za-z0-9-]+'
 reserved="^https?://(${label}\\.)*(example\\.(com|net|org)|example|test|invalid)\\.?(:[0-9]+)?([/?#].*)?\$"
-named="^https?://(www\\.w3\\.org|react\\.dev/errors|base-ui\\.com/production-error|react\\.i18next\\.com|reactrouter\\.com|localhost(:[0-9]+)?)([/?#].*)?\$"
+named="^https?://(www\\.w3\\.org|react\\.dev/errors|base-ui\\.com/production-error|react\\.i18next\\.com|reactrouter\\.com|hoserva\\.dev|localhost(:[0-9]+)?)([/?#].*)?\$"
 interpolated='^https?://\$\{'
 allowed="(${named}|${interpolated}|^https?://github\\.com/ungap/url-search-params(\\.|[?#].*)?\$|^https?://fb\\.me/use-check-prop-types([?#].*)?\$|${reserved})"
 
