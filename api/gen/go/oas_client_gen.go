@@ -640,6 +640,26 @@ type Invoker interface {
 	//
 	// GET /migrate/report
 	GetMigrationReport(ctx context.Context) (GetMigrationReportOK, error)
+	// GetMigrationTemplate invokes getMigrationTemplate operation.
+	//
+	// The preview of one template or Compose Manager project from the latest scan, built when it is asked
+	// for by converting the template again from the Flash Backup zip the session keeps in the daemon's
+	// state directory, with the Docker networks of the Phase A capture; the session itself keeps no
+	// template content. It holds the source as the flash holds it, the generated Compose (the project's
+	// own `compose.yaml` for a project), every warning, including the writable-layer warning every
+	// converted template carries and any host path into another `/mnt/<pool>`, and the privileges the
+	// Compose content asks for. The source and the Compose hold the template's environment, secrets
+	// included, which is why this is an admin operation and the report's rows never quote them. A template
+	// the converter could not read has `status` `failed` and an `error`, and no Compose. 404
+	// `template_not_found` for a name the report does not list or a Compose Manager project whose
+	// `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
+	// `no_template_preview` for a report made before scans converted templates. 409
+	// `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from
+	// the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept
+	// after the zip is gone.
+	//
+	// GET /migrate/templates/{name}
+	GetMigrationTemplate(ctx context.Context, params GetMigrationTemplateParams) (*MigrationTemplatePreview, error)
 	// GetNetworkSettings invokes getNetworkSettings operation.
 	//
 	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
@@ -1011,6 +1031,25 @@ type Invoker interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// ListMigrationTemplates invokes listMigrationTemplates operation.
+	//
+	// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
+	// §5): every template with its class and how it converted, every Compose Manager project, and the
+	// counts the report shows. The scan converts each template in memory with the converter
+	// `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom
+	// network's `docker network create` command is exact when the capture holds that network. Nothing is
+	// created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's
+	// outcome (its status and warning classes), never its content, so this answers without the zip;
+	// `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a
+	// container on the source server (autostart, running and stopped) and, without the capture's container
+	// list, every template (`allTemplates`); a template-only template is converted and previewable but is
+	// in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed
+	// with its own `compose.yaml`, counted in `composeProjects` and never converted. 404
+	// `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made
+	// before scans converted templates (scan again).
+	//
+	// GET /migrate/templates
+	ListMigrationTemplates(ctx context.Context) (*MigrationTemplates, error)
 	// ListNotificationChannels invokes listNotificationChannels operation.
 	//
 	// Every configured alerting destination (doc 03 §8.3).
@@ -10347,6 +10386,163 @@ func (c *Client) sendGetMigrationReport(ctx context.Context) (res GetMigrationRe
 	return result, nil
 }
 
+// GetMigrationTemplate invokes getMigrationTemplate operation.
+//
+// The preview of one template or Compose Manager project from the latest scan, built when it is asked
+// for by converting the template again from the Flash Backup zip the session keeps in the daemon's
+// state directory, with the Docker networks of the Phase A capture; the session itself keeps no
+// template content. It holds the source as the flash holds it, the generated Compose (the project's
+// own `compose.yaml` for a project), every warning, including the writable-layer warning every
+// converted template carries and any host path into another `/mnt/<pool>`, and the privileges the
+// Compose content asks for. The source and the Compose hold the template's environment, secrets
+// included, which is why this is an admin operation and the report's rows never quote them. A template
+// the converter could not read has `status` `failed` and an `error`, and no Compose. 404
+// `template_not_found` for a name the report does not list or a Compose Manager project whose
+// `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
+// `no_template_preview` for a report made before scans converted templates. 409
+// `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from
+// the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept
+// after the zip is gone.
+//
+// GET /migrate/templates/{name}
+func (c *Client) GetMigrationTemplate(ctx context.Context, params GetMigrationTemplateParams) (*MigrationTemplatePreview, error) {
+	res, err := c.sendGetMigrationTemplate(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetMigrationTemplate(ctx context.Context, params GetMigrationTemplateParams) (res *MigrationTemplatePreview, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMigrationTemplate"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/migrate/templates/{name}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetMigrationTemplateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/migrate/templates/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetMigrationTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetMigrationTemplateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetMigrationTemplateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetNetworkSettings invokes getNetworkSettings operation.
 //
 // Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
@@ -14830,6 +15026,144 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 
 	stage = "DecodeResponse"
 	result, err := decodeListJobsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListMigrationTemplates invokes listMigrationTemplates operation.
+//
+// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
+// §5): every template with its class and how it converted, every Compose Manager project, and the
+// counts the report shows. The scan converts each template in memory with the converter
+// `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom
+// network's `docker network create` command is exact when the capture holds that network. Nothing is
+// created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's
+// outcome (its status and warning classes), never its content, so this answers without the zip;
+// `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a
+// container on the source server (autostart, running and stopped) and, without the capture's container
+// list, every template (`allTemplates`); a template-only template is converted and previewable but is
+// in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed
+// with its own `compose.yaml`, counted in `composeProjects` and never converted. 404
+// `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made
+// before scans converted templates (scan again).
+//
+// GET /migrate/templates
+func (c *Client) ListMigrationTemplates(ctx context.Context) (*MigrationTemplates, error) {
+	res, err := c.sendListMigrationTemplates(ctx)
+	return res, err
+}
+
+func (c *Client) sendListMigrationTemplates(ctx context.Context) (res *MigrationTemplates, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listMigrationTemplates"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/migrate/templates"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListMigrationTemplatesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/templates"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListMigrationTemplatesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListMigrationTemplatesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListMigrationTemplatesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

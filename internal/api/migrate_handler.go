@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path"
 	"strings"
 
 	"github.com/google/uuid"
@@ -36,6 +37,12 @@ func migrateError(err error) error {
 		return &apiError{code: "scan_in_progress", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrNoReport):
 		return &apiError{code: "no_migration_report", statusCode: 404, message: err.Error()}
+	case errors.Is(err, migrate.ErrNoPreview):
+		return &apiError{code: "no_template_preview", statusCode: 404, message: err.Error()}
+	case errors.Is(err, migrate.ErrSourceUnavailable):
+		return &apiError{code: "template_source_unavailable", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrTemplateNotFound), errors.Is(err, migrate.ErrNoCompose):
+		return &apiError{code: "template_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, migrate.ErrNotFlashDevice):
 		return &apiError{code: "invalid_flash_device", statusCode: 400, message: err.Error()}
 	case errors.Is(err, migrate.ErrZipOnly):
@@ -188,4 +195,89 @@ func (h *Handler) ForgetMigration(ctx context.Context) error {
 		return errMigrationNotConfigured()
 	}
 	return migrateError(h.Migration.Forget(ctx))
+}
+
+// ListMigrationTemplates returns the templates and Compose Manager projects of
+// the latest report with how each converted and the counts the report shows.
+func (h *Handler) ListMigrationTemplates(ctx context.Context) (*apiv1.MigrationTemplates, error) {
+	if h.Migration == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	list, err := h.Migration.Templates(ctx)
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	out := &apiv1.MigrationTemplates{
+		Counts: apiv1.MigrationTemplateCounts{
+			Clean: list.Counts.Clean, WithWarnings: list.Counts.WithWarnings, Failed: list.Counts.Failed,
+			TemplateOnly: list.Counts.TemplateOnly, AllTemplates: list.Counts.AllTemplates, ComposeProjects: list.Counts.ComposeProjects,
+		},
+		Templates:       make([]apiv1.MigrationTemplateSummary, 0, len(list.Templates)),
+		ComposeProjects: make([]apiv1.MigrationComposeProjectSummary, 0, len(list.ComposeProjects)),
+	}
+	for _, e := range list.Templates {
+		item := apiv1.MigrationTemplateSummary{
+			Name: e.Name, File: path.Base(e.File), Class: apiv1.MigrationTemplateClass(e.Class), Counted: e.Counted(),
+			Status: apiv1.MigrationTemplateStatus(e.Outcome.Status), WarningCount: e.Outcome.ActionWarnings(),
+			Error: optString(e.Outcome.FailureText()),
+		}
+		if e.AutostartPosition > 0 {
+			item.AutostartPosition = apiv1.NewOptInt(e.AutostartPosition)
+		}
+		out.Templates = append(out.Templates, item)
+	}
+	for _, p := range list.ComposeProjects {
+		status, errText := composeProjectStatus(p.Outcome)
+		containers := p.Containers
+		if containers == nil {
+			containers = []string{}
+		}
+		out.ComposeProjects = append(out.ComposeProjects, apiv1.MigrationComposeProjectSummary{
+			Name: p.Name, Containers: containers, Status: status, Error: optString(errText),
+		})
+	}
+	return out, nil
+}
+
+func composeProjectStatus(o *migrate.Outcome) (apiv1.MigrationTemplateStatus, string) {
+	switch {
+	case o == nil:
+		return apiv1.MigrationTemplateStatusMissing, ""
+	case o.Status == migrate.PreviewFailed:
+		return apiv1.MigrationTemplateStatusFailed, o.FailureText()
+	}
+	return apiv1.MigrationTemplateStatusPreviewed, ""
+}
+
+// GetMigrationTemplate returns one template's or Compose Manager project's
+// preview from the latest report.
+func (h *Handler) GetMigrationTemplate(ctx context.Context, params apiv1.GetMigrationTemplateParams) (*apiv1.MigrationTemplatePreview, error) {
+	if h.Migration == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	v, err := h.Migration.Template(ctx, params.Name)
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	out := &apiv1.MigrationTemplatePreview{Name: v.Name, Warnings: []apiv1.ConversionWarning{}, Privileges: []apiv1.TemplatePrivilege{}}
+	if v.Kind == migrate.KindTemplate {
+		out.Kind = apiv1.MigrationTemplatePreviewKindTemplate
+		out.Title = apiv1.NewOptString(v.Entry.Name)
+		out.Class = apiv1.NewOptMigrationTemplateClass(apiv1.MigrationTemplateClass(v.Entry.Class))
+		out.Counted = apiv1.NewOptBool(v.Entry.Counted())
+		out.Status = apiv1.MigrationTemplateStatus(v.Entry.Outcome.Status)
+	} else {
+		out.Kind = apiv1.MigrationTemplatePreviewKindComposeProject
+		out.Status, _ = composeProjectStatus(v.Project.Outcome)
+	}
+	out.Source = v.Preview.Source
+	out.Compose = optString(v.Preview.Compose)
+	out.Error = optString(v.Preview.Error)
+	for _, w := range v.Preview.Warnings {
+		out.Warnings = append(out.Warnings, apiv1.ConversionWarning{Class: apiv1.ConversionWarningClass(w.Class), Message: w.Message, Detail: optString(w.Detail), Command: optString(w.Command)})
+	}
+	for _, pr := range v.Preview.Privileges {
+		out.Privileges = append(out.Privileges, apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Detail: optString(pr.Detail), Description: pr.Description})
+	}
+	return out, nil
 }

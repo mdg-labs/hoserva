@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>photos</Name>
+  <Repository>example/photos:latest</Repository>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Overview>A photo gallery written for the mock migration scenario.</Overview>
+  <Category>MediaServer:Photos</Category>
+  <WebUI>http://[IP]:[PORT:8082]/</WebUI>
+  <Config Name="Web port" Target="8082" Default="8082" Mode="tcp" Description="" Type="Port" Display="always" Required="true" Mask="false">8082</Config>
+  <Config Name="Library" Target="/photos" Default="" Mode="rw" Description="" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/photos</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/photos" Mode="rw" Description="" Type="Path" Display="advanced-hide" Required="true" Mask="false">/mnt/user/appdata/photos</Config>
+  <Config Name="TZ" Target="TZ" Default="UTC" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">UTC</Config>
+</Container>

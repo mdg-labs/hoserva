@@ -4,11 +4,14 @@
 # disks, before any .deb is deployed, verifies it, copies its expected result
 # (manifest, layout and the Flash Backup zips) into
 # .vm/<HOSERVA_LAB_ID>/unraid/<variant>/, and takes the snapshot named like the
-# variant, so `make vm-restore NAME=<variant>` returns to it in seconds.
+# variant, so `make vm-restore NAME=<variant>` returns to it in seconds. A
+# variant with options (OPTION=<name>) builds that option, and a non-default one
+# is named <variant>-<option> (output directory and snapshot).
 #
-# The disks keep the sizes `make vm-up` gave them: 2000G or less per disk gives
-# Unraid's MBR layout; 2T (2 TiB) and larger give the GPT layout
-# (HOSERVA_VM_PARITY_SIZE and HOSERVA_VM_DATA_SIZE at vm-up).
+# The guest must come from `make vm-up VARIANT=<variant>`, which creates each
+# target disk at its spec size=; the builder refuses a disk of any other size
+# before it writes one. So the layout is the L2 build's: up to 2000G is Unraid's
+# MBR layout, 2T (2 TiB) and larger the GPT layout.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,16 +29,16 @@ unraid_guest_push
 unraid_guest_build "$VARIANT"
 unraid_guest_verify "$VARIANT"
 
-dest="$VM_ROOT/unraid/$VARIANT"
+dest="$VM_ROOT/unraid/$UNRAID_RUN"
 echo "vm-unraid-fixture[$HOSERVA_LAB_ID]: copying the expected result to $dest"
 rm -rf -- "$dest"
 mkdir -p -- "$dest"
-vm_ssh "sudo tar -C '$UNRAID_GUEST_OUT/$VARIANT' -cf - expected" | tar -C "$dest" -xf -
+vm_ssh "sudo tar -C '$UNRAID_GUEST_OUT/$UNRAID_RUN' -cf - expected" | tar -C "$dest" -xf -
 
-if virsh -c "$VM_CONNECT" snapshot-list "$VM_DOMAIN" --name | grep -qxF -- "$VARIANT"; then
-  echo "vm-unraid-fixture[$HOSERVA_LAB_ID]: replacing the earlier snapshot '$VARIANT'"
+if virsh -c "$VM_CONNECT" snapshot-list "$VM_DOMAIN" --name | grep -qxF -- "$UNRAID_RUN"; then
+  echo "vm-unraid-fixture[$HOSERVA_LAB_ID]: replacing the earlier snapshot '$UNRAID_RUN'"
   vm_assert_own_domain "$VM_DOMAIN"
-  virsh -c "$VM_CONNECT" snapshot-delete "$VM_DOMAIN" --snapshotname "$VARIANT" >/dev/null
+  virsh -c "$VM_CONNECT" snapshot-delete "$VM_DOMAIN" --snapshotname "$UNRAID_RUN" >/dev/null
 fi
-NAME="$VARIANT" "$script_dir/snapshot-vm.sh"
-echo "vm-unraid-fixture[$HOSERVA_LAB_ID]: done — make vm-restore NAME=$VARIANT returns to it"
+NAME="$UNRAID_RUN" "$script_dir/snapshot-vm.sh"
+echo "vm-unraid-fixture[$HOSERVA_LAB_ID]: done — make vm-restore NAME=$UNRAID_RUN returns to it"

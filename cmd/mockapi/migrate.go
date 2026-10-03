@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,8 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/migrate"
+	"github.com/mdg-labs/hoserva/internal/template"
+	migrationpending "github.com/mdg-labs/hoserva/web/fixtures/migration-pending"
 )
 
 // mockFlashDevice is the Unraid USB stick this mock offers: a FAT filesystem
@@ -93,7 +96,10 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckCache, migrate.StatusWarn, "appdata", "Docker keeps container data under /mnt/user/appdata/; cache setting prefer; its directory is on disk1, pool cache. Phase A step 5 must move it to the array before the cache is re-created.")
 	add(migrate.CheckCache, migrate.StatusInfo, "Docker storage", "Docker's directory (/mnt/user/system/docker/dockerdir) is on the cache. It is not moved: images are pulled again when containers are recreated. What does not come back is each container's writable layer (doc 04 §5). No container's writable layer holds data.")
 	add(migrate.CheckUsers, migrate.StatusInfo, "", "2 user accounts: alice, bob. Names only are read; passwords cannot be carried over, so each is set again at the import (doc 05 §4 step 4).")
-	add(migrate.CheckTemplates, migrate.StatusInfo, "", "7 templates parsed: 3 autostart, 1 running, 1 stopped, 2 template only. 5 are installed; a template with no container is a record of an app once installed.")
+	add(migrate.CheckTemplates, migrate.StatusInfo, "", "2 templates parsed: 1 autostart, 1 running, 0 stopped, 0 template only. 2 are installed; a template with no container is a record of an app once installed.")
+	add(migrate.CheckTemplates, migrate.StatusInfo, "", "Of the 2 installed templates, 1 convert cleanly and 1 with warnings (Q36).")
+	add(migrate.CheckTemplates, migrate.StatusInfo, "gateway", "Converts with 2 warnings to review (flagged_path, missing_network). Open its preview before recreating the container.")
+	add(migrate.CheckContainers, migrate.StatusInfo, "", "1 Compose Manager project previewed with its own compose.yaml and not converted.")
 	add(migrate.CheckContainers, migrate.StatusInfo, "", "8 containers in the capture: 6 from the Docker page (dockerMan), 1 from Compose Manager, 1 created by hand.")
 	add(migrate.CheckContainers, migrate.StatusFlag, "dbtool", "A dockerMan container with no template whose <Name> matches. It cannot be converted: open it on the Docker page, edit it and apply to save its template, then run the prepare script again (doc 05 §4 step 2).")
 	add(migrate.CheckContainers, migrate.StatusFlag, "handmade", "Created by hand (docker run), so it has no template to convert. Recreate it from its run command.")
@@ -253,4 +259,152 @@ func (h *handler) ForgetMigration(ctx context.Context) error {
 	defer h.migration.mu.Unlock()
 	h.migration.report, h.migration.size, h.migration.device, h.migration.receivedAt = nil, 0, "", time.Time{}
 	return nil
+}
+
+// mockComposeProject is the compose.yaml of the one Compose Manager project the
+// mock's report lists.
+const mockComposeProject = "services:\n  web:\n    image: example/web:1.0\n    container_name: stack-web\n    volumes:\n      - /mnt/user/appdata/stack:/data\n"
+
+// mockMigrationTemplate is one template of the migration-pending scenario, converted by
+// the production converter with the capture's br0 network.
+type mockMigrationTemplate struct {
+	file     string
+	class    apiv1.MigrationTemplateClass
+	position int
+	conv     *template.Conversion
+}
+
+func mockMigrationTemplates() ([]mockMigrationTemplate, error) {
+	classes := map[string]mockMigrationTemplate{
+		"my-photos.xml":  {class: apiv1.MigrationTemplateClassAutostart, position: 1},
+		"my-gateway.xml": {class: apiv1.MigrationTemplateClassRunning},
+	}
+	networks := []template.NetworkDef{{
+		Name: "br0", Driver: "ipvlan", Subnet: "192.168.50.0/24", Gateway: "192.168.50.1", Parent: "ens20",
+		Options: map[string]string{"ipvlan_mode": "l2", "parent": "ens20"},
+	}}
+	entries, err := fs.ReadDir(migrationpending.Templates, ".")
+	if err != nil {
+		return nil, err
+	}
+	var out []mockMigrationTemplate
+	for _, e := range entries {
+		data, err := fs.ReadFile(migrationpending.Templates, e.Name())
+		if err != nil {
+			return nil, err
+		}
+		conv, err := template.ConvertUnraid(data, template.ConvertOptions{Networks: networks})
+		if err != nil {
+			return nil, fmt.Errorf("converting the fixture template %s: %w", e.Name(), err)
+		}
+		t := classes[e.Name()]
+		t.file, t.conv = e.Name(), conv
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+func actionWarnings(c *template.Conversion) int {
+	n := 0
+	for _, w := range c.Warnings {
+		if w.Class != template.WarnWritableLayer && w.Class != template.WarnNote {
+			n++
+		}
+	}
+	return n
+}
+
+func (h *handler) requireMigrationReport() error {
+	h.migration.mu.Lock()
+	defer h.migration.mu.Unlock()
+	if h.migration.report == nil {
+		return errNoMigrationReport()
+	}
+	return nil
+}
+
+func (h *handler) ListMigrationTemplates(ctx context.Context) (*apiv1.MigrationTemplates, error) {
+	if err := h.requireMigrationReport(); err != nil {
+		return nil, err
+	}
+	templates, err := mockMigrationTemplates()
+	if err != nil {
+		return nil, err
+	}
+	out := &apiv1.MigrationTemplates{
+		Templates: make([]apiv1.MigrationTemplateSummary, 0, len(templates)),
+		ComposeProjects: []apiv1.MigrationComposeProjectSummary{
+			{Name: "stack", Containers: []string{"stack-web"}, Status: apiv1.MigrationTemplateStatusPreviewed},
+		},
+	}
+	out.Counts.ComposeProjects = 1
+	for _, t := range templates {
+		status := apiv1.MigrationTemplateStatusClean
+		if !t.conv.Clean() {
+			status = apiv1.MigrationTemplateStatusWarnings
+			out.Counts.WithWarnings++
+		} else {
+			out.Counts.Clean++
+		}
+		item := apiv1.MigrationTemplateSummary{
+			Name: t.conv.Metadata.Title, File: t.file, Class: t.class, Counted: true,
+			Status: status, WarningCount: actionWarnings(t.conv),
+		}
+		if t.position > 0 {
+			item.AutostartPosition = apiv1.NewOptInt(t.position)
+		}
+		out.Templates = append(out.Templates, item)
+	}
+	return out, nil
+}
+
+func (h *handler) GetMigrationTemplate(ctx context.Context, params apiv1.GetMigrationTemplateParams) (*apiv1.MigrationTemplatePreview, error) {
+	if err := h.requireMigrationReport(); err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	fromStick := h.migration.device != ""
+	h.migration.mu.Unlock()
+	if fromStick {
+		return nil, errMigrationRefusal("template_source_unavailable", 409, migrate.ErrSourceUnavailable)
+	}
+	opt := func(s string) apiv1.OptString {
+		if s == "" {
+			return apiv1.OptString{}
+		}
+		return apiv1.NewOptString(s)
+	}
+	if params.Name == "stack" {
+		return &apiv1.MigrationTemplatePreview{
+			Kind: apiv1.MigrationTemplatePreviewKindComposeProject, Name: "stack", Status: apiv1.MigrationTemplateStatusPreviewed,
+			Source: mockComposeProject, Compose: apiv1.NewOptString(mockComposeProject),
+			Warnings: []apiv1.ConversionWarning{}, Privileges: []apiv1.TemplatePrivilege{},
+		}, nil
+	}
+	templates, err := mockMigrationTemplates()
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range templates {
+		if t.file != params.Name {
+			continue
+		}
+		out := &apiv1.MigrationTemplatePreview{
+			Kind: apiv1.MigrationTemplatePreviewKindTemplate, Name: t.file, Title: apiv1.NewOptString(t.conv.Metadata.Title),
+			Class: apiv1.NewOptMigrationTemplateClass(t.class), Counted: apiv1.NewOptBool(true), Status: apiv1.MigrationTemplateStatusClean,
+			Source: t.conv.Source, Compose: apiv1.NewOptString(t.conv.Compose),
+			Warnings: make([]apiv1.ConversionWarning, len(t.conv.Warnings)), Privileges: make([]apiv1.TemplatePrivilege, len(t.conv.Privileges)),
+		}
+		if !t.conv.Clean() {
+			out.Status = apiv1.MigrationTemplateStatusWarnings
+		}
+		for i, w := range t.conv.Warnings {
+			out.Warnings[i] = apiv1.ConversionWarning{Class: apiv1.ConversionWarningClass(w.Class), Message: w.Message, Detail: opt(w.Detail), Command: opt(w.Command)}
+		}
+		for i, pr := range t.conv.Privileges {
+			out.Privileges[i] = apiv1.TemplatePrivilege{Kind: apiv1.TemplatePrivilegeKind(pr.Kind), Service: pr.Service, Description: pr.Description, Detail: opt(pr.Detail)}
+		}
+		return out, nil
+	}
+	return nil, &mockError{code: "template_not_found", statusCode: 404, message: migrate.ErrTemplateNotFound.Error()}
 }

@@ -476,20 +476,38 @@ func TestTemplates_DockerNotRunningAtCaptureSaysSo(t *testing.T) {
 	requireRow(t, r, CheckCache, StatusWarn, "Docker was not running at capture", "writable-layer size")
 }
 
+// committedCaptureTime is the captured_at of the committed capture of the
+// variant these tests scan.
+func committedCaptureTime(t *testing.T) time.Time {
+	t.Helper()
+	files, _ := flashTree(t, inventoryVariant)
+	var capture struct {
+		CapturedAt string `json:"captured_at"`
+	}
+	if err := json.Unmarshal(files["config/hoserva/capture.json"], &capture); err != nil {
+		t.Fatalf("committed capture.json: %v", err)
+	}
+	at, err := time.Parse(time.RFC3339, capture.CapturedAt)
+	if err != nil {
+		t.Fatalf("committed capture.json captured_at %q: %v", capture.CapturedAt, err)
+	}
+	return at
+}
+
 func TestTemplates_ACaptureOlderThanTheNewestTemplateIsStale(t *testing.T) {
 	const tmpl = "config/plugins/dockerMan/templates-user/my-gateway.xml"
-	// The committed capture is dated 2026-10-02T17:56:07Z.
+	captured := committedCaptureTime(t)
 	for _, tc := range []struct {
 		name  string
 		saved time.Time
 		stale bool
 	}{
-		{"template saved after the capture", time.Date(2026, 10, 2, 18, 30, 0, 0, time.UTC), true},
-		{"template saved before the capture", time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC), false},
+		{"template saved after the capture", captured.Add(time.Hour), true},
+		{"template saved before the capture", captured.Add(-time.Hour), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := scanCase{times: map[string]time.Time{tmpl: tc.saved}}.run(t)
-			if got := hasRow(r, CheckCapture, StatusWarn, "may be stale", "2026-10-02T17:56:07Z", tc.saved.Format(time.RFC3339)); got != tc.stale {
+			if got := hasRow(r, CheckCapture, StatusWarn, "may be stale", captured.Format(time.RFC3339), tc.saved.Format(time.RFC3339)); got != tc.stale {
 				t.Errorf("stale warning = %v, want %v: %+v", got, tc.stale, rowsFor(r, CheckCapture))
 			}
 			if r.Verdict == VerdictNoGo {
@@ -520,7 +538,7 @@ func TestTemplates_AStickSourceReportsAStaleCaptureToo(t *testing.T) {
 	if rep := scan(); hasRow(rep, CheckCapture, StatusWarn, "may be stale") {
 		t.Fatalf("a flash saved before its capture reads as stale: %+v", rowsFor(rep, CheckCapture))
 	}
-	later := time.Date(2026, 10, 2, 23, 0, 0, 0, time.UTC)
+	later := committedCaptureTime(t).Add(time.Hour)
 	if err := os.Chtimes(dir+"/config/plugins/dockerMan/templates-user/my-notes.xml", later, later); err != nil {
 		t.Fatal(err)
 	}

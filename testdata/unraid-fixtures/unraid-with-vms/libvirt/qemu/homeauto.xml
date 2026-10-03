@@ -1,0 +1,59 @@
+<domain type='kvm'>
+  <name>homeauto</name>
+  <uuid>9e2f7c68-1b53-4a8d-b0e4-7d3c6a52f9e8</uuid>
+  <metadata>
+    <vmtemplate xmlns="http://unraid" name="Linux" icon="linux.png" os="linux"/>
+  </metadata>
+  <memory unit='KiB'>2097152</memory>
+  <currentMemory unit='KiB'>2097152</currentMemory>
+  <vcpu placement='static'>2</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc-q35-8.2'>hvm</type>
+    <loader readonly='yes' type='pflash'>/usr/share/qemu/ovmf-x64/OVMF_CODE-pure-efi.fd</loader>
+    <nvram>/etc/libvirt/qemu/nvram/9e2f7c68-1b53-4a8d-b0e4-7d3c6a52f9e8_VARS-pure-efi.fd</nvram>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough' check='none' migratable='on'>
+    <topology sockets='1' dies='1' clusters='1' cores='2' threads='1'/>
+    <cache mode='passthrough'/>
+  </cpu>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <devices>
+    <emulator>/usr/local/sbin/qemu</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='raw' cache='writeback'/>
+      <source file='/mnt/user/domains/homeauto/vdisk1.img'/>
+      <target dev='hdc' bus='virtio'/>
+      <boot order='1'/>
+      <address type='pci' domain='0x0000' bus='0x02' slot='0x00' function='0x0'/>
+    </disk>
+    <interface type='bridge'>
+      <mac address='52:54:00:3e:a1:03'/>
+      <source bridge='virbr0'/>
+      <model type='virtio-net'/>
+      <address type='pci' domain='0x0000' bus='0x01' slot='0x00' function='0x0'/>
+    </interface>
+    <graphics type='vnc' port='-1' autoport='yes' websocket='-1' listen='0.0.0.0' keymap='en-us'>
+      <listen type='address' address='0.0.0.0'/>
+    </graphics>
+    <hostdev mode='subsystem' type='usb' managed='no'>
+      <source>
+        <vendor id='0x10c4'/>
+        <product id='0xea60'/>
+      </source>
+      <address type='usb' bus='0' port='1'/>
+    </hostdev>
+    <memballoon model='virtio'>
+      <address type='pci' domain='0x0000' bus='0x03' slot='0x00' function='0x0'/>
+    </memballoon>
+  </devices>
+</domain>

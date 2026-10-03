@@ -458,7 +458,10 @@ func checkUsers(r *Report, src FlashSource, imp *Import) error {
 // checkDocker classes every template by the capture's container list and
 // reports the containers that cannot convert.
 func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
-	type tmpl struct{ file, name string }
+	type tmpl struct {
+		file, name string
+		data       []byte
+	}
 	var parsed []tmpl
 	var newest time.Time
 	for _, n := range directChildren(src, templatesDir) {
@@ -477,7 +480,7 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 			r.add(CheckTemplates, StatusWarn, path.Base(n), "The template does not parse (%v). It cannot be converted.", err)
 			continue
 		}
-		parsed = append(parsed, tmpl{n, name})
+		parsed = append(parsed, tmpl{n, name, data})
 	}
 
 	containers, haveContainers, err := readContainers(r, src, f)
@@ -502,8 +505,9 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 
 	counts := map[TemplateClass]int{}
 	nameFiles := map[string][]string{}
+	networks := networkDefs(imp.Networks)
 	for _, t := range parsed {
-		e := TemplateEntry{File: t.file, Name: t.name, Class: ClassUnknown}
+		e := TemplateEntry{File: t.file, Name: t.name, Class: ClassUnknown, Outcome: previewTemplate(t.data, networks).Outcome(false)}
 		if haveContainers {
 			c, ok := dockerMan[t.name]
 			switch {
@@ -547,7 +551,12 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 		r.add(CheckTemplates, StatusWarn, "", "More than one template names the same container: %s. Each is classed by that one container.", d)
 	}
 
-	return checkContainers(r, src, containers, haveContainers, dockerMan, nameFiles, imp)
+	if err := checkContainers(r, src, containers, haveContainers, dockerMan, nameFiles, imp); err != nil {
+		return err
+	}
+	countPreviews(imp, haveContainers)
+	reportPreviews(r, imp)
+	return nil
 }
 
 func checkStale(r *Report, f *Flash, newest time.Time) {
@@ -674,6 +683,13 @@ func checkContainers(r *Report, src FlashSource, containers []captureContainer, 
 	for _, n := range names {
 		p := projects[n]
 		sort.Strings(p.Containers)
+		if p.File != "" {
+			data, err := src.Read(p.File)
+			if err != nil {
+				return err
+			}
+			p.Outcome = previewCompose(data).Outcome(true)
+		}
 		imp.ComposeProjects = append(imp.ComposeProjects, *p)
 	}
 

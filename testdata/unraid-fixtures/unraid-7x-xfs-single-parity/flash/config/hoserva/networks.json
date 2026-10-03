@@ -1,8 +1,8 @@
 [
     {
         "Name": "br0",
-        "Id": "14a2e1c9df3003481bbb37ced5e481e4e85ce5fff283016cbe15fe97e22ab4e4",
-        "Created": "2026-10-02T17:56:04.009128107Z",
+        "Id": "55635933dad8ef4ace58ab903b0fdb232a7e18e6fb8a2fc462f05e4fe67f820f",
+        "Created": "2026-10-03T07:00:42.194257181Z",
         "Scope": "local",
         "Driver": "ipvlan",
         "EnableIPv6": false,
@@ -24,9 +24,9 @@
         },
         "ConfigOnly": false,
         "Containers": {
-            "b6236063b2e5c32872a21bbff84541b110a0d88b51711d005280caf12861bc44": {
+            "00d35405c6fd11dd0015c461b2181f6b83151c6deacc675c2db207f861b7cc51": {
                 "Name": "gateway",
-                "EndpointID": "a67f9e4075f51a2bed2fb1e3b42adad92bca34f8320fc4bdce05c70acd6858e2",
+                "EndpointID": "e00c06a7acb35e23940884d73e1fc6e84fdbb6a25deeb5fc03baeab1e8d29d7b",
                 "MacAddress": "",
                 "IPv4Address": "192.168.50.20/24",
                 "IPv6Address": ""
@@ -40,8 +40,8 @@
     },
     {
         "Name": "bridge",
-        "Id": "c6292d7862f1ee6049623deae36b4dee0a1edb8a1903f5893d8e5054e944f091",
-        "Created": "2026-10-02T17:55:40.673253913Z",
+        "Id": "0979e29d7bc98ac37403771785e593b49b5f02a9926c5f969ea2af3ffc9b7736",
+        "Created": "2026-10-03T07:00:37.064303046Z",
         "Scope": "local",
         "Driver": "bridge",
         "EnableIPv6": false,
@@ -63,32 +63,32 @@
         },
         "ConfigOnly": false,
         "Containers": {
-            "33f18129f8cc7e162852ae01f4707b459704dbec4a0a80a1679bae9b6c0667cf": {
+            "40e4d7a61c396a4f1d388e2d5d126ceb439e90d6f9421afd890ce54a6f3090b1": {
+                "Name": "photos",
+                "EndpointID": "49398e6d1d6a45da1643c78c91038b93e48d1c00bdb5c954c8eb3e53a990c9ac",
+                "MacAddress": "02:42:ac:11:00:03",
+                "IPv4Address": "172.17.0.3/16",
+                "IPv6Address": ""
+            },
+            "436ca376d9baca731e1f53ae974c01e3a1cfeee063db37e1dd3ad45fd032c8d5": {
                 "Name": "dbtool",
-                "EndpointID": "d4d89dbc8da8133a0e2d071f90167e336a08611ac9fb09258597226534537bb7",
+                "EndpointID": "81690d5bb3496c6ba3c579144e4753f951073d34c997f17d102e61b8649e7534",
                 "MacAddress": "02:42:ac:11:00:04",
                 "IPv4Address": "172.17.0.4/16",
                 "IPv6Address": ""
             },
-            "457738c8c8a8d2da1900da621b754f7a8c916b975653f6e00138a26cc406fbeb": {
+            "bcd7b8499c4878333f7647ea455d05e9468b3c730d2b5e0042f7f83d782e9896": {
                 "Name": "handmade",
-                "EndpointID": "e3b3b6f6c26b23d926f11ece6c91bb5df805ace7a52c27edebbd35dd76f5b1d7",
+                "EndpointID": "190fc0fe86a4a0879442c8dc3d7fbf732427598298f3e5a6b2f55c6798f24848",
                 "MacAddress": "02:42:ac:11:00:05",
                 "IPv4Address": "172.17.0.5/16",
                 "IPv6Address": ""
             },
-            "569349833b9db832700f092bff09248e6548eba8e00178aeb30d5b13f7db4360": {
+            "ee8d02c28b1d9ea874cd66e48b3bc119b99e132c45297741a2259ea2eeb09de1": {
                 "Name": "notes",
-                "EndpointID": "dcbf5a2e1367186e440a7cbebb57dadc0b3a07f60d7cbab49d4febc6c440126d",
+                "EndpointID": "a7938ec045a4cbca33f6b7cf8d2b98417da13a0e2b3d94eb5e5ad6d14ab5062e",
                 "MacAddress": "02:42:ac:11:00:02",
                 "IPv4Address": "172.17.0.2/16",
-                "IPv6Address": ""
-            },
-            "892df1da041c450833e4457832f18338dd190b28f1d3073ef6cc760a89e86bdb": {
-                "Name": "photos",
-                "EndpointID": "4d403184f4c49b93824f47d1ff89e873f146ed83d1cec7cedc97d3f71171ac8b",
-                "MacAddress": "02:42:ac:11:00:03",
-                "IPv4Address": "172.17.0.3/16",
                 "IPv6Address": ""
             }
         },
@@ -104,8 +104,8 @@
     },
     {
         "Name": "host",
-        "Id": "36f5e09360020b198c95b6d98467098c1e5c2e175c52b2324ded8583ca50d187",
-        "Created": "2026-10-02T17:55:40.614263269Z",
+        "Id": "9132aa1b9136fc385515a4494a3dfa8eb3f7d5e4f0568be19abcb1ae7fb54c8a",
+        "Created": "2026-10-03T07:00:36.999508499Z",
         "Scope": "local",
         "Driver": "host",
         "EnableIPv6": false,
@@ -122,9 +122,9 @@
         },
         "ConfigOnly": false,
         "Containers": {
-            "f36c71ecc33a68252bbcfd0a3fa9d53ffc40a994f06e72de1c2445434450caab": {
+            "44eaa9403d79c49ceb8e0ab4df05521e3653f0004571de89ab5c604faf45333a": {
                 "Name": "mediaserver",
-                "EndpointID": "3d9f42a509938f5c873a462676d03c0c7b25c3d28e4a68dfd737a67c0101d8f2",
+                "EndpointID": "1de37df863fe948d47feaf753a3bfc6e3a694edcd3eeb1f1ae92464fa5deda01",
                 "MacAddress": "",
                 "IPv4Address": "",
                 "IPv6Address": ""
@@ -135,8 +135,8 @@
     },
     {
         "Name": "none",
-        "Id": "0f73ad67d09a42fe4c7b691a82631a28915b6f0fb78396079fcac99148383302",
-        "Created": "2026-10-02T17:55:40.606603769Z",
+        "Id": "dc5489b1f3f413a1771e2da31ea4fd9f20abebeef2ed0e449accb98ad98245fb",
+        "Created": "2026-10-03T07:00:36.987626095Z",
         "Scope": "local",
         "Driver": "null",
         "EnableIPv6": false,
@@ -158,8 +158,8 @@
     },
     {
         "Name": "stack_default",
-        "Id": "2d8a7554cf4098047e0be351123e653e7a55913828b7ffeb08c4e7401bcfdf8d",
-        "Created": "2026-10-02T17:56:06.784565155Z",
+        "Id": "1edc4c825ced0adffcee3af2c36c02ac97a53dff64da1c186a099daa0c9ac2f5",
+        "Created": "2026-10-03T07:00:44.541137447Z",
         "Scope": "local",
         "Driver": "bridge",
         "EnableIPv6": false,
@@ -168,8 +168,8 @@
             "Options": null,
             "Config": [
                 {
-                    "Subnet": "172.19.0.0/16",
-                    "Gateway": "172.19.0.1"
+                    "Subnet": "172.18.0.0/16",
+                    "Gateway": "172.18.0.1"
                 }
             ]
         },
@@ -181,11 +181,11 @@
         },
         "ConfigOnly": false,
         "Containers": {
-            "46e9172b141fba3a0088b414049291b3ac5e502040a5864dbe7f561f6f0f2122": {
+            "4d9cbbcf211fb690c74d2f998904a39d635f49927e974893bfc8fb92489a8721": {
                 "Name": "stack-web",
-                "EndpointID": "431d8761259c0faf931750ad03d8b9e431022195fa4f0d911e9c418cf2842e07",
-                "MacAddress": "02:42:ac:13:00:02",
-                "IPv4Address": "172.19.0.2/16",
+                "EndpointID": "35deb70f57a85abaed0c979e68de9b75293d9ca1834e4712bd21c5379b387350",
+                "MacAddress": "02:42:ac:12:00:02",
+                "IPv4Address": "172.18.0.2/16",
                 "IPv6Address": ""
             }
         },

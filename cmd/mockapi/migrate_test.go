@@ -264,3 +264,72 @@ func TestMockMigration_ARequestBodyPastTheScanLimitIsRefusedAsTooLarge(t *testin
 		t.Fatalf("an upload past the limit = %v, want 413 zip_too_large", err)
 	}
 }
+
+// The scenario's templates are converted by the production converter: one
+// converts cleanly and one with warnings, and the report's rows agree with the
+// operations' answers.
+func TestMockMigration_TemplatePreviews(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	list, err := h.ListMigrationTemplates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := list.Counts; c.Clean != 1 || c.WithWarnings != 1 || c.Failed != 0 || c.TemplateOnly != 0 || c.AllTemplates || c.ComposeProjects != 1 {
+		t.Fatalf("counts = %+v, want one clean, one with warnings and one project", c)
+	}
+	byFile := map[string]apiv1.MigrationTemplateSummary{}
+	for _, it := range list.Templates {
+		byFile[it.File] = it
+	}
+	if it := byFile["my-photos.xml"]; it.Status != apiv1.MigrationTemplateStatusClean || it.WarningCount != 0 || it.Class != apiv1.MigrationTemplateClassAutostart {
+		t.Errorf("my-photos.xml = %+v", it)
+	}
+	gateway := byFile["my-gateway.xml"]
+	if gateway.Status != apiv1.MigrationTemplateStatusWarnings || gateway.WarningCount != 2 {
+		t.Fatalf("my-gateway.xml = %+v", gateway)
+	}
+
+	pv, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-gateway.xml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var command string
+	for _, w := range pv.Warnings {
+		if w.Class == apiv1.ConversionWarningClassMissingNetwork {
+			command = w.Command.Or("")
+		}
+	}
+	if !strings.Contains(command, "-d ipvlan --subnet 192.168.50.0/24 --gateway 192.168.50.1 -o parent=ens20") {
+		t.Errorf("network command = %q, want the capture's exact one", command)
+	}
+	if pv.Compose.Or("") == "" || !strings.Contains(pv.Source, "<Name>gateway</Name>") {
+		t.Errorf("preview = %+v", pv)
+	}
+
+	m, _ := h.GetMigration(ctx)
+	report, _ := m.Report.Get()
+	var found bool
+	for _, row := range report.Rows {
+		if row.Check == "docker_templates" && row.Subject.Or("") == "gateway" && strings.Contains(row.Detail, "2 warnings") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the report's docker_templates rows do not agree with the gateway's preview")
+	}
+
+	if _, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "nothing.xml"}); err == nil || !strings.Contains(err.Error(), "no template") {
+		t.Errorf("an unknown template = %v, want template_not_found", err)
+	}
+	if _, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-gateway.xml"}); err == nil || !strings.Contains(err.Error(), "not kept") {
+		t.Errorf("a preview of a report made from the stick = %v, want template_source_unavailable", err)
+	}
+	empty, _ := newHandler("healthy")
+	if _, err := empty.ListMigrationTemplates(ctx); err == nil {
+		t.Error("ListMigrationTemplates answered with no report")
+	}
+}

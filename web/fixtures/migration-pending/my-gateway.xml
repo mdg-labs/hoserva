@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>gateway</Name>
+  <Repository>example/gateway:0.9</Repository>
+  <Network>br0</Network>
+  <MyIP>192.168.50.20</MyIP>
+  <Privileged>false</Privileged>
+  <Overview>A reverse proxy written for the mock migration scenario, on a custom network and with a host path outside the pool.</Overview>
+  <Category>Network:Proxy</Category>
+  <WebUI>http://[IP]:[PORT:8083]/</WebUI>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/gateway" Mode="rw" Description="" Type="Path" Display="advanced-hide" Required="true" Mask="false">/mnt/user/appdata/gateway</Config>
+  <Config Name="Certificates" Target="/certs" Default="" Mode="ro" Description="" Type="Path" Display="always" Required="false" Mask="false">/mnt/disks/backup/certs</Config>
+  <Config Name="Web port" Target="8083" Default="8083" Mode="tcp" Description="" Type="Port" Display="always" Required="true" Mask="false">8083</Config>
+</Container>

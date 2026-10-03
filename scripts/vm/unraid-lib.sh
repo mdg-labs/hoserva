@@ -10,11 +10,57 @@
 UNRAID_GUEST_DIR=/home/hoserva/unraid-fixture
 UNRAID_GUEST_OUT=/srv/unraid-fixtures
 
+# unraid_require_variant: validates VARIANT and the optional OPTION (a variant
+# with an options/ directory builds one of them; the spec's default_option when
+# OPTION is unset). Sets UNRAID_RUN, the name the builder gives the build's
+# output directory and this lab's snapshot: the variant, plus -<option> for a
+# non-default option. UNRAID_OPTION_ARG is the builder's own --option argument.
 unraid_require_variant() {
+  local vdir default
   VARIANT="${VARIANT:-}"
+  OPTION="${OPTION:-}"
   [[ -n "$VARIANT" ]] || die "set VARIANT (e.g. VARIANT=unraid-6.12-xfs-single-parity)"
   [[ "$VARIANT" =~ ^unraid-[a-z0-9][a-z0-9.-]*$ ]] || die "invalid VARIANT '$VARIANT'"
-  [[ -d "$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT" ]] || die "no variant '$VARIANT' under testdata/unraid-fixtures/"
+  vdir="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT"
+  [[ -d "$vdir" ]] || die "no variant '$VARIANT' under testdata/unraid-fixtures/"
+  UNRAID_RUN="$VARIANT"
+  UNRAID_OPTION_ARG=""
+  if [[ -d "$vdir/options" ]]; then
+    default="$(sed -n 's/^default_option=//p' "$vdir/spec")"
+    [[ "$default" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "spec of '$VARIANT' has options but no default_option"
+    if [[ -n "$OPTION" ]]; then
+      [[ "$OPTION" =~ ^[a-z0-9][a-z0-9-]*$ && -d "$vdir/options/$OPTION" ]] || die "variant '$VARIANT' has no option '$OPTION'"
+      UNRAID_OPTION_ARG="--option '$OPTION'"
+      [[ "$OPTION" == "$default" ]] || UNRAID_RUN="$VARIANT-$OPTION"
+    fi
+  else
+    [[ -z "$OPTION" ]] || die "variant '$VARIANT' has no options, but OPTION='$OPTION' was set"
+  fi
+}
+
+# unraid_spec_sizes: prints "<target> <bytes>" for each disk line of the
+# variant's own spec, the sizes scripts/devenv/unraid-fixture.sh builds on.
+# Any other disk line (one pulled in by an include) is not read here; the
+# builder refuses a guest disk whose size differs from its spec.
+unraid_spec_sizes() {
+  local spec="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT/spec" line words w size target bytes seen=" "
+  [[ -f "$spec" ]] || die "variant '$VARIANT' has no spec file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == disk\ * ]] || continue
+    read -r -a words <<<"$line"
+    size="" target=""
+    for w in "${words[@]:2}"; do
+      case "$w" in
+        size=*) size="${w#size=}" ;;
+        target=*) target="${w#target=}" ;;
+      esac
+    done
+    [[ -n "$size" && -n "$target" ]] || die "spec of '$VARIANT': disk '${words[1]:-}' needs size= and target="
+    [[ "$seen" != *" $target "* ]] || die "spec of '$VARIANT': target '$target' is used by two disks"
+    seen+="$target "
+    bytes="$(numfmt --from=iec "$size")" || die "spec of '$VARIANT': disk '${words[1]}': bad size '$size'"
+    printf '%s %s\n' "$target" "$bytes"
+  done <"$spec"
 }
 
 unraid_require_guest() {
@@ -39,18 +85,18 @@ unraid_guest_push() {
     | vm_ssh "rm -rf -- '$UNRAID_GUEST_DIR' && mkdir -p '$UNRAID_GUEST_DIR' && tar -xf - -C '$UNRAID_GUEST_DIR'"
 }
 
-# unraid_guest_build <variant> [no-capture]: builds the variant on the guest's
-# array disks; a rebuild replaces the earlier output directory.
+# unraid_guest_build <variant> [no-capture]: builds the variant (and OPTION)
+# on the guest's array disks; a rebuild replaces the earlier output directory.
 unraid_guest_build() {
   local variant=$1 env_extra=""
   [[ "${2:-}" == no-capture ]] && env_extra="HOSERVA_FIXTURE_NO_CAPTURE=1"
-  echo "unraid[$HOSERVA_LAB_ID]: building $variant on the guest's array disks"
-  vm_ssh "sudo rm -rf --one-file-system -- '$UNRAID_GUEST_OUT/$variant' && sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' $env_extra bash '$UNRAID_GUEST_DIR/scripts/devenv/unraid-fixture.sh' --tier l3 '$variant'"
+  echo "unraid[$HOSERVA_LAB_ID]: building $UNRAID_RUN on the guest's array disks"
+  vm_ssh "sudo rm -rf --one-file-system -- '$UNRAID_GUEST_OUT/$UNRAID_RUN' && sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' $env_extra bash '$UNRAID_GUEST_DIR/scripts/devenv/unraid-fixture.sh' --tier l3 $UNRAID_OPTION_ARG '$variant'"
 }
 
 unraid_guest_verify() {
   local variant=$1 env_extra=""
   [[ "${2:-}" == no-capture ]] && env_extra="HOSERVA_FIXTURE_NO_CAPTURE=1"
-  echo "unraid[$HOSERVA_LAB_ID]: verifying $variant through read-only mounts"
-  vm_ssh "sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' $env_extra bash '$UNRAID_GUEST_DIR/scripts/devenv/unraid-fixture.sh' --tier l3 --verify '$variant'"
+  echo "unraid[$HOSERVA_LAB_ID]: verifying $UNRAID_RUN through read-only mounts"
+  vm_ssh "sudo env HOSERVA_LAB_ID='$HOSERVA_LAB_ID' $env_extra bash '$UNRAID_GUEST_DIR/scripts/devenv/unraid-fixture.sh' --tier l3 --verify $UNRAID_OPTION_ARG '$variant'"
 }

@@ -1,0 +1,37 @@
+# VM Manager enabled: three libvirt domains in libvirt.img, with their vdisks
+# under the domains share. The disk layout is the primary path's (see
+# unraid-6.12-xfs-single-parity): single parity, three XFS data disks and a
+# btrfs cache.
+#
+# libvirt.img is built the way Unraid's VM Manager keeps it, from the public
+# unraid/webgui source (tag 7.3.2):
+#   - a btrfs loop image of IMAGE_SIZE GiB (domain.cfg, default 1) at
+#     IMAGE_FILE, mounted at /etc/libvirt (etc/rc.d/rc.libvirt,
+#     emhttp/plugins/dynamix.vm.manager/scripts/libvirtconfig);
+#   - each domain as qemu/<name>.xml, with the metadata element
+#     <vmtemplate xmlns="http://unraid" .../> (include/libvirt.php);
+#   - UEFI guests: the loader /usr/share/qemu/ovmf-x64/OVMF_CODE-pure-efi.fd
+#     (OVMF_CODE-pure-efi-tpm.fd with a TPM) and a per-domain
+#     qemu/nvram/<uuid>_VARS-pure-efi[-tpm].fd (include/libvirt.php);
+#   - qemu/swtpm/tpm-states, qemu/snapshot and qemu/snapshotdb, which the
+#     service creates when it starts (rc.libvirt).
+# The domain XML in libvirt/qemu/ is authored for this fixture, in the shape
+# libvirt.php generates; nothing is copied from a real server.
+#
+# Options (--option, or OPTION= for the make targets) place libvirt.img:
+#   array  the default: /mnt/user/system/libvirt/libvirt.img on disk2
+#   alt    a non-default IMAGE_FILE, /mnt/user/system/vmmanager/libvirt.img
+#   cache  on the cache pool, as on many real servers: the scan warns that it
+#          is lost with the cache unless Phase A step 5 moves it
+unraid_version=6.12.15
+unraid_release=2025-03-25
+default_option=array
+expect_parity_signature=xfs
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2 xfs=rmapbt-nrext64
+disk disk3  kind=data   fs=xfs   size=320M target=disk3
+disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-with-vms
+# An option other than the default keeps only the capture files that depend on it, in options/<option>/flash/config/hoserva/.
+include ../common/spec-flash

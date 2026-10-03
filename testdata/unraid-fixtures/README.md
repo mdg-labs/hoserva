@@ -17,9 +17,15 @@ common/                  shared by every variant
   seed                   which seed files apply, plus variant-only data
   flash/                 files laid over common/flash/, including config/hoserva/,
                          the committed Phase A capture
+  options/<name>/        only where a variant has options (unraid-with-vms): the
+                         option's seed and a flash/ laid over the variant's
+  libvirt/               only unraid-with-vms: the tree of its libvirt.img, one
+                         qemu/<name>.xml per domain
 ```
 
 Build and check a variant with `make lab-unraid-fixture` and `make lab-unraid-verify`
 (L2, loop devices) or `make vm-unraid-fixture` (L3, the lab's guest); regenerate a
-variant's capture with `make vm-unraid-capture`. All three take `VARIANT=<variant>`.
+variant's capture with `make vm-unraid-capture`. All three take `VARIANT=<variant>`,
+and `OPTION=<name>` for a variant with options (`unraid-with-vms`: `array`, the
+default, `alt` and `cache`).
 Doc 06 §5 describes what is built and what is recorded.

@@ -4,8 +4,14 @@
 # zips, and the expected result, without Unraid. No agent runs Unraid or
 # connects to a real Unraid server (D20).
 #
-#   unraid-fixture.sh --tier l2|l3 <variant>             build a variant
-#   unraid-fixture.sh --tier l2|l3 --verify <variant>    re-read it and diff
+#   unraid-fixture.sh --tier l2|l3 [--option <name>] <variant>             build a variant
+#   unraid-fixture.sh --tier l2|l3 [--option <name>] --verify <variant>    re-read it and diff
+#
+# A variant with an options/ directory (unraid-with-vms) builds one of its
+# options: --option, or HOSERVA_FIXTURE_OPTION, or the spec's default_option.
+# An option adds its own seed (options/<name>/seed) and lays options/<name>/flash
+# over the variant's flash tree. A non-default option builds under
+# <variant>-<option> so it never collides with the default one.
 #
 # It runs as root on whichever system owns the block devices, never on the
 # development host:
@@ -13,18 +19,24 @@
 #       backed by images under this lab's own /lab/<id>/unraid/<variant>/img;
 #   l3  inside the lab's L3 guest (make vm-unraid-fixture), on the guest's own
 #       virtio array disks, found by the serial scripts/vm/create-vm.sh gave
-#       them.
+#       them. Each must be exactly its spec size= (make vm-up VARIANT=<variant>
+#       creates them so); any other size is refused before a disk is written.
 # Any other device is refused. A variant is defined in
 # testdata/unraid-fixtures/<variant>/: spec (disk roles, filesystems, sizes),
 # seed (data), flash/ (the authored flash tree laid over common/flash).
 #
-# What it writes under its output directory (l2: /lab/<id>/unraid/<variant>/,
-# l3: /srv/unraid-fixtures/<variant>/):
+# What it writes under its output directory (l2: /lab/<id>/unraid/<run>/,
+# l3: /srv/unraid-fixtures/<run>/, <run> being the variant, plus -<option> for
+# a non-default option):
 #   expected/manifest.sha256   every file: sha256, size, mode, owner, disk,
 #                              path; per-disk and per-share counts and bytes
 #   expected/entries.tsv       directories, symlinks, FIFOs, sockets, device
 #                              nodes, sparse files and user.* attributes
 #   expected/layout.txt        partition scheme, filesystem facts, parity
+#   expected/domains.txt       only when libvirt.img exists at domain.cfg's
+#                              IMAGE_FILE: where it is, and each libvirt
+#                              domain it holds with its vdisks (sha256),
+#                              firmware, bridges and passthrough addresses
 #   expected/flash.sha256      every file of the flash tree
 #   expected/flash-backup.zip  the flash as Unraid's flash_backup packs it
 #   expected/flash-hand-zipped.zip   the flash as a user zipping /boot would
@@ -48,6 +60,8 @@ die() { printf 'unraid-fixture: %s\n' "$*" >&2; exit 1; }
 
 TIER=""
 VARIANT=""
+OPTION=""
+RUN=""
 MODE=build
 FIXTURES=""
 VDIR=""
@@ -62,6 +76,9 @@ WORK=""
 SPEC_VERSION=""
 SPEC_RELEASE=""
 SPEC_EXPECT_PARITY_SIGNATURE=""
+LV_MNT=""
+LV_LOOP=""
+LV_LOCATION=""
 SLOTS=()
 APPLEDOUBLE=()
 declare -A D_KIND D_FS D_SIZE D_TARGET D_POOL D_XFS
@@ -133,6 +150,7 @@ parse_spec() {
       unraid_version=*) SPEC_VERSION=${line#*=} ;;
       unraid_release=*) SPEC_RELEASE=${line#*=} ;;
       expect_parity_signature=*) SPEC_EXPECT_PARITY_SIGNATURE=${line#*=} ;;
+      default_option=*) ;; # read by resolve_option
       include\ *) parse_spec "$dir/${line#include }" ;;
       appledouble\ *) APPLEDOUBLE+=("${line#appledouble }") ;;
       disk\ *) parse_disk "$line" ;;
@@ -174,7 +192,23 @@ serial_of() {  # slot -> the serial rendered into the flash tree
 
 # ----------------------------------------------------------------- tier
 
+resolve_option() {
+  local opt=${OPTION:-${HOSERVA_FIXTURE_OPTION:-}} def
+  def=$(sed -n 's/^default_option=//p' "$VDIR/spec")
+  if [[ -d $VDIR/options ]]; then
+    [[ $def =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "$VARIANT has options but its spec names no default_option"
+    OPTION=${opt:-$def}
+    [[ $OPTION =~ ^[a-z0-9][a-z0-9-]*$ && -d $VDIR/options/$OPTION ]] || die "$VARIANT has no option '$OPTION'"
+  else
+    [[ -z $opt ]] || die "$VARIANT has no options, but option '$opt' was asked for"
+    OPTION=""
+  fi
+  RUN=$VARIANT
+  if [[ -n $OPTION && $OPTION != "$def" ]]; then RUN=$VARIANT-$OPTION; fi
+}
+
 init_tier() {
+  local base
   [[ $EUID -eq 0 ]] || die "must run as root, inside the lab container or the L3 guest"
   [[ ${HOSERVA_LAB_ID:-} =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ && $HOSERVA_LAB_ID != *..* ]] \
     || die "set a valid HOSERVA_LAB_ID"
@@ -182,23 +216,25 @@ init_tier() {
     l2)
       LAB="/lab/$HOSERVA_LAB_ID"
       if [[ ! -d $LAB ]] || ! mountpoint -q "$LAB"; then die "$LAB is not this lab's mount: run inside the lab container (make lab-unraid-fixture)"; fi
-      OUT="$LAB/unraid/$VARIANT"
+      base="$LAB/unraid"
       ;;
     l3)
       systemd-detect-virt --vm --quiet || die "not inside a virtual machine: run inside the L3 guest (make vm-unraid-fixture)"
       if systemd-detect-virt --container --quiet; then die "inside a container, not the L3 guest"; fi
-      OUT="${HOSERVA_FIXTURE_OUT:-/srv/unraid-fixtures}/$VARIANT"
+      base="${HOSERVA_FIXTURE_OUT:-/srv/unraid-fixtures}"
       ;;
     *) die "--tier must be l2 or l3" ;;
   esac
-  IMG="$OUT/img"
-  MNT="$OUT/mnt"
-  EXP="$OUT/expected"
-  FLASH="$OUT/flash"
   FIXTURES=$(realpath -- "${HOSERVA_FIXTURES_DIR:-$SCRIPT_DIR/../../testdata/unraid-fixtures}")
   [[ $VARIANT =~ ^unraid-[a-z0-9][a-z0-9.-]*$ ]] || die "bad variant name '$VARIANT'"
   VDIR="$FIXTURES/$VARIANT"
   [[ -d $VDIR && -f $VDIR/spec && -f $VDIR/seed ]] || die "no variant '$VARIANT' under $FIXTURES"
+  resolve_option
+  OUT="$base/$RUN"
+  IMG="$OUT/img"
+  MNT="$OUT/mnt"
+  EXP="$OUT/expected"
+  FLASH="$OUT/flash"
 }
 
 # L2: a loop device is accepted only when losetup itself reports it attached
@@ -240,6 +276,15 @@ assert_own_part() {  # slot
     l2) assert_own_loop "${PART[$slot]}" "${WHOLE[$slot]}" ;;
     l3) assert_own_virtio "$slot" "${WHOLE[$slot]}" ;;
   esac
+}
+
+# L3: the guest disk must be exactly the size the spec gives it, or the build
+# would lay out other partitions than the L2 build of the same variant.
+assert_spec_size() {  # slot bytes
+  local slot=$1 actual=$2
+  [[ $actual =~ ^[0-9]+$ ]] || die "refusing $(role_of "$slot"): cannot read the size of its disk"
+  ((actual == D_SIZE[$slot])) \
+    || die "refusing $(role_of "$slot") (slot $slot): the guest disk is $actual bytes, the spec says ${D_SIZE[$slot]} bytes (make vm-up VARIANT=$VARIANT sizes the disks from the spec)"
 }
 
 l3_whole_dev() {
@@ -336,8 +381,6 @@ new_disk() {  # slot (build only)
       ;;
     l3)
       whole=${WHOLE[$slot]}
-      bytes=$(blockdev --getsize64 "$whole")
-      D_SIZE[$slot]=$bytes
       wipefs -a -q "$whole"
       partition_script "$bytes" | sfdisk -q "$whole" >/dev/null
       udevadm settle
@@ -402,6 +445,13 @@ unmount_all() {
 cleanup() {
   local rc=$? m dev img
   set +e
+  if [[ -n $LV_MNT ]] && mountpoint -q "$LV_MNT" 2>/dev/null; then umount "$LV_MNT" 2>/dev/null; fi
+  if [[ -n $LV_LOOP ]]; then
+    img=$(losetup --noheadings --output BACK-FILE "$LV_LOOP" 2>/dev/null)
+    case $img in
+      "$MNT"/*) losetup -d "$LV_LOOP" ;;
+    esac
+  fi
   for m in "${MOUNTED[@]}"; do
     if mountpoint -q "$m" 2>/dev/null; then umount "$m" 2>/dev/null; fi
   done
@@ -413,8 +463,87 @@ cleanup() {
       "$IMG"/*.img*) losetup -d "$dev" ;;
     esac
   done
-  if [[ -n $WORK ]]; then rm -rf -- "$WORK"; fi
+  if [[ -n $WORK ]] && ! { [[ -n $LV_MNT ]] && mountpoint -q "$LV_MNT" 2>/dev/null; }; then rm -rf --one-file-system -- "$WORK"; fi
+  for m in ${LV_MNT:+"$LV_MNT"} "${MOUNTED[@]}"; do
+    if mountpoint -q "$m" 2>/dev/null; then
+      printf 'unraid-fixture: cannot unmount %s; make lab-destroy clears it\n' "$m" >&2
+      if ((rc == 0)); then rc=1; fi
+    fi
+  done
   return $rc
+}
+
+# ------------------------------------------------------------- libvirt.img
+
+# Reads a quoted KEY="value" of the flash tree's domain.cfg.
+flash_domain_cfg() {  # key
+  sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$FLASH/config/domain.cfg" | head -n 1
+}
+
+# A loop device is accepted only when losetup reports it attached to exactly
+# this one file on one of the fixture's own mounted disks.
+assert_own_lv_loop() {  # dev image
+  local dev=$1 img=$2 resolved
+  [[ $dev =~ ^/dev/loop[0-9]+$ ]] || die "refusing non-loop device: $dev"
+  case $(realpath -m -- "$img") in
+    "$(realpath -m -- "$MNT")"/*) ;;
+    *) die "refusing $img: not a file on one of the fixture's mounted disks" ;;
+  esac
+  resolved=$(losetup -j "$img" --output NAME --noheadings 2>/dev/null | tr -d '[:space:]')
+  [[ -n $resolved && $resolved == "$dev" ]] || die "refusing $dev: not the only loop device backed by $img"
+}
+
+lv_attach() {  # image rw|ro
+  local img=$1 mode=$2 opts=()
+  if [[ $mode == ro ]]; then opts=(--read-only); fi
+  LV_LOOP=$(losetup --find --show "${opts[@]}" -- "$img")
+  assert_own_lv_loop "$LV_LOOP" "$img"
+  LV_MNT="$WORK/libvirt"
+  mkdir -p -- "$LV_MNT"
+  case $mode in
+    rw) mount -t btrfs -o noatime "$LV_LOOP" "$LV_MNT" ;;
+    ro) mount -t btrfs -o ro,rescue=nologreplay,noatime "$LV_LOOP" "$LV_MNT" ;;
+  esac
+}
+
+lv_detach() {
+  umount "$LV_MNT" || die "cannot unmount $LV_MNT"
+  losetup -d "$LV_LOOP"
+  LV_MNT=""
+  LV_LOOP=""
+}
+
+# seed op libvirtimg: the image of Unraid's VM Manager at $T, a btrfs loop
+# image of domain.cfg's IMAGE_SIZE GiB holding the variant's authored tree
+# (libvirt/qemu/*.xml) and what the libvirt service itself creates.
+seed_libvirt_img() {  # slot path args...
+  local path=$2 size tree src declared gib nv xmls=()
+  shift 2
+  size=$(arg_value size "$@") || die "seed: libvirtimg: no size"
+  tree=$(arg_value tree "$@") || die "seed: libvirtimg: no tree"
+  [[ $tree =~ ^[a-z][a-z0-9-]*$ ]] || die "seed: libvirtimg: bad tree '$tree'"
+  src="$VDIR/$tree"
+  [[ -d $src/qemu ]] || die "seed: libvirtimg: $src has no qemu/"
+  declared=$(flash_domain_cfg IMAGE_FILE)
+  [[ $declared == "/mnt/user/$path" ]] || die "seed: libvirtimg: placed at /mnt/user/$path, but domain.cfg's IMAGE_FILE is '$declared'"
+  gib=$(flash_domain_cfg IMAGE_SIZE)
+  size=$(numfmt --from=iec "$size") || die "seed: libvirtimg: bad size"
+  [[ $gib =~ ^[1-9][0-9]*$ ]] || die "seed: libvirtimg: domain.cfg has no usable IMAGE_SIZE ('$gib')"
+  ((size == gib * 1073741824)) || die "seed: libvirtimg: size $size is not domain.cfg's IMAGE_SIZE ($gib GiB)"
+  [[ ! -e $T && ! -L $T ]] || die "seed: libvirtimg: $T exists"
+  truncate -s "$size" "$T"
+  mkfs.btrfs -q -f "$T"
+  lv_attach "$T" rw
+  cp -a --no-preserve=ownership -- "$src/." "$LV_MNT/"
+  mkdir -p -- "$LV_MNT/qemu/nvram" "$LV_MNT/qemu/snapshot" "$LV_MNT/qemu/snapshotdb" "$LV_MNT/qemu/swtpm/tpm-states"
+  xmls=("$src"/qemu/*.xml)
+  [[ -f ${xmls[0]} ]] || die "seed: libvirtimg: $src/qemu holds no domain XML"
+  while IFS= read -r nv; do
+    [[ $nv == /etc/libvirt/qemu/nvram/* && $nv != *..* ]] || die "seed: libvirtimg: unexpected nvram path '$nv'"
+    head -c 131072 /dev/urandom >"$LV_MNT/${nv#/etc/libvirt/}"
+  done < <(cat -- "${xmls[@]}" | sed -n 's|.*<nvram>\([^<]*\)</nvram>.*|\1|p')
+  sync
+  lv_detach
 }
 
 # -------------------------------------------------------------- seeding
@@ -501,6 +630,7 @@ seed_run() {
           head -c "$len" /dev/urandom | dd of="$T" bs=1 seek="$off" conv=notrunc status=none
         done
         ;;
+      libvirtimg) seed_libvirt_img "$slot" "$path" "${f[@]:3}" ;;
       xattr) apply_xattrs "$T" "${f[@]:3}" ;;
       mode) DEFERRED_MODES+=("$T|$(arg_value mode "${f[@]:3}")") ;;
       *) die "seed: unknown operation '$op'" ;;
@@ -670,6 +800,101 @@ parity_facts() {  # slot
   esac
 }
 
+# ------------------------------------------------------------ domains
+
+# Reads every domain of the libvirt.img at domain.cfg's IMAGE_FILE, when one
+# exists on a disk, and writes $1/domains.txt: the image, then each domain's
+# firmware, bridges, vdisks (sha256 from the manifest scan), passthrough
+# addresses and nvram. Sets LV_LOCATION to where the image is, array or cache.
+scan_libvirt() {  # scan-dir
+  local scan=$1 declared rel s hit=() slot img rows kind name a b c facts vfacts
+  declared=$(flash_domain_cfg IMAGE_FILE)
+  [[ $declared == /mnt/user/* ]] || return 0
+  rel=${declared#/mnt/user/}
+  for s in "${SLOTS[@]}"; do
+    if [[ ${D_KIND[$s]} == parity ]]; then continue; fi
+    if [[ -f $MNT/$s/$rel ]]; then hit+=("$s"); fi
+  done
+  ((${#hit[@]} > 0)) || return 0
+  ((${#hit[@]} == 1)) || die "libvirt.img is on more than one disk (${hit[*]})"
+  slot=${hit[0]}
+  img="$MNT/$slot/$rel"
+  case ${D_KIND[$slot]} in
+    data) LV_LOCATION=array ;;
+    pool) LV_LOCATION=cache ;;
+  esac
+  rows="$WORK/domains.rows"
+  facts=$(domain_file_facts "$scan" "$rel") || die "libvirt.img is not in the scan of its disk"
+  lv_attach "$img" ro
+  perl -e '
+    use strict;
+    use warnings;
+    my $dir = shift @ARGV;
+    opendir(my $dh, "$dir/qemu") or die "no qemu/ in the image: $!";
+    my @files = sort grep { /\.xml$/ } readdir $dh;
+    die "the image holds no domain XML" unless @files;
+    for my $f (@files) {
+      open(my $fh, "<:raw", "$dir/qemu/$f") or die "open $f: $!";
+      my $x = do { local $/; <$fh> };
+      close $fh;
+      my ($name) = $x =~ m{<name>([^<]+)</name>} or die "$f: no <name>";
+      die "$f: the file name is not the domain name \"$name\"" unless "$name.xml" eq $f;
+      my ($uuid) = $x =~ m{<uuid>([^<]+)</uuid>} or die "$f: no <uuid>";
+      my ($loader) = $x =~ m{<loader[^>]*>([^<]+)</loader>};
+      my ($nvram) = $x =~ m{<nvram>([^<]+)</nvram>};
+      my @bridges = $x =~ m{<interface type=.bridge.>.*?<source bridge=.([^\x27"]+).}gs;
+      printf "domain\t%s\tfile=qemu/%s\tuuid=%s\tfirmware=%s\tloader=%s\tbridge=%s\n", $name, $f, $uuid,
+        defined $loader ? "uefi" : "bios", $loader // "-", @bridges ? join(",", @bridges) : "-";
+      my @disks = $x =~ m{<disk type=.file. device=.(\w+).>(.*?)</disk>}gs;
+      my $ndisks = () = $x =~ m{<disk }g;
+      die "$f: a disk that is not a file-backed one" unless $ndisks * 2 == @disks;
+      while (my ($dev, $body) = splice(@disks, 0, 2)) {
+        my ($src) = $body =~ m{<source file=.([^\x27"]+).} or die "$f: a disk with no source file";
+        printf "%s\t%s\t%s\n", $dev eq "cdrom" ? "media" : "vdisk", $name, $src;
+      }
+      for my $h ($x =~ m{<hostdev [^>]*type=.pci.[^>]*>(.*?)</hostdev>}gs) {
+        my ($src) = $h =~ m{<source>(.*?)</source>}s or die "$f: a pci hostdev with no source";
+        my ($d, $b, $s, $fn) = $src =~ m{<address domain=.0x([0-9a-f]+). bus=.0x([0-9a-f]+). slot=.0x([0-9a-f]+). function=.0x([0-9a-f]+).} or die "$f: a pci hostdev with no address";
+        printf "pci\t%s\t%04x:%02x:%02x.%x\n", $name, hex($d), hex($b), hex($s), hex($fn);
+      }
+      for my $h ($x =~ m{<hostdev [^>]*type=.usb.[^>]*>(.*?)</hostdev>}gs) {
+        my ($v) = $h =~ m{<vendor id=.0x([0-9a-f]+).} or die "$f: a usb hostdev with no vendor";
+        my ($p) = $h =~ m{<product id=.0x([0-9a-f]+).} or die "$f: a usb hostdev with no product";
+        printf "usb\t%s\t%04x:%04x\n", $name, hex($v), hex($p);
+      }
+      printf "nvram\t%s\t%s\n", $name, $nvram if defined $nvram;
+    }
+  ' -- "$LV_MNT" >"$rows" || die "cannot read the domains of $img"
+  {
+    printf '# hoserva unraid fixture domains, version 1\n'
+    printf '# image: where libvirt.img is; domain: file, uuid, firmware, loader, bridges;\n'
+    printf '# vdisk, media, nvram: owner, path, sha256 and bytes (/etc/libvirt/... for nvram); pci, usb: owner, address (vendor:product for usb)\n'
+    printf '# expect-scan: the status of the scan'"'"'s libvirt.img row once the capture is read\n'
+    printf 'image\t%s\tdisk=%s\tlocation=%s\t%s\n' "$declared" "$slot" "$LV_LOCATION" "$facts"
+    while IFS=$'\t' read -r kind name a b c; do
+      case $kind in
+        vdisk | media)
+          [[ $a == /mnt/user/* ]] || die "domain '$name': $kind '$a' is not under /mnt/user/"
+          vfacts=$(domain_file_facts "$scan" "${a#/mnt/user/}") || die "domain '$name': $kind '$a' is not on exactly one disk"
+          printf '%s\t%s\t%s\t%s\n' "$kind" "$name" "$a" "$vfacts"
+          ;;
+        nvram)
+          [[ $a == /etc/libvirt/qemu/nvram/* && -f $LV_MNT/${a#/etc/libvirt/} ]] || die "domain '$name': its nvram '$a' is not in the image"
+          printf 'nvram\t%s\t%s\tsha256=%s\tbytes=%s\n' "$name" "$a" "$(sha256sum -- "$LV_MNT/${a#/etc/libvirt/}" | cut -d' ' -f1)" "$(stat -c %s -- "$LV_MNT/${a#/etc/libvirt/}")"
+          ;;
+        *) printf '%s\t%s\t%s' "$kind" "$name" "$a"; if [[ -n ${b:-} ]]; then printf '\t%s' "$b"; fi; if [[ -n ${c:-} ]]; then printf '\t%s' "$c"; fi; printf '\n' ;;
+      esac
+    done <"$rows"
+    if [[ $LV_LOCATION == cache ]]; then printf 'expect-scan\tlibvirt.img\twarn\n'; else printf 'expect-scan\tlibvirt.img\tinfo\n'; fi
+  } >"$scan/domains.txt"
+  lv_detach
+}
+
+# sha256 and bytes of the one file with this path under a share, from the scan.
+domain_file_facts() {  # scan-dir path-below-/mnt/user
+  cat -- "$1"/*.files | LC_ALL=C awk -F'\t' -v p="$2" '$6 == p { n++; h = $1; b = $2 } END { if (n != 1) exit 1; printf "sha256=%s\tbytes=%s", h, b }'
+}
+
 # ------------------------------------------------------------- manifest
 
 render_expected() {  # scan-dir out-dir
@@ -684,6 +909,7 @@ render_expected() {  # scan-dir out-dir
   {
     printf '# hoserva unraid fixture manifest, version 1\n'
     printf '# variant: %s\n' "$VARIANT"
+    if [[ -n $OPTION ]]; then printf '# option: %s\n' "$OPTION"; fi
     printf '# columns: sha256, size, mode, owner, disk, path (tab separated; the path is relative to the disk root)\n'
     for s in "${SLOTS[@]}"; do
       if [[ ${D_KIND[$s]} == parity ]]; then continue; fi
@@ -700,6 +926,7 @@ render_expected() {  # scan-dir out-dir
   {
     printf '# hoserva unraid fixture layout, version 1\n'
     printf 'variant %s\n' "$VARIANT"
+    if [[ -n $OPTION ]]; then printf 'option %s\n' "$OPTION"; fi
     printf 'unraid_version %s\n' "$SPEC_VERSION"
     for s in "${SLOTS[@]}"; do
       line="disk $s kind=${D_KIND[$s]} scheme=${LAYOUT_SCHEME[$s]} start=${LAYOUT_START[$s]} sectors=${LAYOUT_SECTORS[$s]} type=${LAYOUT_TYPE[$s]} fs=${D_FS[$s]}"
@@ -715,6 +942,7 @@ render_expected() {  # scan-dir out-dir
       printf 'parity %s kind=%s window=%s sha256=%s signature=%s data=%s\n' "$s" "${PARITY_KIND[$s]}" "$PARITY_WINDOW" "${PARITY_SHA[$s]}" "${PARITY_SIG[$s]}" "${f%,}"
     done
   } >"$out/layout.txt"
+  if [[ -f $scan/domains.txt ]]; then cp -- "$scan/domains.txt" "$out/domains.txt"; fi
 }
 
 declare -A LAYOUT_SCHEME LAYOUT_START LAYOUT_SECTORS LAYOUT_TYPE
@@ -779,6 +1007,7 @@ build_flash() {
   mkdir -p -- "$FLASH"
   cp -a --no-preserve=ownership -- "$FIXTURES/common/flash/." "$FLASH/"
   if [[ -d $VDIR/flash ]]; then cp -a --no-preserve=ownership -- "$VDIR/flash/." "$FLASH/"; fi
+  if [[ -n $OPTION && -d $VDIR/options/$OPTION/flash ]]; then cp -a --no-preserve=ownership -- "$VDIR/options/$OPTION/flash/." "$FLASH/"; fi
   mkdir -p -- "$FLASH/config/hoserva"
   printf '# Version %s %s\nAuthored for Hoserva migration fixtures; not a release note.\n' "$SPEC_VERSION" "$SPEC_RELEASE" >"$FLASH/changes.txt"
   gen_disk_cfg >"$FLASH/config/disk.cfg"
@@ -815,13 +1044,17 @@ build_flash() {
 }
 
 check_capture() {  # flash-dir
-  local flash=$1 at at_epoch newest=0 m f
+  local flash=$1 at at_epoch newest=0 m f loc
   if [[ ! -f $flash/config/hoserva/capture.json ]]; then
     [[ ${HOSERVA_FIXTURE_NO_CAPTURE:-} == 1 ]] && return 0
     die "$VARIANT has no capture under flash/config/hoserva/: generate it with make vm-unraid-capture"
   fi
   [[ -f $flash/config/hoserva/containers.json && -f $flash/config/hoserva/networks.json && -f $flash/config/hoserva/disks.ini ]] \
     || die "$VARIANT: the capture is incomplete"
+  if [[ -n $LV_LOCATION ]]; then
+    loc=$(sed -n 's/.*"libvirt_img_location": *"\([^"]*\)".*/\1/p' "$flash/config/hoserva/capture.json")
+    [[ $loc == "$LV_LOCATION" ]] || die "capture.json records libvirt.img as '${loc:-nothing}', but it is on the $LV_LOCATION: regenerate the capture with make vm-unraid-capture"
+  fi
   at=$(sed -n 's/.*"captured_at": *"\([^"]*\)".*/\1/p' "$flash/config/hoserva/capture.json")
   at_epoch=$(date -u -d "$at" +%s) || die "capture.json: bad captured_at '$at'"
   while IFS= read -r -d '' f; do
@@ -904,6 +1137,7 @@ build() {
     for s in "${SLOTS[@]}"; do
       WHOLE[$s]=$(l3_whole_dev "$s")
       assert_unused "${WHOLE[$s]}"
+      assert_spec_size "$s" "$(blockdev --getsize64 "${WHOLE[$s]}" 2>/dev/null)"
     done
   fi
   for s in "${SLOTS[@]}"; do new_disk "$s"; done
@@ -914,8 +1148,13 @@ build() {
     format_part "$s"
     mount_fs "$s" rw
   done
+  build_flash
   DEFERRED_MODES=()
   seed_run "$VDIR/seed"
+  if [[ -n $OPTION ]]; then
+    [[ -f $VDIR/options/$OPTION/seed ]] || die "option '$OPTION' has no seed"
+    seed_run "$VDIR/options/$OPTION/seed"
+  fi
   scan="$WORK/scan"
   mkdir -p -- "$scan"
   for s in "${SLOTS[@]}"; do
@@ -929,6 +1168,7 @@ build() {
     scan_tree "$MNT/$s" "$s" "$scan/$s.files" "$scan/$s.entries"
     fs_facts "$s"
   done
+  scan_libvirt "$scan"
   unmount_all
   sync
   for s in "${SLOTS[@]}"; do
@@ -940,7 +1180,6 @@ build() {
   done
   assert_parity_signature
   render_expected "$scan" "$EXP"
-  build_flash
   make_zips
   printf 'unraid-fixture: built %s (%s) under %s\n' "$VARIANT" "$TIER" "$OUT"
 }
@@ -960,8 +1199,9 @@ verify() {
     mount_fs "$s" ro
     scan_tree "$MNT/$s" "$s" "$scan/$s.files" "$scan/$s.entries"
     fs_facts "$s"
-    unmount_all
   done
+  scan_libvirt "$scan"
+  unmount_all
   for s in "${SLOTS[@]}"; do
     if [[ ${D_KIND[$s]} == parity ]]; then parity_facts "$s"; fi
   done
@@ -971,6 +1211,9 @@ verify() {
   for f in manifest.sha256 entries.tsv layout.txt; do
     diff -u "$EXP/$f" "$WORK/new/$f" >&2 || die "$f differs from what the disks hold"
   done
+  if [[ -e $EXP/domains.txt || -e $WORK/new/domains.txt ]]; then
+    diff -u "$EXP/domains.txt" "$WORK/new/domains.txt" >&2 || die "domains.txt differs from what libvirt.img holds"
+  fi
   verify_zips
   printf 'unraid-fixture: %s verified: %s files across %s disks match the manifest\n' "$VARIANT" \
     "$(grep -vc '^#' "$EXP/manifest.sha256")" "$(grep -c '^# disk ' "$EXP/manifest.sha256")"
@@ -982,6 +1225,11 @@ main() {
       --tier)
         [[ $# -ge 2 ]] || die "--tier needs a value"
         TIER=$2
+        shift 2
+        ;;
+      --option)
+        [[ $# -ge 2 && -n $2 ]] || die "--option needs a value"
+        OPTION=$2
         shift 2
         ;;
       --verify)
@@ -996,7 +1244,7 @@ main() {
         ;;
     esac
   done
-  [[ -n $VARIANT && -n $TIER ]] || die "usage: unraid-fixture.sh --tier l2|l3 [--verify] <variant>"
+  [[ -n $VARIANT && -n $TIER ]] || die "usage: unraid-fixture.sh --tier l2|l3 [--option <name>] [--verify] <variant>"
   init_tier
   parse_spec "$VDIR/spec"
   ((${#SLOTS[@]} > 0)) || die "the spec declares no disks"
