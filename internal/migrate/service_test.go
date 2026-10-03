@@ -11,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -438,8 +440,10 @@ func TestService_RecoverMarksAnInterruptedScanFailed(t *testing.T) {
 	if err := s.StartScan(context.Background(), bytes.NewReader(zipOf(t, files, false)), ScanOptions{}, func(context.Context, string) (string, error) { return "job-1", nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(s.Dir, "upload-orphan.zip"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, orphan := range []string{"upload-orphan.zip", "staging-orphan.zip"} {
+		if err := os.WriteFile(filepath.Join(s.Dir, orphan), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := s.Recover(ctx0); err != nil {
 		t.Fatal(err)
@@ -450,6 +454,64 @@ func TestService_RecoverMarksAnInterruptedScanFailed(t *testing.T) {
 	}
 	if names := dirEntries(t, s.Dir); len(names) != 1 {
 		t.Errorf("directory = %v, want the interrupted upload only", names)
+	}
+}
+
+// stallingReader signals once it is first read and then blocks until release
+// is closed, standing in for a client whose upload is slow to arrive.
+type stallingReader struct {
+	r       io.Reader
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *stallingReader) Read(p []byte) (int, error) {
+	s.once.Do(func() {
+		close(s.started)
+		<-s.release
+	})
+	return s.r.Read(p)
+}
+
+func TestService_AnUploadInFlightDoesNotBlockTheSession(t *testing.T) {
+	s, _, files := newService(t, "unraid-7x-xfs-single-parity")
+	body := &stallingReader{r: bytes.NewReader(zipOf(t, files, false)), started: make(chan struct{}), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.StartScan(context.Background(), body, ScanOptions{}, func(context.Context, string) (string, error) { return "job-1", nil })
+	}()
+	<-body.started
+
+	// Each session operation runs in its own goroutine and is given a deadline:
+	// one blocked behind the upload releases it and fails rather than hanging.
+	within := func(op string, f func() error) {
+		t.Helper()
+		res := make(chan error, 1)
+		go func() { res <- f() }()
+		select {
+		case err := <-res:
+			if err != nil {
+				t.Errorf("%s during an upload = %v", op, err)
+			}
+		case <-time.After(5 * time.Second):
+			close(body.release)
+			<-done
+			t.Fatalf("%s waited on an upload still arriving", op)
+		}
+	}
+	within("State", func() error { _, err := s.State(ctx0); return err })
+	within("Forget", func() error { return s.Forget(ctx0) })
+
+	close(body.release)
+	if err := <-done; err != nil {
+		t.Fatalf("StartScan = %v", err)
+	}
+	if st, _ := s.State(ctx0); st.Phase != PhaseScanning {
+		t.Errorf("phase = %s, want scanning", st.Phase)
+	}
+	if names := dirEntries(t, s.Dir); len(names) != 1 || !strings.HasPrefix(names[0], "upload-") {
+		t.Errorf("session directory = %v, want the accepted upload only", names)
 	}
 }
 

@@ -77,6 +77,14 @@ type State struct {
 	Report    *Report
 }
 
+// An upload is written under stagingPrefix while it arrives and is inspected,
+// and renamed to uploadPrefix once StartScan accepts it. Only uploadPrefix
+// files are pruned.
+const (
+	stagingPrefix = "staging-"
+	uploadPrefix  = "upload-"
+)
+
 // Service keeps the one migration session: its record in the migration_session
 // table (D4) and, beside it in Dir, the uploaded zip the record names. The zip
 // holds secrets (password hashes, SSH host keys, WireGuard and rclone config, the
@@ -224,7 +232,7 @@ func (s *Service) prune(sess *session) error {
 	}
 	var errs []error
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "upload-") && !keep[e.Name()] {
+		if strings.HasPrefix(e.Name(), uploadPrefix) && !keep[e.Name()] {
 			if err := os.Remove(s.path(e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				errs = append(errs, err)
 			}
@@ -272,7 +280,28 @@ func (s *Service) Recover(ctx context.Context) error {
 		}
 	}
 	s.recoverStick(ctx)
+	if err := s.removeStaging(); err != nil {
+		return err
+	}
 	return s.prune(sess)
+}
+
+// removeStaging removes the uploads a previous process was still receiving.
+// Only Recover calls it: at any other time a staging file is a live upload.
+func (s *Service) removeStaging() error {
+	entries, err := os.ReadDir(s.Dir)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), stagingPrefix) {
+			if err := os.Remove(s.path(e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // StartScan stages the upload, refuses it unless it is a usable Flash Backup,
@@ -281,7 +310,60 @@ func (s *Service) Recover(ctx context.Context) error {
 // of the job it queued. A refusal, or a submit
 // that fails, leaves the session as it was and no staged file behind. Nothing
 // about the uploaded zip is ever modified.
+//
+// The body arrives and is inspected without s.mu held: a slow client would
+// otherwise stall every session operation, a running scan's commit among them,
+// for as long as its upload takes. Until it is accepted the file carries the
+// staging prefix, which prune never matches.
 func (s *Service) StartScan(ctx context.Context, upload io.Reader, opts ScanOptions, submit func(ctx context.Context, upload string) (jobID string, err error)) error {
+	if err := s.refuseWhileScanning(ctx); err != nil {
+		return err
+	}
+	name, size, err := s.stage(upload)
+	if err != nil {
+		return err
+	}
+	kept := false
+	defer func() {
+		if !kept {
+			_ = os.Remove(s.path(name))
+		}
+	}()
+	if err := s.inspectStaged(name, opts); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, err := s.load(ctx)
+	if err != nil {
+		return err
+	}
+	if running, _, err := s.scanOutcome(ctx, sess.Scan); err != nil {
+		return err
+	} else if running {
+		return ErrScanInProgress
+	}
+	accepted := uploadPrefix + strings.TrimPrefix(name, stagingPrefix)
+	if err := os.Rename(s.path(name), s.path(accepted)); err != nil {
+		return fmt.Errorf("staging the upload: %w", err)
+	}
+	name = accepted
+	if err := syncDir(s.Dir); err != nil {
+		return fmt.Errorf("staging the upload: %w", err)
+	}
+
+	rec := &scanRecord{File: name, Size: size, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout}
+	if err := s.queue(ctx, sess, rec, submit); err != nil {
+		return err
+	}
+	kept = true
+	return nil
+}
+
+// refuseWhileScanning refuses an upload before its body is read when a scan is
+// already running; StartScan checks again once the upload has arrived.
+func (s *Service) refuseWhileScanning(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.ensureDir(); err != nil {
@@ -296,32 +378,17 @@ func (s *Service) StartScan(ctx context.Context, upload io.Reader, opts ScanOpti
 	} else if running {
 		return ErrScanInProgress
 	}
+	return nil
+}
 
-	name, size, err := s.stage(upload)
-	if err != nil {
-		return err
-	}
-	staged := true
-	defer func() {
-		if staged {
-			_ = os.Remove(s.path(name))
-		}
-	}()
+func (s *Service) inspectStaged(name string, opts ScanOptions) error {
 	src, f, err := OpenZipFile(s.path(name))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := Inspect(src, opts); err != nil {
-		return err
-	}
-
-	rec := &scanRecord{File: name, Size: size, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout}
-	if err := s.queue(ctx, sess, rec, submit); err != nil {
-		return err
-	}
-	staged = false
-	return nil
+	_, err = Inspect(src, opts)
+	return err
 }
 
 // queue records rec as the session's scan and calls submit, which queues the
@@ -347,13 +414,14 @@ func (s *Service) queue(ctx context.Context, sess *session, rec *scanRecord, sub
 	return nil
 }
 
-// stage copies the upload to a new 0600 file in Dir, bounded by maxZipBytes.
+// stage copies the upload to a new 0600 staging file in Dir, bounded by
+// maxZipBytes.
 func (s *Service) stage(upload io.Reader) (name string, size int64, err error) {
 	var rnd [12]byte
 	if _, err := rand.Read(rnd[:]); err != nil {
 		return "", 0, err
 	}
-	name = "upload-" + hex.EncodeToString(rnd[:]) + ".zip"
+	name = stagingPrefix + hex.EncodeToString(rnd[:]) + ".zip"
 	f, err := os.OpenFile(s.path(name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", 0, err
