@@ -128,6 +128,12 @@ func (h *handler) SetAppdataBackupContainer(ctx context.Context, req *apiv1.SetA
 }
 
 func (h *handler) queueMockJob(typ apiv1.JobType) (*apiv1.Job, error) {
+	return h.queueMockJobIn(typ, apiv1.JobClassService)
+}
+
+// queueMockJobIn queues a job of typ in class, the same way for every job type
+// this mock queues.
+func (h *handler) queueMockJobIn(typ apiv1.JobType, class apiv1.JobClass) (*apiv1.Job, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.maintenance {
@@ -136,7 +142,7 @@ func (h *handler) queueMockJob(typ apiv1.JobType) (*apiv1.Job, error) {
 	j := apiv1.Job{
 		ID:        uuid.New(),
 		Type:      typ,
-		Class:     apiv1.JobClassService,
+		Class:     class,
 		Status:    apiv1.JobStatusQueued,
 		CreatedAt: time.Now().UTC(),
 	}

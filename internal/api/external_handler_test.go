@@ -355,3 +355,186 @@ func TestEjectAndMountExternalDisk_RunThroughTheBackupWriteGate(t *testing.T) {
 		t.Fatalf("mounts = %d, unmounts = %d; want 2 and 1", len(mounter.Mounts), len(mounter.Unmounts))
 	}
 }
+
+const unraidStickUUID = "ABCD-1234"
+
+func addUnraidStick(p *disk.FakeProvider) {
+	p.AddDisk("/dev/sdu", disk.Disk{Size: 16 * disk.GB, Filesystem: "vfat", Label: "UNRAID", FSUUID: unraidStickUUID})
+}
+
+func requireUnraidStickRefusal(t *testing.T, h *api.Handler, err error) {
+	t.Helper()
+	ae := apiError(t, h, err)
+	if ae.Response.Code != "unraid_stick" || ae.StatusCode != 409 {
+		t.Fatalf("refusal = (%d %q), want (409 unraid_stick)", ae.StatusCode, ae.Response.Code)
+	}
+}
+
+func registeredExternalLabels(t *testing.T, h *api.Handler) []string {
+	t.Helper()
+	rows, err := h.ArrayStore.External().ListExternalDisks(context.Background())
+	if err != nil {
+		t.Fatalf("ListExternalDisks (store): %v", err)
+	}
+	var labels []string
+	for _, r := range rows {
+		labels = append(labels, r.Label)
+	}
+	return labels
+}
+
+func TestListExternalDisks_DoesNotOfferTheUnraidStick(t *testing.T) {
+	h, p, _, _ := newExternalHandler(t)
+	addUnraidStick(p)
+	p.AddDisk("/dev/sdv", disk.Disk{Filesystem: "vfat", Label: "unraid", FSUUID: "EFGH-5678"})
+	p.AddDisk("/dev/sdw", disk.Disk{Filesystem: "vfat", Label: "USBDRIVE", FSUUID: "1111-2222"})
+	p.AddDisk("/dev/sdx", disk.Disk{Filesystem: "ext4", Label: "UNRAID", FSUUID: "uuid-ext4-unraid"})
+
+	got, err := h.ListExternalDisks(context.Background())
+	if err != nil {
+		t.Fatalf("ListExternalDisks: %v", err)
+	}
+	var devices []string
+	for _, d := range got.Disks {
+		devices = append(devices, d.Device)
+	}
+	if want := []string{"/dev/sde", "/dev/sdw", "/dev/sdx"}; !sameStrings(devices, want) {
+		t.Fatalf("offered %v, want %v: the vfat UNRAID stick (any case) is never offered, other vfat disks and other filesystems labelled UNRAID are", devices, want)
+	}
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, g := range got {
+		seen[g]++
+	}
+	for _, w := range want {
+		seen[w]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func TestRegisterExternalDisk_RefusesTheUnraidStick(t *testing.T) {
+	h, p, mounter, _ := newExternalHandler(t)
+	addUnraidStick(p)
+	p.AddDisk("/dev/sdv", disk.Disk{Filesystem: "vfat", Label: "unraid", FSUUID: "EFGH-5678"})
+	for _, dev := range []string{"/dev/sdu", "/dev/sdv"} {
+		_, err := h.RegisterExternalDisk(context.Background(), &apiv1.RegisterExternalDiskRequest{Device: dev, Label: "usbstick"})
+		requireUnraidStickRefusal(t, h, err)
+	}
+	if labels := registeredExternalLabels(t, h); len(labels) != 0 {
+		t.Fatalf("a refused register stored %v", labels)
+	}
+	if len(mounter.Mounts) != 0 {
+		t.Fatalf("mounted %+v", mounter.Mounts)
+	}
+}
+
+func TestExternalDisk_UnraidStickByLabelIsRefusedWithoutRegisteringOrWriting(t *testing.T) {
+	h, p, mounter, _ := newExternalHandler(t)
+	addUnraidStick(p)
+	ctx := context.Background()
+
+	_, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "UNRAID"})
+	requireUnraidStickRefusal(t, h, err)
+
+	plan := disk.ExternalFormatPlan(disk.AssignedDisk{Device: "/dev/sdu", Filesystem: disk.XFS})
+	_, err = h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: plan.Confirmation()}, apiv1.FormatExternalDiskParams{Label: "UNRAID"})
+	requireUnraidStickRefusal(t, h, err)
+
+	_, err = h.UpdateExternalDisk(ctx, &apiv1.UpdateExternalDiskRequest{BackupDestination: apiv1.NewOptBool(true)}, apiv1.UpdateExternalDiskParams{Label: "UNRAID"})
+	requireUnraidStickRefusal(t, h, err)
+
+	if len(mounter.Mounts) != 0 || len(p.FormatCalls()) != 0 {
+		t.Fatalf("the stick was touched: mounts %+v, formats %v", mounter.Mounts, p.FormatCalls())
+	}
+	if labels := registeredExternalLabels(t, h); len(labels) != 0 {
+		t.Fatalf("a refused operation registered %v", labels)
+	}
+}
+
+func TestExternalDisk_StickRegisteredBeforeTheRefusalCannotBeMountedFormattedOrUsedForBackups(t *testing.T) {
+	h, p, mounter, _ := newExternalHandler(t)
+	addUnraidStick(p)
+	ctx := context.Background()
+	rows := []store.ExternalDisk{
+		{Label: "stick", Device: "/dev/sdu", Filesystem: "vfat", FSUUID: unraidStickUUID, Mountpoint: "/mnt/disks/stick"},
+		// The device name is gone, but the filesystem it holds is the stick's.
+		{Label: "moved", Device: "/dev/sdz", Filesystem: "vfat", FSUUID: "abcd-1234", Mountpoint: "/mnt/disks/moved"},
+	}
+	for _, row := range rows {
+		if err := h.ArrayStore.External().PutExternalDisk(ctx, row); err != nil {
+			t.Fatalf("PutExternalDisk: %v", err)
+		}
+	}
+	for _, row := range rows {
+		_, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: apiv1.ExternalDiskLabel(row.Label)})
+		requireUnraidStickRefusal(t, h, err)
+
+		plan := disk.ExternalFormatPlan(disk.AssignedDisk{Device: row.Device, Filesystem: disk.XFS})
+		_, err = h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: plan.Confirmation()}, apiv1.FormatExternalDiskParams{Label: apiv1.ExternalDiskLabel(row.Label)})
+		requireUnraidStickRefusal(t, h, err)
+
+		_, err = h.UpdateExternalDisk(ctx, &apiv1.UpdateExternalDiskRequest{BackupDestination: apiv1.NewOptBool(true)}, apiv1.UpdateExternalDiskParams{Label: apiv1.ExternalDiskLabel(row.Label)})
+		requireUnraidStickRefusal(t, h, err)
+	}
+	if len(mounter.Mounts) != 0 || len(p.FormatCalls()) != 0 {
+		t.Fatalf("the stick was touched: mounts %+v, formats %v", mounter.Mounts, p.FormatCalls())
+	}
+
+	if _, err := h.EjectExternalDisk(ctx, apiv1.EjectExternalDiskParams{Label: "stick"}); err != nil {
+		t.Fatalf("EjectExternalDisk must stay possible for a stick an earlier version mounted: %v", err)
+	}
+	if len(mounter.Unmounts) != 1 {
+		t.Fatalf("Unmounts = %+v", mounter.Unmounts)
+	}
+}
+
+func TestFormatExternalDisk_StickIsRefusedBeforeTheConfirmationIsChecked(t *testing.T) {
+	h, p, _, _ := newExternalHandler(t)
+	addUnraidStick(p)
+	ctx := context.Background()
+	rows := []store.ExternalDisk{
+		{Label: "stick", Device: "/dev/sdu", Filesystem: "vfat", FSUUID: unraidStickUUID, Mountpoint: "/mnt/disks/stick"},
+		{Label: "moved", Device: "/dev/sdz", Filesystem: "vfat", FSUUID: "abcd-1234", Mountpoint: "/mnt/disks/moved"},
+	}
+	for _, row := range rows {
+		if err := h.ArrayStore.External().PutExternalDisk(ctx, row); err != nil {
+			t.Fatalf("PutExternalDisk: %v", err)
+		}
+	}
+	labels := []string{"stick", "moved", "UNRAID"}
+	for _, label := range labels {
+		for _, confirmation := range []string{"", "wrong"} {
+			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: confirmation}, apiv1.FormatExternalDiskParams{Label: apiv1.ExternalDiskLabel(label)})
+			requireUnraidStickRefusal(t, h, err)
+		}
+	}
+	if len(p.FormatCalls()) != 0 {
+		t.Fatalf("the stick was formatted: %v", p.FormatCalls())
+	}
+}
+
+func TestExternalDisk_OtherVfatDisksKeepWorking(t *testing.T) {
+	h, p, mounter, _ := newExternalHandler(t)
+	addUnraidStick(p)
+	p.AddDisk("/dev/sdw", disk.Disk{Filesystem: "vfat", Label: "USBDRIVE", FSUUID: "1111-2222"})
+	ctx := context.Background()
+	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdw", Label: "usbdrive"}); err != nil {
+		t.Fatalf("RegisterExternalDisk: %v", err)
+	}
+	if _, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "usbdrive"}); err != nil {
+		t.Fatalf("MountExternalDisk: %v", err)
+	}
+	if len(mounter.Mounts) != 1 || mounter.Mounts[0].UUID != "1111-2222" {
+		t.Fatalf("Mounts = %+v", mounter.Mounts)
+	}
+}

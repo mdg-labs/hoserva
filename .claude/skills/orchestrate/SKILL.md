@@ -330,42 +330,67 @@ member) in issue-number order; place each in the first lane whose
 accumulated scope doesn't intersect its own, else start a new lane. Lanes
 run in parallel; units within a lane run serially.
 
-### Promotion-diff budget
+### Promotion-diff budget — a hard rule
 
-CodeRabbit reviews at most 100 files per pull request, counted after
-`.coderabbit.yaml`'s `path_filters` exclusions, and `dev` only reaches `main`
-through one `dev → main` PR (`open-pr`, then `cr-review`). Once that diff
-passes 100 reviewable files the promotion has to be split or goes partly
-unreviewed, so check what this run would add to it before dispatching
-anything. Issues that land in `mdg-labs/hoserva-catalog` (step 1a) are not
-counted — that repository promotes on its own.
+**The `dev → main` reviewable diff never grows past 100 files. No run, no
+option, no maintainer prompt may take it there.** CodeRabbit reviews at most
+100 files per pull request, counted after `.coderabbit.yaml`'s `path_filters`
+exclusions, and `dev` only reaches `main` through one `dev → main` PR
+(`open-pr`, then `cr-review`). A diff past 100 forces a split promotion, and
+a split promotion leaves `dev` and `main` with duplicate history. There is no
+"proceed anyway". Issues that land in `mdg-labs/hoserva-catalog` (step 1a)
+are not counted — that repository promotes on its own.
 
-1. From the real repo, run
-   `.claude/skills/dev-diff/dev-diff.sh --list`. It prints the reviewable
-   paths of the current `main...dev` diff, one per line: the set `R`. If it
-   exits non-zero (unclean tree, `main` diverged from `origin/main`), show
-   its error and ask via `AskUserQuestion` whether to stop or to proceed
-   without the budget check — never treat a failed run as an empty `R`.
-2. Take each issue's expected files `E` from the `Expected files:` line of
-   its scope hint (an estimate of reviewable files, excluding what
-   `.coderabbit.yaml` filters out, plus the likely paths). An issue with no
-   such line — triaged before the estimate existed — is not blocked and not
-   sent back to refinement: derive a rough `E` from its step-3 scope (one
-   file per backticked file path, about two per backticked directory) and
-   say in the plan that you did.
-3. Net the estimate: the issue's net new files `N` are the expected files not
-   already in `R` — a file named by exact path that is in `R` is zero growth.
-   Paths given as a directory, or not named, count as new. A path two issues
-   in T both name is counted once, against the earlier one in wave order.
-4. Print one line per issue, `#n: ~E expected, ~N new`, and the total:
-   `dev→main reviewable: |R| now → ~|R|+ΣN projected (cap 100)`.
-   - **Projected over 100** — stop before dispatching anything and ask via
-     `AskUserQuestion`. Options: *promote first* (recommended — run
-     `open-pr`, merge the promotion, then run this again); *trim T* to the
-     issues that fit under the cap, in wave order; *proceed anyway*, with
-     the overrun stated in the report.
-   - **Projected 90 to 100** — proceed, and say in the plan that the next run
-     will need a promotion first.
+**Check before every action, not once per run.** Re-run the budget check
+below, from the real repo, immediately before **each** of these, every
+time:
+
+- dispatching any unit — first dispatch, next unit in a lane, a fix round,
+  a rebase re-run, an issue pulled in by step 11;
+- landing any commit (step 8), before the cherry-pick.
+
+A check is not "still valid" from a moment ago — other lanes land in
+between.
+
+**The check:**
+
+1. `R` = the output of `.claude/skills/dev-diff/dev-diff.sh --list` (the
+   reviewable paths of the current `main...dev` diff). First confirm local
+   `dev` exists (`git rev-parse --verify dev`): without it the script exits
+   zero with no paths, which is not an empty diff. If `dev` is missing or the
+   script exits non-zero, stop and report it — never treat a failed or
+   unavailable comparison as an empty `R`, and never act without a
+   successful check.
+2. **In flight** — each unit dispatched but not yet landed, or landed-pending.
+   If it has committed, its files are `git -C <workspace> diff --name-only
+   dev..HEAD`, all counted as reviewable (no filter credit). If it has not
+   committed yet, use its estimate from step 3.
+3. **Estimate high, never low.** For an issue not yet committed, `E` is the
+   **larger** of its `Expected files:` line and a count derived from its
+   step-3 scope at **one file per backticked file path and four per
+   backticked directory**, plus every entry point and always-shared file in
+   its scope, then **×1.5 rounded up**. A new package directory counts at
+   least six. A fixture-heavy issue with no stated bound is not estimated —
+   it is left out of T. A path in `R` counts as zero growth only when
+   named by its exact file path.
+4. `P` = |R| + files of in-flight units not in `R` + `E` of every
+   not-yet-dispatched issue still in T. Print it:
+   `dev→main reviewable: |R| now, P projected (cap 100, drop at 90)`.
+
+**Acting on it:**
+
+- **P ≥ 90** — drop issues from T until `P` < 90, starting with the last
+  in wave order. Only issues **not in flight** are dropped — never a
+  dispatched unit's work, and never by shrinking, consolidating or excluding
+  code, tests or fixtures (see the `budget-drops-issues-not-code` memory).
+  A dropped issue goes back to `status:ready` if you touched its label, and
+  is listed in the report as "dropped for the budget".
+- **A dispatch would push P to 90 or above** — don't dispatch it; drop it.
+- **Landing a commit would take |R ∪ commit files| past 100** — do not
+  land. Stop the run, leave the commit in its clone, and tell the maintainer
+  a promotion is needed first. In-flight work that fits lands as built.
+- **|R| is already ≥ 90 at the start of a run** — dispatch nothing; tell
+  the maintainer to promote first (`open-pr`).
 
 Print the plan before dispatching — waves, bundles and why, lanes and why,
 and the budget lines above. If T has more than ~12 issues, state the count
@@ -438,6 +463,10 @@ with no epic.
 - **You own the abandonment transitions:** an issue leaving your hands still open (executor `blocked`, or escalated after three FAILs) goes back to `status:ready`.
 
 ## 6. Dispatch `task-executor`
+
+**Run the promotion-diff budget check (step 4) first — before every
+dispatch, including fix rounds, rebase re-runs and pulled-in issues.** If
+it says drop or stop, do that instead of dispatching.
 
 Read `.claude/skills/orchestrate/templates/executor-prompt.md` and fill every
 `{{…}}` token: the shared preamble once (workspace, lab id, what step 0 found
@@ -593,6 +622,10 @@ comments and moves its own labels; read its returned verdicts rather than
 re-deriving them from GitHub.
 
 ## 8. On PASS — land, sequentially, never in parallel
+
+**Run the promotion-diff budget check (step 4) before every landing.** If
+`R` plus this commit's files would pass 100, do not land it — stop the run
+and say a promotion is needed first.
 
 Land one commit at a time, in bundle order, skipping members that FAILed.
 Every git command in this step runs in the unit's landing clone, the real repo
@@ -808,8 +841,8 @@ gets its own issue and its own commit.
   projection. Per issue, its actual new files are the files of its commit
   that are in the final list and were not in `R` or in an earlier issue's
   commit this run; name every issue whose actual count exceeds its estimate
-  by more than about 50%, as for changed lines in step 7. If the user chose
-  to proceed past a projected overrun, say so here.
+  by more than about 50%, as for changed lines in step 7, and list every
+  issue dropped for the budget.
 - Any stale lab containers or loop devices step 0 found
 - **What's still local, for the maintainer to read and push**: the
   `blockedBy`-held list above (and, in the rare stacking case step 8
@@ -837,6 +870,7 @@ report as your final message.
 
 ## Non-negotiables
 
+- **The `dev → main` reviewable diff never passes 100 files.** The budget check (step 4) runs before every dispatch and every landing; at a projected 90 or more, not-yet-dispatched issues are dropped from T, last in wave order first. Estimates err high. There is no "proceed anyway".
 - **Commits land on local `dev` and are pushed to `origin/dev` immediately after landing, including `safety-critical` ones** — or, for an issue with a `Lands in: mdg-labs/hoserva-catalog` line, on `dev` of the clone at `HOSERVA_CATALOG_REPO`, pushed to its `origin/dev`. Only a commit held back by a fresh `blockedBy` added during this run is never pushed by you — the maintainer reads and pushes that. Before any push, confirm no held-back commit sits unpushed underneath the one you're landing (step 8) — pushing would carry it along too. `main` — in either repository — is never touched by this skill at all; it only moves via a maintainer-run `dev → main` promotion. A scratch clone's own branch is internal and disposable.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
 - **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.

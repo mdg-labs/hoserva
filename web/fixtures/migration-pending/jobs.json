@@ -10,6 +10,19 @@
       "cancellable": true,
       "createdAt": "2026-01-06T01:00:00Z",
       "error": null
+    },
+    {
+      "id": "a1a1a1a1-0006-4000-8000-000000000002",
+      "type": "migration_scan",
+      "class": "topology",
+      "status": "succeeded",
+      "progress": null,
+      "resumable": false,
+      "cancellable": false,
+      "createdAt": "2026-01-05T23:00:00Z",
+      "startedAt": "2026-01-05T23:00:01Z",
+      "finishedAt": "2026-01-05T23:00:09Z",
+      "error": null
     }
   ]
 }

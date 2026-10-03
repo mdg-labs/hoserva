@@ -209,6 +209,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeContainerUpdate {
 			return fmt.Errorf("job: container_update params require a mode")
 		}
+		if t == TypeMigrationScan {
+			return fmt.Errorf("job: migration_scan params require an upload")
+		}
 		return nil
 	}
 	switch t {
@@ -259,6 +262,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeContainerUpdate:
 		_, err := decodeContainerUpdateParams(params)
+		return err
+	case TypeMigrationScan:
+		_, err := decodeMigrationScanParams(params)
 		return err
 	case TypeAppdataBackup:
 		_, err := decodeAppdataBackupParams(params)
@@ -438,6 +444,26 @@ func decodeDiskUpgradeParityParams(params []byte) (DiskUpgradeParityParams, erro
 	}
 	if p.NewMountpoint == "" || p.NewMountpoint == p.Mountpoint {
 		return DiskUpgradeParityParams{}, fmt.Errorf("job: disk_upgrade_parity params require a distinct newMountpoint")
+	}
+	return p, nil
+}
+
+// MigrationScanParams is startMigrationScan's persisted payload: the name the
+// migration service gave the staged upload, never a path a client chose.
+type MigrationScanParams struct {
+	Upload string `json:"upload"`
+}
+
+func decodeMigrationScanParams(params []byte) (MigrationScanParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return MigrationScanParams{}, fmt.Errorf("job: migration_scan params require an upload")
+	}
+	var p MigrationScanParams
+	if err := decodeJSON(params, &p); err != nil {
+		return MigrationScanParams{}, err
+	}
+	if p.Upload == "" {
+		return MigrationScanParams{}, fmt.Errorf("job: migration_scan params require an upload")
 	}
 	return p, nil
 }

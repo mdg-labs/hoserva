@@ -547,11 +547,25 @@ func (UnimplementedHandler) FinishDiskRemoval(ctx context.Context, req *FinishDi
 	return r, ht.ErrNotImplemented
 }
 
+// ForgetMigration implements forgetMigration operation.
+//
+// Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password
+// hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A
+// scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied
+// from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
+// runs.
+//
+// DELETE /migrate
+func (UnimplementedHandler) ForgetMigration(ctx context.Context) error {
+	return ht.ErrNotImplemented
+}
+
 // FormatExternalDisk implements formatExternalDisk operation.
 //
 // Formats the disk after the same typed confirmation array setup uses
 // (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong
-// or missing confirmation is refused with `confirmation_required` and formats nothing.
+// or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB
+// stick is refused with `unraid_stick` (409), whatever the confirmation.
 //
 // POST /disks/external/{label}/format
 func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (r *ExternalDisk, _ error) {
@@ -755,6 +769,35 @@ func (UnimplementedHandler) GetLastMoverRun(ctx context.Context) (r NilMoverRunR
 //
 // GET /metrics
 func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsParams) (r *MetricSeries, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetMigration implements getMigration operation.
+//
+// The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows.
+// `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running,
+// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
+// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
+// scan, if there was one, is still returned). The rows name and count; they never quote a file's
+// content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks
+// a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled
+// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
+// true, once the session's report was made from a capture that says Unraid booted from an internal
+// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
+// no such disk is attached or this daemon cannot read one.
+//
+// GET /migrate
+func (UnimplementedHandler) GetMigration(ctx context.Context) (r *Migration, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetMigrationReport implements getMigrationReport operation.
+//
+// The latest scan's report as a Markdown document: the verdict, then every check with its status,
+// subject and detail. 404 `no_migration_report` before a scan has finished.
+//
+// GET /migrate/report
+func (UnimplementedHandler) GetMigrationReport(ctx context.Context) (r GetMigrationReportOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1210,7 +1253,8 @@ func (UnimplementedHandler) ListDockerNetworks(ctx context.Context) (r *ListDock
 //
 // Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a
 // pool or parity member. Registered external disks plus inventory disks that are not the boot device
-// and not in the array. Nothing is mounted by this call.
+// and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it
+// is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
 //
 // GET /disks/external
 func (UnimplementedHandler) ListExternalDisks(ctx context.Context) (r *ListExternalDisksOK, _ error) {
@@ -1359,7 +1403,8 @@ func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *Mark
 // MountExternalDisk implements mountExternalDisk operation.
 //
 // Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically
-// on plug-in. The boot device and array disks are refused.
+// on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick
+// (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
 //
 // POST /disks/external/{label}/mount
 func (UnimplementedHandler) MountExternalDisk(ctx context.Context, params MountExternalDiskParams) (r *ExternalDisk, _ error) {
@@ -1667,7 +1712,8 @@ func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *Ne
 // RegisterExternalDisk implements registerExternalDisk operation.
 //
 // Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as
-// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused.
+// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB
+// stick (`unraid_stick`, 409).
 //
 // POST /disks/external
 func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *RegisterExternalDiskRequest) (r *ExternalDisk, _ error) {
@@ -2036,6 +2082,50 @@ func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) 
 	return r, ht.ErrNotImplemented
 }
 
+// StartMigrationDeviceScan implements startMigrationDeviceScan operation.
+//
+// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
+// stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the
+// `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private
+// mountpoint under the daemon's state directory for the one read made here before anything is queued
+// and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing
+// is copied from it. The stick is the user's rollback. Refused before anything is queued: 400
+// `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot
+// disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the
+// session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot
+// pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not
+// be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no
+// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless
+// `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when
+// this daemon has no migration service or cannot read a flash device. The result is the report the
+// same flash's zip gives.
+//
+// POST /migrate/scan/device
+func (UnimplementedHandler) StartMigrationDeviceScan(ctx context.Context, req *StartMigrationDeviceScanReq) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartMigrationScan implements startMigrationScan operation.
+//
+// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
+// no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root
+// only, as the session's source; it is never modified and never extracted: entries are read in memory.
+// A scan replaces the previous session's report and zip once it finishes. Refused before anything is
+// queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry
+// path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB,
+// refused as soon as the request body, which is the zip and its multipart framing, passes that size
+// plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
+// (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
+// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
+// `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
+// layout refusal; the override is recorded in the report and printed at its top. The scan reads the
+// disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+//
+// POST /migrate/scan
+func (UnimplementedHandler) StartMigrationScan(ctx context.Context, req *StartMigrationScanReq) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartMover implements startMover operation.
 //
 // Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
@@ -2237,6 +2327,7 @@ func (UnimplementedHandler) UpdateCatalogSettings(ctx context.Context, req *Cata
 // UpdateExternalDisk implements updateExternalDisk operation.
 //
 // Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
+// Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
 //
 // PATCH /disks/external/{label}
 func (UnimplementedHandler) UpdateExternalDisk(ctx context.Context, req *UpdateExternalDiskRequest, params UpdateExternalDiskParams) (r *ExternalDisk, _ error) {

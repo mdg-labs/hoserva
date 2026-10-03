@@ -26,6 +26,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/share"
@@ -101,6 +102,10 @@ type Handler struct {
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
+	// Migration is the Unraid migrator's session (doc 05): the scan of a
+	// Flash Backup zip and its report. Nil returns 501 from the /migrate
+	// operations.
+	Migration *migrate.Service
 	// RegenerateConfig is cmd/hoservad's hook for ImportConfig (doc 10 §1):
 	// after the database has been restored it regenerates every managed
 	// config file whose inputs are in the database and applies the result to

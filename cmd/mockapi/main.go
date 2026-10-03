@@ -19,7 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ogen-go/ogen/ogenerrors"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
@@ -51,9 +54,9 @@ func run(addr, scenario string) error {
 		return fmt.Errorf("load scenario %q events: %w", scenario, err)
 	}
 
-	apiServer, err := apiv1.NewServer(apiHandler, securityHandler{}, apiv1.WithPathPrefix("/api/v1"))
+	apiServer, err := newAPIServer(apiHandler)
 	if err != nil {
-		return fmt.Errorf("build API server: %w", err)
+		return err
 	}
 
 	mux := http.NewServeMux()
@@ -82,6 +85,40 @@ func run(addr, scenario string) error {
 		}
 		return err
 	}
+}
+
+const scanPath = "/api/v1/migrate/scan"
+
+// newAPIServer is the generated server with production's refusal of a Flash
+// Backup upload past the limit: 413 zip_too_large, like the daemon's.
+func newAPIServer(h apiv1.Handler) (http.Handler, error) {
+	return newAPIServerWithScanLimit(h, migrate.UploadBodyLimit)
+}
+
+func newAPIServerWithScanLimit(h apiv1.Handler, scanLimit int64) (http.Handler, error) {
+	srv, err := apiv1.NewServer(h, securityHandler{}, apiv1.WithPathPrefix("/api/v1"),
+		apiv1.WithErrorHandler(func(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+			if r.URL.Path == scanPath && migrate.IsUploadTooLarge(err) {
+				migrate.WriteZipTooLarge(w)
+				return
+			}
+			ogenerrors.DefaultErrorHandler(ctx, w, r, err)
+		}))
+	if err != nil {
+		return nil, fmt.Errorf("build API server: %w", err)
+	}
+	return limitScanBody(srv, scanLimit), nil
+}
+
+func limitScanBody(next http.Handler, limit int64) http.Handler {
+	scan := migrate.LimitUploadBody(next, limit, 0)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == scanPath {
+			scan.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // requireLoopback keeps the mock, like the rest of this repo's dev tooling,

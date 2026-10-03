@@ -146,6 +146,7 @@ var uncomparedTables = map[string]string{
 	"image_update_checks":        "runtime: what the last container update check found",
 	"container_image_history":    "runtime: the container updates whose previous images this host still keeps for a revert, which an archive of another state cannot bring back",
 	"container_update_policy":    "not previewed: the containers a bulk update skips; listing them needs a preview change kind of their own, which the web catalog must name too",
+	"migration_session":          "runtime: the latest Unraid migration scan and its report, which describe the Flash Backup zip in this installation's state directory and not the configuration; the zip is never in an archive, so a start forgets a source a restored row names that this machine does not have",
 	"registry_credentials":       "not previewed: the registries the daily update check holds a saved login for, whose sealed credentials come back through secrets.age; listing them needs a preview change kind of its own, which the web catalog must name too",
 	"catalog_sources":            "not previewed: the catalog sources the user added; an import restores their rows with the database but not their downloaded copies, so a restored source supplies nothing until it is refreshed, and a preview would need a change kind of its own, like container_update_settings",
 	"container_update_settings":  "not previewed: how long a previous image is kept for a revert; it needs a preview change kind of its own, like container_update_policy",

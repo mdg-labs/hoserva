@@ -31,23 +31,24 @@ func (l *Lister) udevDataDir() string {
 
 // discoveryFS returns udev-cached ID_FS_TYPE, ID_FS_LABEL and ID_FS_UUID
 // for the whole-disk sysfs name, falling back to its partitions when the
-// whole disk has none. Primary filesystem rule: the first partition by
-// ascending sysfs partition number that carries any of those ID_FS_*
-// fields. That covers Unraid-style layouts (filesystem on partition 1)
-// and Windows GPT disks (MSR on 1, NTFS on 2). Every read is a udev
-// database file, never blkid, so a standby disk is not opened (Q13).
-func (l *Lister) discoveryFS(name string) (fsType, label, uuid string) {
+// whole disk has none, and the sysfs name of the node that carried them.
+// Primary filesystem rule: the first partition by ascending sysfs partition
+// number that carries any of those ID_FS_* fields. That covers Unraid-style
+// layouts (filesystem on partition 1) and Windows GPT disks (MSR on 1, NTFS
+// on 2). Every read is a udev database file, never blkid, so a standby disk
+// is not opened (Q13).
+func (l *Lister) discoveryFS(name string) (node, fsType, label, uuid string) {
 	fsType, label, uuid = l.udevFS(name)
 	if fsType != "" || label != "" || uuid != "" {
-		return fsType, label, uuid
+		return name, fsType, label, uuid
 	}
 	for _, part := range l.partitions(name) {
 		fsType, label, uuid = l.udevFS(part)
 		if fsType != "" || label != "" || uuid != "" {
-			return fsType, label, uuid
+			return part, fsType, label, uuid
 		}
 	}
-	return "", "", ""
+	return "", "", "", ""
 }
 
 // partitions returns the sysfs names of every partition of diskName,

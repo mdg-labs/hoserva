@@ -153,6 +153,10 @@ type handler struct {
 	drillMu   sync.Mutex
 	drillLast *apiv1.RestoreDrillRun
 
+	// migration is the migration session (doc 05): empty, except in the
+	// migration-pending scenario, which starts with a completed scan.
+	migration *mockMigration
+
 	externalMu sync.Mutex
 	external   map[string]apiv1.ExternalDisk
 
@@ -238,6 +242,7 @@ func newHandler(scenario string) (*handler, error) {
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),
 		drillLast:          seededDrillRun(),
+		migration:          seededMigration(scenario),
 		external:           make(map[string]apiv1.ExternalDisk),
 
 		users:                map[uuid.UUID]apiv1.UserSummary{mockAdminID: mockUserSummary()},

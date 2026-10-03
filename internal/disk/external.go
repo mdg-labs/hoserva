@@ -24,7 +24,39 @@ var (
 	// ErrExternalMounted is FormatExternal's refusal to erase a disk
 	// that is still mounted.
 	ErrExternalMounted = errors.New("disk: eject the disk before formatting")
+	// ErrUnraidStick is the external-disk path's refusal of the Unraid USB
+	// stick: it is the user's rollback (doc 05 §4 step 11, §5) and is only
+	// ever read, through ReadOnlyMounter.
+	ErrUnraidStick = errors.New("disk: this is the Unraid USB stick, which Hoserva only reads and never mounts read-write, formats or writes")
 )
+
+// The Unraid USB stick is a FAT filesystem labelled UNRAID (doc 05 §3).
+const (
+	UnraidStickFilesystem = "vfat"
+	UnraidStickLabel      = "UNRAID"
+)
+
+// IsUnraidStick reports whether d is the Unraid USB stick by its filesystem
+// and label, which is how udev reports it before anything is mounted.
+func IsUnraidStick(d Disk) bool {
+	return d.Filesystem == UnraidStickFilesystem && strings.EqualFold(d.Label, UnraidStickLabel)
+}
+
+// RefuseUnraidStick returns ErrUnraidStick when dev, or a disk holding the
+// filesystem uuid, is the Unraid USB stick in disks. A uuid match catches a
+// record made for the stick whose device name has since changed.
+func RefuseUnraidStick(disks []Disk, dev, uuid string) error {
+	whole := WholeDiskDevice(dev)
+	for _, d := range disks {
+		if !IsUnraidStick(d) {
+			continue
+		}
+		if d.Device == dev || d.Device == whole || (uuid != "" && d.FSUUID != "" && strings.EqualFold(d.FSUUID, uuid)) {
+			return fmt.Errorf("%s: %w", dev, ErrUnraidStick)
+		}
+	}
+	return nil
+}
 
 // externalLabelPattern is the same shape pool.ValidateShareName uses: a
 // label is a single path segment under /mnt/disks/, so it cannot contain

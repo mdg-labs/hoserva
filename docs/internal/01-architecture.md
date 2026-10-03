@@ -137,7 +137,11 @@ hoserva vm console <name>                   # browser console over the existing 
 hoserva vm passthrough list|check           # IOMMU groups, ACS report (doc 14 §3)
 hoserva vm passthrough assign <name> --pci 01:00.0
 
-hoserva migrate scan --flash-backup <zip>   # Unraid pre-flight (doc 05, Q25)
+hoserva migrate scan --flash-backup <zip> [--unverified-layout]   # Unraid pre-flight (doc 05, Q25)
+hoserva migrate scan --flash-device <device> [--unverified-layout] # the same, read from the attached Unraid stick
+hoserva migrate status                          # the session's phase and the report's verdict
+hoserva migrate report [-o <file>]              # the go / no-go report as a document
+hoserva migrate forget                          # delete the session and the stored zip
 hoserva migrate import
 hoserva migrate vm-scan                         # Unraid VM definitions from the adopted pool (doc 14 §5)
 hoserva migrate vm-import <domain-name>
@@ -230,9 +234,11 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
   |---|---|---|
   | **Parity** | sync, scrub, fix, check | Parity, Array-write, Topology |
   | **Array-write** | rebalance, evacuation, share relocation, mover, VM disk relocation | Parity, Topology, other Array-write on the same disks |
-  | **Topology** | disk format, add/remove/replace disk, pool remount | Everything in the three storage classes |
+  | **Topology** | disk format, add/remove/replace disk, pool remount, migration scan | Everything in the three storage classes |
   | **Service** | appdata backup, config backup, container update | Other Service jobs on the same container (a config backup: another config backup) |
   | **VM** | VM start, stop, create, delete, snapshot, clone, migration-import (doc 14 §2, Q56) | Other VM jobs on the same VM |
+
+  A migration scan only reads, but it is a Topology job so that no storage job runs beside it. It is the one Topology job that does not take the pre-topology config backup, since it changes nothing that backup protects and repeated scans must not use up the retention real changes rely on.
 
   The nightly maintenance chain (Q30) runs its steps in sequence and holds each class in turn.
 - **Every sync goes through the threshold guard** (doc 02 §2), whatever triggered it — schedule, disk add, evacuation, or a manual click.

@@ -69,11 +69,15 @@ func NewFakeProvider() *FakeProvider {
 }
 
 // AddDisk registers a disk, healthy and spun up, ready for a test or the
-// frontend dev server to see through List.
+// frontend dev server to see through List. A disk with a filesystem and no
+// FSDevice holds it on the whole disk.
 func (f *FakeProvider) AddDisk(dev string, d Disk) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d.Device = dev
+	if d.FSDevice == "" && (d.Filesystem != "" || d.Label != "" || d.FSUUID != "") {
+		d.FSDevice = dev
+	}
 	f.disks[dev] = &fakeDisk{disk: d, spinState: Active}
 }
 
@@ -112,6 +116,9 @@ func (f *FakeProvider) Reassign(oldDev, newDev string) {
 	}
 	delete(f.disks, oldDev)
 	fd.disk.Device = newDev
+	if fd.disk.FSDevice == oldDev {
+		fd.disk.FSDevice = newDev
+	}
 	f.disks[newDev] = fd
 }
 

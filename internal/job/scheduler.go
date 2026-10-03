@@ -324,6 +324,15 @@ func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 	s.topologyBackup = b
 }
 
+// takesTopologyBackup reports whether a job of type t, in class, starts with the
+// pre-topology config backup. A migration scan is in the Topology class so no
+// storage job runs beside it, but it only reads: it changes no topology, and its
+// repeated runs must not use the bounded retention the real changes' backups
+// rely on.
+func takesTopologyBackup(t Type, class Class) bool {
+	return class == ClassTopology && t != TypeMigrationScan
+}
+
 // runTopologyBackup runs the pre-topology config backup (doc 10 §1, #406,
 // #408), if one is wired, at the moment a ClassTopology job actually
 // starts — called by Submit for one starting immediately, and by
@@ -405,7 +414,7 @@ func (s *Scheduler) finishSubmitLocked(ctx context.Context, t Type, class Class,
 	switch {
 	case s.hasConflictWithRunningLocked(class, resourceIDs):
 		j.Status = StatusQueued
-	case class == ClassTopology && !backupRan:
+	case takesTopologyBackup(t, class) && !backupRan:
 		j.Status = StatusQueued
 		deferredForBackup = true
 	default:
@@ -468,7 +477,7 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	class, _ := ClassOf(t)
 
 	backupRan := false
-	if class == ClassTopology {
+	if takesTopologyBackup(t, class) {
 		s.mu.Lock()
 		if err := s.admitLocked(ctx, t); err != nil {
 			s.mu.Unlock()
@@ -1738,7 +1747,7 @@ func (s *Scheduler) dispatch() {
 			continue
 		}
 
-		if q.job.Class == ClassTopology {
+		if takesTopologyBackup(q.job.Type, q.job.Class) {
 			if s.dispatching == nil {
 				s.dispatching = make(map[string]*queuedJob)
 			}

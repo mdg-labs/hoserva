@@ -52,6 +52,7 @@ func rootCmd() *cobra.Command {
 		logsCmd(),
 		backupCmd(),
 		configCmd(),
+		migrateCmd(),
 		doctorCmd(),
 		userCmd(),
 		tokenCmd(),

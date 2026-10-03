@@ -1060,13 +1060,13 @@ export interface paths {
         };
         /**
          * List external disks
-         * @description Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a pool or parity member. Registered external disks plus inventory disks that are not the boot device and not in the array. Nothing is mounted by this call.
+         * @description Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a pool or parity member. Registered external disks plus inventory disks that are not the boot device and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
          */
         get: operations["listExternalDisks"];
         put?: never;
         /**
          * Register a disk as external
-         * @description Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as `/mnt/disks/<label>`. Does not mount or format. The boot device is refused.
+         * @description Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB stick (`unraid_stick`, 409).
          */
         post: operations["registerExternalDisk"];
         delete?: never;
@@ -1092,7 +1092,7 @@ export interface paths {
         head?: never;
         /**
          * Update an external disk
-         * @description Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
+         * @description Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1). Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
          */
         patch: operations["updateExternalDisk"];
         trace?: never;
@@ -1110,7 +1110,7 @@ export interface paths {
         put?: never;
         /**
          * Mount an external disk
-         * @description Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically on plug-in. The boot device and array disks are refused.
+         * @description Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
          */
         post: operations["mountExternalDisk"];
         delete?: never;
@@ -1154,7 +1154,7 @@ export interface paths {
         put?: never;
         /**
          * Format an external disk
-         * @description Formats the disk after the same typed confirmation array setup uses (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing.
+         * @description Formats the disk after the same typed confirmation array setup uses (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB stick is refused with `unraid_stick` (409), whatever the confirmation.
          */
         post: operations["formatExternalDisk"];
         delete?: never;
@@ -1797,6 +1797,90 @@ export interface paths {
          * @description Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the newest config archive this installation wrote to each enabled destination, opens it the way a restore would (an encrypted one through its identity sidecar and the backup passphrase alone), checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards everything it fetched. It never writes to a destination and never reads the live database. A destination that cannot be read, or holds no archive written by this installation, fails the drill. The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a `restore_drill_failed` notification. A drill behind another one queues rather than failing.
          */
         post: operations["startRestoreDrill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The migration session and its report
+         * @description The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows. `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if there was one, is still returned). The rows name and count; they never quote a file's content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the session's report was made from a capture that says Unraid booted from an internal device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when no such disk is attached or this daemon cannot read one.
+         */
+        get: operations["getMigration"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete the migration session
+         * @description Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+         */
+        delete: operations["forgetMigration"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan a Flash Backup zip
+         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+         */
+        post: operations["startMigrationScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/scan/device": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan the Unraid USB stick
+         * @description The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private mountpoint under the daemon's state directory for the one read made here before anything is queued and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing is copied from it. The stick is the user's rollback. Refused before anything is queued: 400 `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service or cannot read a flash device. The result is the report the same flash's zip gives.
+         */
+        post: operations["startMigrationDeviceScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the go / no-go report
+         * @description The latest scan's report as a Markdown document: the verdict, then every check with its status, subject and detail. 404 `no_migration_report` before a scan has finished.
+         */
+        get: operations["getMigrationReport"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3152,7 +3236,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -5214,6 +5298,66 @@ export interface components {
             archive?: string | null;
             /** @description Why the destination failed. Absent when it passed. */
             error?: string | null;
+        };
+        /** @enum {string} */
+        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned";
+        /**
+         * @description `refuse` blocks the migration; `flag` and `warn` need attention before it goes ahead; `info` and `pass` do not.
+         * @enum {string}
+         */
+        MigrationCheckStatus: "pass" | "warn" | "flag" | "refuse" | "info";
+        /** @enum {string} */
+        MigrationVerdict: "go" | "go_with_warnings" | "no_go";
+        MigrationReportRow: {
+            /** @description Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`, `parity_size`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without changing this shape. */
+            check: string;
+            status: components["schemas"]["MigrationCheckStatus"];
+            /** @description A slot, pool or device the row is about. Absent for the whole system. */
+            subject?: string;
+            detail: string;
+        };
+        MigrationReport: {
+            /** Format: date-time */
+            generatedAt: string;
+            /** @description From the first line of the flash's `changes.txt`. Absent when it states none. */
+            unraidVersion?: string;
+            /** @description True when the scan ran only because `unverifiedLayout` overrode the refusal of the version or flash layout (Q24). */
+            unverifiedLayout: boolean;
+            verdict: components["schemas"]["MigrationVerdict"];
+            rows: components["schemas"]["MigrationReportRow"][];
+        };
+        MigrationFlashDevice: {
+            /** @description The disk's device path, which `startMigrationDeviceScan` takes. */
+            device: string;
+            /**
+             * Format: int64
+             * @description Bytes.
+             */
+            size: number;
+            model?: string;
+            serial?: string;
+        };
+        Migration: {
+            phase: components["schemas"]["MigrationPhase"];
+            /** @description Why the latest scan did not finish. Present only in `scan_failed`. */
+            scanError?: string;
+            /**
+             * Format: int64
+             * @description The size in bytes of the zip the report was made from. Absent when it was made from a flash device.
+             */
+            sourceSize?: number;
+            /**
+             * Format: date-time
+             * @description When the zip the report was made from was uploaded, or the flash device was scanned.
+             */
+            sourceReceivedAt?: string;
+            /** @description The device the report was read from, when it was made from the Unraid USB stick and not from a zip. */
+            sourceDevice?: string;
+            /** @description The disks a scan can read as the Unraid USB stick now. */
+            flashDevices: components["schemas"]["MigrationFlashDevice"][];
+            /** @description True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is the only source and no stick is offered (Q25). */
+            zipOnly: boolean;
+            report?: components["schemas"]["MigrationReport"];
         };
         AppdataBackupContainer: {
             name: string;
@@ -7944,6 +8088,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Migration"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    forgetMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startMigrationScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description The Flash Backup zip, its root being `/boot`.
+                     */
+                    file: string;
+                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
+                    unverifiedLayout?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The queued `migration_scan` job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startMigrationDeviceScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The disk's device path, as `flashDevices` lists it (`/dev/sdb`). */
+                    device: string;
+                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
+                    unverifiedLayout?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The queued `migration_scan` job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMigrationReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
                 };
             };
             default: components["responses"]["Error"];

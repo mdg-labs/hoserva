@@ -46,6 +46,7 @@ existing line by adding its PR number.
 - **atomicity** — a cancel or stop flag read in one lock hold and the start done in a later one, so a request that lands in the gap is accepted and then ignored — PR 412
 - **ordering** — a side effect that takes a bounded resource (a pre-change archive's retention slot) runs before the admission check that can refuse the operation, so refused retries use up what real changes rely on — PR 412
 - **atomicity** — two paths that each rebuild and publish the same live object (degraded acknowledge vs. array-sequence rebuild) under no shared lock, so one publishes state computed before the other's change landed and silently undoes it — PR 394
+- **atomicity** — a mutex held while a client's request body streams to disk, so one slow upload stalls every other operation on that lock (status, delete, a running job's commit) for as long as the transport's timeouts allow — PR 575
 
 ## Fail-open and error handling
 - **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback) — PR 150, 159
@@ -65,6 +66,7 @@ existing line by adding its PR number.
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
 - **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
 - **errors** — a fixed deadline sized for the small case applied to a transfer whose size is unbounded (a multi-gigabyte archive over rclone), so large inputs fail on size alone — PR 453
+- **errors** — a caller accepts a helper's exit 0 as a result while the helper exits 0 with empty output when its input is missing (`dev-diff.sh --list` without a local `dev`), so "unavailable" reads as "empty" — PR 575
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
@@ -104,6 +106,7 @@ existing line by adding its PR number.
 - **doc-drift** — a skill adopts another skill's rule (hold back a commit on a fresh `blockedBy`) without the check that makes it hold (`git log origin/dev..dev` before every push), so the next push publishes what was held — PR 546
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
+- **doc-drift** — a design doc's command table lists only one of a command's alternative forms (`--flash-backup` without `--flash-device`) — PR 575
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
@@ -120,6 +123,7 @@ existing line by adding its PR number.
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
 - **security** — a CI job that runs pull-request code checks out with the default `persist-credentials`, leaving `GITHUB_TOKEN` in `.git/config` for the code under test to read — PR 546
 - **security** — user or state values written into a config format without escaping control characters — PR 254
+- **security** — a file the CLI saves for the user that names accounts, shares or containers is left world-readable (0644) where the daemon keeps the same data 0600 — PR 575
 
 ## Tests
 - **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic) — PR 159, 163, 231, 337, 403, 421, 430, 567

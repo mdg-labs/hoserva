@@ -44,6 +44,9 @@ func TestLister_List_ReadsUdevFilesystemWithoutOpeningDevice(t *testing.T) {
 	if sda.Filesystem != "xfs" || sda.Label != "disk1" || sda.FSUUID != "uuid-disk1" {
 		t.Fatalf("sda filesystem/label/uuid = %q/%q/%q, want xfs/disk1/uuid-disk1 (from partition udev data)", sda.Filesystem, sda.Label, sda.FSUUID)
 	}
+	if sda.FSDevice != "/dev/sda1" {
+		t.Fatalf("sda.FSDevice = %q, want /dev/sda1: the filesystem is on the partition, so that is what a mount names", sda.FSDevice)
+	}
 	if !sda.ContainsData {
 		t.Fatal("sda.ContainsData = false, want true")
 	}
@@ -57,6 +60,9 @@ func TestLister_List_ReadsUdevFilesystemWithoutOpeningDevice(t *testing.T) {
 	}
 	if sdb.LooksLikeUnraid {
 		t.Fatal("sdb.LooksLikeUnraid = true, want false (label backup)")
+	}
+	if sdb.FSDevice != "/dev/sdb" {
+		t.Fatalf("sdb.FSDevice = %q, want /dev/sdb: the filesystem is on the whole disk", sdb.FSDevice)
 	}
 }
 
@@ -108,5 +114,28 @@ func TestLister_List_FilesystemOnLaterPartition(t *testing.T) {
 	}
 	if !sdc.ContainsData {
 		t.Fatal("sdc.ContainsData = false, want true (NTFS on partition 2)")
+	}
+	if sdc.FSDevice != "/dev/sdc2" {
+		t.Fatalf("sdc.FSDevice = %q, want /dev/sdc2", sdc.FSDevice)
+	}
+}
+
+// TestLister_List_FSDeviceIsEmptyWithoutAFilesystem: a disk udev knows no
+// filesystem for names no node to mount, so a caller cannot fall back to the
+// whole disk by reading it.
+func TestLister_List_FSDeviceIsEmptyWithoutAFilesystem(t *testing.T) {
+	l := newTestLister(t)
+	udev := filepath.Join(t.TempDir(), "udev")
+	mustMkdirAll(t, udev)
+	l.UdevDataDir = udev
+
+	got, err := l.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, d := range got {
+		if d.FSDevice != "" || d.Filesystem != "" {
+			t.Errorf("%s: FSDevice %q, Filesystem %q, want neither with no udev data", d.Device, d.FSDevice, d.Filesystem)
+		}
 	}
 }

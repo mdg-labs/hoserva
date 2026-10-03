@@ -199,6 +199,19 @@ type MachineKeyCheck struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+type MigrationSession struct {
+	ID                   int64  `json:"id"`
+	SourceFile           string `json:"source_file"`
+	SourceSize           int64  `json:"source_size"`
+	SourceReceivedAt     string `json:"source_received_at"`
+	Report               string `json:"report"`
+	ScanFile             string `json:"scan_file"`
+	ScanSize             int64  `json:"scan_size"`
+	ScanReceivedAt       string `json:"scan_received_at"`
+	ScanUnverifiedLayout int64  `json:"scan_unverified_layout"`
+	ScanError            string `json:"scan_error"`
+}
+
 type MoverRunResult struct {
 	ID          int64  `json:"id"`
 	StartedAt   string `json:"started_at"`

@@ -104,7 +104,11 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		id := ResolveIdentity(byID[name])
 		dev := "/dev/" + name
 
-		fsType, fsLabel, fsUUID := l.discoveryFS(name)
+		fsNode, fsType, fsLabel, fsUUID := l.discoveryFS(name)
+		fsDevice := ""
+		if fsNode != "" {
+			fsDevice = "/dev/" + fsNode
+		}
 		var cachePartitions []CachePartition
 		var partitions []BootPartition
 		if bootSet[dev] {
@@ -120,6 +124,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			WeakIdentity:    id.WeakIdentity,
 			ByIDName:        id.ByIDName,
 			Boot:            bootSet[dev],
+			FSDevice:        fsDevice,
 			Filesystem:      fsType,
 			Label:           fsLabel,
 			FSUUID:          fsUUID,
