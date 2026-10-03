@@ -1,0 +1,199 @@
+[
+    {
+        "Name": "br0",
+        "Id": "8c2c60dce1217c302ab4483f720a226390945d62d6716a9f7b78bf8a58fd5745",
+        "Created": "2026-10-03T10:02:31.336081187Z",
+        "Scope": "local",
+        "Driver": "ipvlan",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": {},
+            "Config": [
+                {
+                    "Subnet": "192.168.50.0/24",
+                    "Gateway": "192.168.50.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "7bfd33a0f2511bbc667ee8415b2f17a35bdbf46cd2f813e909dbf6f3ffeea7c3": {
+                "Name": "gateway",
+                "EndpointID": "d9674b56958023a4fac52d486437968e0cee940b2c8b3651cf210600f0276853",
+                "MacAddress": "",
+                "IPv4Address": "192.168.50.20/24",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {
+            "ipvlan_mode": "l2",
+            "parent": "ens20"
+        },
+        "Labels": {}
+    },
+    {
+        "Name": "bridge",
+        "Id": "897948f0806f6b0b95b50fd3f5519e2c3c157c938c0ffa12ee4ffcf1ab64450c",
+        "Created": "2026-10-03T10:01:43.840864642Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.17.0.0/16",
+                    "Gateway": "172.17.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "033629c63a0bf3dbf1b92f78dbe45537c9987c9a9cbf3cc65d0495929857a474": {
+                "Name": "dbtool",
+                "EndpointID": "a180daa28bb001ba6c2cc4f7ae3a750f9fc855dbb97a4893b720e663edf13b59",
+                "MacAddress": "02:42:ac:11:00:04",
+                "IPv4Address": "172.17.0.4/16",
+                "IPv6Address": ""
+            },
+            "0364d518b03fde8cadc4060aba792381a97103368434956b8f03d8f7bca9f035": {
+                "Name": "notes",
+                "EndpointID": "b422a7b2f5844d4b37befcd349aa887aa734109b68da404fabccefbfcdf6213c",
+                "MacAddress": "02:42:ac:11:00:02",
+                "IPv4Address": "172.17.0.2/16",
+                "IPv6Address": ""
+            },
+            "9bd5e8617868582c22169ea21b8e95e5f93fe9315defe1b95d7321ca540b80bf": {
+                "Name": "handmade",
+                "EndpointID": "2fbdd719bee42bd39017d1a009daf85cafc79495d12d6323366c19d6c572797c",
+                "MacAddress": "02:42:ac:11:00:05",
+                "IPv4Address": "172.17.0.5/16",
+                "IPv6Address": ""
+            },
+            "e606e52fbb866267c9d4517aaf8736f7f861cdb6510eb06ab6ffb9569c541508": {
+                "Name": "photos",
+                "EndpointID": "58720b3e3b266843040da214f66711a99148008c5491da9917a42220e17e88cc",
+                "MacAddress": "02:42:ac:11:00:03",
+                "IPv4Address": "172.17.0.3/16",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {
+            "com.docker.network.bridge.default_bridge": "true",
+            "com.docker.network.bridge.enable_icc": "true",
+            "com.docker.network.bridge.enable_ip_masquerade": "true",
+            "com.docker.network.bridge.host_binding_ipv4": "0.0.0.0",
+            "com.docker.network.bridge.name": "docker0",
+            "com.docker.network.driver.mtu": "1500"
+        },
+        "Labels": {}
+    },
+    {
+        "Name": "host",
+        "Id": "6849612e8cd77261fb5010753de2c2e96c47d6346fb1faa79a6acfb78e03128f",
+        "Created": "2026-10-03T10:01:43.780531065Z",
+        "Scope": "local",
+        "Driver": "host",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": null
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "101479209a718feb119e97bb34fdc70cbf9871b7c8c269522d2e17baaca9573b": {
+                "Name": "mediaserver",
+                "EndpointID": "557d75ec2988f8bde9ad937a4d34cf4d58fde010101d9fdfa7c0c89afdd01ab7",
+                "MacAddress": "",
+                "IPv4Address": "",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {},
+        "Labels": {}
+    },
+    {
+        "Name": "none",
+        "Id": "3a2c7931f484152686942fc48e555869dd46c692c8dee23f5b5fac8dd9c21d01",
+        "Created": "2026-10-03T10:01:43.771641334Z",
+        "Scope": "local",
+        "Driver": "null",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": null
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {},
+        "Options": {},
+        "Labels": {}
+    },
+    {
+        "Name": "stack_default",
+        "Id": "b03983f41f3105a4998a5825d2d8341856be704f6e4bb42560c7cbeac85e4060",
+        "Created": "2026-10-03T10:02:33.82446391Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.19.0.0/16",
+                    "Gateway": "172.19.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "87700754a1547ec78a6a68ded6d2d44a69b17a5da821c6ce84ea29c0bbe1cb3e": {
+                "Name": "stack-web",
+                "EndpointID": "d8568e9a0d55047182d7db67f0d57aee686c2eda8e2d7c9b2c87c01182ce20ef",
+                "MacAddress": "02:42:ac:13:00:02",
+                "IPv4Address": "172.19.0.2/16",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {},
+        "Labels": {
+            "com.docker.compose.network": "default",
+            "com.docker.compose.project": "stack",
+            "com.docker.compose.version": "2.26.1"
+        }
+    }
+]

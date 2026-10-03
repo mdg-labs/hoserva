@@ -14,6 +14,12 @@
 # The containers cover: dockerMan containers with a template, one stopped, one
 # on a custom ipvlan network, one dockerMan container whose template does not
 # exist, one created by hand and one from a Compose Manager project.
+#
+# A variant with an internal boot device has no stick to imitate: its flash is
+# the ZFS dataset flash/boot of the fixture's own boot pool, imported read-write
+# and mounted at <root>/boot, so the script sees /boot on zfs and the pool's
+# member partition, as it would on that server. The capture's boot device serial
+# carries this lab's id like every guest serial, and is rewritten to "-capture".
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -37,6 +43,7 @@ CAP="$OUT/capture-root"
 RESULT="$OUT/capture"
 BOOT_IMG="$OUT/boot.img"
 bootdev=""
+bootzfs=false
 containers_owned=false
 
 # shellcheck disable=SC2317 # called from the EXIT trap
@@ -67,20 +74,35 @@ mkdir -p -- "$CAP/mnt" "$CAP/boot" "$CAP/var/local/emhttp/smart" "$CAP/var/lib/d
 MNT="$CAP/mnt"
 
 # ---- the fixture's disks, read-only, where Unraid mounts them
+# The boot device is attached read-write: its pool is imported read-write below,
+# because the prepare script writes the capture into /boot.
 for s in "${SLOTS[@]}"; do
-  if [[ ${D_KIND[$s]} == parity ]]; then continue; fi
-  existing_disk "$s"
-  mount_fs "$s" ro
+  if is_boot_layout "$s"; then
+    WHOLE[$s]=$(l3_whole_dev "$s")
+    attach_part "$s" rw
+  else
+    existing_disk "$s"
+  fi
 done
+for s in $(fs_slots); do mount_fs "$s" ro; done
 
-# ---- the flash, on a FAT32 image like the stick
-rm -f -- "$BOOT_IMG"
-truncate -s 128M "$BOOT_IMG"
-mkfs.vfat -F 32 -n UNRAID "$BOOT_IMG" >/dev/null
-bootdev=$(losetup --find --show "$BOOT_IMG")
-mount -t vfat -o rw,noatime,umask=0,shortname=mixed "$bootdev" "$CAP/boot"
-MOUNTED+=("$CAP/boot")
-cp -r --no-preserve=mode,ownership,timestamps -- "$FLASH/." "$CAP/boot/"
+# ---- the flash: a FAT32 image like the stick, or the internal boot pool's dataset
+if bs=$(boot_slot); then
+  bootzfs=true
+  zpool import -N -o cachefile=none -d "$(boot_part "${WHOLE[$bs]}" 3)" "$BOOT_ZFS_POOL"
+  ZPOOLS+=("$BOOT_ZFS_POOL")
+  mount -t zfs "$BOOT_ZFS_DATASET" "$CAP/boot"
+  MOUNTED+=("$CAP/boot")
+  [[ -f $CAP/boot/config/disk.cfg ]] || die "the boot pool's dataset holds no flash tree: build $VARIANT first"
+else
+  rm -f -- "$BOOT_IMG"
+  truncate -s 128M "$BOOT_IMG"
+  mkfs.vfat -F 32 -n UNRAID "$BOOT_IMG" >/dev/null
+  bootdev=$(losetup --find --show "$BOOT_IMG")
+  mount -t vfat -o rw,noatime,umask=0,shortname=mixed "$bootdev" "$CAP/boot"
+  MOUNTED+=("$CAP/boot")
+  cp -r --no-preserve=mode,ownership,timestamps -- "$FLASH/." "$CAP/boot/"
+fi
 
 # ---- Unraid's runtime state
 # The serials the guest's disks report carry this lab's id; the committed
@@ -155,4 +177,5 @@ for f in containers.json networks.json capture.json report.txt var.ini autostart
 done
 cp -r -- "$CAP/boot/config/hoserva/." "$RESULT/"
 rm -f -- "$RESULT/disks.ini"
+if [[ $bootzfs == true ]]; then sed -i -E 's/-hoserva-[^"]*/-capture/' "$RESULT/capture.json"; fi
 printf 'unraid-capture: captured %s under %s\n' "$VARIANT" "$RESULT"

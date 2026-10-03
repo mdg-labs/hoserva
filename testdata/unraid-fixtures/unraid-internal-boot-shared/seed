@@ -1,0 +1,3 @@
+include|../common/seed-array
+include|../common/seed-cache-system
+include|../common/seed-cache-appdata

@@ -1,0 +1,13 @@
+include|../common/seed-array
+include|../common/seed-cache-system
+include|../common/seed-cache-appdata
+# the ext4 disk: a share of its own, a symlink, a FIFO and attributes
+file|disk4|photos-archive/2025/trip-01.bin|size=180000|xattr=user.DOSATTRIB="0x20"
+file|disk4|photos-archive/2025/trip-02.bin|size=170000
+text|disk4|photos-archive/README.txt|content=kept on the ext4 disk\n
+symlink|disk4|photos-archive/latest|target=2025
+fifo|disk4|photos-archive/run/ingest.fifo
+file|disk4|media/movies/ext4-only.bin|size=120000|xattr=user.fixtureapp.rating="4"
+# more on the btrfs disk, beside seed-array's share data
+file|disk3|documents/btrfs-scan.bin|size=64000|xattr=user.fixtureapp.rev="3"
+symlink|disk3|documents/latest-scan|target=btrfs-scan.bin

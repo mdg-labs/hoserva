@@ -1,0 +1,12 @@
+# The verdict the migration scan must give each disk of this variant (doc 05 §3). The
+# builder measures every row on the disks and refuses to build a variant whose
+# rows the disks do not show; expected/scan.txt is this file with those facts.
+# disk3 is a ZFS member and disk4 and disk5 are the two devices of one btrfs
+# filesystem: each is refused by name (Q23); disk1 and disk2 proceed.
+disk parity parity
+disk disk1 adopt
+disk disk2 adopt
+disk disk3 refuse zfs
+disk disk4 refuse multi-device-btrfs
+disk disk5 refuse multi-device-btrfs
+disk cache recreated

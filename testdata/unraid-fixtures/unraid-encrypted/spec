@@ -1,0 +1,23 @@
+# An encrypted array (Q22): every array data disk is a LUKS container holding XFS,
+# and the flash's defaultFsType and diskFsType.N say "luks:xfs", the value Unraid's
+# own settings page writes. The cache pool is not encrypted. The scan detects the
+# containers and refuses each encrypted disk by name.
+#
+# The bytewise XOR of three LUKS containers keeps the LUKS magic number, so the
+# parity partition itself probes as a LUKS container: the scan has to take the
+# parity role from the slot, never from the filesystem (doc 05 §3), or it would
+# list the parity disk among the encrypted ones.
+#
+# Building it needs device-mapper (cryptsetup open), which the lab container does not
+# have: this variant builds in the L3 guest only.
+unraid_version=6.12.15
+unraid_release=2025-03-25
+expect_parity_signature=crypto_LUKS
+luks_passphrase=fixture-passphrase-not-a-secret
+disk parity kind=parity fs=none     size=384M target=parity1
+disk disk1  kind=data   fs=luks-xfs size=320M target=disk1
+disk disk2  kind=data   fs=luks-xfs size=320M target=disk2
+disk disk3  kind=data   fs=luks-xfs size=320M target=disk3
+disk cache  kind=pool   fs=btrfs    size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-encrypted
+include ../common/spec-flash

@@ -1,0 +1,18 @@
+# Two XFS data disks beside one single-device btrfs and one ext4 data disk, each
+# with its own filesystem type in the flash's diskFsType.N (Q23). The scan adopts
+# every one of them after its own read-only check. A cache pool completes the
+# array.
+#
+# The flash deliberately has no config/hoserva/ capture, so the scan's missing-
+# capture fallback runs against a whole fixture: it warns, lists every template,
+# and pre-selects none (doc 05 §3, Q89). There is therefore no disks.ini either.
+unraid_version=6.12.15
+unraid_release=2025-03-25
+capture=none
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2
+disk disk3  kind=data   fs=btrfs size=320M target=disk3
+disk disk4  kind=data   fs=ext4  size=320M target=disk4
+disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+include ../common/spec-flash

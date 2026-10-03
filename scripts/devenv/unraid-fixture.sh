@@ -23,7 +23,14 @@
 #       creates them so); any other size is refused before a disk is written.
 # Any other device is refused. A variant is defined in
 # testdata/unraid-fixtures/<variant>/: spec (disk roles, filesystems, sizes),
-# seed (data), flash/ (the authored flash tree laid over common/flash).
+# seed (data), flash/ (the authored flash tree laid over common/flash), and, for
+# the variants that exercise the scan's refusals, expect (the verdict the scan
+# must give each disk).
+#
+# A variant whose disks need ZFS (fs=zfs, boot=) or device-mapper (fs=luks-xfs)
+# builds on the L3 tier only: the lab image has no OpenZFS, and the lab
+# container's device set (loop devices and FUSE, Q45) has no /dev/mapper/control,
+# so the l2 tier refuses it before anything is written.
 #
 # What it writes under its output directory (l2: /lab/<id>/unraid/<run>/,
 # l3: /srv/unraid-fixtures/<run>/, <run> being the variant, plus -<option> for
@@ -37,6 +44,13 @@
 #                              IMAGE_FILE: where it is, and each libvirt
 #                              domain it holds with its vdisks (sha256),
 #                              firmware, bridges and passthrough addresses
+#   expected/scan.txt          only with an expect file: the verdict for every
+#                              disk (adopt, refuse and why, recreated, boot
+#                              device), each checked against what the builder
+#                              measured on the disk, and the scan's warnings
+#   expected/source-disks.sha256   only when a disk is refused: the sha256 of every
+#                              whole source device, taken before any scan, so a
+#                              test can assert nothing wrote to them
 #   expected/flash.sha256      every file of the flash tree
 #   expected/flash-backup.zip  the flash as Unraid's flash_backup packs it
 #   expected/flash-hand-zipped.zip   the flash as a user zipping /boot would
@@ -55,6 +69,10 @@ PART_START_SECTOR=64
 GPT_LINUX_TYPE=0FC63DAF-8483-4772-8E79-3D69D8477DE4
 FLASH_MTIME='2026-09-15 10:00:00 UTC'
 XFS_FEATURES=(crc finobt sparse reflink bigtime inobtcount rmapbt nrext64)
+# Unraid's internal-boot layout (doc 08 §2, mkbootable): partitions 1 to 3 are
+# the boot area, 4 the data area.
+BOOT_ZFS_POOL=flash
+BOOT_ZFS_DATASET=flash/boot
 
 die() { printf 'unraid-fixture: %s\n' "$*" >&2; exit 1; }
 
@@ -76,17 +94,22 @@ WORK=""
 SPEC_VERSION=""
 SPEC_RELEASE=""
 SPEC_EXPECT_PARITY_SIGNATURE=""
+SPEC_CAPTURE=""
+SPEC_LUKS_PASSPHRASE=""
+L3_ONLY=""
 LV_MNT=""
 LV_LOOP=""
 LV_LOCATION=""
 SLOTS=()
 APPLEDOUBLE=()
-declare -A D_KIND D_FS D_SIZE D_TARGET D_POOL D_XFS
-declare -A PART WHOLE
+declare -A D_KIND D_FS D_SIZE D_TARGET D_POOL D_XFS D_GROUP D_BOOT D_CORRUPT
+declare -A PART WHOLE FSDEV
 declare -A FACT_LABEL FACT_FEATURES
 declare -A PARITY_SHA PARITY_SIG PARITY_KIND
 LOOPS=()
 MOUNTED=()
+LUKS_OPEN=()
+ZPOOLS=()
 SETRO=()
 DEFERRED_MODES=()
 PARITY_WINDOW=0
@@ -104,11 +127,11 @@ parse_disk() {
     val=${w#*=}
     case $key in
       kind)
-        case $val in parity | data | pool) ;; *) die "spec: disk '$slot': bad kind '$val'" ;; esac
+        case $val in parity | data | pool | boot) ;; *) die "spec: disk '$slot': bad kind '$val'" ;; esac
         D_KIND[$slot]=$val
         ;;
       fs)
-        case $val in xfs | btrfs | none) ;; *) die "spec: disk '$slot': bad fs '$val'" ;; esac
+        case $val in xfs | btrfs | ext4 | luks-xfs | zfs | none) ;; *) die "spec: disk '$slot': bad fs '$val'" ;; esac
         D_FS[$slot]=$val
         ;;
       size)
@@ -126,6 +149,19 @@ parse_disk() {
         case $val in default | rmapbt-nrext64) ;; *) die "spec: disk '$slot': bad xfs '$val'" ;; esac
         D_XFS[$slot]=$val
         ;;
+      group)
+        [[ $val =~ ^[a-z][a-z0-9]*$ ]] || die "spec: disk '$slot': bad group '$val'"
+        D_GROUP[$slot]=$val
+        ;;
+      boot)
+        [[ $val == dedicated || $val =~ ^[1-9][0-9]{3,5}$ ]] || die "spec: disk '$slot': boot= is 'dedicated' or the boot area in MiB (4096 or more)"
+        if [[ $val != dedicated ]]; then ((val >= 4096)) || die "spec: disk '$slot': a boot area of $val MiB is below the 4096 MiB Unraid's wizard requires"; fi
+        D_BOOT[$slot]=$val
+        ;;
+      corrupt)
+        [[ $val == xfs-metadata ]] || die "spec: disk '$slot': bad corrupt '$val'"
+        D_CORRUPT[$slot]=$val
+        ;;
       *) die "spec: disk '$slot': unknown key '$key'" ;;
     esac
   done
@@ -135,8 +171,13 @@ parse_disk() {
     parity) [[ $slot == parity || $slot == parity2 ]] || die "spec: parity disk must be 'parity' or 'parity2'" ;;
     data) [[ $slot == disk* && ${D_FS[$slot]} != none ]] || die "spec: data disk '$slot' needs a diskN name and a filesystem" ;;
     pool) [[ -n ${D_POOL[$slot]:-} && ${D_FS[$slot]} != none ]] || die "spec: pool disk '$slot' needs pool= and a filesystem" ;;
+    boot) [[ $slot == boot && ${D_BOOT[$slot]:-} == dedicated && ${D_FS[$slot]} == none ]] || die "spec: a boot disk is named 'boot', has fs=none and boot=dedicated" ;;
   esac
   [[ ${D_KIND[$slot]} != parity || ${D_FS[$slot]} == none ]] || die "spec: parity disk '$slot' has no filesystem"
+  [[ -z ${D_BOOT[$slot]:-} || ${D_KIND[$slot]} == boot || ( ${D_KIND[$slot]} == pool && ${D_BOOT[$slot]} != dedicated ) ]] \
+    || die "spec: disk '$slot': boot=dedicated is for the boot disk, boot=<MiB> for a pool that shares the boot device"
+  [[ -z ${D_CORRUPT[$slot]:-} || ${D_FS[$slot]} == xfs ]] || die "spec: disk '$slot': corrupt=xfs-metadata needs fs=xfs"
+  [[ -z ${D_GROUP[$slot]:-} || ( ${D_FS[$slot]} == btrfs && ${D_KIND[$slot]} == data ) ]] || die "spec: disk '$slot': group= is for btrfs data disks"
   SLOTS+=("$slot")
 }
 
@@ -151,6 +192,11 @@ parse_spec() {
       unraid_release=*) SPEC_RELEASE=${line#*=} ;;
       expect_parity_signature=*) SPEC_EXPECT_PARITY_SIGNATURE=${line#*=} ;;
       default_option=*) ;; # read by resolve_option
+      capture=*)
+        SPEC_CAPTURE=${line#*=}
+        [[ $SPEC_CAPTURE == none ]] || die "spec $file: capture= can only be 'none'"
+        ;;
+      luks_passphrase=*) SPEC_LUKS_PASSPHRASE=${line#*=} ;;
       include\ *) parse_spec "$dir/${line#include }" ;;
       appledouble\ *) APPLEDOUBLE+=("${line#appledouble }") ;;
       disk\ *) parse_disk "$line" ;;
@@ -168,7 +214,7 @@ slot_index() {
     *)
       i=0
       for s in "${SLOTS[@]}"; do
-        if [[ ${D_KIND[$s]} != pool ]]; then continue; fi
+        if [[ ${D_KIND[$s]} != pool && ${D_KIND[$s]} != boot ]]; then continue; fi
         i=$((i + 1))
         if [[ $s == "$slot" ]]; then break; fi
       done
@@ -188,6 +234,88 @@ serial_of() {  # slot -> the serial rendered into the flash tree
   local s
   s="$(role_of "$1")-hoserva-${HOSERVA_LAB_ID}"
   echo "${s:0:20}"
+}
+
+# The filesystem each slot holds once its container is open, the type libblkid
+# reports on the partition itself, and the value Unraid writes as diskFsType.
+inner_fs() { case ${D_FS[$1]} in luks-xfs) echo xfs ;; *) echo "${D_FS[$1]}" ;; esac; }
+raw_type() { case ${D_FS[$1]} in luks-xfs) echo crypto_LUKS ;; zfs) echo zfs_member ;; *) echo "${D_FS[$1]}" ;; esac; }
+unraid_fstype() { case ${D_FS[$1]} in luks-xfs) echo luks:xfs ;; none) echo "" ;; *) echo "${D_FS[$1]}" ;; esac; }
+
+is_boot_layout() { [[ -n ${D_BOOT[$1]:-} ]]; }
+
+boot_slot() {
+  local s
+  for s in "${SLOTS[@]}"; do
+    if is_boot_layout "$s"; then
+      echo "$s"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The slots that share one multi-device btrfs filesystem: the first declared is
+# the one that is formatted, mounted and seeded; the others are its members.
+group_primary() {  # slot -> primary slot of its group, or itself
+  local s=$1 t
+  [[ -n ${D_GROUP[$s]:-} ]] || {
+    echo "$s"
+    return 0
+  }
+  for t in "${SLOTS[@]}"; do
+    if [[ ${D_GROUP[$t]:-} == "${D_GROUP[$s]}" ]]; then
+      echo "$t"
+      return 0
+    fi
+  done
+}
+group_members() {  # slot -> every slot of its group, primary first
+  local s=$1 t
+  if [[ -z ${D_GROUP[$s]:-} ]]; then
+    echo "$s"
+    return 0
+  fi
+  for t in "${SLOTS[@]}"; do
+    if [[ ${D_GROUP[$t]:-} == "${D_GROUP[$s]}" ]]; then echo "$t"; fi
+  done
+}
+is_group_member() { [[ -n ${D_GROUP[$1]:-} && $(group_primary "$1") != "$1" ]]; }
+
+# Every slot that holds a filesystem the builder formats and mounts: data and
+# pool disks except the other members of a multi-device btrfs.
+fs_slots() {
+  local s
+  for s in "${SLOTS[@]}"; do
+    case ${D_KIND[$s]} in
+      parity | boot) continue ;;
+    esac
+    if is_group_member "$s"; then continue; fi
+    echo "$s"
+  done
+}
+
+check_spec() {
+  local s g n=0 reasons=()
+  local -A gcount=()
+  for s in "${SLOTS[@]}"; do
+    case ${D_FS[$s]} in
+      zfs) reasons+=("$s is a ZFS disk") ;;
+      luks-xfs) reasons+=("$s is a LUKS container") ;;
+    esac
+    if is_boot_layout "$s"; then
+      n=$((n + 1))
+      reasons+=("$s has the internal-boot layout, whose boot pool is ZFS")
+    fi
+    if [[ -n ${D_GROUP[$s]:-} ]]; then gcount[${D_GROUP[$s]}]=$((${gcount[${D_GROUP[$s]}]:-0} + 1)); fi
+    if [[ ${D_FS[$s]} == luks-xfs && -z $SPEC_LUKS_PASSPHRASE ]]; then die "spec: disk '$s' is LUKS, but the spec has no luks_passphrase="; fi
+  done
+  ((n <= 1)) || die "spec: at most one disk can carry the internal-boot layout"
+  for g in "${!gcount[@]}"; do
+    ((gcount[$g] >= 2)) || die "spec: btrfs group '$g' has a single disk; a multi-device filesystem needs two or more"
+  done
+  if [[ -n $SPEC_LUKS_PASSPHRASE && ! $SPEC_LUKS_PASSPHRASE =~ ^[A-Za-z0-9._-]+$ ]]; then die "spec: luks_passphrase must be letters, digits, '.', '_' and '-'"; fi
+  if ((${#reasons[@]} > 0)); then L3_ONLY=$(IFS=';'; printf '%s' "${reasons[*]}"); fi
 }
 
 # ----------------------------------------------------------------- tier
@@ -340,11 +468,47 @@ read_layout() {
 
 register_loop() { LOOPS+=("$1"); }
 
+boot_part() { printf '%s%s' "$1" "$2"; }  # whole device, partition number (virtio names)
+
+# The boot device: the layout Unraid's mkbootable writes (doc 08 §2). L3 only.
+write_boot_table() {  # slot
+  local slot=$1 whole=${WHOLE[$1]} mib boot_mib
+  mib=$((D_SIZE[$slot] / 1048576))
+  if [[ ${D_BOOT[$slot]} == dedicated ]]; then boot_mib=$((mib - 1)); else boot_mib=${D_BOOT[$slot]}; fi
+  ((boot_mib >= 4096 && boot_mib < mib)) || die "$slot: a ${boot_mib} MiB boot area does not fit a ${mib} MiB device with a data partition"
+  sgdisk "$whole" \
+    --new=1:1M:+1M --typecode=1:ef02 --change-name=1:'BIOS Boot Partition' \
+    --new=2:0:+510M --typecode=2:ef00 --change-name=2:'EFI System Partition' \
+    --new=3:0:+$((boot_mib - 512))M --typecode=3:8300 --change-name=3:'Unraid Boot Partition' \
+    --new=4:0:0 --typecode=4:8300 >/dev/null
+  udevadm settle
+}
+
+# Sets PART[slot] to the data area, partition 4, and makes every partition
+# of the device read-only when asked.
+attach_boot_parts() {  # slot ro|rw
+  local slot=$1 mode=$2 whole=${WHOLE[$1]} n dev
+  assert_own_virtio "$slot" "$whole"
+  for n in 1 2 3 4; do
+    dev=$(boot_part "$whole" "$n")
+    [[ -b $dev ]] || die "$whole has no partition $n"
+    if [[ $mode == ro ]]; then
+      blockdev --setro "$dev"
+      SETRO+=("$dev")
+    fi
+  done
+  PART[$slot]=$(boot_part "$whole" 4)
+}
+
 # Sets PART[slot] to the partition's block device; for l2 that is a loop
 # device over the partition's own byte range of the image.
 attach_part() {  # slot ro|rw
   local slot=$1 mode=$2 whole dev opts=()
   whole=${WHOLE[$slot]}
+  if is_boot_layout "$slot"; then
+    attach_boot_parts "$slot" "$mode"
+    return 0
+  fi
   read_layout "$whole"
   case $TIER in
     l2)
@@ -382,8 +546,12 @@ new_disk() {  # slot (build only)
     l3)
       whole=${WHOLE[$slot]}
       wipefs -a -q "$whole"
-      partition_script "$bytes" | sfdisk -q "$whole" >/dev/null
-      udevadm settle
+      if is_boot_layout "$slot"; then
+        write_boot_table "$slot"
+      else
+        partition_script "$bytes" | sfdisk -q "$whole" >/dev/null
+        udevadm settle
+      fi
       ;;
   esac
   attach_part "$slot" rw
@@ -400,12 +568,51 @@ existing_disk() {  # slot ro (verify)
 
 # ------------------------------------------------------------ filesystems
 
+luks_name() { printf 'hoserva-fx-%s' "$1"; }
+
+# Opens the LUKS container of a slot as /dev/mapper/hoserva-fx-<slot>.
+luks_open() {  # slot rw|ro
+  local slot=$1 mode=$2 name opts=()
+  name=$(luks_name "$slot")
+  if [[ $mode == ro ]]; then opts=(--readonly); fi
+  [[ ! -e /dev/mapper/$name ]] || die "/dev/mapper/$name already exists"
+  printf '%s' "$SPEC_LUKS_PASSPHRASE" | cryptsetup open --type luks --key-file=- "${opts[@]}" "${PART[$slot]}" "$name" \
+    || die "$slot: cannot open its LUKS container"
+  LUKS_OPEN+=("$name")
+  FSDEV[$slot]=/dev/mapper/$name
+}
+
+zfs_import_ro() {  # slot
+  local slot=$1
+  zpool import -N -o readonly=on -o cachefile=none -d "${PART[$slot]}" "$slot" || die "$slot: cannot import its ZFS pool read-only"
+  ZPOOLS+=("$slot")
+  FSDEV[$slot]=$slot
+}
+
+# Makes the slot's filesystem device available for an existing disk: the
+# partition itself, the opened LUKS container or the imported ZFS pool.
+activate_fs() {  # slot rw|ro
+  local slot=$1 mode=$2
+  case ${D_FS[$slot]} in
+    luks-xfs) luks_open "$slot" "$mode" ;;
+    zfs) zfs_import_ro "$slot" ;;
+    *) FSDEV[$slot]=${PART[$slot]} ;;
+  esac
+}
+
 format_part() {  # slot
-  local slot=$1 dev mopts i
+  local slot=$1 dev mopts i m members=() devs=()
   dev=${PART[$slot]}
   assert_own_part "$slot"
+  FSDEV[$slot]=$dev
   case ${D_FS[$slot]} in
-    xfs)
+    xfs | luks-xfs)
+      if [[ ${D_FS[$slot]} == luks-xfs ]]; then
+        printf '%s' "$SPEC_LUKS_PASSPHRASE" | cryptsetup luksFormat --batch-mode --type luks2 --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --key-file=- "$dev" \
+          || die "$slot: cannot create its LUKS container"
+        luks_open "$slot" rw
+        dev=${FSDEV[$slot]}
+      fi
       mopts=crc=1,finobt=1,reflink=1,bigtime=1,inobtcount=1,rmapbt=0
       i=sparse=1,nrext64=0
       if [[ ${D_XFS[$slot]:-default} == rmapbt-nrext64 ]]; then
@@ -414,36 +621,75 @@ format_part() {  # slot
       fi
       mkfs.xfs -q -f -K -m "$mopts" -i "$i" "$dev"
       ;;
-    btrfs) mkfs.btrfs -q -f "$dev" ;;
+    ext4) mkfs.ext4 -q -F -E lazy_itable_init=0,lazy_journal_init=0 "$dev" ;;
+    btrfs)
+      if [[ -n ${D_GROUP[$slot]:-} ]]; then
+        mapfile -t members < <(group_members "$slot")
+        for m in "${members[@]}"; do
+          assert_own_part "$m"
+          devs+=("${PART[$m]}")
+        done
+        mkfs.btrfs -q -f -d raid1 -m raid1 "${devs[@]}"
+      else
+        mkfs.btrfs -q -f "$dev"
+      fi
+      ;;
+    zfs)
+      zpool create -f -o ashift=12 -o cachefile=none -O mountpoint=legacy -O xattr=sa -O atime=off "$slot" "$dev"
+      ZPOOLS+=("$slot")
+      FSDEV[$slot]=$slot
+      ;;
   esac
 }
 
 mount_fs() {  # slot rw|ro
-  local slot=$1 mode=$2 m dev
+  local slot=$1 mode=$2 m dev devopt="" t members=()
   m="$MNT/$slot"
-  dev=${PART[$slot]}
+  [[ -n ${FSDEV[$slot]:-} ]] || activate_fs "$slot" "$mode"
+  dev=${FSDEV[$slot]}
   mkdir -p -- "$m"
-  case ${D_FS[$slot]}:$mode in
+  if [[ -n ${D_GROUP[$slot]:-} ]]; then
+    mapfile -t members < <(group_members "$slot")
+    for t in "${members[@]:1}"; do devopt+=",device=${PART[$t]}"; done
+  fi
+  case $(inner_fs "$slot"):$mode in
     xfs:rw) mount -t xfs -o noatime,nouuid,inode64,logbufs=8,logbsize=32k,noquota "$dev" "$m" ;;
     xfs:ro) mount -t xfs -o ro,norecovery,nouuid,noatime,inode64,noquota "$dev" "$m" ;;
-    btrfs:rw) mount -t btrfs -o noatime "$dev" "$m" ;;
-    btrfs:ro) mount -t btrfs -o ro,rescue=nologreplay,noatime "$dev" "$m" ;;
+    btrfs:rw) mount -t btrfs -o "noatime$devopt" "$dev" "$m" ;;
+    btrfs:ro) mount -t btrfs -o "ro,rescue=nologreplay,noatime$devopt" "$dev" "$m" ;;
+    ext4:rw) mount -t ext4 -o noatime "$dev" "$m" ;;
+    ext4:ro) mount -t ext4 -o ro,noload,noatime "$dev" "$m" ;;
+    zfs:rw) mount -t zfs "$dev" "$m" ;;
+    zfs:ro) mount -t zfs -o ro "$dev" "$m" ;;
   esac
   MOUNTED+=("$m")
 }
 
+# Unmounts everything in reverse order, then closes the LUKS containers and
+# exports the ZFS pools the run opened. A step that fails stops the run: the
+# disks are never reported as built or verified over a mount or mapping that is
+# still holding them.
 unmount_all() {
-  local i m
+  local i m name pool
   for ((i = ${#MOUNTED[@]} - 1; i >= 0; i--)); do
     m=${MOUNTED[$i]}
     if mountpoint -q "$m" 2>/dev/null; then umount "$m" || die "cannot unmount $m"; fi
   done
   MOUNTED=()
+  for pool in "${ZPOOLS[@]}"; do
+    zpool export "$pool" || die "cannot export the ZFS pool $pool"
+  done
+  ZPOOLS=()
+  for name in "${LUKS_OPEN[@]}"; do
+    cryptsetup close "$name" || die "cannot close /dev/mapper/$name"
+  done
+  LUKS_OPEN=()
+  FSDEV=()
 }
 
 # shellcheck disable=SC2317 # called from the EXIT trap
 cleanup() {
-  local rc=$? m dev img
+  local rc=$? m dev img name pool
   set +e
   if [[ -n $LV_MNT ]] && mountpoint -q "$LV_MNT" 2>/dev/null; then umount "$LV_MNT" 2>/dev/null; fi
   if [[ -n $LV_LOOP ]]; then
@@ -454,6 +700,24 @@ cleanup() {
   fi
   for m in "${MOUNTED[@]}"; do
     if mountpoint -q "$m" 2>/dev/null; then umount "$m" 2>/dev/null; fi
+  done
+  for pool in "${ZPOOLS[@]}"; do
+    if zpool list -H -o name "$pool" >/dev/null 2>&1; then
+      zpool export "$pool" 2>/dev/null
+      if zpool list -H -o name "$pool" >/dev/null 2>&1; then
+        printf 'unraid-fixture: cannot export the ZFS pool %s\n' "$pool" >&2
+        if ((rc == 0)); then rc=1; fi
+      fi
+    fi
+  done
+  for name in "${LUKS_OPEN[@]}"; do
+    if [[ -e /dev/mapper/$name ]]; then
+      cryptsetup close "$name" 2>/dev/null
+      if [[ -e /dev/mapper/$name ]]; then
+        printf 'unraid-fixture: cannot close /dev/mapper/%s\n' "$name" >&2
+        if ((rc == 0)); then rc=1; fi
+      fi
+    fi
   done
   for dev in "${SETRO[@]}"; do blockdev --setrw "$dev" 2>/dev/null; done
   for dev in "${LOOPS[@]}"; do
@@ -702,26 +966,70 @@ probe_value() {  # key dev -> value or empty when there is no signature
   esac
 }
 
+btrfs_devices() {  # partition -> the number of devices its filesystem spans
+  local n
+  n=$(btrfs inspect-internal dump-super "$1" | sed -n 's/^num_devices[[:space:]]*//p') || die "btrfs inspect-internal dump-super $1 failed"
+  [[ $n =~ ^[1-9][0-9]*$ ]] || die "$1: cannot read the number of btrfs devices"
+  printf '%s' "$n"
+}
+
 # Records what is true of a mounted data or pool filesystem.
 fs_facts() {  # slot
-  local slot=$1 dev type label info f v feats=""
+  local slot=$1 dev type label info f v feats="" n luks
   dev=${PART[$slot]}
   type=$(probe_value TYPE "$dev")
+  [[ $type == "$(raw_type "$slot")" ]] || die "$slot: the partition holds '$type', not $(raw_type "$slot")"
+  case ${D_FS[$slot]} in
+    zfs)
+      label=$(probe_value LABEL "$dev")
+      [[ $label == "$slot" ]] || die "$slot: the ZFS pool is named '$label', not $slot"
+      FACT_LABEL[$slot]=$label
+      FACT_FEATURES[$slot]="zpool=$label"
+      return 0
+      ;;
+    luks-xfs)
+      label=$(probe_value LABEL "$dev")
+      [[ -z $label ]] || die "$slot: the LUKS container has a label ('$label')"
+      luks=$(cryptsetup luksDump "$dev" | sed -n 's/^Version:[[:space:]]*//p')
+      [[ $luks =~ ^[12]$ ]] || die "$slot: cannot read the LUKS version"
+      feats="luks=$luks"
+      type=$(probe_value TYPE "${FSDEV[$slot]}")
+      [[ $type == xfs ]] || die "$slot: the LUKS container holds '$type', not xfs"
+      dev=${FSDEV[$slot]}
+      ;;
+  esac
   label=$(probe_value LABEL "$dev")
-  [[ $type == "${D_FS[$slot]}" ]] || die "$slot: the filesystem is '$type', not ${D_FS[$slot]}"
   [[ -z $label ]] || die "$slot: the filesystem has a label ('$label'); Unraid's carry none"
   FACT_LABEL[$slot]=-
-  if [[ $type == xfs ]]; then
-    info=$(xfs_info "$MNT/$slot") || die "xfs_info $slot failed"
-    for f in "${XFS_FEATURES[@]}"; do
-      v=$(grep -oE "(^|[ ,])$f=[0-9]" <<<"$info" | head -n 1 | sed 's/.*=//') || true
-      [[ -n $v ]] || die "$slot: xfs_info does not report $f"
-      feats+=" $f=$v"
-    done
-    FACT_FEATURES[$slot]=${feats# }
-  else
-    FACT_FEATURES[$slot]=""
-  fi
+  case $(inner_fs "$slot") in
+    xfs)
+      info=$(xfs_info "$MNT/$slot") || die "xfs_info $slot failed"
+      for f in "${XFS_FEATURES[@]}"; do
+        v=$(grep -oE "(^|[ ,])$f=[0-9]" <<<"$info" | head -n 1 | sed 's/.*=//') || true
+        [[ -n $v ]] || die "$slot: xfs_info does not report $f"
+        feats+=" $f=$v"
+      done
+      ;;
+    btrfs)
+      n=$(btrfs_devices "$dev")
+      ((n == $(group_members "$slot" | wc -l))) || die "$slot: its btrfs filesystem spans $n devices, the spec's group has $(group_members "$slot" | wc -l)"
+      feats+=" devices=$n"
+      ;;
+  esac
+  FACT_FEATURES[$slot]=${feats# }
+}
+
+# The other devices of a multi-device btrfs filesystem are not mounted
+# themselves; what is recorded for them is what the superblock says.
+member_facts() {  # slot
+  local slot=$1 dev=${PART[$1]} type n
+  type=$(probe_value TYPE "$dev")
+  [[ $type == btrfs ]] || die "$slot: the partition holds '$type', not btrfs"
+  [[ -z $(probe_value LABEL "$dev") ]] || die "$slot: the filesystem has a label; Unraid's carry none"
+  n=$(btrfs_devices "$dev")
+  ((n == $(group_members "$slot" | wc -l))) || die "$slot: its btrfs filesystem spans $n devices, the spec's group has $(group_members "$slot" | wc -l)"
+  FACT_LABEL[$slot]=-
+  FACT_FEATURES[$slot]="devices=$n member-of=$(group_primary "$slot")"
 }
 
 xor_stream() {  # window dev...
@@ -756,7 +1064,7 @@ data_slots() {
 set_parity_window() {
   local s bytes win=$PARITY_WINDOW_BYTES
   for s in "${SLOTS[@]}"; do
-    if [[ ${D_KIND[$s]} == pool ]]; then continue; fi
+    if [[ ${D_KIND[$s]} == pool || ${D_KIND[$s]} == boot ]]; then continue; fi
     bytes=$(blockdev --getsize64 "${PART[$s]}")
     if ((bytes < win)); then win=$bytes; fi
   done
@@ -911,8 +1219,7 @@ render_expected() {  # scan-dir out-dir
     printf '# variant: %s\n' "$VARIANT"
     if [[ -n $OPTION ]]; then printf '# option: %s\n' "$OPTION"; fi
     printf '# columns: sha256, size, mode, owner, disk, path (tab separated; the path is relative to the disk root)\n'
-    for s in "${SLOTS[@]}"; do
-      if [[ ${D_KIND[$s]} == parity ]]; then continue; fi
+    for s in $(fs_slots); do
       LC_ALL=C awk -F'\t' -v s="$s" '$5 == s { n++; b += $2 } END { printf "# disk %s files=%d bytes=%d\n", s, n, b }' "$scan/files"
     done
     LC_ALL=C awk -F'\t' '{ split($6, p, "/"); n[p[1]]++; b[p[1]] += $2 } END { for (k in n) printf "# share %s files=%d bytes=%d\n", k, n[k], b[k] }' "$scan/files" | LC_ALL=C sort
@@ -929,6 +1236,16 @@ render_expected() {  # scan-dir out-dir
     if [[ -n $OPTION ]]; then printf 'option %s\n' "$OPTION"; fi
     printf 'unraid_version %s\n' "$SPEC_VERSION"
     for s in "${SLOTS[@]}"; do
+      if is_boot_layout "$s"; then
+        line="disk $s kind=${D_KIND[$s]} scheme=gpt layout=internal-boot boot=${D_BOOT[$s]} fs=${D_FS[$s]}"
+        if [[ ${D_KIND[$s]} != boot ]]; then
+          line+=" label=${FACT_LABEL[$s]}"
+          if [[ -n ${FACT_FEATURES[$s]} ]]; then line+=" ${FACT_FEATURES[$s]}"; fi
+        fi
+        printf '%s\n' "$line"
+        printf '%s\n' "${BOOT_LAYOUT[$s]}"
+        continue
+      fi
       line="disk $s kind=${D_KIND[$s]} scheme=${LAYOUT_SCHEME[$s]} start=${LAYOUT_START[$s]} sectors=${LAYOUT_SECTORS[$s]} type=${LAYOUT_TYPE[$s]} fs=${D_FS[$s]}"
       if [[ ${D_KIND[$s]} != parity ]]; then
         line+=" label=${FACT_LABEL[$s]}"
@@ -945,10 +1262,11 @@ render_expected() {  # scan-dir out-dir
   if [[ -f $scan/domains.txt ]]; then cp -- "$scan/domains.txt" "$out/domains.txt"; fi
 }
 
-declare -A LAYOUT_SCHEME LAYOUT_START LAYOUT_SECTORS LAYOUT_TYPE
+declare -A LAYOUT_SCHEME LAYOUT_START LAYOUT_SECTORS LAYOUT_TYPE BOOT_LAYOUT
 
 record_layout() {  # slot
   local slot=$1
+  if is_boot_layout "$slot"; then return 0; fi
   read_layout "${WHOLE[$slot]}"
   LAYOUT_SCHEME[$slot]=$L_SCHEME
   LAYOUT_START[$slot]=$L_START
@@ -965,33 +1283,341 @@ assert_parity_signature() {
   done
 }
 
+# ------------------------------------------------------- internal boot
+
+# The boot area of the device: the FAT32 EFI system partition and the ZFS pool
+# "flash" whose dataset flash/boot holds the flash tree, the way mkbootable
+# makes them (doc 08 §2). The data area, partition 4, is formatted by
+# format_part when the device also holds a pool.
+create_boot_pool() {  # slot
+  local slot=$1 whole=${WHOLE[$1]} esp zfs
+  assert_own_virtio "$slot" "$whole"
+  esp=$(boot_part "$whole" 2)
+  zfs=$(boot_part "$whole" 3)
+  mkfs.fat -F32 -n EFI "$esp" >/dev/null
+  zpool create -f -m none -o compatibility=grub2 -o ashift=12 -o autotrim=on -o cachefile=none "$BOOT_ZFS_POOL" "$zfs"
+  ZPOOLS+=("$BOOT_ZFS_POOL")
+  zfs create -o mountpoint=legacy -o compression=lz4 -o atime=off -o xattr=sa "$BOOT_ZFS_DATASET"
+  mkdir -p -- "$MNT/flash-boot"
+  mount -t zfs "$BOOT_ZFS_DATASET" "$MNT/flash-boot"
+  MOUNTED+=("$MNT/flash-boot")
+  BOOT_POOL_GUID=$(zpool get -H -o value guid "$BOOT_ZFS_POOL")
+  [[ $BOOT_POOL_GUID =~ ^[0-9]+$ ]] || die "cannot read the GUID of the ZFS pool $BOOT_ZFS_POOL"
+}
+
+fill_boot_pool() {
+  mountpoint -q "$MNT/flash-boot" || die "the boot dataset is not mounted"
+  cp -a --no-preserve=ownership -- "$FLASH/." "$MNT/flash-boot/"
+  sync
+}
+
+# Reads the boot device back the way the scan sees it: the partition names and
+# types from the udev database, the filesystem facts from libblkid, and the
+# pool's GUID. Dies when the table is not Unraid's internal-boot layout.
+record_boot_layout() {  # slot
+  local slot=$1 whole=${WHOLE[$1]} dump n dev props name type line start size fs label want_name want_type text="" guid
+  local -a names=('BIOS\x20Boot\x20Partition' 'EFI\x20System\x20Partition' 'Unraid\x20Boot\x20Partition' '')
+  local -a types=(21686148-6449-6e6f-744e-656564454649 c12a7328-f81f-11d2-ba4b-00a0c93ec93b 0fc63daf-8483-4772-8e79-3d69d8477de4 0fc63daf-8483-4772-8e79-3d69d8477de4)
+  dump=$(sfdisk -d "$whole") || die "sfdisk -d $whole failed"
+  [[ $(sed -n 's/^label: //p' <<<"$dump") == gpt ]] || die "$slot: the boot device has no GPT"
+  udevadm settle
+  for n in 1 2 3 4; do
+    dev=$(boot_part "$whole" "$n")
+    props=$(udevadm info -q property -n "$dev") || die "udevadm info $dev failed"
+    name=$(sed -n 's/^ID_PART_ENTRY_NAME=//p' <<<"$props")
+    type=$(sed -n 's/^ID_PART_ENTRY_TYPE=//p' <<<"$props")
+    want_name=${names[$((n - 1))]}
+    want_type=${types[$((n - 1))]}
+    [[ $name == "$want_name" ]] || die "$slot: partition $n is named '$name', Unraid's internal-boot layout names it '$want_name'"
+    [[ $type == "$want_type" ]] || die "$slot: partition $n has type '$type', Unraid's internal-boot layout has '$want_type'"
+    line=$(grep -E "^$dev : " <<<"$dump") || die "$slot: sfdisk does not list $dev"
+    start=$(sed -n 's/.*start= *\([0-9]*\),.*/\1/p' <<<"$line")
+    size=$(sed -n 's/.*size= *\([0-9]*\),.*/\1/p' <<<"$line")
+    fs=$(probe_value TYPE "$dev")
+    label=$(probe_value LABEL "$dev")
+    text+="part $slot $n name=${name:--} type=$type start=$start sectors=$size fs=${fs:--} label=${label:--}"$'\n'
+  done
+  guid=$(probe_value UUID "$(boot_part "$whole" 3)")
+  [[ $(probe_value TYPE "$(boot_part "$whole" 2)") == vfat && $(probe_value LABEL "$(boot_part "$whole" 2)") == EFI ]] || die "$slot: partition 2 is not FAT32 labelled EFI"
+  [[ $(probe_value TYPE "$(boot_part "$whole" 3)") == zfs_member && $(probe_value LABEL "$(boot_part "$whole" 3)") == "$BOOT_ZFS_POOL" ]] \
+    || die "$slot: partition 3 is not a member of the ZFS pool $BOOT_ZFS_POOL"
+  text+="zpool $slot name=$BOOT_ZFS_POOL dataset=$BOOT_ZFS_DATASET guid=$guid"
+  BOOT_LAYOUT[$slot]=$text
+}
+
+# Verify: the flash tree the boot pool holds, read back from the device
+# through a read-only import, must be the flash tree this build recorded.
+verify_boot_pool() {  # slot
+  local slot=$1 zfs
+  zfs=$(boot_part "${WHOLE[$slot]}" 3)
+  zpool import -N -o readonly=on -o cachefile=none -d "$zfs" "$BOOT_ZFS_POOL" || die "$slot: cannot import the boot pool read-only"
+  ZPOOLS+=("$BOOT_ZFS_POOL")
+  mkdir -p -- "$MNT/flash-boot"
+  mount -t zfs -o ro "$BOOT_ZFS_DATASET" "$MNT/flash-boot"
+  MOUNTED+=("$MNT/flash-boot")
+  (cd -- "$MNT/flash-boot" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) >"$WORK/boot-pool.sha256"
+  diff -u "$EXP/flash.sha256" "$WORK/boot-pool.sha256" >&2 || die "$slot: the boot pool does not hold the flash tree"
+}
+
+# ------------------------------------------------------ expected scan result
+
+# What the scan must say about each disk is authored in the variant's expect
+# file; the builder measures every claim on the disks themselves and refuses to
+# build a variant whose expect file says something the disks do not show.
+declare -A EXPECT_DISK M_VERDICT M_FACTS
+EXPECT_WARNS=()
+EXPECT_CONFIG_SOURCE=""
+HAVE_EXPECT=0
+
+load_expect() {
+  local file=$VDIR/expect line w slot verdict reason s warn=0 cfg=0
+  [[ -f $file ]] || return 0
+  HAVE_EXPECT=1
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ -z ${line//[[:space:]]/} || $line == \#* ]]; then continue; fi
+    read -r -a w <<<"$line"
+    case ${w[0]} in
+      disk)
+        slot=${w[1]:-}
+        verdict=${w[2]:-}
+        reason=${w[3]:--}
+        [[ -n ${D_KIND[$slot]:-} ]] || die "expect: no disk '$slot' in the spec"
+        [[ -z ${EXPECT_DISK[$slot]:-} ]] || die "expect: disk '$slot' is listed twice"
+        case "$verdict $reason" in
+          "parity -" | "adopt -" | "recreated -" | "boot-device -" | "boot-device cache-recreated" | \
+            "refuse integrity" | "refuse encrypted" | "refuse zfs" | "refuse multi-device-btrfs") ;;
+          *) die "expect: cannot read the verdict of disk '$slot': $line" ;;
+        esac
+        EXPECT_DISK[$slot]="$verdict $reason"
+        ;;
+      warn)
+        [[ ${w[1]:-} == capture-missing && ${#w[@]} -eq 2 ]] || die "expect: cannot read: $line"
+        EXPECT_WARNS+=("${w[1]}")
+        ;;
+      config-source)
+        [[ ${w[1]:-} == zip && ${#w[@]} -eq 2 ]] || die "expect: cannot read: $line"
+        EXPECT_CONFIG_SOURCE=zip
+        ;;
+      *) die "expect: cannot read: $line" ;;
+    esac
+  done <"$file"
+  for s in "${SLOTS[@]}"; do
+    [[ -n ${EXPECT_DISK[$s]:-} ]] || die "expect: disk '$s' has no verdict"
+  done
+  if ((${#EXPECT_WARNS[@]} > 0)); then warn=1; fi
+  if [[ -n $EXPECT_CONFIG_SOURCE ]]; then cfg=1; fi
+  if [[ $SPEC_CAPTURE == none ]]; then
+    ((warn)) || die "expect: the spec says capture=none, so the expect file must record the capture-missing warning"
+  else
+    ((!warn)) || die "expect: the capture-missing warning, but the spec has a capture"
+  fi
+  if boot_slot >/dev/null; then
+    ((cfg)) || die "expect: the spec has an internal-boot disk, so the expect file must say config-source zip"
+  else
+    ((!cfg)) || die "expect: config-source zip, but the spec has no internal-boot disk"
+  fi
+}
+
+# The Unraid slot number of a data disk, whose diskFsType.N the flash carries.
+flash_fs_type() {  # slot
+  local n
+  n=$(slot_index "$1")
+  sed -n "s/^diskFsType\\.$n=\"\\(.*\\)\"\$/\\1/p" "$FLASH/config/disk.cfg" | head -n 1
+}
+
+# Runs the read-only check Q23 names for the filesystem, on the unmounted
+# partition. Sets CHECK_TOOL and CHECK_RC; an exit status that is neither clean
+# nor the tool's own "this filesystem has errors" is a failure of the check, not
+# a verdict.
+run_adopt_check() {  # slot fs
+  local slot=$1 fs=$2 dev=${PART[$1]} argv=() bad_rc rc=0
+  case $fs in
+    xfs) argv=(xfs_repair -n "$dev"); bad_rc=1; CHECK_TOOL=xfs_repair-n ;;
+    ext4) argv=(e2fsck -n "$dev"); bad_rc=4; CHECK_TOOL=e2fsck-n ;;
+    btrfs) argv=(btrfs check --readonly "$dev"); bad_rc=1; CHECK_TOOL=btrfs-check-readonly ;;
+    *) die "$slot: no read-only check for '$fs'" ;;
+  esac
+  "${argv[@]}" >/dev/null 2>&1 || rc=$?
+  if ((rc != 0 && rc != bad_rc)); then die "$slot: ${argv[*]} exited $rc, which is neither clean nor the tool's report of errors"; fi
+  CHECK_RC=$rc
+}
+
+# Sets M_VERDICT[slot] ("<verdict> <reason>") and M_FACTS[slot] from the disk.
+measure_slot() {  # slot
+  local slot=$1 dev=${PART[$1]} raw flash n facts
+  case ${D_KIND[$slot]} in
+    parity)
+      M_VERDICT[$slot]="parity -"
+      M_FACTS[$slot]="kind=parity"
+      return 0
+      ;;
+    boot)
+      M_VERDICT[$slot]="boot-device -"
+      M_FACTS[$slot]="layout=internal-boot partition3=zfs_member pool=$BOOT_ZFS_POOL boot=${D_BOOT[$slot]}"
+      return 0
+      ;;
+    pool)
+      if is_boot_layout "$slot"; then
+        M_VERDICT[$slot]="boot-device cache-recreated"
+        M_FACTS[$slot]="layout=internal-boot partition3=zfs_member pool=$BOOT_ZFS_POOL partition4=$(probe_value TYPE "$dev") boot=${D_BOOT[$slot]}"
+      else
+        M_VERDICT[$slot]="recreated -"
+        M_FACTS[$slot]="pool=${D_POOL[$slot]} fs=$(probe_value TYPE "$dev")"
+      fi
+      return 0
+      ;;
+  esac
+  raw=$(probe_value TYPE "$dev")
+  flash=$(flash_fs_type "$slot")
+  case $raw in
+    crypto_LUKS)
+      [[ $flash == luks:* ]] || die "$slot: the partition is a LUKS container, but the flash says diskFsType '$flash'"
+      cryptsetup isLuks "$dev" || die "$slot: libblkid reports LUKS, cryptsetup does not"
+      M_VERDICT[$slot]="refuse encrypted"
+      M_FACTS[$slot]="partition=crypto_LUKS flash=$flash"
+      ;;
+    zfs_member)
+      [[ $flash == zfs ]] || die "$slot: the partition is a ZFS member, but the flash says diskFsType '$flash'"
+      M_VERDICT[$slot]="refuse zfs"
+      M_FACTS[$slot]="partition=zfs_member flash=$flash"
+      ;;
+    xfs | ext4 | btrfs)
+      [[ $flash == "$raw" ]] || die "$slot: the partition is $raw, but the flash says diskFsType '$flash'"
+      n=1
+      facts="fs=$raw"
+      if [[ $raw == btrfs ]]; then
+        n=$(btrfs_devices "$dev")
+        facts+=" devices=$n"
+      fi
+      if ((n > 1)); then
+        M_VERDICT[$slot]="refuse multi-device-btrfs"
+        M_FACTS[$slot]="partition=btrfs devices=$n flash=$flash"
+      else
+        run_adopt_check "$slot" "$raw"
+        if ((CHECK_RC == 0)); then M_VERDICT[$slot]="adopt -"; else M_VERDICT[$slot]="refuse integrity"; fi
+        M_FACTS[$slot]="$facts flash=$flash check=$CHECK_TOOL exit=$CHECK_RC"
+      fi
+      ;;
+    *) die "$slot: the partition holds '$raw', which no variant of this builder expects" ;;
+  esac
+}
+
+# Measures every disk and requires each to match the expect file.
+check_expect() {
+  local s
+  ((HAVE_EXPECT)) || return 0
+  for s in "${SLOTS[@]}"; do
+    measure_slot "$s"
+    [[ ${M_VERDICT[$s]} == "${EXPECT_DISK[$s]}" ]] \
+      || die "expect: disk '$s': the expect file says '${EXPECT_DISK[$s]}', the disk shows '${M_VERDICT[$s]}' (${M_FACTS[$s]})"
+  done
+}
+
+have_refusal() {
+  local s
+  ((HAVE_EXPECT)) || return 1
+  for s in "${SLOTS[@]}"; do
+    if [[ ${EXPECT_DISK[$s]%% *} == refuse ]]; then return 0; fi
+  done
+  return 1
+}
+
+render_scan() {  # out-dir
+  local out=$1 s v r w refused=() adopted=()
+  {
+    printf '# hoserva unraid fixture expected scan result, version 1\n'
+    printf '# disk: slot, verdict, reason, then what the builder measured on the disk\n'
+    for s in "${SLOTS[@]}"; do
+      read -r v r <<<"${M_VERDICT[$s]}"
+      printf 'disk\t%s\t%s\t%s' "$s" "$v" "$r"
+      for w in ${M_FACTS[$s]}; do printf '\t%s' "$w"; done
+      printf '\n'
+      case $v in
+        refuse) refused+=("$s") ;;
+        adopt) adopted+=("$s") ;;
+      esac
+    done
+    printf 'refused\t%s\n' "$(IFS=,; printf '%s' "${refused[*]:--}")"
+    printf 'adopted\t%s\n' "$(IFS=,; printf '%s' "${adopted[*]:--}")"
+    for w in "${EXPECT_WARNS[@]}"; do
+      printf 'warn\t%s\ttemplates=all-unknown\tpreselected=none\n' "$w"
+    done
+    if [[ -n $EXPECT_CONFIG_SOURCE ]]; then printf 'config-source\tzip\tusb-stick=none\n'; fi
+  } >"$out/scan.txt"
+}
+
+# The sha256 of every whole source device, one line per disk, taken before any
+# scan reads them. The same function runs when verifying.
+source_hashes() {
+  local s bytes hash
+  printf '# hoserva unraid fixture source disks, version 1\n'
+  printf '# columns: sha256 of the whole device, bytes, slot (tab separated)\n'
+  for s in "${SLOTS[@]}"; do
+    if [[ $TIER == l3 ]]; then
+      blockdev --flushbufs "${WHOLE[$s]}"
+      bytes=$(blockdev --getsize64 "${WHOLE[$s]}")
+    else
+      bytes=$(stat -c %s -- "${WHOLE[$s]}")
+    fi
+    hash=$(sha256sum -- "${WHOLE[$s]}" | cut -d' ' -f1)
+    printf '%s\t%s\t%s\n' "$hash" "$bytes" "$s"
+  done
+}
+
+# XFS metadata damage that leaves the files readable: the first bytes of the
+# root block of allocation group 0's free-space B-tree (its magic number, level
+# and record count) are zeroed, so xfs_repair -n reports a bad B-tree block
+# while every inode and extent is untouched.
+corrupt_xfs_metadata() {  # slot
+  local slot=$1 dev=${PART[$1]} bs root
+  assert_own_part "$slot"
+  bs=$(xfs_db -r -c 'sb 0' -c 'p blocksize' "$dev" | sed -n 's/^blocksize = //p')
+  root=$(xfs_db -r -c 'agf 0' -c 'p bnoroot' "$dev" | sed -n 's/^bnoroot = //p')
+  [[ $bs =~ ^[0-9]+$ && $root =~ ^[0-9]+$ ]] || die "$slot: cannot find the free-space B-tree of allocation group 0"
+  head -c 16 /dev/zero | dd of="$dev" bs=1 seek=$((root * bs)) conv=notrunc status=none
+  sync
+}
+
 # ---------------------------------------------------------------- flash
 
 disk_size_kib() { echo $((D_SIZE[$1] / 1024)); }
 
 gen_disk_cfg() {
-  local s n
-  printf 'startArray="yes"\nspindownDelay="30"\nspinupGroups="no"\ndefaultFsType="xfs"\nqueueDepth="auto"\nmd_write_method="auto"\n'
+  local s n first=xfs
+  for s in "${SLOTS[@]}"; do
+    if [[ ${D_KIND[$s]} == data ]]; then
+      first=$(unraid_fstype "$s")
+      break
+    fi
+  done
+  printf 'startArray="yes"\nspindownDelay="30"\nspinupGroups="no"\ndefaultFsType="%s"\nqueueDepth="auto"\nmd_write_method="auto"\n' "$first"
   for s in "${SLOTS[@]}"; do
     case ${D_KIND[$s]} in
       parity) n=$(slot_index "$s"); printf 'diskIdSlot.%s="-"\ndiskSpindownDelay.%s="-1"\n' "$n" "$n" ;;
-      data) n=$(slot_index "$s"); printf 'diskIdSlot.%s="-"\ndiskFsType.%s="%s"\ndiskSpindownDelay.%s="-1"\ndiskSpinupGroup.%s=""\n' "$n" "$n" "${D_FS[$s]}" "$n" "$n" ;;
+      data) n=$(slot_index "$s"); printf 'diskIdSlot.%s="-"\ndiskFsType.%s="%s"\ndiskSpindownDelay.%s="-1"\ndiskSpinupGroup.%s=""\n' "$n" "$n" "$(unraid_fstype "$s")" "$n" "$n" ;;
     esac
   done
 }
 
 # Unraid's /var/local/emhttp/disks.ini, the slot to disk identity table that
-# the prepare script copies into the flash (Q89).
+# the prepare script copies into the flash (Q89). An internal-boot device also
+# has the "flash" section of type Boot (a USB stick's is Flash), and its pool a
+# bootPool of dedicated, or yes when the device also holds the pool (doc 08 §2).
 gen_disks_ini() {
   local s letters=(b c d e f g h i j k l m n o p) i=0 type
   for s in "${SLOTS[@]}"; do
     case ${D_KIND[$s]} in
       parity) type=Parity ;;
       data) type=Data ;;
-      pool) type=Cache ;;
+      pool | boot) type=Cache ;;
     esac
     printf '["%s"]\nidx="%s"\nname="%s"\ndevice="sd%s"\nid="FIXTURE_%s"\nsize="%s"\nstatus="DISK_OK"\ntype="%s"\nfsType="%s"\nrotational="1"\nspindownDelay="-1"\nidSb="FIXTURE_%s"\nsizeSb="%s"\n' \
-      "$s" "$(slot_index "$s")" "$s" "${letters[$i]}" "$(serial_of "$s")" "$(disk_size_kib "$s")" "$type" "${D_FS[$s]/none/}" "$(serial_of "$s")" "$(disk_size_kib "$s")"
+      "$s" "$(slot_index "$s")" "$s" "${letters[$i]}" "$(serial_of "$s")" "$(disk_size_kib "$s")" "$type" "$(unraid_fstype "$s")" "$(serial_of "$s")" "$(disk_size_kib "$s")"
+    if is_boot_layout "$s"; then
+      if [[ ${D_BOOT[$s]} == dedicated ]]; then printf 'bootPool="dedicated"\n'; else printf 'bootPool="yes"\n'; fi
+      printf '["flash"]\nidx="54"\nname="flash"\ndevice="sd%s"\nid="FIXTURE_%s"\nsize="%s"\nstatus="DISK_OK"\ntype="Boot"\nfsType="zfs"\nrotational="1"\nspindownDelay="-1"\nidSb="FIXTURE_%s"\nsizeSb="%s"\n' \
+        "${letters[$i]}" "$(serial_of "$s")" "$(disk_size_kib "$s")" "$(serial_of "$s")" "$(disk_size_kib "$s")"
+    fi
     i=$((i + 1))
   done
 }
@@ -1001,22 +1627,33 @@ appledouble_header() {
   head -c 32 /dev/zero
 }
 
+# The flash tree of an internal-boot server has grub/ and an empty efi/ mount
+# point where a USB stick has syslinux/ and EFI/ (doc 08 §2); the scan must
+# require neither.
 build_flash() {
   local s p rel f serial
   rm -rf -- "$FLASH"
   mkdir -p -- "$FLASH"
   cp -a --no-preserve=ownership -- "$FIXTURES/common/flash/." "$FLASH/"
+  if boot_slot >/dev/null; then rm -rf -- "$FLASH/syslinux"; fi
+  if [[ $SPEC_CAPTURE == none && -e $VDIR/flash/config/hoserva ]]; then die "$VARIANT: the spec says capture=none, but flash/config/hoserva exists"; fi
   if [[ -d $VDIR/flash ]]; then cp -a --no-preserve=ownership -- "$VDIR/flash/." "$FLASH/"; fi
   if [[ -n $OPTION && -d $VDIR/options/$OPTION/flash ]]; then cp -a --no-preserve=ownership -- "$VDIR/options/$OPTION/flash/." "$FLASH/"; fi
-  mkdir -p -- "$FLASH/config/hoserva"
+  if [[ $SPEC_CAPTURE != none ]]; then mkdir -p -- "$FLASH/config/hoserva"; fi
   printf '# Version %s %s\nAuthored for Hoserva migration fixtures; not a release note.\n' "$SPEC_VERSION" "$SPEC_RELEASE" >"$FLASH/changes.txt"
   gen_disk_cfg >"$FLASH/config/disk.cfg"
-  gen_disks_ini >"$FLASH/config/hoserva/disks.ini"
+  if [[ $SPEC_CAPTURE != none ]]; then gen_disks_ini >"$FLASH/config/hoserva/disks.ini"; fi
   head -c 4096 /dev/urandom >"$FLASH/config/super.dat"
   head -c 4096 /dev/urandom >"$FLASH/config/super.old"
   for f in bzimage bzroot bzfirmware bzmodules; do printf 'placeholder, not a kernel image\n' >"$FLASH/$f"; done
-  mkdir -p -- "$FLASH/EFI/boot" "$FLASH/previous"
-  printf 'placeholder, not an EFI binary\n' >"$FLASH/EFI/boot/bootx64.efi"
+  mkdir -p -- "$FLASH/previous"
+  if boot_slot >/dev/null; then
+    mkdir -p -- "$FLASH/grub" "$FLASH/efi"
+    printf 'set default=0\nset timeout=3\nmenuentry "Fixture OS" {\n  linux /bzimage unraiduuid=%s\n  initrd /bzroot\n}\n' "$BOOT_POOL_GUID" >"$FLASH/grub/grub.cfg"
+  else
+    mkdir -p -- "$FLASH/EFI/boot"
+    printf 'placeholder, not an EFI binary\n' >"$FLASH/EFI/boot/bootx64.efi"
+  fi
   for f in bzimage bzroot; do printf 'placeholder, the previous release\n' >"$FLASH/previous/$f"; done
   printf '# Version 6.12.10 2024-01-01\nAuthored for Hoserva migration fixtures; not a release note.\n' >"$FLASH/previous/changes.txt"
   mkdir -p -- "$FLASH/.git/refs/heads" "$FLASH/.git/objects"
@@ -1044,7 +1681,11 @@ build_flash() {
 }
 
 check_capture() {  # flash-dir
-  local flash=$1 at at_epoch newest=0 m f loc
+  local flash=$1 at at_epoch newest=0 m f loc bs shared mode
+  if [[ $SPEC_CAPTURE == none ]]; then
+    [[ ! -e $flash/config/hoserva ]] || die "$VARIANT has capture=none, but its flash has config/hoserva/"
+    return 0
+  fi
   if [[ ! -f $flash/config/hoserva/capture.json ]]; then
     [[ ${HOSERVA_FIXTURE_NO_CAPTURE:-} == 1 ]] && return 0
     die "$VARIANT has no capture under flash/config/hoserva/: generate it with make vm-unraid-capture"
@@ -1054,6 +1695,14 @@ check_capture() {  # flash-dir
   if [[ -n $LV_LOCATION ]]; then
     loc=$(sed -n 's/.*"libvirt_img_location": *"\([^"]*\)".*/\1/p' "$flash/config/hoserva/capture.json")
     [[ $loc == "$LV_LOCATION" ]] || die "capture.json records libvirt.img as '${loc:-nothing}', but it is on the $LV_LOCATION: regenerate the capture with make vm-unraid-capture"
+  fi
+  if bs=$(boot_slot); then
+    mode=$(sed -n 's/.*"boot": {"mode": "\([^"]*\)", "filesystem": "\([^"]*\)".*/\1 \2/p' "$flash/config/hoserva/capture.json")
+    [[ $mode == "internal zfs" ]] || die "capture.json records boot mode and filesystem '${mode:-nothing}', but $bs is an internal boot device: regenerate the capture with make vm-unraid-capture"
+    grep -q '"devices": \[{"name"' "$flash/config/hoserva/capture.json" || die "capture.json names no boot device: regenerate the capture with make vm-unraid-capture"
+    if [[ ${D_BOOT[$bs]} == dedicated ]]; then shared=false; else shared=true; fi
+    grep -q "\"shared_with_data_pool\": $shared}" "$flash/config/hoserva/capture.json" \
+      || die "capture.json does not say shared_with_data_pool is $shared for $bs: regenerate the capture with make vm-unraid-capture"
   fi
   at=$(sed -n 's/.*"captured_at": *"\([^"]*\)".*/\1/p' "$flash/config/hoserva/capture.json")
   at_epoch=$(date -u -d "$at" +%s) || die "capture.json: bad captured_at '$at'"
@@ -1091,10 +1740,16 @@ verify_zips() {
   for z in flash-backup flash-hand-zipped; do
     [[ -f $EXP/$z.zip ]] || die "missing $EXP/$z.zip"
     list=$(unzip -Z1 "$EXP/$z.zip")
-    for expect in config/disk.cfg changes.txt syslinux/syslinux.cfg config/plugins/dockerMan/templates-user/my-notes.xml \
+    for expect in config/disk.cfg changes.txt bzimage config/plugins/dockerMan/templates-user/my-notes.xml \
       config/plugins/dockerMan/templates-user/._my-notes.xml .git/HEAD; do
       grep -qxF -- "$expect" <<<"$list" || die "$z.zip has no $expect"
     done
+    if boot_slot >/dev/null; then
+      grep -qxF -- grub/grub.cfg <<<"$list" || die "$z.zip has no grub/grub.cfg"
+      grep -qE '^(syslinux|EFI)/' <<<"$list" && die "$z.zip of an internal-boot server holds syslinux/ or EFI/"
+    else
+      grep -qxF -- syslinux/syslinux.cfg <<<"$list" || die "$z.zip has no syslinux/syslinux.cfg"
+    fi
     grep -qE '^config/' <<<"$list" || die "$z.zip: config/ is not at its root"
     grep -qE '^(boot|flash)/' <<<"$list" && die "$z.zip: entries are not rooted at /boot"
     dir="$WORK/$z"
@@ -1117,14 +1772,44 @@ verify_zips() {
 # ---------------------------------------------------------------- build
 
 check_tools() {
-  local t
-  for t in sfdisk sgdisk mkfs.xfs mkfs.btrfs xfs_info blkid numfmt perl setfattr getfattr zip unzip sha256sum find losetup; do
+  local t s needs_zfs=0 tools=(sfdisk sgdisk mkfs.xfs mkfs.btrfs mkfs.ext4 xfs_info xfs_repair xfs_db e2fsck btrfs blkid numfmt perl setfattr getfattr zip unzip sha256sum find losetup)
+  for s in "${SLOTS[@]}"; do
+    case ${D_FS[$s]} in
+      luks-xfs) tools+=(cryptsetup) ;;
+      zfs) needs_zfs=1 ;;
+    esac
+    if is_boot_layout "$s"; then
+      needs_zfs=1
+      tools+=(mkfs.fat udevadm)
+    fi
+  done
+  if ((needs_zfs)); then tools+=(zpool zfs); fi
+  for t in "${tools[@]}"; do
     command -v "$t" >/dev/null 2>&1 || die "$t is not installed"
   done
+  if ((needs_zfs)) && ! grep -q '^zfs ' /proc/modules; then
+    modprobe zfs || die "the zfs kernel module is not available in this guest"
+  fi
+}
+
+# Zeroes the first and last 2 MiB of a partition (all of a smaller one), where
+# a ZFS pool keeps its labels, so a signature left by an earlier build of another
+# variant on the same disk cannot be read as a second filesystem beside the new
+# one.
+scrub_partition_edges() {  # block device
+  local dev=$1 sectors edge=4096
+  sectors=$(blockdev --getsz "$dev")
+  [[ $sectors =~ ^[1-9][0-9]*$ ]] || die "refusing $dev: cannot read its size"
+  if ((sectors <= 2 * edge)); then
+    dd if=/dev/zero of="$dev" bs=512 count="$sectors" status=none
+    return 0
+  fi
+  dd if=/dev/zero of="$dev" bs=512 count="$edge" status=none
+  dd if=/dev/zero of="$dev" bs=512 seek=$((sectors - edge)) count="$edge" status=none
 }
 
 build() {
-  local s scan
+  local s scan m
   [[ ! -e $OUT/expected ]] || die "$OUT already holds a build; remove it first"
   if [[ $TIER == l3 ]] && dpkg-query -W -f '${Status}' hoserva 2>/dev/null | grep -q 'install ok installed'; then
     die "Hoserva is installed in this guest: build the fixture before deploying the .deb"
@@ -1141,14 +1826,27 @@ build() {
     done
   fi
   for s in "${SLOTS[@]}"; do new_disk "$s"; done
+  if [[ $TIER == l3 ]]; then
+    for s in "${SLOTS[@]}"; do
+      if is_boot_layout "$s"; then
+        for m in 2 3 4; do scrub_partition_edges "$(boot_part "${WHOLE[$s]}" "$m")"; done
+      else
+        scrub_partition_edges "${PART[$s]}"
+      fi
+    done
+  fi
   for s in "${SLOTS[@]}"; do record_layout "$s"; done
   set_parity_window
-  for s in "${SLOTS[@]}"; do
-    [[ ${D_KIND[$s]} == parity ]] && continue
+  if s=$(boot_slot); then create_boot_pool "$s"; fi
+  for s in $(fs_slots); do
     format_part "$s"
     mount_fs "$s" rw
   done
+  for s in "${SLOTS[@]}"; do
+    if is_boot_layout "$s"; then record_boot_layout "$s"; fi
+  done
   build_flash
+  if boot_slot >/dev/null; then fill_boot_pool; fi
   DEFERRED_MODES=()
   seed_run "$VDIR/seed"
   if [[ -n $OPTION ]]; then
@@ -1157,20 +1855,23 @@ build() {
   fi
   scan="$WORK/scan"
   mkdir -p -- "$scan"
-  for s in "${SLOTS[@]}"; do
-    [[ ${D_KIND[$s]} == parity ]] && continue
-    normalize_tree "$MNT/$s"
-  done
+  for s in $(fs_slots); do normalize_tree "$MNT/$s"; done
   apply_deferred_modes
   sync
-  for s in "${SLOTS[@]}"; do
-    [[ ${D_KIND[$s]} == parity ]] && continue
+  for s in $(fs_slots); do
     scan_tree "$MNT/$s" "$s" "$scan/$s.files" "$scan/$s.entries"
     fs_facts "$s"
+  done
+  for s in "${SLOTS[@]}"; do
+    if is_group_member "$s"; then member_facts "$s"; fi
   done
   scan_libvirt "$scan"
   unmount_all
   sync
+  for s in "${SLOTS[@]}"; do
+    if [[ -n ${D_CORRUPT[$s]:-} ]]; then corrupt_xfs_metadata "$s"; fi
+  done
+  check_expect
   for s in "${SLOTS[@]}"; do
     if [[ ${D_KIND[$s]} == parity ]]; then write_parity "$s"; fi
   done
@@ -1180,39 +1881,60 @@ build() {
   done
   assert_parity_signature
   render_expected "$scan" "$EXP"
+  if ((HAVE_EXPECT)); then render_scan "$EXP"; fi
+  if have_refusal; then source_hashes >"$EXP/source-disks.sha256"; fi
   make_zips
   printf 'unraid-fixture: built %s (%s) under %s\n' "$VARIANT" "$TIER" "$OUT"
 }
 
 verify() {
-  local s scan
+  local s scan f
   [[ -d $EXP ]] || die "$OUT has no build: build the variant first"
   check_tools
   WORK=$(mktemp -d "$OUT/work.XXXXXX")
   for s in "${SLOTS[@]}"; do existing_disk "$s"; done
+  if have_refusal; then
+    [[ -f $EXP/source-disks.sha256 ]] || die "$OUT recorded no source-disks.sha256, but the variant refuses disks"
+    source_hashes >"$WORK/source-disks.before"
+    diff -u "$EXP/source-disks.sha256" "$WORK/source-disks.before" >&2 || die "a source disk differs from the sha256 recorded when it was built"
+  elif [[ -e $EXP/source-disks.sha256 ]]; then
+    die "$OUT recorded source-disks.sha256, but the variant refuses no disk"
+  fi
   for s in "${SLOTS[@]}"; do record_layout "$s"; done
   set_parity_window
   scan="$WORK/scan"
   mkdir -p -- "$scan"
-  for s in "${SLOTS[@]}"; do
-    [[ ${D_KIND[$s]} == parity ]] && continue
+  for s in $(fs_slots); do
     mount_fs "$s" ro
     scan_tree "$MNT/$s" "$s" "$scan/$s.files" "$scan/$s.entries"
     fs_facts "$s"
   done
+  for s in "${SLOTS[@]}"; do
+    if is_group_member "$s"; then member_facts "$s"; fi
+    if is_boot_layout "$s"; then record_boot_layout "$s"; fi
+  done
+  if s=$(boot_slot); then verify_boot_pool "$s"; fi
   scan_libvirt "$scan"
   unmount_all
+  check_expect
   for s in "${SLOTS[@]}"; do
     if [[ ${D_KIND[$s]} == parity ]]; then parity_facts "$s"; fi
   done
   assert_parity_signature
   render_expected "$scan" "$WORK/new"
-  local f
+  if ((HAVE_EXPECT)); then render_scan "$WORK/new"; fi
   for f in manifest.sha256 entries.tsv layout.txt; do
     diff -u "$EXP/$f" "$WORK/new/$f" >&2 || die "$f differs from what the disks hold"
   done
+  if ((HAVE_EXPECT)); then
+    diff -u "$EXP/scan.txt" "$WORK/new/scan.txt" >&2 || die "scan.txt differs from what the disks show"
+  fi
   if [[ -e $EXP/domains.txt || -e $WORK/new/domains.txt ]]; then
     diff -u "$EXP/domains.txt" "$WORK/new/domains.txt" >&2 || die "domains.txt differs from what libvirt.img holds"
+  fi
+  if have_refusal; then
+    source_hashes >"$WORK/source-disks.after"
+    diff -u "$WORK/source-disks.before" "$WORK/source-disks.after" >&2 || die "verifying wrote to a source disk"
   fi
   verify_zips
   printf 'unraid-fixture: %s verified: %s files across %s disks match the manifest\n' "$VARIANT" \
@@ -1248,6 +1970,11 @@ main() {
   init_tier
   parse_spec "$VDIR/spec"
   ((${#SLOTS[@]} > 0)) || die "the spec declares no disks"
+  check_spec
+  if [[ $TIER == l2 && -n $L3_ONLY ]]; then
+    die "$VARIANT cannot be built on the l2 tier ($L3_ONLY): the lab image has no OpenZFS and the lab container has no device-mapper. Build it in the L3 guest: make vm-up VARIANT=$VARIANT, then make vm-unraid-fixture VARIANT=$VARIANT"
+  fi
+  load_expect
   [[ $SPEC_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $SPEC_RELEASE =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "the spec needs unraid_version=X.Y.Z and unraid_release=YYYY-MM-DD"
   trap cleanup EXIT
   case $MODE in

@@ -1,0 +1,9 @@
+# The verdict the migration scan must give each disk of this variant (doc 05 §3). The
+# builder measures every row on the disks and refuses to build a variant whose
+# rows the disks do not show; expected/scan.txt is this file with those facts.
+# disk2 fails xfs_repair -n and is refused by name; disk1 and disk3 proceed.
+disk parity parity
+disk disk1 adopt
+disk disk2 refuse integrity
+disk disk3 adopt
+disk cache recreated

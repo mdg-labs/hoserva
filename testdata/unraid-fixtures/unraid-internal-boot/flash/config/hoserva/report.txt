@@ -1,0 +1,72 @@
+Hoserva Phase A report (prepare-migration unreleased, 2026-10-03 10:01 UTC)
+Unraid 7.3.2. Lines starting with !! must be fixed while Unraid still runs.
+
+== Containers ==
+8 containers: 7 running, 1 not running.
+By origin: 6 from the Docker page (dockerMan templates), 1 from Compose Manager, 1 created by hand.
+  - stack-web  [running]  Compose Manager project stack
+  - handmade  [running]  created by hand
+  - dbtool  [running]  dockerMan
+  - gateway  [running]  dockerMan
+  - syncer  [exited]  dockerMan
+  - photos  [running]  dockerMan
+  - mediaserver  [running]  dockerMan
+  - notes  [running]  dockerMan
+!! 1 dockerMan container(s) have no template whose <Name> matches: dbtool. They cannot be converted. Fix it while Unraid runs: open each one on the Docker page, edit it and apply (that saves its template), or re-add it from its template.
+Created by hand (no template to convert; recreate them from their run command): handmade
+Compose Manager containers come from the project's own compose.yaml and are offered as it is.
+
+== Autostart order ==
+  1. notes
+  2. photos (waits 30 s before the next)
+  3. mediaserver
+
+== Shares and the cache ==
+Shares and their cache setting:
+  - appdata: cache "no"
+  - backup: cache "no"
+  - documents: cache "no"
+  - domains: cache "no"
+  - isos: cache "no"
+  - media: cache "no"
+  - oldstuff: cache "no"
+  - system: cache "no"
+Docker storage (/mnt/user/system/docker/dockerdir) is on the array.
+Writable-layer size per container (state kept inside the container, not in a mapped path):
+  - stack-web: 0 KiB
+  - handmade: 0 KiB
+  - dbtool: 0 KiB
+  - gateway: 0 KiB
+  - syncer: 0 KiB
+  - photos: 0 KiB
+  - mediaserver: 0 KiB
+  - notes: 0 KiB
+Nothing is left on the cache to move.
+
+== Last parity check ==
+Last parity check: 2026-09-25 01:33 UTC, exit code 0, 0 errors.
+
+== Disks: serial and slot ==
+  - parity (Parity): FIXTURE_parity1-capture as sdb, DISK_OK
+  - disk1 (Data): FIXTURE_disk1-capture as sdc, DISK_OK
+  - disk2 (Data): FIXTURE_disk2-capture as sdd, DISK_OK
+  - disk3 (Data): FIXTURE_disk3-capture as sde, DISK_OK
+  - boot (Cache): FIXTURE_disk4-capture as sdf, DISK_OK
+  - flash (Boot): FIXTURE_disk4-capture as sdf, DISK_OK
+Parity disk(s): parity. Their contents are not kept: they are rewritten as parity.
+
+== Boot device and rollback ==
+Unraid boots from an internal boot pool (zfs), 1 device(s).
+The boot pool has its own device(s).
+Rollback after Debian is installed:
+  - Debian on another device: switch the firmware boot order back.
+  - Debian on this boot device: restore the Flash Backup zip to a USB stick (USB Flash Creator) and boot it.
+There is no stick to keep: the Flash Backup zip is the rollback artifact.
+
+== Capture ==
+Written to /boot/config/hoserva/: containers.json, networks.json, disks.ini, autostart, var.ini, smart/, capture.json and this report.
+Docker files are absent when Docker was not running; the capture says so.
+The capture in /boot/config/hoserva/ contains your containers' environment variables, secrets included, like the templates on the same flash. The Flash Backup zip is as sensitive as the flash itself: keep it like the flash.
+
+To fix before you continue (1):
+  !! 1 dockerMan container(s) have no template whose <Name> matches: dbtool. They cannot be converted. Fix it while Unraid runs: open each one on the Docker page, edit it and apply (that saves its template), or re-add it from its template.

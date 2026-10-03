@@ -15,6 +15,10 @@
 # capture.json and report.txt, the files that depend on it, under
 # options/<name>/flash/config/hoserva/, laid over the variant's capture.
 #
+# A variant with an internal boot device is captured from its own boot pool
+# (unraid-capture-guest.sh), so /boot is on zfs as it is on that server. A variant
+# whose spec says capture=none has no capture by design, and the target refuses it.
+#
 # It then builds and verifies the variant again with the new capture, so the
 # files that are about to be committed are known to be accepted.
 set -euo pipefail
@@ -27,6 +31,9 @@ source "$script_dir/unraid-lib.sh"
 
 vm_require_id
 unraid_require_variant
+if grep -qx 'capture=none' "$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT/spec"; then
+  die "variant '$VARIANT' has capture=none: it deliberately has no config/hoserva/ capture, so there is nothing to regenerate"
+fi
 unraid_require_guest
 
 unraid_guest_packages

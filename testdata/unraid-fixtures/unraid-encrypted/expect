@@ -1,0 +1,9 @@
+# The verdict the migration scan must give each disk of this variant (doc 05 §3). The
+# builder measures every row on the disks and refuses to build a variant whose
+# rows the disks do not show; expected/scan.txt is this file with those facts.
+# Every array data disk is a LUKS container: the scan refuses each by name.
+disk parity parity
+disk disk1 refuse encrypted
+disk disk2 refuse encrypted
+disk disk3 refuse encrypted
+disk cache recreated

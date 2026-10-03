@@ -1,0 +1,12 @@
+# The verdict the migration scan must give each disk of this variant (doc 05 §3). The
+# builder measures every row on the disks and refuses to build a variant whose
+# rows the disks do not show; expected/scan.txt is this file with those facts.
+# The boot device is classed as Unraid's boot device: never adopted, never
+# refused as a ZFS data disk. The array proceeds, and the Flash Backup zip is
+# the only configuration source.
+disk parity parity
+disk disk1 adopt
+disk disk2 adopt
+disk disk3 adopt
+disk boot boot-device
+config-source zip
