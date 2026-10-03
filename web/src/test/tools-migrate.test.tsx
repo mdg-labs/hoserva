@@ -64,6 +64,25 @@ function withReport(rows: (current: MigrationReportRow[]) => MigrationReportRow[
   return { ...migrationPending, report: { ...report, unverifiedLayout: unverified, rows: rows(report.rows) } };
 }
 
+function withCapture(capture: components["schemas"]["MigrationCapture"]): Migration {
+  const migration = withReport((rows) => rows);
+  const review = migration.report?.review;
+  if (!migration.report || !review) {
+    throw new Error("the migration-pending fixture has a review");
+  }
+  return { ...migration, report: { ...migration.report, review: { ...review, capture } } };
+}
+
+function withoutReview(rows: (current: MigrationReportRow[]) => MigrationReportRow[]): Migration {
+  const migration = withReport(rows);
+  if (!migration.report) {
+    throw new Error("the migration-pending fixture has a report");
+  }
+  const report = { ...migration.report };
+  delete report.review;
+  return { ...migration, report };
+}
+
 function templatesWith(extra: MigrationTemplates["templates"]): MigrationTemplates {
   return { ...migrationPendingTemplates, templates: [...migrationPendingTemplates.templates, ...extra] };
 }
@@ -149,16 +168,15 @@ describe("the migration workspace", () => {
   });
 
   describe("resuming from the server's phase", () => {
-    it("opens on Review when a scan has already finished, with the disk, boot and share rows read-only", async () => {
+    it("opens on Review when a scan has already finished, with the disk roles, boot and shares", async () => {
       renderPage();
 
       expect(await screen.findByText("Step 2 of 4")).toBeInTheDocument();
-      expect(screen.getByText("disk2")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Role for EXAMPLE_DISK1" })).toBeInTheDocument();
       expect(screen.getByText("Unraid boots from a USB stick. Keep the stick: it is the rollback.")).toBeInTheDocument();
       expect(screen.getByText("Boot device", { selector: "h3" })).toBeInTheDocument();
-      expect(screen.getAllByText(/allocation High-water/)).toHaveLength(1);
-      expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0);
-      expect(screen.queryByRole("combobox", { name: "Role" })).not.toBeInTheDocument();
+      expect(screen.getByText("Disk roles", { selector: "h3" })).toBeInTheDocument();
+      expect(screen.getByText("media")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
     });
 
@@ -401,7 +419,7 @@ describe("the migration workspace", () => {
       expect(await screen.findByText("gateway")).toBeInTheDocument();
       expect(screen.getByText("photos")).toBeInTheDocument();
       expect(screen.getByText("2 warnings")).toBeInTheDocument();
-      expect(screen.getByText("No warnings")).toBeInTheDocument();
+      expect(screen.getAllByText("No warnings")).toHaveLength(3);
       expect(screen.getByText("Running")).toBeInTheDocument();
       expect(screen.getByText("Autostart")).toBeInTheDocument();
       expect(screen.queryByText("old-app")).not.toBeInTheDocument();
@@ -444,9 +462,8 @@ describe("the migration workspace", () => {
       expect(screen.getByText(/Created by hand \(docker run\)/)).toBeInTheDocument();
     });
 
-    it("warns about a missing container capture with the row's own text, explains it and links to the capture steps, without blocking", async () => {
-      const detail = "config/hoserva/ is not in the Flash Backup.";
-      backend.migration = ok(withReport((rows) => [...rows, { check: "capture", status: "warn", detail }]));
+    it("warns about a missing capture from the structured capture state, explains it and links to the capture steps, without blocking", async () => {
+      backend.migration = ok(withCapture({ state: "missing" }));
       backend.templates = ok({
         ...migrationPendingTemplates,
         counts: { ...migrationPendingTemplates.counts, allTemplates: true },
@@ -456,7 +473,7 @@ describe("the migration workspace", () => {
 
       const title = await screen.findByText("The container capture needs a look");
       const banner = title.closest('[role="alert"]') as HTMLElement;
-      expect(within(banner).getByText(detail)).toBeInTheDocument();
+      expect(within(banner).getByText("The Flash Backup has no container capture.")).toBeInTheDocument();
       expect(within(banner).getByText(/Hoserva's prepare script, which you run on the Unraid server/)).toBeInTheDocument();
       expect(await within(banner).findByText(/Every template is listed as unknown/)).toBeInTheDocument();
       expect(within(banner).getByRole("link", { name: "Read the capture steps" })).toHaveAttribute(
@@ -467,29 +484,65 @@ describe("the migration workspace", () => {
       expect(await screen.findByText("gateway")).toBeInTheDocument();
     });
 
-    it("words a stale capture's warning from its own text and does not claim every template is unknown", async () => {
-      const detail =
-        "The capture was taken 2026-09-30T10:00:00Z, but a template on the flash was saved later (2026-09-30T14:00:00Z), so the capture may be stale.";
-      backend.migration = ok(withReport((rows) => [...rows, { check: "capture", status: "warn", detail }]));
+    it("warns that a capture it could not read was not read", async () => {
+      backend.migration = ok(withCapture({ state: "unreadable" }));
+      renderPage();
+
+      const title = await screen.findByText("The container capture needs a look");
+      const banner = title.closest('[role="alert"]') as HTMLElement;
+      expect(within(banner).getByText(/could not be read/)).toBeInTheDocument();
+    });
+
+    it("warns about a stale capture with the time it was taken, without blocking and without claiming every template is unknown", async () => {
+      backend.migration = ok(withCapture({ state: "stale", capturedAt: "2026-09-30T10:00:00Z" }));
+      renderPage();
+
+      const title = await screen.findByText("The container capture may be out of date");
+      const banner = title.closest('[role="alert"]') as HTMLElement;
+      expect(within(banner).getByText(/The capture was taken .*2026.*, but a template on the flash was saved after that/)).toBeInTheDocument();
+      expect(screen.queryByText("The container capture needs a look")).not.toBeInTheDocument();
+      expect(await screen.findByText("gateway")).toBeInTheDocument();
+      expect(within(banner).queryByText(/Every template is listed as unknown/)).not.toBeInTheDocument();
+      expect(screen.getByText("Step 2 of 4")).toBeInTheDocument();
+    });
+
+    it("words a stale capture without a time when the capture states none", async () => {
+      backend.migration = ok(withCapture({ state: "stale" }));
+      renderPage();
+
+      const title = await screen.findByText("The container capture may be out of date");
+      const banner = title.closest('[role="alert"]') as HTMLElement;
+      expect(within(banner).getByText(/A template on the flash was saved after the capture was taken/)).toBeInTheDocument();
+    });
+
+    it("shows no capture warning for a capture that was read, even if the report's capture row warns", async () => {
+      const migration = withCapture({ state: "present", capturedAt: "2026-10-03T12:51:52Z" });
+      const report = migration.report;
+      if (!report) {
+        throw new Error("the migration-pending fixture has a report");
+      }
+      backend.migration = ok({
+        ...migration,
+        report: { ...report, rows: [...report.rows, { check: "capture", status: "warn", detail: "stale row prose" }] },
+      });
+      renderPage();
+
+      await screen.findByText("gateway");
+      expect(screen.queryByText("The container capture needs a look")).not.toBeInTheDocument();
+      expect(screen.queryByText("The container capture may be out of date")).not.toBeInTheDocument();
+    });
+
+    it("falls back to the capture row's own text for a report made before the structured review", async () => {
+      const detail = "config/hoserva/ is not in the Flash Backup.";
+      backend.migration = ok(withoutReview((rows) => [...rows, { check: "capture", status: "warn", detail }]));
       renderPage();
 
       const title = await screen.findByText("The container capture needs a look");
       const banner = title.closest('[role="alert"]') as HTMLElement;
       expect(within(banner).getByText(detail)).toBeInTheDocument();
+      expect(screen.getByText("This scan has no disk mapping data")).toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: /^Role for/ })).not.toBeInTheDocument();
       expect(await screen.findByText("gateway")).toBeInTheDocument();
-      expect(screen.getByText("Autostart")).toBeInTheDocument();
-      expect(within(banner).queryByText(/Every template is listed as unknown/)).not.toBeInTheDocument();
-      expect(screen.getByText("Step 2 of 4")).toBeInTheDocument();
-    });
-
-    it("shows no capture warning for a capture that was read", async () => {
-      backend.migration = ok(
-        withReport((rows) => [...rows, { check: "capture", status: "pass", detail: "The capture was read." }]),
-      );
-      renderPage();
-
-      await screen.findByText("gateway");
-      expect(screen.queryByText("The container capture needs a look")).not.toBeInTheDocument();
     });
 
     it("explains a scan with no matched disks instead of showing an empty table", async () => {

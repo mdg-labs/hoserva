@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
 import { buttonVariants } from "@/components/ui/button";
-import { DOCS_CAPTURE_URL, DOCS_UNPROTECTED_WINDOW_URL } from "@/routes/tools-migrate/report";
+import { DOCS_CAPTURE_URL, DOCS_UNPROTECTED_WINDOW_URL, type CaptureNotice } from "@/routes/tools-migrate/report";
 
 function DocsLink({ href, label }: { href: string; label: string }): React.ReactElement {
   return (
@@ -51,18 +51,27 @@ export function UnverifiedLayoutBanner(): React.ReactElement {
 }
 
 export function CaptureWarningBanner({
-  detail,
+  notice,
   allUnknown,
 }: {
-  detail: string;
+  notice: CaptureNotice;
   allUnknown: boolean;
 }): React.ReactElement {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const stale = notice.state === "stale";
+  const capturedAt =
+    notice.state !== "row" && notice.capturedAt
+      ? new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(notice.capturedAt))
+      : null;
+  const detail =
+    notice.state === "row"
+      ? notice.detail
+      : t(`toolsMigrate.captureWarning.state.${stale && capturedAt ? "staleDated" : notice.state}`, { date: capturedAt });
 
   return (
     <Banner
       tone="warning"
-      title={t("toolsMigrate.captureWarning.title")}
+      title={stale ? t("toolsMigrate.captureWarning.staleTitle") : t("toolsMigrate.captureWarning.title")}
       description={
         <div className="flex flex-col gap-2">
           <p>{detail}</p>

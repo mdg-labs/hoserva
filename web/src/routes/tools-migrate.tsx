@@ -10,6 +10,7 @@ import { getMigration, startMigrationDeviceScan, startMigrationScan } from "@/li
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { UnprotectedWindowBanner, UnverifiedLayoutBanner } from "@/routes/tools-migrate/banners";
+import { proposedMapping, type DiskMapping, type MappingRole } from "@/routes/tools-migrate/mapping";
 import { ReviewStep } from "@/routes/tools-migrate/review-step";
 import { SOURCE_STICK, SOURCE_ZIP, type Migration, type SourceKind } from "@/routes/tools-migrate/report";
 import { ScanProgress, ScanReport, SourceForm } from "@/routes/tools-migrate/scan-step";
@@ -47,6 +48,9 @@ export function ToolsMigratePage(): React.ReactElement {
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [startedFrom, setStartedFrom] = useState<Migration | null>(null);
+  // The roles edited so far, kept for the report they were edited against: a
+  // new scan starts again from the proposed roles.
+  const [edited, setEdited] = useState<{ reportAt: string; roles: DiskMapping } | null>(null);
 
   const migrationQuery = useApiQuery({
     queryKey: "migration",
@@ -93,6 +97,9 @@ export function ToolsMigratePage(): React.ReactElement {
   }
 
   const report = migration.report;
+  const review = report?.review;
+  const proposed = review ? proposedMapping(review.disks) : undefined;
+  const mapping = proposed && edited && edited.reportAt === report?.generatedAt ? { ...proposed, ...edited.roles } : proposed;
   const reviewable = phase === "scanned" && report !== undefined;
   const step = reviewable ? (viewStep ?? REVIEW_STEP) : SCAN_STEP;
   const stickOffered = !migration.zipOnly && migration.flashDevices.length > 0;
@@ -122,6 +129,12 @@ export function ToolsMigratePage(): React.ReactElement {
     setZipFile(null);
     setStartedFrom(migrationQuery.data);
     await migrationQuery.refresh();
+  }
+
+  function handleMappingChange(key: string, role: MappingRole | null): void {
+    if (report) {
+      setEdited({ reportAt: report.generatedAt, roles: { ...mapping, [key]: role } });
+    }
   }
 
   function handleNext(): void {
@@ -209,7 +222,14 @@ export function ToolsMigratePage(): React.ReactElement {
             />
           ) : null}
           {showReport ? <ScanReport migration={migration} onScanAgain={handleScanAgain} /> : null}
-          {step === REVIEW_STEP && report ? <ReviewStep rows={report.rows} onScanAgain={handleScanAgain} /> : null}
+          {step === REVIEW_STEP && report ? (
+            <ReviewStep
+              report={report}
+              mapping={mapping}
+              onMappingChange={handleMappingChange}
+              onScanAgain={handleScanAgain}
+            />
+          ) : null}
         </div>
       </Wizard>
       <p className="mx-auto w-full max-w-2xl text-muted-foreground text-xs">{t("toolsMigrate.trademark")}</p>
