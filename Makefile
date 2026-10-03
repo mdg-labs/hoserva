@@ -395,6 +395,7 @@ packaging-test:
 # (D20). Needs jq, python3 and unzip.
 test-unraid-tools:
 	tools/unraid/test-prepare-migration.sh
+	scripts/vm/unraid-sizing-check.sh
 
 # The agent workflow's GitHub client (issue #410): scripts/gh-rest.sh's own
 # contract tests against a fake `gh`, plus the fake-gh tests for the
@@ -449,6 +450,7 @@ lint-gh:
 # as for golangci-lint above.
 SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh \
 	scripts/vm/unraid-fixture.sh scripts/vm/unraid-capture.sh scripts/vm/unraid-capture-guest.sh scripts/vm/unraid-lib.sh \
+	scripts/vm/create-vm.sh scripts/vm/unraid-sizing-check.sh \
 	tools/unraid/prepare-migration.sh tools/unraid/test-prepare-migration.sh \
 	scripts/release/stamp-prepare-script.sh scripts/release/test-stamp-prepare-script.sh \
 	scripts/release/test-publish-release.sh \
@@ -768,6 +770,12 @@ lab-destroy: lab-require-id
 # precedent above of leaving validation to the script that acts on the
 # value. HOSERVA_LAB_ID itself is already validated by the top-of-file
 # unexport/$(value ...)/export guard before any recipe below runs.
+#
+# vm-up VARIANT=<variant> creates each array disk the variant's spec targets
+# at that spec's size= (parity1, disk1..disk5, cache; a disk no spec line
+# targets keeps its HOSERVA_VM_*_SIZE default), so the L3 build of an Unraid
+# fixture lays out the same partitions as its L2 build. Without VARIANT the
+# disks are sized by HOSERVA_VM_*_SIZE alone.
 vm-up:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-up)" >&2; exit 1; }
 	scripts/vm/create-vm.sh
@@ -783,9 +791,10 @@ vm-restore:
 # Builds a synthetic Unraid source (doc 06 §5, issue #74) on this lab's
 # guest's own array disks before any .deb is deployed, verifies it, and takes
 # the snapshot named like the variant, so `make vm-restore NAME=<variant>`
-# returns to it. HOSERVA_VM_DATA_SIZE and HOSERVA_VM_PARITY_SIZE of 2000G or
-# less at `make vm-up` give the MBR layout; 2T (2 TiB) and larger, including
-# the defaults, give GPT.
+# returns to it. The guest must come from `make vm-up VARIANT=<variant>`: each
+# target disk must be exactly its spec size=, and the build refuses any other
+# before it writes a disk, so the layout (MBR up to 2000G, GPT from 2T) is the
+# one the L2 build gives.
 vm-unraid-fixture:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
@@ -795,7 +804,9 @@ vm-unraid-fixture:
 # networks.json, autostart, var.ini, smart/, capture.json, report.txt): runs the
 # fixture's containers in this lab's guest, runs tools/unraid/prepare-migration.sh
 # against the fixture's flash root there, and copies the result back into
-# testdata/unraid-fixtures/<variant>/flash/config/hoserva/.
+# testdata/unraid-fixtures/<variant>/flash/config/hoserva/. Like
+# vm-unraid-fixture, it needs a guest from `make vm-up VARIANT=<variant>`, so
+# the capture's disk sizes and fit figures are the spec's.
 vm-unraid-capture:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }

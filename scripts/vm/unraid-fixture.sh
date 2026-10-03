@@ -6,9 +6,10 @@
 # .vm/<HOSERVA_LAB_ID>/unraid/<variant>/, and takes the snapshot named like the
 # variant, so `make vm-restore NAME=<variant>` returns to it in seconds.
 #
-# The disks keep the sizes `make vm-up` gave them: 2000G or less per disk gives
-# Unraid's MBR layout; 2T (2 TiB) and larger give the GPT layout
-# (HOSERVA_VM_PARITY_SIZE and HOSERVA_VM_DATA_SIZE at vm-up).
+# The guest must come from `make vm-up VARIANT=<variant>`, which creates each
+# target disk at its spec size=; the builder refuses a disk of any other size
+# before it writes one. So the layout is the L2 build's: up to 2000G is Unraid's
+# MBR layout, 2T (2 TiB) and larger the GPT layout.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

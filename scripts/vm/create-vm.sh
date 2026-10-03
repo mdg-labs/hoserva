@@ -10,6 +10,9 @@
 # sizes costs almost nothing on disk until the guest actually writes to
 # them.
 #
+# VARIANT=<unraid fixture variant> sizes the array disks from that variant's
+# spec (see below) instead of the HOSERVA_VM_*_SIZE values.
+#
 # HOSERVA_VM_TOPOLOGY selects the layout (default "separate", the one
 # above). "shared-nvme" is doc 01 §6's partitioned-NVMe layout: the OS disk
 # carries a second, unused partition after root (HOSERVA_VM_SPARE_PARTITION_SIZE,
@@ -27,10 +30,6 @@ source "$script_dir/lib.sh"
 
 vm_require_id
 
-if vm_domain_exists "$VM_DOMAIN"; then
-  die "domain '$VM_DOMAIN' already exists — run 'make vm-destroy' first if you want a fresh VM"
-fi
-
 MEMORY_MIB="${HOSERVA_VM_MEMORY_MIB:-4096}"
 VCPU_COUNT="${HOSERVA_VM_VCPU:-4}"
 TOPOLOGY="${HOSERVA_VM_TOPOLOGY:-separate}"
@@ -41,14 +40,6 @@ case "$TOPOLOGY" in
 esac
 SPARE_PARTITION_SIZE="${HOSERVA_VM_SPARE_PARTITION_SIZE:-8G}"
 
-echo "vm-up[$HOSERVA_LAB_ID]: fetching base image"
-BASE_IMAGE="$("$script_dir/fetch-base-image.sh")"
-
-echo "vm-up[$HOSERVA_LAB_ID]: creating OS disk (copy-on-write over $BASE_IMAGE)"
-OS_DISK="$VM_IMG_DIR/os.qcow2"
-qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$OS_DISK" "$OS_DISK_SIZE"
-
-echo "vm-up[$HOSERVA_LAB_ID]: creating array disks"
 # name:size pairs — the same six-disk-plus-cache topology
 # scripts/devenv/create-array.sh uses for the L2 lab (doc 06 §3), so the
 # two layers describe the same array shape at different fidelity.
@@ -76,6 +67,44 @@ else
     "cache:$CACHE_SIZE"
   )
 fi
+
+# VARIANT (issue #570) sizes each array disk its spec names, by target, from
+# that Unraid fixture variant's spec (doc 06 §5), so the L3 build lays out the
+# same partitions as the L2 one. A disk no spec line targets keeps the size
+# above. Everything is resolved here, before the first image is fetched or
+# created: a missing variant, a spec line without a size or target, or a target
+# this topology has no disk for refuses the whole run.
+VARIANT="${VARIANT:-}"
+if [[ -n "$VARIANT" ]]; then
+  # shellcheck source=scripts/vm/unraid-lib.sh
+  source "$script_dir/unraid-lib.sh"
+  unraid_require_variant
+  spec_sizes="$(unraid_spec_sizes)" || exit 1
+  [[ -n "$spec_sizes" ]] || die "variant '$VARIANT' has no disk lines in its spec"
+  while read -r spec_target spec_bytes; do
+    matched=0
+    for i in "${!ARRAY_DISK_SPECS[@]}"; do
+      if [[ "${ARRAY_DISK_SPECS[$i]%%:*}" == "$spec_target" ]]; then
+        ARRAY_DISK_SPECS[i]="$spec_target:$spec_bytes"
+        matched=1
+      fi
+    done
+    ((matched)) || die "variant '$VARIANT' targets disk '$spec_target', which topology '$TOPOLOGY' does not create"
+  done <<<"$spec_sizes"
+fi
+
+if vm_domain_exists "$VM_DOMAIN"; then
+  die "domain '$VM_DOMAIN' already exists — run 'make vm-destroy' first if you want a fresh VM"
+fi
+
+echo "vm-up[$HOSERVA_LAB_ID]: fetching base image"
+BASE_IMAGE="$("$script_dir/fetch-base-image.sh")"
+
+echo "vm-up[$HOSERVA_LAB_ID]: creating OS disk (copy-on-write over $BASE_IMAGE)"
+OS_DISK="$VM_IMG_DIR/os.qcow2"
+qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$OS_DISK" "$OS_DISK_SIZE"
+
+echo "vm-up[$HOSERVA_LAB_ID]: creating array disks"
 ARRAY_DISKS_XML="$(mktemp)"
 OS_DISK_SERIAL_XML_FILE="$(mktemp)"
 trap 'rm -f -- "$ARRAY_DISKS_XML" "$OS_DISK_SERIAL_XML_FILE"' EXIT

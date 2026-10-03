@@ -13,7 +13,8 @@
 #       backed by images under this lab's own /lab/<id>/unraid/<variant>/img;
 #   l3  inside the lab's L3 guest (make vm-unraid-fixture), on the guest's own
 #       virtio array disks, found by the serial scripts/vm/create-vm.sh gave
-#       them.
+#       them. Each must be exactly its spec size= (make vm-up VARIANT=<variant>
+#       creates them so); any other size is refused before a disk is written.
 # Any other device is refused. A variant is defined in
 # testdata/unraid-fixtures/<variant>/: spec (disk roles, filesystems, sizes),
 # seed (data), flash/ (the authored flash tree laid over common/flash).
@@ -242,6 +243,15 @@ assert_own_part() {  # slot
   esac
 }
 
+# L3: the guest disk must be exactly the size the spec gives it, or the build
+# would lay out other partitions than the L2 build of the same variant.
+assert_spec_size() {  # slot bytes
+  local slot=$1 actual=$2
+  [[ $actual =~ ^[0-9]+$ ]] || die "refusing $(role_of "$slot"): cannot read the size of its disk"
+  ((actual == D_SIZE[$slot])) \
+    || die "refusing $(role_of "$slot") (slot $slot): the guest disk is $actual bytes, the spec says ${D_SIZE[$slot]} bytes (make vm-up VARIANT=$VARIANT sizes the disks from the spec)"
+}
+
 l3_whole_dev() {
   local slot=$1 link dev
   link="/dev/disk/by-id/virtio-$(serial_of "$slot")"
@@ -336,8 +346,6 @@ new_disk() {  # slot (build only)
       ;;
     l3)
       whole=${WHOLE[$slot]}
-      bytes=$(blockdev --getsize64 "$whole")
-      D_SIZE[$slot]=$bytes
       wipefs -a -q "$whole"
       partition_script "$bytes" | sfdisk -q "$whole" >/dev/null
       udevadm settle
@@ -904,6 +912,7 @@ build() {
     for s in "${SLOTS[@]}"; do
       WHOLE[$s]=$(l3_whole_dev "$s")
       assert_unused "${WHOLE[$s]}"
+      assert_spec_size "$s" "$(blockdev --getsize64 "${WHOLE[$s]}" 2>/dev/null)"
     done
   fi
   for s in "${SLOTS[@]}"; do new_disk "$s"; done

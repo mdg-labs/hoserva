@@ -17,6 +17,31 @@ unraid_require_variant() {
   [[ -d "$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT" ]] || die "no variant '$VARIANT' under testdata/unraid-fixtures/"
 }
 
+# unraid_spec_sizes: prints "<target> <bytes>" for each disk line of the
+# variant's own spec, the sizes scripts/devenv/unraid-fixture.sh builds on.
+# Any other disk line (one pulled in by an include) is not read here; the
+# builder refuses a guest disk whose size differs from its spec.
+unraid_spec_sizes() {
+  local spec="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT/spec" line words w size target bytes seen=" "
+  [[ -f "$spec" ]] || die "variant '$VARIANT' has no spec file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == disk\ * ]] || continue
+    read -r -a words <<<"$line"
+    size="" target=""
+    for w in "${words[@]:2}"; do
+      case "$w" in
+        size=*) size="${w#size=}" ;;
+        target=*) target="${w#target=}" ;;
+      esac
+    done
+    [[ -n "$size" && -n "$target" ]] || die "spec of '$VARIANT': disk '${words[1]:-}' needs size= and target="
+    [[ "$seen" != *" $target "* ]] || die "spec of '$VARIANT': target '$target' is used by two disks"
+    seen+="$target "
+    bytes="$(numfmt --from=iec "$size")" || die "spec of '$VARIANT': disk '${words[1]}': bad size '$size'"
+    printf '%s %s\n' "$target" "$bytes"
+  done <"$spec"
+}
+
 unraid_require_guest() {
   vm_assert_own_domain "$VM_DOMAIN"
   vm_domain_exists "$VM_DOMAIN" || die "domain '$VM_DOMAIN' does not exist — run 'make vm-up' first"

@@ -1,4 +1,4 @@
-Hoserva Phase A report (prepare-migration unreleased, 2026-10-02 17:56 UTC)
+Hoserva Phase A report (prepare-migration unreleased, 2026-10-03 07:00 UTC)
 Unraid 7.3.2. Lines starting with !! must be fixed while Unraid still runs.
 
 == Containers ==
@@ -46,7 +46,7 @@ Writable-layer size per container (state kept inside the container, not in a map
   - photos: 0 KiB
   - mediaserver: 0 KiB
   - notes: 0 KiB
-Fit: the data on the cache (328 KiB) fits on the array: 5.8 TiB usable of 5.8 TiB free across 3 data disks, after the largest share floor (0 KiB) is kept free on each. This compares totals; it does not check that one large file fits on one disk.
+Fit: the data on the cache (328 KiB) fits on the array: 2.2 TiB usable of 2.2 TiB free across 3 data disks, after the largest share floor (0 KiB) is kept free on each. This compares totals; it does not check that one large file fits on one disk.
 
 == Last parity check ==
 Last parity check: 2026-09-25 01:33 UTC, exit code 0, 0 errors.

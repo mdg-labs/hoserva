@@ -87,6 +87,23 @@ TIER=l3
 refused "a loop device on the L3 tier" assert_own_virtio disk1 "$own"
 refused "the guest's OS disk" assert_own_virtio disk1 /dev/vda
 refused "a virtio disk that does not exist" assert_own_virtio disk1 /dev/vdb
+# the L3 size guard: a guest disk is accepted only at exactly its spec size
+# shellcheck disable=SC2034
+VARIANT=unraid-guard
+# shellcheck disable=SC2034
+D_SIZE[disk1]=335544320
+size_refusal() {  # description, expected message, actual size
+  local out
+  if out=$(assert_spec_size disk1 "$3" 2>&1); then bad "$1 was accepted"; elif [[ $out == *"$2"* ]]; then ok "$1 is refused"; else bad "$1 failed for another reason: $out"; fi
+}
+if (assert_spec_size disk1 335544320) >/dev/null 2>&1; then
+  ok "a guest disk of exactly its spec size is accepted"
+else
+  bad "the guard refused a guest disk of exactly its spec size"
+fi
+size_refusal "a larger guest disk" "the guest disk is 4398046511104 bytes, the spec says 335544320 bytes" 4398046511104
+size_refusal "a smaller guest disk" "the guest disk is 335544319 bytes, the spec says 335544320 bytes" 335544319
+size_refusal "a guest disk whose size could not be read" "cannot read the size of its disk" ""
 # shellcheck disable=SC2034
 TIER=l2
 
