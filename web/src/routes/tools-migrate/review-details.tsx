@@ -5,7 +5,7 @@ import { DataTable, type DataTableColumn } from "@/components/patterns/data-tabl
 import { PlainTerm } from "@/components/patterns/plain-term";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import { diskKey, type DiskMapping } from "@/routes/tools-migrate/mapping";
-import { ROLLBACK_ROWS, bootKind, type MigrationBoot, type ReviewDisk, type SharePreview } from "@/routes/tools-migrate/report";
+import { ROLLBACK_ROWS, bootKind, layoutRow, plannedLayout, type MigrationBoot, type ReviewDisk, type SharePreview } from "@/routes/tools-migrate/report";
 
 const HIGH_WATER_POLICY = "mfs";
 
@@ -80,12 +80,13 @@ export function BootLayout({
 }): React.ReactElement {
   const { t } = useTranslation();
   const kind = bootKind(boot);
-  const cacheDisks = disks
-    .map((disk, index) => ({ disk, role: mapping[diskKey(disk, index)] }))
-    .filter((entry) => entry.role === "cache")
-    .map((entry) => entry.disk.serial ?? entry.disk.device ?? entry.disk.unraidId ?? entry.disk.slot ?? "")
+  const cacheEntries = disks.filter((disk, index) => mapping[diskKey(disk, index)] === "cache");
+  const cacheDisks = cacheEntries
+    .map((disk) => disk.serial ?? disk.device ?? disk.unraidId ?? disk.slot ?? "")
     .filter((label) => label !== "");
-  const rows = ROLLBACK_ROWS[kind];
+  const layout = plannedLayout(kind, disks, cacheEntries);
+  const decidedRow = layout === undefined ? undefined : layoutRow(kind, layout);
+  const rows = decidedRow === undefined ? ROLLBACK_ROWS[kind] : [decidedRow];
   const columns: DataTableColumn<string>[] = [
     {
       id: "debian",
@@ -114,12 +115,20 @@ export function BootLayout({
             ? t("toolsMigrate.review.boot.cacheOn", { disks: cacheDisks.join(", ") })
             : t("toolsMigrate.review.boot.noCache")}
         </dd>
+        {layout !== undefined ? (
+          <>
+            <dt className="text-muted-foreground">{t("toolsMigrate.review.boot.plannedLayout")}</dt>
+            <dd>{t(`toolsMigrate.review.boot.layouts.${layout}`)}</dd>
+          </>
+        ) : null}
       </dl>
       {rows.length > 0 ? (
         <>
-          <p className="text-sm">{t("toolsMigrate.review.boot.rollbackIntro")}</p>
+          <p className="text-sm">
+            {t(decidedRow === undefined ? "toolsMigrate.review.boot.rollbackIntro" : "toolsMigrate.review.boot.rollbackIntroOne")}
+          </p>
           <DataTable rows={rows} getRowKey={(row) => row} columns={columns} />
-          <p className="text-muted-foreground text-sm">{t("toolsMigrate.review.boot.sharedNvmeNote")}</p>
+          {layout !== "separate" ? <p className="text-muted-foreground text-sm">{t("toolsMigrate.review.boot.sharedNvmeNote")}</p> : null}
         </>
       ) : (
         <p className="text-sm">{t(`toolsMigrate.review.boot.noRollback.${kind}`)}</p>

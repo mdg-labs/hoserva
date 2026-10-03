@@ -84,6 +84,10 @@ type ReviewDisk struct {
 	// device (refused, proposed ignore). Such a disk is one row, never a second
 	// boot row beside it. Only the cache row of it is proposed a role but ignore.
 	UnraidBoot bool `json:"unraidBoot,omitempty"`
+	// HostBoot is whether the disk is the one this machine boots from, from the
+	// scan's own disk.Boot. It is nil when no disk of this machine matched, and
+	// in a session saved before it existed, and nil is unknown, never false.
+	HostBoot *bool `json:"hostBoot,omitempty"`
 	// Device is this machine's device for the disk, empty when none matched.
 	Device     string `json:"device,omitempty"`
 	Serial     string `json:"serial,omitempty"`
@@ -102,7 +106,8 @@ type ReviewDisk struct {
 }
 
 func (d *ReviewDisk) setIdentity(m *disk.Disk) {
-	weak := m.WeakIdentity
+	weak, boot := m.WeakIdentity, m.Boot
+	d.HostBoot = &boot
 	d.Device, d.Serial, d.WWN, d.ByID, d.Model = m.Device, m.Serial, m.WWN, m.ByIDName, m.Model
 	d.Size, d.Filesystem, d.WeakIdentity = m.Size, m.Filesystem, &weak
 }

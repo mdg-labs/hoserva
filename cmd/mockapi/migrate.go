@@ -166,16 +166,21 @@ func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrat
 	// cache is that disk as the cache pool's row, as production builds it.
 	machine := []disk.Disk{{Device: mockFlashDevice, Size: 16 * disk.GB, Model: "SanDisk Cruzer Fit", Serial: "4C530001240603119335", Filesystem: disk.UnraidStickFilesystem, Label: disk.UnraidStickLabel}}
 	if rv.Boot.Mode == "internal" {
+		shared := rv.Boot.SharedWithCache != nil && *rv.Boot.SharedWithCache
 		for i, bd := range f.Capture.Boot.Devices {
 			if bd.Serial == "" {
 				continue
 			}
 			machine = append(machine, disk.Disk{Device: fmt.Sprintf("/dev/nvme%dn1", i+1), Serial: bd.Serial, Model: bd.Model, Size: 500 * gib, Filesystem: "zfs_member", UnraidBoot: true})
 		}
-		if rv.Boot.SharedWithCache != nil && *rv.Boot.SharedWithCache && len(machine) > 1 {
+		// Debian is installed on the shared disk: the shared NVMe of doc 01 §6.
+		if shared && len(machine) > 1 {
+			machine[1].Boot = true
 			b := machine[1]
 			for i := range rv.Disks {
 				if rv.Disks[i].Slot == "pool cache" {
+					hostBoot := b.Boot
+					rv.Disks[i].HostBoot = &hostBoot
 					rv.Disks[i].UnraidID, rv.Disks[i].Device, rv.Disks[i].Serial, rv.Disks[i].ByID = b.Serial, b.Device, b.Serial, "nvme-"+b.Serial
 					rv.Disks[i].WWN, rv.Disks[i].Model, rv.Disks[i].Size = "", b.Model, b.Size
 				}
@@ -184,6 +189,14 @@ func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrat
 	}
 	rv.Disks = migrate.AddBootDisks(rv.Disks, f, machine)
 	rv.Disks = append(rv.Disks, migrate.ReviewDisk{UnraidRole: migrate.UnraidUnassigned, Device: "/dev/sdf", Serial: "EXAMPLE_SPARE", Model: "EXAMPLE 1TB", Size: tib, Filesystem: "ext4", WeakIdentity: &strong})
+	// Every row with a disk of this machine says whether it is the one the mock
+	// boots from, which only the shared NVMe above is.
+	for i := range rv.Disks {
+		if rv.Disks[i].Device != "" && rv.Disks[i].HostBoot == nil {
+			notBoot := false
+			rv.Disks[i].HostBoot = &notBoot
+		}
+	}
 	rv.Shares = []migrate.SharePreview{
 		{Name: "media", AllocationMethod: "highwater", HighWater: true, Include: []string{}, Exclude: []string{}, WarningCount: 1},
 		{Name: "backup", AllocationMethod: "fillup", Include: []string{}, Exclude: []string{"disk3"}},
@@ -363,6 +376,9 @@ func mockMigrationReviewToAPI(rv *migrate.Review) apiv1.MigrationReview {
 		}
 		if d.UnraidBoot {
 			item.UnraidBoot = apiv1.NewOptBool(true)
+		}
+		if d.HostBoot != nil {
+			item.HostBoot = apiv1.NewOptBool(*d.HostBoot)
 		}
 		out.Disks = append(out.Disks, item)
 	}

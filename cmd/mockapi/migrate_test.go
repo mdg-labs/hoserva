@@ -399,6 +399,11 @@ func TestMockMigration_TheSeededReviewHasTheStatesTheReviewStepNeeds(t *testing.
 	if len(unnamed) != 1 || unnamed[0].UnraidRole.Or("") != apiv1.MigrationUnraidRoleUnassigned {
 		t.Errorf("unnamed disks = %+v, want one unassigned", unnamed)
 	}
+	for _, d := range review.Disks {
+		if d.HostBoot.Set != d.Device.Set || d.HostBoot.Value {
+			t.Errorf("%+v: hostBoot is known and false exactly where a disk of this machine matched, since the seeded machine boots from none of them", d)
+		}
+	}
 
 	var highWater, plain int
 	for _, sh := range review.Shares {
@@ -540,6 +545,12 @@ func TestMockMigration_AScannedZipGivesTheBootModeAndCaptureStateProductionGives
 			}
 			if sticks != 1 || boots != wantBoots {
 				t.Errorf("boot rows = %d (%d the stick), want %d with the stick always there: %+v", boots, sticks, wantBoots, review.Disks)
+			}
+			for _, d := range review.Disks {
+				wantBoot := internal && shared && d.Slot.Or("") == "pool cache"
+				if d.HostBoot.Set != d.Device.Set || d.HostBoot.Value != wantBoot {
+					t.Errorf("%+v: hostBoot is true only on the shared NVMe's row, and known wherever a disk matched", d)
+				}
 			}
 			if internal && shared {
 				if pool.Serial.Or("") != "BOOT1" || !pool.UnraidBoot.Value || pool.ProposedRole.Or("") != apiv1.MigrationProposedRoleCache || !pool.Device.Set {

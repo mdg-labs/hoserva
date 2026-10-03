@@ -517,6 +517,9 @@ func TestHandler_GetMigration_ServesTheStructuredReview(t *testing.T) {
 	if boot.UnraidRole.Or("") != apiv1.MigrationUnraidRoleBoot || boot.ProposedRole.Or("") != apiv1.MigrationProposedRoleIgnore || boot.Serial.Or("") != "BOOTSERIAL" || boot.Device.Set {
 		t.Errorf("the boot device the capture names = %+v, want a boot row that can only be ignored", boot)
 	}
+	if !parity.HostBoot.Set || parity.HostBoot.Value || !data.HostBoot.Set || data.HostBoot.Value || boot.HostBoot.Set {
+		t.Errorf("hostBoot: parity %+v, disk1 %+v, boot %+v; want false where a disk matched and absent where none did", parity.HostBoot, data.HostBoot, boot.HostBoot)
+	}
 	if len(review.Disks) != 3 {
 		t.Errorf("disks = %d, want the parity, the data disk and the boot device: %+v", len(review.Disks), review.Disks)
 	}

@@ -274,7 +274,7 @@ func TestReview_ASlotWithNoDiskHereHasNoIdentityAndAnUnknownWeakness(t *testing.
 		t.Fatal(err)
 	}
 	d := reviewDisk(t, r, "disk2")
-	if d.Device != "" || d.Serial != "" || d.WeakIdentity != nil || d.Filesystem != "" {
+	if d.Device != "" || d.Serial != "" || d.WeakIdentity != nil || d.HostBoot != nil || d.Filesystem != "" {
 		t.Errorf("disk2 has an identity of this machine: %+v", d)
 	}
 	if d.UnraidID != "FIXTURE_disk2-hoserva-test" || d.Size != 320<<20 || d.Problem != "no disk on this machine has this serial or WWN" || d.UnraidRole != UnraidData || d.DiskNumber != 2 {
@@ -707,6 +707,81 @@ func TestReview_ThisMachinesBootDiskInTheCachePoolIsASharedNVMeAndProposedCache(
 	if len(rows) != 1 || rows[0].Status != StatusPass || rows[0].Detail != want {
 		t.Errorf("mapping rows for the cache pool = %+v, want one pass row %q", rows, want)
 	}
+}
+
+// hostBoot is the scan's own boot-disk detection on the row it belongs to: true
+// on the disk this machine boots from, false on every other disk of this machine
+// the table lists (a boot row and an unassigned disk included), and unknown, not
+// false, where no disk of this machine matched the row.
+func TestReview_HostBootIsSetOnlyOnTheRowOfTheDiskThisMachineBootsFrom(t *testing.T) {
+	hostBootRows := func(r *Report) []string {
+		var out []string
+		for _, d := range r.Review.Disks {
+			if d.HostBoot != nil && *d.HostBoot {
+				out = append(out, d.Slot)
+			}
+		}
+		return out
+	}
+	assertOthersKnown := func(t *testing.T, r *Report) {
+		t.Helper()
+		for _, d := range r.Review.Disks {
+			if (d.Device != "") != (d.HostBoot != nil) {
+				t.Errorf("%+v: hostBoot is known exactly when a disk of this machine matched the row", d)
+			}
+		}
+	}
+
+	t.Run("no disk is the boot disk", func(t *testing.T) {
+		files, spec := flashTree(t, primary)
+		p := disksWithout(spec, "disk2")
+		p.AddDisk("/dev/sdm", disk.Disk{Serial: "spare", Size: 1 << 30, Filesystem: "ext4"})
+		p.AddDisk("/dev/sdx", disk.Disk{Serial: "STICK", Size: 8 << 30, Filesystem: disk.UnraidStickFilesystem, Label: disk.UnraidStickLabel})
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hostBootRows(r); len(got) != 0 {
+			t.Errorf("hostBoot is true on %v, want no row", got)
+		}
+		assertOthersKnown(t, r)
+		var unassigned, stick bool
+		for _, d := range r.Review.Disks {
+			unassigned = unassigned || d.UnraidRole == UnraidUnassigned && d.HostBoot != nil
+			stick = stick || d.UnraidRole == UnraidBoot && d.HostBoot != nil
+		}
+		if !unassigned || !stick {
+			t.Errorf("the unassigned disk and the stick have a known hostBoot: %v %v in %+v", unassigned, stick, r.Review.Disks)
+		}
+	})
+	for _, slot := range []string{"parity", "disk1", "cache"} {
+		t.Run(slot+" is the boot disk", func(t *testing.T) {
+			e := newDataEnv(t, primary)
+			e.setDisk(slot, func(d *disk.Disk) { d.Boot = true })
+			r := e.scan()
+			want := slot
+			if slot == "cache" {
+				want = "pool cache"
+			}
+			if got := hostBootRows(r); !reflect.DeepEqual(got, []string{want}) {
+				t.Errorf("hostBoot is true on %v, want only %s", got, want)
+			}
+			assertOthersKnown(t, r)
+		})
+	}
+	t.Run("an Unraid boot device that is the boot disk", func(t *testing.T) {
+		files, spec := flashTree(t, primary)
+		bootCapture(`{"mode":"internal","filesystem":"zfs","devices":[{"name":"nvme0n1","serial":"B1","model":"Boot SSD","size":"500G"}],"mirrored":false,"shared_with_data_pool":false}`)(files)
+		p := fixtureDisks(spec)
+		p.AddDisk("/dev/nvme0n1", disk.Disk{Serial: "B1", Size: 500 << 30, Model: "Boot SSD", UnraidBoot: true, Boot: true, Filesystem: "zfs_member"})
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hostBootRows(r); !reflect.DeepEqual(got, []string{"boot"}) {
+			t.Errorf("hostBoot is true on %v, want only the boot row", got)
+		}
+	})
 }
 
 // unraidBoot is set on the row of any disk that is also an Unraid boot device,

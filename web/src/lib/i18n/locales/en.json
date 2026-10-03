@@ -819,6 +819,12 @@
           "unknown": "Unknown"
         },
         "rollbackIntro": "Going back to Unraid after the point where Debian is installed depends on where Debian goes. Find your row:",
+        "rollbackIntroOne": "Going back to Unraid after the point where Debian is installed, for the layout your disk roles give:",
+        "plannedLayout": "Where Debian goes",
+        "layouts": {
+          "separate": "A separate boot device",
+          "shared": "A shared NVMe: the cache is on the disk this machine boots from"
+        },
         "columns": {
           "debian": "Debian goes on",
           "rollback": "Going back to Unraid"

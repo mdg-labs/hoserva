@@ -9982,6 +9982,12 @@ type MigrationDisk struct {
 	// that names a boot device (refused as `boot_device` and proposed `ignore`). The disk is this one row,
 	// never a second `boot` row beside it. Absent otherwise.
 	UnraidBoot OptBool `json:"unraidBoot"`
+	// True when this row's disk is the disk this machine boots from, which is the scan's own boot-disk
+	// detection, not a second one: Debian is installed on it. False when a disk of this machine matched
+	// the row and is not that disk. Absent when no disk of this machine matched, and in a report made
+	// before the field existed; absent means unknown, never false. On the cache pool's row, true is the
+	// shared NVMe of doc 01 §6.
+	HostBoot OptBool `json:"hostBoot"`
 	// This machine's device for the disk. Absent when none matched.
 	Device OptString `json:"device"`
 	Serial OptString `json:"serial"`
@@ -10033,6 +10039,11 @@ func (s *MigrationDisk) GetProposedRole() OptMigrationProposedRole {
 // GetUnraidBoot returns the value of UnraidBoot.
 func (s *MigrationDisk) GetUnraidBoot() OptBool {
 	return s.UnraidBoot
+}
+
+// GetHostBoot returns the value of HostBoot.
+func (s *MigrationDisk) GetHostBoot() OptBool {
+	return s.HostBoot
 }
 
 // GetDevice returns the value of Device.
@@ -10123,6 +10134,11 @@ func (s *MigrationDisk) SetProposedRole(val OptMigrationProposedRole) {
 // SetUnraidBoot sets the value of UnraidBoot.
 func (s *MigrationDisk) SetUnraidBoot(val OptBool) {
 	s.UnraidBoot = val
+}
+
+// SetHostBoot sets the value of HostBoot.
+func (s *MigrationDisk) SetHostBoot(val OptBool) {
+	s.HostBoot = val
 }
 
 // SetDevice sets the value of Device.

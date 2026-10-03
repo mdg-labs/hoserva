@@ -20905,6 +20905,12 @@ func (s *MigrationDisk) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.HostBoot.Set {
+			e.FieldStart("hostBoot")
+			s.HostBoot.Encode(e)
+		}
+	}
+	{
 		if s.Device.Set {
 			e.FieldStart("device")
 			s.Device.Encode(e)
@@ -20976,25 +20982,26 @@ func (s *MigrationDisk) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfMigrationDisk = [18]string{
+var jsonFieldsNameOfMigrationDisk = [19]string{
 	0:  "slot",
 	1:  "diskNumber",
 	2:  "unraidId",
 	3:  "unraidRole",
 	4:  "proposedRole",
 	5:  "unraidBoot",
-	6:  "device",
-	7:  "serial",
-	8:  "wwn",
-	9:  "byId",
-	10: "model",
-	11: "size",
-	12: "filesystem",
-	13: "weakIdentity",
-	14: "problem",
-	15: "refused",
-	16: "refusalCode",
-	17: "refusal",
+	6:  "hostBoot",
+	7:  "device",
+	8:  "serial",
+	9:  "wwn",
+	10: "byId",
+	11: "model",
+	12: "size",
+	13: "filesystem",
+	14: "weakIdentity",
+	15: "problem",
+	16: "refused",
+	17: "refusalCode",
+	18: "refusal",
 }
 
 // Decode decodes MigrationDisk from json.
@@ -21065,6 +21072,16 @@ func (s *MigrationDisk) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"unraidBoot\"")
+			}
+		case "hostBoot":
+			if err := func() error {
+				s.HostBoot.Reset()
+				if err := s.HostBoot.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hostBoot\"")
 			}
 		case "device":
 			if err := func() error {
@@ -21157,7 +21174,7 @@ func (s *MigrationDisk) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"problem\"")
 			}
 		case "refused":
-			requiredBitSet[1] |= 1 << 7
+			requiredBitSet[2] |= 1 << 0
 			if err := func() error {
 				v, err := d.Bool()
 				s.Refused = bool(v)
@@ -21199,8 +21216,8 @@ func (s *MigrationDisk) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [3]uint8{
 		0b00000000,
-		0b10000000,
 		0b00000000,
+		0b00000001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

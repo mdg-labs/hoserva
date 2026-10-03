@@ -214,6 +214,9 @@ func migrationReviewToAPI(rv *migrate.Review) apiv1.MigrationReview {
 		if d.UnraidBoot {
 			item.UnraidBoot = apiv1.NewOptBool(true)
 		}
+		if d.HostBoot != nil {
+			item.HostBoot = apiv1.NewOptBool(*d.HostBoot)
+		}
 		out.Disks = append(out.Disks, item)
 	}
 	for _, sh := range rv.Shares {

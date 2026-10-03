@@ -169,6 +169,44 @@ export const ROLLBACK_ROWS: Record<BootKind, string[]> = {
   unknown: [],
 };
 
+export type PlannedLayout = "separate" | "shared";
+
+const LAYOUT_ROWS: Partial<Record<BootKind, Record<PlannedLayout, string>>> = {
+  usb: { separate: "separate", shared: "sharedNvme" },
+  internal_shared: { separate: "another", shared: "sameNvme" },
+};
+
+// Whether Debian goes on a separate device or on the NVMe that holds the cache
+// (doc 01 section 6). Until the import's last step nothing the user maps changes
+// Unraid's own devices, so for a USB boot it follows the disks Unraid used as its
+// cache (unraidRole), whatever role the mapping gives them; the chosen cache role
+// only says whether there is a cache to decide on. For an internal boot that also
+// holds the cache, the cache that counts is the Unraid boot device's own, taken
+// from the chosen cache disks. A disk with no hostBoot is an unknown, so nothing
+// is decided on it.
+export function plannedLayout(kind: BootKind, disks: ReviewDisk[], chosenCache: ReviewDisk[]): PlannedLayout | undefined {
+  if (LAYOUT_ROWS[kind] === undefined || chosenCache.length === 0) {
+    return undefined;
+  }
+  let candidates: ReviewDisk[];
+  if (kind === "internal_shared") {
+    candidates = chosenCache.filter((disk) => disk.unraidBoot === true);
+    if (candidates.length !== chosenCache.length) {
+      return undefined;
+    }
+  } else {
+    candidates = disks.filter((disk) => disk.unraidRole === "cache");
+  }
+  if (candidates.some((disk) => disk.hostBoot === true)) {
+    return "shared";
+  }
+  return candidates.length > 0 && candidates.every((disk) => disk.hostBoot === false) ? "separate" : undefined;
+}
+
+export function layoutRow(kind: BootKind, layout: PlannedLayout): string | undefined {
+  return LAYOUT_ROWS[kind]?.[layout];
+}
+
 export function allTemplatesUnknown(templates: MigrationTemplates): boolean {
   return (
     templates.counts.allTemplates ||

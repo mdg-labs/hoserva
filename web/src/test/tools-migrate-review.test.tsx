@@ -45,6 +45,27 @@ function withDisks(patch: (disks: Disk[]) => Disk[]): Migration {
   return withReview((review) => ({ ...review, disks: patch(review.disks) }));
 }
 
+function withUnknownHostBoot(migration: Migration): Migration {
+  const report = migration.report;
+  if (!report?.review) {
+    throw new Error("the fixture has a report with a review");
+  }
+  const disks = report.review.disks.map((disk) => ({ ...disk, hostBoot: undefined }));
+  return { ...migration, report: { ...report, review: { ...report.review, disks } } };
+}
+
+function withHostBoot(slot: string, hostBoot: boolean, extra: Partial<Disk> = {}): (disks: Disk[]) => Disk[] {
+  return (disks) => disks.map((disk) => (disk.slot === slot ? { ...disk, ...extra, hostBoot } : disk));
+}
+
+function internalSharedWith(hostBoot: boolean): Migration {
+  return withReview((review) => ({
+    ...review,
+    boot: { mode: "internal", mirrored: false, sharedWithCache: true },
+    disks: [...review.disks.filter((disk) => disk.slot !== "pool cache"), { ...SHARED_CACHE_ROW, hostBoot }],
+  }));
+}
+
 function renderPage(migration: Migration): ReturnType<typeof render> {
   mockGet.mockImplementation((path: string) => {
     switch (path) {
@@ -294,8 +315,8 @@ describe("the migration Review step", () => {
   });
 
   describe("the boot mode and planned layout", () => {
-    it("shows a USB boot, the cache the roles give, and both rollback rows", async () => {
-      renderPage(withBoot({ mode: "usb" }));
+    it("shows a USB boot, the cache the roles give, and both rollback rows when no disk says whether it is the host boot disk", async () => {
+      renderPage(withUnknownHostBoot(withBoot({ mode: "usb" })));
 
       await screen.findByText("Boot mode and layout");
       expect(screen.getByText("A USB stick")).toBeInTheDocument();
@@ -304,6 +325,105 @@ describe("the migration Review step", () => {
       expect(
         screen.getByText("Put the stick back in, re-create the Unraid cache and move the appdata back."),
       ).toBeInTheDocument();
+    });
+
+    it("shows only the separate-device row for a USB boot whose cache is not on the disk this machine boots from", async () => {
+      renderPage(withBoot({ mode: "usb" }));
+
+      expect(await screen.findByText("A separate boot device")).toBeInTheDocument();
+      expect(screen.getByText("Where Debian goes")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in and boot from it.")).toBeInTheDocument();
+      expect(screen.queryByText("Put the stick back in, re-create the Unraid cache and move the appdata back.")).not.toBeInTheDocument();
+      expect(screen.queryByText(/the Unraid cache is destroyed by the installation/)).not.toBeInTheDocument();
+    });
+
+    it("shows only the shared NVMe row for a USB boot whose cache is on the disk this machine boots from", async () => {
+      renderPage(withDisks(withHostBoot("pool cache", true)));
+      await screen.findByText("Boot mode and layout");
+
+      expect(await screen.findByText("A shared NVMe: the cache is on the disk this machine boots from")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in, re-create the Unraid cache and move the appdata back.")).toBeInTheDocument();
+      expect(screen.queryByText("Put the stick back in and boot from it.")).not.toBeInTheDocument();
+      expect(screen.getByText(/the Unraid cache is destroyed by the installation/)).toBeInTheDocument();
+    });
+
+    it("keeps the shared NVMe row when Unraid's cache disk is set to Ignore and the cache goes to another disk", async () => {
+      renderPage(withDisks(withHostBoot("pool cache", true)));
+      expect(await screen.findByText("A shared NVMe: the cache is on the disk this machine boots from")).toBeInTheDocument();
+
+      await selectRole("EXAMPLE_SPARE", "Cache");
+      expect(await screen.findByText("On EXAMPLE_CACHE, EXAMPLE_SPARE, from the roles above")).toBeInTheDocument();
+      expect(screen.getByText("A shared NVMe: the cache is on the disk this machine boots from")).toBeInTheDocument();
+
+      await selectRole("EXAMPLE_CACHE", "Ignore");
+      expect(await screen.findByText("On EXAMPLE_SPARE, from the roles above")).toBeInTheDocument();
+      expect(screen.getByText("A shared NVMe: the cache is on the disk this machine boots from")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in, re-create the Unraid cache and move the appdata back.")).toBeInTheDocument();
+      expect(screen.queryByText("Put the stick back in and boot from it.")).not.toBeInTheDocument();
+      expect(screen.queryByText("A separate boot device")).not.toBeInTheDocument();
+      expect(screen.getByText(/the Unraid cache is destroyed by the installation/)).toBeInTheDocument();
+    });
+
+    it("keeps the separate-device row when the cache role moves to another disk and Unraid's cache is not the boot disk", async () => {
+      renderPage(withBoot({ mode: "usb" }));
+      await screen.findByText("A separate boot device");
+
+      await selectRole("EXAMPLE_SPARE", "Cache");
+      await selectRole("EXAMPLE_CACHE", "Ignore");
+      expect(await screen.findByText("On EXAMPLE_SPARE, from the roles above")).toBeInTheDocument();
+      expect(screen.getByText("A separate boot device")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in and boot from it.")).toBeInTheDocument();
+    });
+
+    it("decides nothing when Unraid's cache disk has no hostBoot, whatever disk the cache role is on", async () => {
+      renderPage(withDisks((disks) => disks.map((disk) => ({ ...disk, hostBoot: disk.slot === "pool cache" ? undefined : false }))));
+      await screen.findByText("On EXAMPLE_CACHE, from the roles above");
+
+      await selectRole("EXAMPLE_SPARE", "Cache");
+      await selectRole("EXAMPLE_CACHE", "Ignore");
+      expect(await screen.findByText("On EXAMPLE_SPARE, from the roles above")).toBeInTheDocument();
+      expect(screen.queryByText("Where Debian goes")).not.toBeInTheDocument();
+      expect(screen.queryByText("A separate boot device")).not.toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in and boot from it.")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in, re-create the Unraid cache and move the appdata back.")).toBeInTheDocument();
+    });
+
+    it("shows every row for the boot kind when no cache is chosen", async () => {
+      renderPage(withBoot({ mode: "usb" }));
+      await screen.findByText("A separate boot device");
+
+      await selectRole("EXAMPLE_CACHE", "Ignore");
+      expect(await screen.findByText("No disk has the cache role")).toBeInTheDocument();
+      expect(screen.queryByText("Where Debian goes")).not.toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in and boot from it.")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in, re-create the Unraid cache and move the appdata back.")).toBeInTheDocument();
+    });
+
+    it("does not read an absent hostBoot as a separate device", async () => {
+      renderPage(withDisks((disks) => disks.map((disk) => ({ ...disk, hostBoot: disk.slot === "pool cache" ? undefined : false }))));
+
+      expect(await screen.findByText("On EXAMPLE_CACHE, from the roles above")).toBeInTheDocument();
+      expect(screen.queryByText("Where Debian goes")).not.toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in and boot from it.")).toBeInTheDocument();
+      expect(screen.getByText("Put the stick back in, re-create the Unraid cache and move the appdata back.")).toBeInTheDocument();
+    });
+
+    it("shows only the same-NVMe row for an internal boot holding the cache when Debian is on that disk", async () => {
+      renderPage(internalSharedWith(true));
+
+      expect(await screen.findByText("A shared NVMe: the cache is on the disk this machine boots from")).toBeInTheDocument();
+      expect(screen.getByText("The same NVMe")).toBeInTheDocument();
+      expect(screen.getByText("Restore the Flash Backup zip to a USB stick and boot from it, then re-create the cache.")).toBeInTheDocument();
+      expect(screen.queryByText("Another device")).not.toBeInTheDocument();
+    });
+
+    it("shows only the another-device row for an internal boot holding the cache when Debian is on another disk", async () => {
+      renderPage(internalSharedWith(false));
+
+      expect(await screen.findByText("A separate boot device")).toBeInTheDocument();
+      expect(screen.getByText("Another device")).toBeInTheDocument();
+      expect(screen.getByText(/The cache, partition 4, is untouched until parity is first written/)).toBeInTheDocument();
+      expect(screen.queryByText("The same NVMe")).not.toBeInTheDocument();
     });
 
     it("follows the cache role chosen in the mapping", async () => {
