@@ -95,7 +95,7 @@ unraid_guest_packages() {
   if grep -qx zfs <<<"$needs"; then
     echo "unraid[$HOSERVA_LAB_ID]: installing OpenZFS in the guest (contrib, built by DKMS: this takes a few minutes the first time)"
     # shellcheck disable=SC2016 # $(uname -r) is the guest's kernel, expanded there
-    vm_ssh 'sudo sed -i "s/^Components: main\$/Components: main contrib/" /etc/apt/sources.list.d/debian.sources && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "linux-headers-$(uname -r)" zfs-dkms zfsutils-linux >/dev/null && sudo modprobe zfs'
+    vm_ssh 'sudo sed -i "/^Components:/{/contrib/!s/\$/ contrib/}" /etc/apt/sources.list.d/debian.sources && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "linux-headers-$(uname -r)" zfs-dkms zfsutils-linux >/dev/null && sudo modprobe zfs'
   fi
 }
 
