@@ -258,7 +258,7 @@ func writeFileAtomic(path string, r io.Reader) error {
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}

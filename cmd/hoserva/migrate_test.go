@@ -302,6 +302,12 @@ func TestMigrateReportPrintsOrSavesTheDocument(t *testing.T) {
 	if saved, _ := os.ReadFile(out); string(saved) != migrateTestReport {
 		t.Errorf("saved report = %q", saved)
 	}
+	// The report names the source's shares, user accounts and containers.
+	if fi, err := os.Stat(out); err != nil {
+		t.Error(err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf("saved report mode = %v, want 0600", fi.Mode().Perm())
+	}
 	entries, _ := os.ReadDir(filepath.Dir(out))
 	if len(entries) != 1 {
 		t.Errorf("the directory holds %v, want only the report", entries)
