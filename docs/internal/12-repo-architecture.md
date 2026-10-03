@@ -104,7 +104,7 @@ hoserva/
 │   └── iso/
 │
 ├── docs/internal/              design docs (this document set)
-└── site/                       Astro Starlight public docs (Q3; split out later)
+└── site/                       Docusaurus public docs, versioned (Q3, Q90; split out later)
 ```
 
 ### Notable choices

@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -291,6 +291,22 @@ web-build:
 	@echo "web: npm run build"
 	cd web && $(NPM) run build
 	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
+
+# site/ (issue #82, Q3, Q90): the Docusaurus docs site. The build is written
+# to site/dist, which scripts/release/assemble-pages-site.sh publishes at the
+# root of hoserva.dev (running this target itself). dist is removed first, so
+# the index.html check below cannot pass on a build left by an earlier run.
+site-build:
+	@echo "site: npm ci"
+	cd site && $(NPM) ci --no-audit --no-fund
+	@echo "site: typecheck"
+	cd site && $(NPM) run typecheck
+	rm -rf site/dist
+	@echo "site: npm run build"
+	cd site && $(NPM) run build
+	@test -f site/dist/index.html || { echo "site-build: site/dist/index.html is missing after 'npm run build' — scripts/release/assemble-pages-site.sh would publish no docs" >&2; exit 1; }
+	@echo "site: layout, external-reference and versioning checks"
+	cd site && $(NPM) run check
 
 # Q49: the built app embeds no outbound request. web-scan-outbound scans an
 # existing web/dist only — CI's web job, which has just built it, runs that.
