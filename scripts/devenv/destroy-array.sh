@@ -6,31 +6,21 @@
 # cannot delete it, and an agent's scratch clone holding a leftover .lab/
 # cannot be deleted either (spike S9, doc 08; issue #120).
 #
-# Order matters: unmount, then detach, then delete. Deleting an image while
-# its loop device is still attached leaves a device whose backing file reads
-# "(deleted)" — and once the path is gone, nothing can attribute that device
-# to a lab any more, so no later cleanup can safely remove it.
+# Order matters: detach the loop devices backed by files on the lab's own
+# mounts, then unmount, then detach the rest, then delete. A device backed by
+# a file on a mount keeps that mount busy, and a lazy unmount of it would hide
+# the device's backing path from the attribution below (issue #576). Deleting
+# an image while its loop device is still attached leaves a device whose
+# backing file reads "(deleted)" — and once the path is gone, nothing can
+# attribute that device to a lab any more, so no later cleanup can safely
+# remove it.
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/lib.sh"
 lab_require_id
 
-unmount_if_mounted() {
-  local m=$1
-  mountpoint -q "$m" 2>/dev/null || return 0
-  local i
-  for i in 1 2 3 4 5; do
-    if fusermount -u "$m" 2>/dev/null || umount "$m" 2>/dev/null; then
-      return 0
-    fi
-    mountpoint -q "$m" 2>/dev/null || return 0
-    sleep 1
-  done
-  fusermount -uz "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
-  if mountpoint -q "$m" 2>/dev/null; then
-    die "failed to unmount $m: still busy after retries and a lazy unmount — refusing to continue (the container must stay up so its root-owned files under \$LAB remain reachable; free the mount and retry)"
-  fi
-}
+# While the lab's mounts are still attached and every path still resolves.
+lab_detach_nested_loops
 
 # Every mount strictly *below* $LAB, deepest first, so a per-share mergerfs
 # mount nested inside the catch-all is unmounted before the thing it sits on.

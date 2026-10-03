@@ -81,11 +81,24 @@ for pkg_dir in "${lab_pkgs[@]}"; do
   bin_pkgs+=("$pkg_dir")
 done
 
+# lab_detach_nested_loops (issue #576) runs inside destroy-array.sh before
+# anything is unmounted, so a regression there leaks a host loop device that
+# only root can clear. Its self-check runs against a fresh standing array.
+echo "run-lab-tests[$HOSERVA_LAB_ID]: resetting standing array before test-nested-loop-detach.sh"
+lab_exec bash /src/scripts/devenv/destroy-array.sh
+lab_exec bash /src/scripts/devenv/create-array.sh
+failed=0
+if lab_exec bash /src/scripts/devenv/test-nested-loop-detach.sh; then
+  echo "run-lab-tests[$HOSERVA_LAB_ID]: PASS test-nested-loop-detach.sh"
+else
+  echo "run-lab-tests[$HOSERVA_LAB_ID]: FAIL test-nested-loop-detach.sh" >&2
+  failed=1
+fi
+
 # -test.run '^TestLab' keeps non-lab unit tests (also compiled into the
 # binary) off the lab's device path: they already run under make test.
 # Helper tests that share the TestLab prefix (e.g. TestLabMover_SIGKILLHelper)
 # still match and self-skip when not re-exec'd.
-failed=0
 for i in "${!binaries[@]}"; do
   bin_path="${binaries[$i]}"
   pkg_dir="${bin_pkgs[$i]}"
