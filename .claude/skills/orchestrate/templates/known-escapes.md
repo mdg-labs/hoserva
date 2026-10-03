@@ -56,6 +56,7 @@ existing line by adding its PR number.
 - **fail-open** — a destructive call treats a missing path as success while the disks are unmounted, so the data is still on disk — PR 344
 - **fail-open** — a cleanup step skipped because a status signal still reads good from an earlier successful run (stale freshness/lastSyncAt), not from the run that just failed — PR 357
 - **fail-open** — a paired stop-then-start recovery step reads live status to decide whether the start is still owed, but live status can't distinguish "never touched" from "an earlier attempt's stop succeeded and its start didn't", so a retry after a failed start silently skips finishing it and reports success — PR 421
+- **fail-open** — a teardown discards each step's error and returns the run's own status, so a mount or device it could not remove stays behind while the run exits 0 — PR 579
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks, and not put back by a rollback that did complete the stop) — PR 199, 246, 338, 395
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
@@ -93,6 +94,7 @@ existing line by adding its PR number.
 
 ## Validation and contracts
 - **validation** — duplicate entries accepted (same device in two roles, repeated mount path, duplicate grant ids) — PR 150, 221
+- **validation** — a file accepted because it parses, without the structure its format requires (a compose.yaml that is empty, comment-only or has no `services` map), so it is reported and counted as read — PR 579
 - **validation** — an "exact duplicate" rule compares only some fields, so entries that differ in access mode or bind address count as identical and one is silently dropped — PR 491
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **validation** — a helper carrying a single-value side effect (a "given more than once, the last is used" note) reused for a field that accumulates a list, so the operator is told kept values were dropped — PR 542
