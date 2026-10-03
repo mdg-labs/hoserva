@@ -69,10 +69,34 @@ unraid_require_guest() {
   vm_domain_running "$VM_DOMAIN" || die "domain '$VM_DOMAIN' is not running — run 'make vm-up' or 'make vm-restore' first"
 }
 
+# unraid_spec_needs: prints "luks" when the variant's spec has a LUKS disk and
+# "zfs" when it has a ZFS disk or the internal-boot layout (whose boot pool is
+# ZFS), so the guest gets only the packages its variant builds with.
+unraid_spec_needs() {
+  local spec="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT/spec"
+  [[ -f "$spec" ]] || die "variant '$VARIANT' has no spec file"
+  if grep -qE '^disk .* fs=luks-xfs( |$)' "$spec"; then echo luks; fi
+  if grep -qE '^disk .* (fs=zfs|boot=[a-z0-9]+)( |$)' "$spec"; then echo zfs; fi
+}
+
 # The packages the builder and the capture need, on a stock Debian 13 guest.
+# A variant with LUKS disks adds cryptsetup. One that needs ZFS adds OpenZFS from
+# Debian's contrib component, built by DKMS against the guest's own kernel
+# (several minutes the first time); nothing is installed on the host.
 unraid_guest_packages() {
+  local needs
   echo "unraid[$HOSERVA_LAB_ID]: installing the builder's packages in the guest"
-  vm_ssh 'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xfsprogs btrfs-progs fdisk gdisk zip unzip attr dosfstools >/dev/null'
+  vm_ssh 'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xfsprogs btrfs-progs e2fsprogs fdisk gdisk zip unzip attr dosfstools >/dev/null'
+  needs="$(unraid_spec_needs)"
+  if grep -qx luks <<<"$needs"; then
+    echo "unraid[$HOSERVA_LAB_ID]: installing cryptsetup in the guest"
+    vm_ssh 'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends cryptsetup >/dev/null && sudo modprobe dm_crypt'
+  fi
+  if grep -qx zfs <<<"$needs"; then
+    echo "unraid[$HOSERVA_LAB_ID]: installing OpenZFS in the guest (contrib, built by DKMS: this takes a few minutes the first time)"
+    # shellcheck disable=SC2016 # $(uname -r) is the guest's kernel, expanded there
+    vm_ssh 'sudo sed -i "/^Components:/{/contrib/!s/\$/ contrib/}" /etc/apt/sources.list.d/debian.sources && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "linux-headers-$(uname -r)" zfs-dkms zfsutils-linux >/dev/null && sudo modprobe zfs'
+  fi
 }
 
 # Copies the builder, the capture helper, the prepare script and the fixture

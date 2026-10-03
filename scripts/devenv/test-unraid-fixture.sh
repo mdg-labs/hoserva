@@ -16,7 +16,16 @@
 #     manifest's), PCI and USB addresses, verify fails when domains.txt is
 #     changed or the capture places libvirt.img elsewhere than it is, and the
 #     builder refuses a domain whose vdisk is on no disk, an image placed
-#     elsewhere than IMAGE_FILE, and an option the variant does not have.
+#     elsewhere than IMAGE_FILE, and an option the variant does not have;
+#   - filesystems and refusals: ext4 and single-device btrfs disks build and
+#     verify, and their adopt checks are recorded in expected/scan.txt; a disk
+#     with damaged XFS metadata is refused by name; two devices of one btrfs
+#     filesystem are refused as multi-device members; an expect file that says
+#     something the disks do not show is refused; a refusal variant records a
+#     sha256 of every whole source disk, and verify fails when one changes; a
+#     variant with capture=none has no config/hoserva/ in its flash or its zip;
+#   - the l2 tier refuses, before writing anything, every variant that needs ZFS
+#     or device-mapper, which the lab does not have.
 #
 # Runs only inside the hoserva-lab container, only under this lab's own $LAB.
 set -euo pipefail
@@ -51,7 +60,8 @@ cleanup_test() {
     umount "$work/rw" 2>/dev/null
     losetup -d "$tdev" 2>/dev/null
   fi
-  rm -rf -- "${LAB:?}/unraid/$variant" "${LAB:?}/unraid/$variant-missing" "${LAB:?}/unraid/$variant-image" "${LAB:?}/unraid/$variant-where" "${LAB:?}/unraid/unraid-guard" "$work"
+  for v in "" -missing -image -where -fs -bad -badexpect -pair -pair-seed -nocap -nowarn; do rm -rf -- "${LAB:?}/unraid/$variant$v"; done
+  rm -rf -- "${LAB:?}/unraid/unraid-guard" "$work"
 }
 trap cleanup_test EXIT
 
@@ -296,6 +306,190 @@ tdev=""
 if out=$(run --verify "$variant"); then bad "verify accepted a data file changed on disk"; else
   if [[ $out == *"not the XOR of the data disks"* ]]; then ok "verify fails when a data file is changed on disk"; else bad "verify failed for another reason: $out"; fi
 fi
+
+# ---- ext4, btrfs, damaged XFS, multi-device btrfs and the expect file
+
+fx=$variant-fs
+mkdir -p -- "$fixtures/$fx"
+cat >"$fixtures/$fx/spec" <<'EOF'
+unraid_version=6.12.15
+unraid_release=2025-03-25
+capture=none
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=btrfs size=320M target=disk2
+disk disk3  kind=data   fs=ext4  size=320M target=disk3
+include ../common/spec-flash
+EOF
+cat >"$fixtures/$fx/seed" <<'EOF'
+file|disk1|media/x.bin|size=50000
+file|disk2|media/y.bin|size=60000
+text|disk3|media/z.txt|content=on ext4\n
+symlink|disk3|media/link|target=z.txt
+EOF
+cat >"$fixtures/$fx/expect" <<'EOF'
+disk parity parity
+disk disk1 adopt
+disk disk2 adopt
+disk disk3 adopt
+warn capture-missing
+EOF
+if out=$(run "$fx") && out=$(run --verify "$fx"); then ok "an XFS, a btrfs and an ext4 disk build and verify"; else bad "the xfs, btrfs and ext4 variant did not build and verify: $out"; fi
+scanfile="$LAB/unraid/$fx/expected/scan.txt"
+if grep -qxF -- "disk"$'\t'"disk2"$'\t'"adopt"$'\t'"-"$'\t'"fs=btrfs"$'\t'"devices=1"$'\t'"flash=btrfs"$'\t'"check=btrfs-check-readonly"$'\t'"exit=0" "$scanfile" \
+  && grep -qxF -- "disk"$'\t'"disk3"$'\t'"adopt"$'\t'"-"$'\t'"fs=ext4"$'\t'"flash=ext4"$'\t'"check=e2fsck-n"$'\t'"exit=0" "$scanfile" \
+  && grep -qxF -- "adopted"$'\t'"disk1,disk2,disk3" "$scanfile"; then
+  ok "scan.txt records each filesystem's own read-only check and that every disk is adoptable"
+else
+  bad "scan.txt lacks the btrfs or ext4 check: $(cat "$scanfile")"
+fi
+if grep -qxF -- 'diskFsType.3="ext4"' "$LAB/unraid/$fx/flash/config/disk.cfg" && grep -qxF -- 'diskFsType.2="btrfs"' "$LAB/unraid/$fx/flash/config/disk.cfg"; then
+  ok "the flash's diskFsType.N matches each disk's filesystem"
+else
+  bad "disk.cfg does not carry diskFsType 2 btrfs and 3 ext4"
+fi
+if [[ ! -e $LAB/unraid/$fx/flash/config/hoserva ]] && ! unzip -Z1 "$LAB/unraid/$fx/expected/flash-backup.zip" | grep -q 'config/hoserva' \
+  && grep -qxF -- "warn"$'\t'"capture-missing"$'\t'"templates=all-unknown"$'\t'"preselected=none" "$scanfile"; then
+  ok "capture=none leaves config/hoserva/ out of the flash and the zip, and scan.txt records the warning"
+else
+  bad "capture=none still produced config/hoserva/ or no warning"
+fi
+cp -- "$scanfile" "$work/scan.orig"
+sed -i $'s/^disk\tdisk3\tadopt/disk\tdisk3\trefuse/' "$scanfile"
+if out=$(run --verify "$fx"); then bad "verify accepted a scan.txt that refuses an adoptable disk"; else
+  if [[ $out == *"scan.txt differs"* ]]; then ok "verify fails when scan.txt is changed"; else bad "verify failed for another reason: $out"; fi
+fi
+cp -- "$work/scan.orig" "$scanfile"
+
+fb=$variant-bad
+mkdir -p -- "$fixtures/$fb"
+cat >"$fixtures/$fb/spec" <<'EOF'
+unraid_version=6.12.15
+unraid_release=2025-03-25
+capture=none
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2 corrupt=xfs-metadata
+disk disk3  kind=data   fs=xfs   size=320M target=disk3
+include ../common/spec-flash
+EOF
+cp -- "$fixtures/$fx/seed" "$fixtures/$fb/seed"
+sed -i '/disk3/d' "$fixtures/$fb/seed"
+printf 'file|disk3|media/w.bin|size=40000\n' >>"$fixtures/$fb/seed"
+cat >"$fixtures/$fb/expect" <<'EOF'
+disk parity parity
+disk disk1 adopt
+disk disk2 refuse integrity
+disk disk3 adopt
+warn capture-missing
+EOF
+if out=$(run "$fb") && out=$(run --verify "$fb"); then ok "a variant with damaged XFS metadata builds and verifies"; else bad "the damaged-XFS variant did not build and verify: $out"; fi
+scanfile="$LAB/unraid/$fb/expected/scan.txt"
+if grep -qxF -- "disk"$'\t'"disk2"$'\t'"refuse"$'\t'"integrity"$'\t'"fs=xfs"$'\t'"flash=xfs"$'\t'"check=xfs_repair-n"$'\t'"exit=1" "$scanfile" \
+  && grep -qxF -- "refused"$'\t'"disk2" "$scanfile" && grep -qxF -- "adopted"$'\t'"disk1,disk3" "$scanfile"; then
+  ok "the damaged disk fails xfs_repair -n and is refused by name, the others are adopted"
+else
+  bad "scan.txt does not refuse exactly the damaged disk: $(cat "$scanfile")"
+fi
+hashes="$LAB/unraid/$fb/expected/source-disks.sha256"
+if [[ $(grep -vc '^#' "$hashes") -eq 4 ]] && grep -qE $'^[0-9a-f]{64}\t[0-9]+\tparity$' "$hashes" && grep -qE $'^[0-9a-f]{64}\t335544320\tdisk2$' "$hashes"; then
+  ok "a refusal variant records a whole-device sha256 of every source disk, parity included"
+else
+  bad "source-disks.sha256 is missing a disk: $(cat "$hashes")"
+fi
+if [[ ! -e $LAB/unraid/$fx/expected/source-disks.sha256 ]]; then
+  ok "a variant that refuses nothing records no source-disk hashes"
+else
+  bad "a variant that refuses nothing recorded source-disk hashes"
+fi
+# a byte in the unused tail of disk1, which no other check reads
+tail_at=$((300 * 1048576))
+orig=$(dd if="$LAB/unraid/$fb/img/disk1.img" bs=1 skip="$tail_at" count=1 status=none | od -An -tu1 | tr -d ' ')
+printf '%b' "$(printf '\\x%02x' $((255 - orig)))" | dd of="$LAB/unraid/$fb/img/disk1.img" bs=1 seek="$tail_at" conv=notrunc status=none
+if out=$(run --verify "$fb"); then bad "verify accepted a source disk that changed after it was recorded"; else
+  if [[ $out == *"differs from the sha256 recorded"* ]]; then ok "verify fails when a source disk no longer hashes as recorded"; else bad "verify failed for another reason: $out"; fi
+fi
+printf '%b' "$(printf '\\x%02x' "$orig")" | dd of="$LAB/unraid/$fb/img/disk1.img" bs=1 seek="$tail_at" conv=notrunc status=none
+if out=$(run --verify "$fb"); then ok "verify passes again once the source disk byte is restored"; else bad "verify did not pass after the source disk byte was restored: $out"; fi
+
+mkdir -p -- "$fixtures/$variant-badexpect"
+cp -a -- "$fixtures/$fb/." "$fixtures/$variant-badexpect/"
+sed -i 's/^disk disk2 refuse integrity$/disk disk2 adopt/' "$fixtures/$variant-badexpect/expect"
+if out=$(run "$variant-badexpect"); then bad "an expect file that adopts a damaged disk was accepted"; else
+  if [[ $out == *"disk 'disk2': the expect file says 'adopt -', the disk shows 'refuse integrity'"* ]]; then ok "an expect file that adopts a damaged disk is refused"; else bad "the expect file failed for another reason: $out"; fi
+fi
+mkdir -p -- "$fixtures/$variant-nowarn"
+cp -a -- "$fixtures/$fb/." "$fixtures/$variant-nowarn/"
+sed -i '/^warn capture-missing$/d' "$fixtures/$variant-nowarn/expect"
+if out=$(run "$variant-nowarn"); then bad "an expect file without the capture-missing warning was accepted for capture=none"; else
+  if [[ $out == *"must record the capture-missing warning"* ]]; then ok "capture=none without the expected warning is refused"; else bad "the warning check failed for another reason: $out"; fi
+fi
+mkdir -p -- "$fixtures/$variant-nocap"
+cp -a -- "$fixtures/$fx/." "$fixtures/$variant-nocap/"
+mkdir -p -- "$fixtures/$variant-nocap/flash/config/hoserva"
+printf '{}\n' >"$fixtures/$variant-nocap/flash/config/hoserva/capture.json"
+if out=$(run "$variant-nocap"); then bad "capture=none beside a committed capture was accepted"; else
+  if [[ $out == *"capture=none, but flash/config/hoserva exists"* ]]; then ok "capture=none beside a committed capture is refused"; else bad "capture=none failed for another reason: $out"; fi
+fi
+
+fp=$variant-pair
+mkdir -p -- "$fixtures/$fp"
+cat >"$fixtures/$fp/spec" <<'EOF'
+unraid_version=6.12.15
+unraid_release=2025-03-25
+capture=none
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=btrfs size=320M target=disk2 group=pair
+disk disk3  kind=data   fs=btrfs size=320M target=disk3 group=pair
+include ../common/spec-flash
+EOF
+printf 'file|disk1|media/x.bin|size=50000\nfile|disk2|media/y.bin|size=60000\n' >"$fixtures/$fp/seed"
+cat >"$fixtures/$fp/expect" <<'EOF'
+disk parity parity
+disk disk1 adopt
+disk disk2 refuse multi-device-btrfs
+disk disk3 refuse multi-device-btrfs
+warn capture-missing
+EOF
+if out=$(run "$fp") && out=$(run --verify "$fp"); then ok "two devices of one btrfs filesystem build and verify"; else bad "the multi-device btrfs variant did not build and verify: $out"; fi
+scanfile="$LAB/unraid/$fp/expected/scan.txt"
+if grep -qxF -- "disk"$'\t'"disk2"$'\t'"refuse"$'\t'"multi-device-btrfs"$'\t'"partition=btrfs"$'\t'"devices=2"$'\t'"flash=btrfs" "$scanfile" \
+  && grep -qxF -- "disk"$'\t'"disk3"$'\t'"refuse"$'\t'"multi-device-btrfs"$'\t'"partition=btrfs"$'\t'"devices=2"$'\t'"flash=btrfs" "$scanfile" \
+  && grep -qxF -- "refused"$'\t'"disk2,disk3" "$scanfile"; then
+  ok "both members of the multi-device btrfs filesystem are refused by name"
+else
+  bad "scan.txt does not refuse both btrfs members: $(cat "$scanfile")"
+fi
+if grep -q ' member-of=disk2' "$LAB/unraid/$fp/expected/layout.txt" && ! grep -q '^# disk disk3 ' "$LAB/unraid/$fp/expected/manifest.sha256"; then
+  ok "only the first device of the btrfs group is mounted and listed in the manifest"
+else
+  bad "the btrfs group is not recorded as one mounted filesystem with a member"
+fi
+mkdir -p -- "$fixtures/$fp-seed"
+cp -a -- "$fixtures/$fp/." "$fixtures/$fp-seed/"
+printf 'file|disk3|media/z.bin|size=1000\n' >>"$fixtures/$fp-seed/seed"
+if out=$(run "$fp-seed"); then bad "a seed on a btrfs group member was accepted"; else
+  if [[ $out == *"'disk3' is not mounted"* ]]; then ok "a seed on a member of a multi-device btrfs filesystem is refused"; else bad "the member seed failed for another reason: $out"; fi
+fi
+rm -rf -- "${LAB:?}/unraid/$fp-seed"
+
+# ---- the variants only the L3 guest can build
+
+if [[ ! -e /dev/mapper/control ]] && ! command -v zpool >/dev/null 2>&1; then
+  ok "the lab has neither a device-mapper control node nor OpenZFS"
+else
+  bad "the lab now has device-mapper or OpenZFS: the l2 refusal of LUKS and ZFS variants is out of date"
+fi
+for v in unraid-encrypted unraid-zfs-disk unraid-internal-boot unraid-internal-boot-shared; do
+  if out=$(env -u HOSERVA_FIXTURES_DIR bash "$BUILDER" --tier l2 "$v" 2>&1); then bad "the l2 tier built $v"; else
+    if [[ $out == *"$v cannot be built on the l2 tier"* && $out == *"make vm-unraid-fixture VARIANT=$v"* && ! -e $LAB/unraid/$v ]]; then
+      ok "the l2 tier refuses $v with a pointer to the L3 target, and writes nothing"
+    else
+      bad "the l2 refusal of $v is wrong: $out"
+    fi
+  fi
+done
 
 if ((fail)); then
   echo "unraid-fixture self-check: FAILED"

@@ -1,0 +1,24 @@
+# Array disks the scan refuses on their filesystem layout (Q23): disk3 is a ZFS
+# array disk, a single-device pool named like the disk, and disk4 and disk5 are the
+# two devices of one multi-device btrfs filesystem (data and metadata both raid1).
+# disk1 and disk2 are ordinary XFS disks.
+#
+# With five data disks the bytewise XOR on the parity disk keeps disk3's ZFS pool
+# label, so the parity partition itself probes as a ZFS member: the scan has to
+# take the parity role from the slot, never from the filesystem (doc 05 §3), or it
+# would refuse the parity disk as a second ZFS disk.
+#
+# A real ZFS pool needs OpenZFS, which the lab container does not have: this
+# variant builds in the L3 guest only, where zfsutils-linux is installed at build time.
+unraid_version=6.12.15
+unraid_release=2025-03-25
+expect_parity_signature=zfs_member
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2
+disk disk3  kind=data   fs=zfs   size=320M target=disk3
+disk disk4  kind=data   fs=btrfs size=320M target=disk4 group=bpair
+disk disk5  kind=data   fs=btrfs size=320M target=disk5 group=bpair
+disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-zfs-disk
+include ../common/spec-flash

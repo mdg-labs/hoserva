@@ -1,0 +1,14 @@
+# Three XFS data disks, one of which fails xfs_repair -n: disk2's metadata is
+# damaged after the files are written (one block of the free-space B-tree of
+# allocation group 0 is overwritten), so the filesystem still mounts read-only and
+# every file still reads back, but it is not clean. The scan refuses disk2 by
+# name and the other data disks proceed.
+unraid_version=7.3.2
+unraid_release=2026-09-10
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2 corrupt=xfs-metadata
+disk disk3  kind=data   fs=xfs   size=320M target=disk3
+disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-corrupt-xfs
+include ../common/spec-flash

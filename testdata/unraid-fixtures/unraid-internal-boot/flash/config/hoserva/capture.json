@@ -1,0 +1,8 @@
+{
+  "captured_at": "2026-10-03T10:01:52Z",
+  "unraid_version": "7.3.2",
+  "script_version": "unreleased",
+  "boot": {"mode": "internal", "filesystem": "zfs", "devices": [{"name":"vdf","serial":"disk4-capture","model":"","size":"6G"}], "mirrored": false, "shared_with_data_pool": false},
+  "docker": {"state": "running", "directory_location": "array", "writable_layers": [{"container":"stack-web","bytes":0},{"container":"handmade","bytes":0},{"container":"dbtool","bytes":0},{"container":"gateway","bytes":0},{"container":"syncer","bytes":0},{"container":"photos","bytes":0},{"container":"mediaserver","bytes":0},{"container":"notes","bytes":0}]},
+  "libvirt_img_location": "unknown"
+}

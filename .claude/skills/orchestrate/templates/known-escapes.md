@@ -57,6 +57,7 @@ existing line by adding its PR number.
 - **fail-open** — a cleanup step skipped because a status signal still reads good from an earlier successful run (stale freshness/lastSyncAt), not from the run that just failed — PR 357
 - **fail-open** — a paired stop-then-start recovery step reads live status to decide whether the start is still owed, but live status can't distinguish "never touched" from "an earlier attempt's stop succeeded and its start didn't", so a retry after a failed start silently skips finishing it and reports success — PR 421
 - **fail-open** — a teardown discards each step's error and returns the run's own status, so a mount or device it could not remove stays behind while the run exits 0 — PR 579
+- **fail-open** — a config edit that matches only the exact expected line (`sed s/^Components: main$/…/`) silently changes nothing when the line carries more values, so the step it enables fails later with an unrelated error — PR 581
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks, and not put back by a rollback that did complete the stop) — PR 199, 246, 338, 395
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201

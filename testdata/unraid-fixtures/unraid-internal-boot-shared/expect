@@ -1,0 +1,12 @@
+# The verdict the migration scan must give each disk of this variant (doc 05 §3). The
+# builder measures every row on the disks and refuses to build a variant whose
+# rows the disks do not show; expected/scan.txt is this file with those facts.
+# The boot + data device is classed as Unraid's boot device: partitions 1 to 3
+# are left alone and partition 4, the cache pool, is re-created like every cache.
+# The array proceeds, and the Flash Backup zip is the only configuration source.
+disk parity parity
+disk disk1 adopt
+disk disk2 adopt
+disk disk3 adopt
+disk cache boot-device cache-recreated
+config-source zip

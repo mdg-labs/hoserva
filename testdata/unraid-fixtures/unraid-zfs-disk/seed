@@ -1,0 +1,7 @@
+include|../common/seed-array
+include|../common/seed-cache-system
+include|../common/seed-cache-appdata
+# the multi-device btrfs filesystem is mounted through its first device, disk4
+file|disk4|photos-archive/2025/trip-01.bin|size=180000
+text|disk4|photos-archive/README.txt|content=kept on a two-device btrfs filesystem\n
+file|disk4|media/movies/btrfs-pair.bin|size=120000

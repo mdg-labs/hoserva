@@ -1,0 +1,18 @@
+# Unraid 7.3 with one device that is both the boot device and the cache (boot +
+# data; doc 08 §2, "Unraid 7.3 internal boot"). Target disk4 has the same GPT layout as in
+# unraid-internal-boot, with a boot area of 4096 MiB, and its partition 4 is the
+# cache pool's btrfs filesystem. Beside it, a three-disk XFS array with single
+# parity. No USB stick; the Flash Backup zip is the only configuration source (Q25).
+#
+# Building it needs OpenZFS, which the lab container does not have: this variant
+# builds in the L3 guest only.
+unraid_version=7.3.2
+unraid_release=2026-09-10
+expect_parity_signature=xfs
+disk parity kind=parity fs=none  size=384M  target=parity1
+disk disk1  kind=data   fs=xfs   size=320M  target=disk1
+disk disk2  kind=data   fs=xfs   size=320M  target=disk2
+disk disk3  kind=data   fs=xfs   size=320M  target=disk3
+disk cache  kind=pool   fs=btrfs size=6144M target=disk4 pool=cache boot=4096
+# Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-internal-boot-shared
+include ../common/spec-flash

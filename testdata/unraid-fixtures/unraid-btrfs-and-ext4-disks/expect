@@ -1,0 +1,14 @@
+# The verdict the migration scan must give each disk of this variant (doc 05 §3). The
+# builder measures every row on the disks and refuses to build a variant whose
+# rows the disks do not show; expected/scan.txt is this file with those facts.
+# Every data disk is adopted after its own read-only check, whatever its
+# filesystem; the cache is re-created.
+disk parity parity
+disk disk1 adopt
+disk disk2 adopt
+disk disk3 adopt
+disk disk4 adopt
+disk cache recreated
+# The flash has no config/hoserva/: the scan warns, lists every template as
+# unknown and pre-selects none (Q89).
+warn capture-missing

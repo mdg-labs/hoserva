@@ -686,7 +686,10 @@ lab-snapraid-check: lab-require-id
 # passed the same way as HOSERVA_FIXTURE_OPTION; unset builds its default.
 # lab-unraid-verify re-reads the build through read-only norecovery mounts and
 # diffs it against its manifest, then checks that the builder refuses every
-# device that is not this lab's own.
+# device that is not this lab's own. A variant that needs ZFS or device-mapper
+# (unraid-encrypted, unraid-zfs-disk, unraid-internal-boot,
+# unraid-internal-boot-shared) is L3 only: this target refuses it before writing
+# anything and names make vm-unraid-fixture.
 lab-unraid-fixture: lab-require-id
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 "$$VARIANT"
@@ -797,7 +800,9 @@ vm-restore:
 # target disk must be exactly its spec size=, and the build refuses any other
 # before it writes a disk, so the layout (MBR up to 2000G, GPT from 2T) is the
 # one the L2 build gives. A variant with options takes OPTION=<name> too; a
-# non-default one is built, copied and snapshotted as <variant>-<option>.
+# non-default one is built, copied and snapshotted as <variant>-<option>. A
+# variant with a LUKS or ZFS disk or an internal boot device also gets cryptsetup
+# or OpenZFS installed in the guest (never on the host).
 vm-unraid-fixture:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
@@ -811,7 +816,8 @@ vm-unraid-fixture:
 # vm-unraid-fixture, it needs a guest from `make vm-up VARIANT=<variant>`, so
 # the capture's disk sizes and fit figures are the spec's. With OPTION=<name>
 # for a non-default option it regenerates only that option's capture.json and
-# report.txt, under options/<name>/flash/config/hoserva/.
+# report.txt, under options/<name>/flash/config/hoserva/. A variant whose spec
+# says capture=none has no capture, and this target refuses it.
 vm-unraid-capture:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-unraid-capture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
