@@ -355,9 +355,12 @@ between.
 **The check:**
 
 1. `R` = the output of `.claude/skills/dev-diff/dev-diff.sh --list` (the
-   reviewable paths of the current `main...dev` diff). If it exits non-zero,
-   stop and report the error — never treat a failed run as an empty `R`, and
-   never act without a successful check.
+   reviewable paths of the current `main...dev` diff). First confirm local
+   `dev` exists (`git rev-parse --verify dev`): without it the script exits
+   zero with no paths, which is not an empty diff. If `dev` is missing or the
+   script exits non-zero, stop and report it — never treat a failed or
+   unavailable comparison as an empty `R`, and never act without a
+   successful check.
 2. **In flight** — each unit dispatched but not yet landed, or landed-pending.
    If it has committed, its files are `git -C <workspace> diff --name-only
    dev..HEAD`, all counted as reviewable (no filter credit). If it has not
