@@ -220,6 +220,20 @@ func TestPreview_ComposeProjectsAreReviewedAsTheyAreAndNotConverted(t *testing.T
 		f[composeFile] = []byte("services:\n  web:\n    image: x\n---\nservices:\n  evil:\n    privileged: true\n")
 	})
 	requireRow(t, r, CheckContainers, StatusWarn, "stack", "more than one YAML document")
+
+	for name, body := range map[string]string{
+		"empty":            "",
+		"comment-only":     "# nothing yet\n",
+		"without services": "networks:\n  front: {}\n",
+		"include-only":     "include:\n  - other.yaml\n",
+		"empty services":   "services: {}\n",
+	} {
+		r = scanInventory(t, func(f map[string][]byte) { f[composeFile] = []byte(body) })
+		if o := r.Import.ComposeProjects[0].Outcome; o.Status != PreviewFailed || o.Failure != FailureNoServices || r.Import.TemplateCounts.ComposeProjects != 0 {
+			t.Errorf("a %s compose.yaml = %+v, counts %+v, want it failed and not counted", name, o, r.Import.TemplateCounts)
+		}
+		requireRow(t, r, CheckContainers, StatusWarn, "stack", "declares no services")
+	}
 }
 
 // The report names and counts. Neither its rows nor the session row holds a

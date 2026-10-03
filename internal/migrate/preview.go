@@ -39,6 +39,7 @@ const (
 	FailureInvalid           = "invalid"
 	FailureInvalidYAML       = "invalid_yaml"
 	FailureMultipleDocuments = "multiple_documents"
+	FailureNoServices        = "no_services"
 )
 
 // Preview is what a template's conversion, or a Compose Manager project's
@@ -115,6 +116,8 @@ func (o *Outcome) FailureText() string {
 		return "compose.yaml is not valid YAML"
 	case FailureMultipleDocuments:
 		return "compose.yaml holds more than one YAML document"
+	case FailureNoServices:
+		return "compose.yaml declares no services"
 	}
 	return ""
 }
@@ -201,7 +204,8 @@ func previewTemplate(data []byte, networks []template.NetworkDef) *Preview {
 // review as a converted stack: its privileges are computed from the file's own
 // content. The file is not converted, and a second YAML document is refused
 // because Compose merges every document, so one could add what the summary
-// never sees.
+// never sees. A file without a services mapping runs nothing of its own, so it
+// is not counted as a previewed project.
 func previewCompose(data []byte) *Preview {
 	p := &Preview{Source: string(data), Compose: string(data)}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -213,6 +217,10 @@ func previewCompose(data []byte) *Preview {
 	var next any
 	if err := dec.Decode(&next); !errors.Is(err, io.EOF) {
 		p.Compose, p.Failure, p.Error = "", FailureMultipleDocuments, "compose.yaml holds more than one YAML document"
+		return p
+	}
+	if services, ok := compose["services"].(map[string]any); !ok || len(services) == 0 {
+		p.Compose, p.Failure, p.Error = "", FailureNoServices, "compose.yaml declares no services"
 		return p
 	}
 	for _, pr := range (&template.Template{Compose: compose}).Privileges(nil) {
