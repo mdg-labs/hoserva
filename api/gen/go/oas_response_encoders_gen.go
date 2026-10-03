@@ -1015,6 +1015,19 @@ func encodeGetMigrationReportResponse(response GetMigrationReportOK, w http.Resp
 	return nil
 }
 
+func encodeGetMigrationTemplateResponse(response *MigrationTemplatePreview, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeGetNetworkSettingsResponse(response *NetworkSettings, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -1432,6 +1445,19 @@ func encodeListExternalDisksResponse(response *ListExternalDisksOK, w http.Respo
 }
 
 func encodeListJobsResponse(response *ListJobsOK, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeListMigrationTemplatesResponse(response *MigrationTemplates, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

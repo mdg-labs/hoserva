@@ -4244,6 +4244,81 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "ListMigrationTemplates",
+		name: "valid_after_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.ListMigrationTemplates(ctx)
+			return err
+		},
+	},
+	{
+		op:   "ListMigrationTemplates",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListMigrationTemplates(ctx)
+			return err
+		},
+	},
+	{
+		op:   "GetMigrationTemplate",
+		name: "valid_for_a_template_of_the_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			zipData := contractFlashZip("7.3.2", func(f map[string]string) {
+				f["config/plugins/dockerMan/templates-user/my-photos.xml"] = `<Container version="2"><Name>photos</Name><Repository>example/photos:latest</Repository></Container>`
+			})
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(zipData, false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-photos.xml"})
+			return err
+		},
+	},
+	{
+		op:   "GetMigrationTemplate",
+		name: "unknown_template_after_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "nothing.xml"})
+			return err
+		},
+	},
+	{
+		op:   "GetMigrationTemplate",
+		name: "source_unavailable_after_a_scan_of_the_stick",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice}); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-photos.xml"})
+			return err
+		},
+	},
+	{
+		op:   "GetMigrationTemplate",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-photos.xml"})
+			return err
+		},
+	},
+	{
 		op:   "ForgetMigration",
 		name: "valid_deletes_a_scanned_session",
 		run: func(ctx context.Context, h apiv1.Handler) error {

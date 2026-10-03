@@ -67,8 +67,19 @@ implementation of this package loses a user's data.
   writes.
 - **The configuration inventory reads names and settings, never content.** Share
   configs, templates, User Scripts, plugins, accounts and notification agents are
-  reported by name and count. A template is read for its `<Name>` only (its
-  settings carry secrets), a User Script's `script` and an agent's file are never
+  reported by name and count. A template's `<Name>` is all the report's rows and
+  the downloadable document quote (its settings carry secrets). The session row
+  holds no template content: for each template it keeps the file, the `<Name>`,
+  the class and an `Outcome` (status, warning classes, a failure code), never the
+  source XML, the generated Compose, a setting's value or a converter message,
+  because those quote settings. The scan converts each template in memory with
+  `internal/template` and the capture's networks to get that outcome and throws
+  the preview away. The one place the content is shown is `Service.Template`, an
+  admin-only operation that converts the one template again, on request, from the
+  Flash Backup zip the session keeps; when that zip is not kept (removed, or the
+  source was the stick, which nothing is copied from) it fails with
+  `ErrSourceUnavailable` and never answers from anything older. A template the
+  converter cannot read is a failed outcome, never a clean one. A User Script's `script` and an agent's file are never
   read, `config/shadow` and `config/smbpasswd` are never read, and the lines of
   `smb-extra.conf` and `go` are counted, not quoted. What the later steps seed
   from is `Report.Import`, kept in the session row with the report and not served

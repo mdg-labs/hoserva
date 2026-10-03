@@ -2244,6 +2244,73 @@ func decodeGetMetricsParams(args [0]string, argsEscaped bool, r *http.Request) (
 	return params, nil
 }
 
+// GetMigrationTemplateParams is parameters of getMigrationTemplate operation.
+type GetMigrationTemplateParams struct {
+	// A template's file name as `listMigrationTemplates` shows it (`my-notes.xml`), which is unique where
+	// the container's name may not be, or a Compose Manager project's name.
+	Name string
+}
+
+func unpackGetMigrationTemplateParams(packed middleware.Parameters) (params GetMigrationTemplateParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeGetMigrationTemplateParams(args [1]string, argsEscaped bool, r *http.Request) (params GetMigrationTemplateParams, _ error) {
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetNotificationChannelParams is parameters of getNotificationChannel operation.
 type GetNotificationChannelParams struct {
 	ChannelId uuid.UUID

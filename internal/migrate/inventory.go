@@ -21,8 +21,9 @@ import (
 // steps to seed from: the shares and users the import creates, the templates the
 // preview offers, the networks the converter needs and the schedules the
 // post-migration checklist offers. It is kept in the session beside the report
-// and is not part of the API's report: it holds names and settings, never a
-// password, a secret or a file's content.
+// and is not part of the API's report. It holds names, settings and the outcome
+// of each template's conversion (its status and warning codes), never a
+// template's content: the preview is built on request from the Flash Backup zip.
 type Import struct {
 	// Shares are the share configs that have a share behind them. An orphan
 	// config is reported and not listed here.
@@ -33,6 +34,9 @@ type Import struct {
 	ComposeProjects []ComposeProject `json:"composeProjects"`
 	Networks        []Network        `json:"networks"`
 	Schedules       Schedules        `json:"schedules"`
+	// TemplateCounts is nil for a report made before templates were converted
+	// by the scan.
+	TemplateCounts *TemplateCounts `json:"templateCounts,omitempty"`
 }
 
 // Share is one config/shares/<name>.cfg. Raw values are kept beside what they
@@ -75,14 +79,19 @@ type TemplateEntry struct {
 	// AutostartWaitSeconds the wait after it; both are 0 off the list.
 	AutostartPosition    int `json:"autostartPosition,omitempty"`
 	AutostartWaitSeconds int `json:"autostartWaitSeconds,omitempty"`
+	// Outcome is how the template converted in memory, whatever its class.
+	Outcome *Outcome `json:"outcome,omitempty"`
 }
 
 // ComposeProject is a Compose Manager project: the compose.yaml in the source,
 // empty when the source has none, and the containers the capture shows it running.
+// Outcome is the compose.yaml as it is, reviewed like a converted stack, and is
+// nil when the source has none.
 type ComposeProject struct {
 	Name       string   `json:"name"`
 	File       string   `json:"file,omitempty"`
 	Containers []string `json:"containers,omitempty"`
+	Outcome    *Outcome `json:"outcome,omitempty"`
 }
 
 // NetworkSubnet is one entry of a network's IPAM configuration.

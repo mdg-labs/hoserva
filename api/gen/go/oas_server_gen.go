@@ -619,6 +619,26 @@ type Handler interface {
 	//
 	// GET /migrate/report
 	GetMigrationReport(ctx context.Context) (GetMigrationReportOK, error)
+	// GetMigrationTemplate implements getMigrationTemplate operation.
+	//
+	// The preview of one template or Compose Manager project from the latest scan, built when it is asked
+	// for by converting the template again from the Flash Backup zip the session keeps in the daemon's
+	// state directory, with the Docker networks of the Phase A capture; the session itself keeps no
+	// template content. It holds the source as the flash holds it, the generated Compose (the project's
+	// own `compose.yaml` for a project), every warning, including the writable-layer warning every
+	// converted template carries and any host path into another `/mnt/<pool>`, and the privileges the
+	// Compose content asks for. The source and the Compose hold the template's environment, secrets
+	// included, which is why this is an admin operation and the report's rows never quote them. A template
+	// the converter could not read has `status` `failed` and an `error`, and no Compose. 404
+	// `template_not_found` for a name the report does not list or a Compose Manager project whose
+	// `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
+	// `no_template_preview` for a report made before scans converted templates. 409
+	// `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from
+	// the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept
+	// after the zip is gone.
+	//
+	// GET /migrate/templates/{name}
+	GetMigrationTemplate(ctx context.Context, params GetMigrationTemplateParams) (*MigrationTemplatePreview, error)
 	// GetNetworkSettings implements getNetworkSettings operation.
 	//
 	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
@@ -990,6 +1010,25 @@ type Handler interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// ListMigrationTemplates implements listMigrationTemplates operation.
+	//
+	// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
+	// §5): every template with its class and how it converted, every Compose Manager project, and the
+	// counts the report shows. The scan converts each template in memory with the converter
+	// `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom
+	// network's `docker network create` command is exact when the capture holds that network. Nothing is
+	// created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's
+	// outcome (its status and warning classes), never its content, so this answers without the zip;
+	// `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a
+	// container on the source server (autostart, running and stopped) and, without the capture's container
+	// list, every template (`allTemplates`); a template-only template is converted and previewable but is
+	// in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed
+	// with its own `compose.yaml`, counted in `composeProjects` and never converted. 404
+	// `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made
+	// before scans converted templates (scan again).
+	//
+	// GET /migrate/templates
+	ListMigrationTemplates(ctx context.Context) (*MigrationTemplates, error)
 	// ListNotificationChannels implements listNotificationChannels operation.
 	//
 	// Every configured alerting destination (doc 03 §8.3).

@@ -145,6 +145,8 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.StartMigrationScanOperation:             RoleAdmin,
 	apiv1.StartMigrationDeviceScanOperation:       RoleAdmin,
 	apiv1.GetMigrationReportOperation:             RoleAdmin,
+	apiv1.ListMigrationTemplatesOperation:         RoleAdmin,
+	apiv1.GetMigrationTemplateOperation:           RoleAdmin,
 	apiv1.GetAppdataBackupOperation:               RoleViewer,
 	apiv1.StartAppdataBackupOperation:             RoleAdmin,
 	apiv1.SetAppdataBackupContainerOperation:      RoleAdmin,

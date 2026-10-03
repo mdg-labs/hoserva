@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestScan_EveryVariantFixtureProducesItsReport(t *testing.T) {
 			r := scanVariant(t, variant, false)
 			hand := scanVariant(t, variant, true)
 			r.GeneratedAt, hand.GeneratedAt = time.Time{}, time.Time{}
-			if fmt.Sprint(r) != fmt.Sprint(hand) {
+			if !reflect.DeepEqual(r, hand) {
 				t.Errorf("flash-backup and hand-zipped shapes give different reports:\n%v\n%v", r, hand)
 			}
 
@@ -246,7 +247,7 @@ func TestScan_JunkIsNeverReadAsConfiguration(t *testing.T) {
 	}
 	plain := scanVariant(t, "unraid-7x-xfs-single-parity", false)
 	r.GeneratedAt, plain.GeneratedAt = time.Time{}, time.Time{}
-	if fmt.Sprint(r) != fmt.Sprint(plain) {
+	if !reflect.DeepEqual(r, plain) {
 		t.Error("a zip carrying extra junk gives a different report")
 	}
 }

@@ -3398,6 +3398,91 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /migrate/templates:
+    get:
+      operationId: listMigrationTemplates
+      summary: The template conversion preview
+      description: >-
+        What the scan's conversion of the Flash Backup's Docker templates
+        found (doc 05 §3 and §6, doc 04 §5): every template with its class
+        and how it converted, every Compose Manager project, and the counts
+        the report shows. The scan converts each template in memory with the
+        converter `convertUnraidTemplate` runs, passing it the Docker
+        networks of the Phase A capture, so a custom network's `docker
+        network create` command is exact when the capture holds that network.
+        Nothing is created, written under `/var/lib/hoserva/stacks/` or
+        started. The session keeps only each template's outcome (its
+        status and warning classes), never its content, so this answers
+        without the zip; `getMigrationTemplate` builds a preview on request.
+        `counts` cover the templates that had a container on the
+        source server (autostart, running and stopped) and, without the
+        capture's container list, every template (`allTemplates`); a
+        template-only template is converted and previewable but is in
+        `templateOnly` and not in the clean or warning counts. A Compose
+        Manager project is previewed with its own `compose.yaml`, counted in
+        `composeProjects` and never converted. 404 `no_migration_report`
+        before a scan has finished, and 404 `no_template_preview` for a
+        report made before scans converted templates (scan again).
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The templates and projects with the counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationTemplates'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /migrate/templates/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >-
+          A template's file name as `listMigrationTemplates` shows it
+          (`my-notes.xml`), which is unique where the container's name may
+          not be, or a Compose Manager project's name.
+    get:
+      operationId: getMigrationTemplate
+      summary: One template's conversion preview
+      description: >-
+        The preview of one template or Compose Manager project from the
+        latest scan, built when it is asked for by converting the template
+        again from the Flash Backup zip the session keeps in the daemon's
+        state directory, with the Docker networks of the Phase A capture; the
+        session itself keeps no template content. It holds the source as the
+        flash holds it, the generated Compose
+        (the project's own `compose.yaml` for a project), every warning,
+        including the writable-layer warning every converted template
+        carries and any host path into another `/mnt/<pool>`, and the
+        privileges the Compose content asks for. The source and the Compose
+        hold the template's environment, secrets included, which is why
+        this is an admin operation and the report's rows never quote them. A
+        template the converter could not read has `status` `failed` and an
+        `error`, and no Compose. 404 `template_not_found` for a name the
+        report does not list or a Compose Manager project whose
+        `compose.yaml` is not in the source, `no_migration_report` before a
+        scan has finished and `no_template_preview` for a report made before scans
+        converted templates. 409 `template_source_unavailable` when the zip
+        is not kept: it was removed, or the report was made from the Unraid
+        USB stick, which nothing is copied from. A preview is never
+        answered from a copy kept after the zip is gone.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationTemplatePreview'
+        default:
+          $ref: '#/components/responses/Error'
+
   /appdata/backup:
     get:
       operationId: getAppdataBackup
@@ -10471,6 +10556,160 @@ components:
             stick is offered (Q25).
         report:
           $ref: '#/components/schemas/MigrationReport'
+
+    MigrationTemplateClass:
+      type: string
+      description: >-
+        What a dockerMan template stands for in the Phase A capture:
+        `autostart` (on Unraid's autostart list), `running`, `stopped`,
+        `template_only` (a template with no container), or `unknown` for
+        every template when the capture has no usable container list.
+      enum: [autostart, running, stopped, template_only, unknown]
+
+    MigrationTemplateStatus:
+      type: string
+      description: >-
+        How a conversion reads. `clean` is Q36's definition: no warning of
+        class `untranslated_flag`, `untranslated_field`, `flagged_path`,
+        `missing_network` or `conflict`. `warnings` has at least one.
+        `failed` is a template the converter could not read. `previewed` is a
+        Compose Manager project's `compose.yaml`, which is never converted.
+        `missing` is a project whose `compose.yaml` is not in the source.
+      enum: [clean, warnings, failed, previewed, missing]
+
+    MigrationTemplateCounts:
+      type: object
+      required: [clean, withWarnings, failed, templateOnly, allTemplates, composeProjects]
+      properties:
+        clean:
+          type: integer
+          description: Counted templates that convert cleanly (Q36).
+        withWarnings:
+          type: integer
+          description: Counted templates that convert with at least one warning that needs manual action.
+        failed:
+          type: integer
+          description: Counted templates the converter could not read. Never part of `clean`.
+        templateOnly:
+          type: integer
+          description: >-
+            Templates with no container on the source server. They are
+            converted and previewable and are in none of the counts above.
+        allTemplates:
+          type: boolean
+          description: >-
+            True when the capture has no container list, so nothing says which
+            templates are installed and `clean`, `withWarnings` and `failed`
+            cover every template.
+        composeProjects:
+          type: integer
+          description: Compose Manager projects whose `compose.yaml` is previewed. Not converted and not in the counts above.
+
+    MigrationTemplateSummary:
+      type: object
+      required: [name, file, class, counted, status, warningCount]
+      properties:
+        name:
+          type: string
+          description: The template's `<Name>`, the name its container is matched on.
+        file:
+          type: string
+          description: The template's file name, which `getMigrationTemplate` takes.
+        class:
+          $ref: '#/components/schemas/MigrationTemplateClass'
+        counted:
+          type: boolean
+          description: Whether the template is in the report's clean and warning counts.
+        status:
+          $ref: '#/components/schemas/MigrationTemplateStatus'
+        warningCount:
+          type: integer
+          description: >-
+            The warnings that make a conversion not clean. The writable-layer
+            warning every conversion carries and the notes are not counted;
+            the preview lists every warning.
+        error:
+          type: string
+          description: Why the converter could not read the template. Present only when `status` is `failed`.
+        autostartPosition:
+          type: integer
+          description: The 1-based place on Unraid's autostart list. Absent off the list.
+
+    MigrationComposeProjectSummary:
+      type: object
+      required: [name, containers, status]
+      properties:
+        name:
+          type: string
+          description: The project's name, which `getMigrationTemplate` takes.
+        containers:
+          type: array
+          items:
+            type: string
+          description: The containers the capture shows the project running.
+        status:
+          $ref: '#/components/schemas/MigrationTemplateStatus'
+        error:
+          type: string
+          description: Why the project's `compose.yaml` could not be read. Present only when `status` is `failed`.
+
+    MigrationTemplates:
+      type: object
+      required: [counts, templates, composeProjects]
+      properties:
+        counts:
+          $ref: '#/components/schemas/MigrationTemplateCounts'
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationTemplateSummary'
+          description: Every template that parsed, by file name.
+        composeProjects:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationComposeProjectSummary'
+
+    MigrationTemplatePreview:
+      type: object
+      required: [kind, name, status, source, warnings, privileges]
+      properties:
+        kind:
+          type: string
+          enum: [template, compose_project]
+        name:
+          type: string
+          description: The template's file name, or the project's name.
+        title:
+          type: string
+          description: A template's `<Name>`. Absent for a project.
+        class:
+          $ref: '#/components/schemas/MigrationTemplateClass'
+        counted:
+          type: boolean
+          description: Whether a template is in the report's clean and warning counts. Absent for a project.
+        status:
+          $ref: '#/components/schemas/MigrationTemplateStatus'
+        source:
+          type: string
+          description: The template XML, or the project's `compose.yaml`, as the flash holds it.
+        compose:
+          type: string
+          description: >-
+            The generated Compose file, or the project's own `compose.yaml`.
+            Not applied anywhere. Absent when the converter failed.
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversionWarning'
+          description: Every warning of a converted template. Empty for a project.
+        privileges:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplatePrivilege'
+          description: The privilege summary of the Compose content.
+        error:
+          type: string
+          description: Why the template or project could not be read. Present only when `status` is `failed`.
 
     AppdataBackupContainer:
       type: object

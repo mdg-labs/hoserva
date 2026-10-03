@@ -9740,6 +9740,57 @@ func (s *MigrationCheckStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/MigrationComposeProjectSummary
+type MigrationComposeProjectSummary struct {
+	// The project's name, which `getMigrationTemplate` takes.
+	Name string `json:"name"`
+	// The containers the capture shows the project running.
+	Containers []string                `json:"containers"`
+	Status     MigrationTemplateStatus `json:"status"`
+	// Why the project's `compose.yaml` could not be read. Present only when `status` is `failed`.
+	Error OptString `json:"error"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationComposeProjectSummary) GetName() string {
+	return s.Name
+}
+
+// GetContainers returns the value of Containers.
+func (s *MigrationComposeProjectSummary) GetContainers() []string {
+	return s.Containers
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationComposeProjectSummary) GetStatus() MigrationTemplateStatus {
+	return s.Status
+}
+
+// GetError returns the value of Error.
+func (s *MigrationComposeProjectSummary) GetError() OptString {
+	return s.Error
+}
+
+// SetName sets the value of Name.
+func (s *MigrationComposeProjectSummary) SetName(val string) {
+	s.Name = val
+}
+
+// SetContainers sets the value of Containers.
+func (s *MigrationComposeProjectSummary) SetContainers(val []string) {
+	s.Containers = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationComposeProjectSummary) SetStatus(val MigrationTemplateStatus) {
+	s.Status = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationComposeProjectSummary) SetError(val OptString) {
+	s.Error = val
+}
+
 // Ref: #/components/schemas/MigrationFlashDevice
 type MigrationFlashDevice struct {
 	// The disk's device path, which `startMigrationDeviceScan` takes.
@@ -9960,6 +10011,531 @@ func (s *MigrationReportRow) SetSubject(val OptString) {
 // SetDetail sets the value of Detail.
 func (s *MigrationReportRow) SetDetail(val string) {
 	s.Detail = val
+}
+
+// What a dockerMan template stands for in the Phase A capture: `autostart` (on Unraid's autostart
+// list), `running`, `stopped`, `template_only` (a template with no container), or `unknown` for every
+// template when the capture has no usable container list.
+// Ref: #/components/schemas/MigrationTemplateClass
+type MigrationTemplateClass string
+
+const (
+	MigrationTemplateClassAutostart    MigrationTemplateClass = "autostart"
+	MigrationTemplateClassRunning      MigrationTemplateClass = "running"
+	MigrationTemplateClassStopped      MigrationTemplateClass = "stopped"
+	MigrationTemplateClassTemplateOnly MigrationTemplateClass = "template_only"
+	MigrationTemplateClassUnknown      MigrationTemplateClass = "unknown"
+)
+
+// AllValues returns all MigrationTemplateClass values.
+func (MigrationTemplateClass) AllValues() []MigrationTemplateClass {
+	return []MigrationTemplateClass{
+		MigrationTemplateClassAutostart,
+		MigrationTemplateClassRunning,
+		MigrationTemplateClassStopped,
+		MigrationTemplateClassTemplateOnly,
+		MigrationTemplateClassUnknown,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationTemplateClass) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationTemplateClassAutostart:
+		return []byte(s), nil
+	case MigrationTemplateClassRunning:
+		return []byte(s), nil
+	case MigrationTemplateClassStopped:
+		return []byte(s), nil
+	case MigrationTemplateClassTemplateOnly:
+		return []byte(s), nil
+	case MigrationTemplateClassUnknown:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationTemplateClass) UnmarshalText(data []byte) error {
+	switch MigrationTemplateClass(data) {
+	case MigrationTemplateClassAutostart:
+		*s = MigrationTemplateClassAutostart
+		return nil
+	case MigrationTemplateClassRunning:
+		*s = MigrationTemplateClassRunning
+		return nil
+	case MigrationTemplateClassStopped:
+		*s = MigrationTemplateClassStopped
+		return nil
+	case MigrationTemplateClassTemplateOnly:
+		*s = MigrationTemplateClassTemplateOnly
+		return nil
+	case MigrationTemplateClassUnknown:
+		*s = MigrationTemplateClassUnknown
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationTemplateCounts
+type MigrationTemplateCounts struct {
+	// Counted templates that convert cleanly (Q36).
+	Clean int `json:"clean"`
+	// Counted templates that convert with at least one warning that needs manual action.
+	WithWarnings int `json:"withWarnings"`
+	// Counted templates the converter could not read. Never part of `clean`.
+	Failed int `json:"failed"`
+	// Templates with no container on the source server. They are converted and previewable and are in none
+	// of the counts above.
+	TemplateOnly int `json:"templateOnly"`
+	// True when the capture has no container list, so nothing says which templates are installed and
+	// `clean`, `withWarnings` and `failed` cover every template.
+	AllTemplates bool `json:"allTemplates"`
+	// Compose Manager projects whose `compose.yaml` is previewed. Not converted and not in the counts
+	// above.
+	ComposeProjects int `json:"composeProjects"`
+}
+
+// GetClean returns the value of Clean.
+func (s *MigrationTemplateCounts) GetClean() int {
+	return s.Clean
+}
+
+// GetWithWarnings returns the value of WithWarnings.
+func (s *MigrationTemplateCounts) GetWithWarnings() int {
+	return s.WithWarnings
+}
+
+// GetFailed returns the value of Failed.
+func (s *MigrationTemplateCounts) GetFailed() int {
+	return s.Failed
+}
+
+// GetTemplateOnly returns the value of TemplateOnly.
+func (s *MigrationTemplateCounts) GetTemplateOnly() int {
+	return s.TemplateOnly
+}
+
+// GetAllTemplates returns the value of AllTemplates.
+func (s *MigrationTemplateCounts) GetAllTemplates() bool {
+	return s.AllTemplates
+}
+
+// GetComposeProjects returns the value of ComposeProjects.
+func (s *MigrationTemplateCounts) GetComposeProjects() int {
+	return s.ComposeProjects
+}
+
+// SetClean sets the value of Clean.
+func (s *MigrationTemplateCounts) SetClean(val int) {
+	s.Clean = val
+}
+
+// SetWithWarnings sets the value of WithWarnings.
+func (s *MigrationTemplateCounts) SetWithWarnings(val int) {
+	s.WithWarnings = val
+}
+
+// SetFailed sets the value of Failed.
+func (s *MigrationTemplateCounts) SetFailed(val int) {
+	s.Failed = val
+}
+
+// SetTemplateOnly sets the value of TemplateOnly.
+func (s *MigrationTemplateCounts) SetTemplateOnly(val int) {
+	s.TemplateOnly = val
+}
+
+// SetAllTemplates sets the value of AllTemplates.
+func (s *MigrationTemplateCounts) SetAllTemplates(val bool) {
+	s.AllTemplates = val
+}
+
+// SetComposeProjects sets the value of ComposeProjects.
+func (s *MigrationTemplateCounts) SetComposeProjects(val int) {
+	s.ComposeProjects = val
+}
+
+// Ref: #/components/schemas/MigrationTemplatePreview
+type MigrationTemplatePreview struct {
+	Kind MigrationTemplatePreviewKind `json:"kind"`
+	// The template's file name, or the project's name.
+	Name string `json:"name"`
+	// A template's `<Name>`. Absent for a project.
+	Title OptString                 `json:"title"`
+	Class OptMigrationTemplateClass `json:"class"`
+	// Whether a template is in the report's clean and warning counts. Absent for a project.
+	Counted OptBool                 `json:"counted"`
+	Status  MigrationTemplateStatus `json:"status"`
+	// The template XML, or the project's `compose.yaml`, as the flash holds it.
+	Source string `json:"source"`
+	// The generated Compose file, or the project's own `compose.yaml`. Not applied anywhere. Absent when
+	// the converter failed.
+	Compose OptString `json:"compose"`
+	// Every warning of a converted template. Empty for a project.
+	Warnings []ConversionWarning `json:"warnings"`
+	// The privilege summary of the Compose content.
+	Privileges []TemplatePrivilege `json:"privileges"`
+	// Why the template or project could not be read. Present only when `status` is `failed`.
+	Error OptString `json:"error"`
+}
+
+// GetKind returns the value of Kind.
+func (s *MigrationTemplatePreview) GetKind() MigrationTemplatePreviewKind {
+	return s.Kind
+}
+
+// GetName returns the value of Name.
+func (s *MigrationTemplatePreview) GetName() string {
+	return s.Name
+}
+
+// GetTitle returns the value of Title.
+func (s *MigrationTemplatePreview) GetTitle() OptString {
+	return s.Title
+}
+
+// GetClass returns the value of Class.
+func (s *MigrationTemplatePreview) GetClass() OptMigrationTemplateClass {
+	return s.Class
+}
+
+// GetCounted returns the value of Counted.
+func (s *MigrationTemplatePreview) GetCounted() OptBool {
+	return s.Counted
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationTemplatePreview) GetStatus() MigrationTemplateStatus {
+	return s.Status
+}
+
+// GetSource returns the value of Source.
+func (s *MigrationTemplatePreview) GetSource() string {
+	return s.Source
+}
+
+// GetCompose returns the value of Compose.
+func (s *MigrationTemplatePreview) GetCompose() OptString {
+	return s.Compose
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *MigrationTemplatePreview) GetWarnings() []ConversionWarning {
+	return s.Warnings
+}
+
+// GetPrivileges returns the value of Privileges.
+func (s *MigrationTemplatePreview) GetPrivileges() []TemplatePrivilege {
+	return s.Privileges
+}
+
+// GetError returns the value of Error.
+func (s *MigrationTemplatePreview) GetError() OptString {
+	return s.Error
+}
+
+// SetKind sets the value of Kind.
+func (s *MigrationTemplatePreview) SetKind(val MigrationTemplatePreviewKind) {
+	s.Kind = val
+}
+
+// SetName sets the value of Name.
+func (s *MigrationTemplatePreview) SetName(val string) {
+	s.Name = val
+}
+
+// SetTitle sets the value of Title.
+func (s *MigrationTemplatePreview) SetTitle(val OptString) {
+	s.Title = val
+}
+
+// SetClass sets the value of Class.
+func (s *MigrationTemplatePreview) SetClass(val OptMigrationTemplateClass) {
+	s.Class = val
+}
+
+// SetCounted sets the value of Counted.
+func (s *MigrationTemplatePreview) SetCounted(val OptBool) {
+	s.Counted = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationTemplatePreview) SetStatus(val MigrationTemplateStatus) {
+	s.Status = val
+}
+
+// SetSource sets the value of Source.
+func (s *MigrationTemplatePreview) SetSource(val string) {
+	s.Source = val
+}
+
+// SetCompose sets the value of Compose.
+func (s *MigrationTemplatePreview) SetCompose(val OptString) {
+	s.Compose = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *MigrationTemplatePreview) SetWarnings(val []ConversionWarning) {
+	s.Warnings = val
+}
+
+// SetPrivileges sets the value of Privileges.
+func (s *MigrationTemplatePreview) SetPrivileges(val []TemplatePrivilege) {
+	s.Privileges = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationTemplatePreview) SetError(val OptString) {
+	s.Error = val
+}
+
+type MigrationTemplatePreviewKind string
+
+const (
+	MigrationTemplatePreviewKindTemplate       MigrationTemplatePreviewKind = "template"
+	MigrationTemplatePreviewKindComposeProject MigrationTemplatePreviewKind = "compose_project"
+)
+
+// AllValues returns all MigrationTemplatePreviewKind values.
+func (MigrationTemplatePreviewKind) AllValues() []MigrationTemplatePreviewKind {
+	return []MigrationTemplatePreviewKind{
+		MigrationTemplatePreviewKindTemplate,
+		MigrationTemplatePreviewKindComposeProject,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationTemplatePreviewKind) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationTemplatePreviewKindTemplate:
+		return []byte(s), nil
+	case MigrationTemplatePreviewKindComposeProject:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationTemplatePreviewKind) UnmarshalText(data []byte) error {
+	switch MigrationTemplatePreviewKind(data) {
+	case MigrationTemplatePreviewKindTemplate:
+		*s = MigrationTemplatePreviewKindTemplate
+		return nil
+	case MigrationTemplatePreviewKindComposeProject:
+		*s = MigrationTemplatePreviewKindComposeProject
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// How a conversion reads. `clean` is Q36's definition: no warning of class `untranslated_flag`,
+// `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. `warnings` has at least one.
+// `failed` is a template the converter could not read. `previewed` is a Compose Manager project's
+// `compose.yaml`, which is never converted. `missing` is a project whose `compose.yaml` is not in the
+// source.
+// Ref: #/components/schemas/MigrationTemplateStatus
+type MigrationTemplateStatus string
+
+const (
+	MigrationTemplateStatusClean     MigrationTemplateStatus = "clean"
+	MigrationTemplateStatusWarnings  MigrationTemplateStatus = "warnings"
+	MigrationTemplateStatusFailed    MigrationTemplateStatus = "failed"
+	MigrationTemplateStatusPreviewed MigrationTemplateStatus = "previewed"
+	MigrationTemplateStatusMissing   MigrationTemplateStatus = "missing"
+)
+
+// AllValues returns all MigrationTemplateStatus values.
+func (MigrationTemplateStatus) AllValues() []MigrationTemplateStatus {
+	return []MigrationTemplateStatus{
+		MigrationTemplateStatusClean,
+		MigrationTemplateStatusWarnings,
+		MigrationTemplateStatusFailed,
+		MigrationTemplateStatusPreviewed,
+		MigrationTemplateStatusMissing,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationTemplateStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationTemplateStatusClean:
+		return []byte(s), nil
+	case MigrationTemplateStatusWarnings:
+		return []byte(s), nil
+	case MigrationTemplateStatusFailed:
+		return []byte(s), nil
+	case MigrationTemplateStatusPreviewed:
+		return []byte(s), nil
+	case MigrationTemplateStatusMissing:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationTemplateStatus) UnmarshalText(data []byte) error {
+	switch MigrationTemplateStatus(data) {
+	case MigrationTemplateStatusClean:
+		*s = MigrationTemplateStatusClean
+		return nil
+	case MigrationTemplateStatusWarnings:
+		*s = MigrationTemplateStatusWarnings
+		return nil
+	case MigrationTemplateStatusFailed:
+		*s = MigrationTemplateStatusFailed
+		return nil
+	case MigrationTemplateStatusPreviewed:
+		*s = MigrationTemplateStatusPreviewed
+		return nil
+	case MigrationTemplateStatusMissing:
+		*s = MigrationTemplateStatusMissing
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationTemplateSummary
+type MigrationTemplateSummary struct {
+	// The template's `<Name>`, the name its container is matched on.
+	Name string `json:"name"`
+	// The template's file name, which `getMigrationTemplate` takes.
+	File  string                 `json:"file"`
+	Class MigrationTemplateClass `json:"class"`
+	// Whether the template is in the report's clean and warning counts.
+	Counted bool                    `json:"counted"`
+	Status  MigrationTemplateStatus `json:"status"`
+	// The warnings that make a conversion not clean. The writable-layer warning every conversion carries
+	// and the notes are not counted; the preview lists every warning.
+	WarningCount int `json:"warningCount"`
+	// Why the converter could not read the template. Present only when `status` is `failed`.
+	Error OptString `json:"error"`
+	// The 1-based place on Unraid's autostart list. Absent off the list.
+	AutostartPosition OptInt `json:"autostartPosition"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationTemplateSummary) GetName() string {
+	return s.Name
+}
+
+// GetFile returns the value of File.
+func (s *MigrationTemplateSummary) GetFile() string {
+	return s.File
+}
+
+// GetClass returns the value of Class.
+func (s *MigrationTemplateSummary) GetClass() MigrationTemplateClass {
+	return s.Class
+}
+
+// GetCounted returns the value of Counted.
+func (s *MigrationTemplateSummary) GetCounted() bool {
+	return s.Counted
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationTemplateSummary) GetStatus() MigrationTemplateStatus {
+	return s.Status
+}
+
+// GetWarningCount returns the value of WarningCount.
+func (s *MigrationTemplateSummary) GetWarningCount() int {
+	return s.WarningCount
+}
+
+// GetError returns the value of Error.
+func (s *MigrationTemplateSummary) GetError() OptString {
+	return s.Error
+}
+
+// GetAutostartPosition returns the value of AutostartPosition.
+func (s *MigrationTemplateSummary) GetAutostartPosition() OptInt {
+	return s.AutostartPosition
+}
+
+// SetName sets the value of Name.
+func (s *MigrationTemplateSummary) SetName(val string) {
+	s.Name = val
+}
+
+// SetFile sets the value of File.
+func (s *MigrationTemplateSummary) SetFile(val string) {
+	s.File = val
+}
+
+// SetClass sets the value of Class.
+func (s *MigrationTemplateSummary) SetClass(val MigrationTemplateClass) {
+	s.Class = val
+}
+
+// SetCounted sets the value of Counted.
+func (s *MigrationTemplateSummary) SetCounted(val bool) {
+	s.Counted = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationTemplateSummary) SetStatus(val MigrationTemplateStatus) {
+	s.Status = val
+}
+
+// SetWarningCount sets the value of WarningCount.
+func (s *MigrationTemplateSummary) SetWarningCount(val int) {
+	s.WarningCount = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationTemplateSummary) SetError(val OptString) {
+	s.Error = val
+}
+
+// SetAutostartPosition sets the value of AutostartPosition.
+func (s *MigrationTemplateSummary) SetAutostartPosition(val OptInt) {
+	s.AutostartPosition = val
+}
+
+// Ref: #/components/schemas/MigrationTemplates
+type MigrationTemplates struct {
+	Counts MigrationTemplateCounts `json:"counts"`
+	// Every template that parsed, by file name.
+	Templates       []MigrationTemplateSummary       `json:"templates"`
+	ComposeProjects []MigrationComposeProjectSummary `json:"composeProjects"`
+}
+
+// GetCounts returns the value of Counts.
+func (s *MigrationTemplates) GetCounts() MigrationTemplateCounts {
+	return s.Counts
+}
+
+// GetTemplates returns the value of Templates.
+func (s *MigrationTemplates) GetTemplates() []MigrationTemplateSummary {
+	return s.Templates
+}
+
+// GetComposeProjects returns the value of ComposeProjects.
+func (s *MigrationTemplates) GetComposeProjects() []MigrationComposeProjectSummary {
+	return s.ComposeProjects
+}
+
+// SetCounts sets the value of Counts.
+func (s *MigrationTemplates) SetCounts(val MigrationTemplateCounts) {
+	s.Counts = val
+}
+
+// SetTemplates sets the value of Templates.
+func (s *MigrationTemplates) SetTemplates(val []MigrationTemplateSummary) {
+	s.Templates = val
+}
+
+// SetComposeProjects sets the value of ComposeProjects.
+func (s *MigrationTemplates) SetComposeProjects(val []MigrationComposeProjectSummary) {
+	s.ComposeProjects = val
 }
 
 // Ref: #/components/schemas/MigrationVerdict
@@ -12972,6 +13548,52 @@ func (o OptMigrationReport) Get() (v MigrationReport, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptMigrationReport) Or(d MigrationReport) MigrationReport {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationTemplateClass returns new OptMigrationTemplateClass with value set to v.
+func NewOptMigrationTemplateClass(v MigrationTemplateClass) OptMigrationTemplateClass {
+	return OptMigrationTemplateClass{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationTemplateClass is optional MigrationTemplateClass.
+type OptMigrationTemplateClass struct {
+	Value MigrationTemplateClass
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationTemplateClass was set.
+func (o OptMigrationTemplateClass) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationTemplateClass) Reset() {
+	var v MigrationTemplateClass
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationTemplateClass) SetTo(v MigrationTemplateClass) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationTemplateClass) Get() (v MigrationTemplateClass, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationTemplateClass) Or(d MigrationTemplateClass) MigrationTemplateClass {
 	if v, ok := o.Get(); ok {
 		return v
 	}
