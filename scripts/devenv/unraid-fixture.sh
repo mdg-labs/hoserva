@@ -464,6 +464,12 @@ cleanup() {
     esac
   done
   if [[ -n $WORK ]] && ! { [[ -n $LV_MNT ]] && mountpoint -q "$LV_MNT" 2>/dev/null; }; then rm -rf --one-file-system -- "$WORK"; fi
+  for m in ${LV_MNT:+"$LV_MNT"} "${MOUNTED[@]}"; do
+    if mountpoint -q "$m" 2>/dev/null; then
+      printf 'unraid-fixture: cannot unmount %s; make lab-destroy clears it\n' "$m" >&2
+      if ((rc == 0)); then rc=1; fi
+    fi
+  done
   return $rc
 }
 

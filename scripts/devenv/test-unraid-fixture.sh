@@ -113,6 +113,37 @@ size_refusal "a guest disk whose size could not be read" "cannot read the size o
 # shellcheck disable=SC2034
 TIER=l2
 
+# the EXIT trap's cleanup: a mount it cannot remove is reported and fails the
+# run, never left behind silently. The device commands are stubs, so nothing
+# is mounted or detached.
+stuck_cleanup() {  # still-mounted path, LV_MNT, MOUNTED...
+  local stuck=$1
+  LV_MNT=$2 LV_LOOP="" WORK="" SETRO=() LOOPS=()
+  MOUNTED=("${@:3}")
+  mountpoint() { [[ ${*: -1} == "$stuck" ]]; }
+  umount() { return 32; }
+  true
+  cleanup
+}
+stuck_refusal() {  # description, still-mounted path, LV_MNT, MOUNTED...
+  local desc=$1 out
+  shift
+  if out=$(stuck_cleanup "$@" 2>&1); then
+    bad "cleanup returned 0 with $desc still mounted"
+  elif [[ $out == *"cannot unmount $1"* ]]; then
+    ok "cleanup reports $desc still mounted and fails"
+  else
+    bad "cleanup failed for another reason: $out"
+  fi
+}
+stuck_refusal "libvirt.img's mount" "$work/lv" "$work/lv" "$work/disk1"
+stuck_refusal "a fixture disk" "$work/disk1" "" "$work/disk1"
+if out=$(stuck_cleanup /nowhere "$work/lv" "$work/disk1" 2>&1); then
+  ok "cleanup returns 0 when every mount is gone"
+else
+  bad "cleanup failed with nothing left mounted: $out"
+fi
+
 # ---- the tiers
 
 if out=$(bash "$BUILDER" --tier l3 "$variant" 2>&1); then
