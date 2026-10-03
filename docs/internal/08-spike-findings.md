@@ -220,7 +220,7 @@ What it could not confirm: the Diagnostics zip captures configuration and system
 
 *Disks.*
 - Disks over 2 TB: GPT with one partition starting at **sector 64**, ending 33 sectors before the end of the disk, of type `0fc63daf-8483-4772-8e79-3d69d8477de4`.
-- Array and cache filesystems carry **no label**. `disk.LooksLikeUnraidLabel` (`internal/disk/discovery.go`) therefore does not match a real 7.3.2 array.
+- Array and cache filesystems carry **no label**. A label-based `looksLikeUnraid` hint therefore cannot match a real 7.3.2 array; the hint is a partition-layout heuristic instead (doc 05 §3).
 - **The parity disk reports `xfs` with a UUID** in udev and `blkid`. With an odd number of data disks whose XFS superblocks share geometry, single parity (bytewise XOR) leaves a valid-looking superblock at the start of the parity partition. Parity can only be identified by its slot (`disks.ini`), never by its filesystem signature.
 - Unraid mounts XFS data disks with `nouuid` (`rw,noatime,nouuid,inode64,logbufs=8,logbsize=32k,noquota`). Array partitions are mounted through Unraid's md driver (`/dev/mdNp1`), and the `/dev/sdX1` nodes are removed.
 - XFS features seen: `crc finobt sparse reflink bigtime inobtcount ftype` everywhere, plus `rmapbt` and `nrext64` on disks made by a newer `mkfs`.

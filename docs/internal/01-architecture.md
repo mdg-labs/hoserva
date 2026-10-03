@@ -137,8 +137,8 @@ hoserva vm console <name>                   # browser console over the existing 
 hoserva vm passthrough list|check           # IOMMU groups, ACS report (doc 14 §3)
 hoserva vm passthrough assign <name> --pci 01:00.0
 
-hoserva migrate scan --flash-backup <zip> [--unverified-layout]   # Unraid pre-flight (doc 05, Q25)
-hoserva migrate scan --flash-device <device> [--unverified-layout] # the same, read from the attached Unraid stick
+hoserva migrate scan --flash-backup <zip> [--unverified-layout] [--full-checksums]   # Unraid pre-flight (doc 05, Q25)
+hoserva migrate scan --flash-device <device> [--unverified-layout] [--full-checksums] # the same, read from the attached Unraid stick
 hoserva migrate status                          # the session's phase and the report's verdict
 hoserva migrate report [-o <file>]              # the go / no-go report as a document
 hoserva migrate templates [<name>]               # the scan's template conversion preview: the list with counts, or one template's preview
