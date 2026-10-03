@@ -36,6 +36,7 @@ outside_img="$LAB/nested-loop-outside.img"
 # Only ever the devices this test attached itself, each with the one file it
 # attached it to.
 declare -A attached=()
+holder=
 
 attach() {  # image size
   local img=$1 dev
@@ -54,6 +55,8 @@ is_attached() { [[ -e "/sys/block/${1#/dev/}/loop/backing_file" ]]; }
 cleanup() {
   local img dev
   set +e
+  # A device a holder still has open only detaches lazily.
+  [[ -z "$holder" ]] || kill "$holder" 2>/dev/null
   # Unmount first, while the device is still there: a mounted device only
   # detaches lazily.
   mountpoint -q "$mounted_mnt" 2>/dev/null && umount "$mounted_mnt"
@@ -162,28 +165,134 @@ else
   bad "freeing $other_dev with a different expected file: status $FREE_RC, backing now '$(backing_of "$other_dev")': $FREE_OUT"
 fi
 
-# 4c. The device really is detached by losetup -d, and the number is taken by
-#     another file in the same instant: the still-attached check must not
-#     mistake that for this device still being attached.
+# 4c. The device really is detached, and the number is taken by another file
+#     as soon as the kernel frees it: the still-attached check must not mistake
+#     that for this device still being attached. A process of this test holds
+#     the device open, so after the step's losetup -d it is only marked
+#     autoclear and the post-detach check reads it still backed by the expected
+#     file. The step's first sleep between polls is the moment the test acts:
+#     it kills the holder (by PID), waits for the kernel to free the number and
+#     takes it with another file. The next poll reads that other file and the
+#     step must return through the backing-file comparison.
 reused_img="$disk/nested-loop-reused.img"
 swapped_img="$disk/nested-loop-swapped.img"
 attach "$reused_img" 16M
 reused_dev=$ATTACHED
 truncate -s 16M "$swapped_img"
 attached[$swapped_img]=$reused_dev
+sleep 60 3<"$reused_dev" &
+holder=$!
+holds_dev() { [[ "$(readlink "/proc/$holder/fd/3" 2>/dev/null)" == "$1" ]]; }
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  holds_dev "$reused_dev" && break
+  sleep 0.1
+done
+holds_dev "$reused_dev" || die "positive control: the holder process does not have $reused_dev open"
+FREE_RC=0
+FREE_OUT=$(
+  swap_done=0
+  # shellcheck disable=SC2317,SC2329 # called by _lab_free_nested_loop
+  sleep() {
+    if ((swap_done == 0)); then
+      swap_done=1
+      echo "probe: backing before the swap '$(backing_of "$reused_dev")'"
+      kill "$holder"
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        holds_dev "$reused_dev" || break
+        command sleep 0.1
+      done
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        is_attached "$reused_dev" || break
+        command sleep 0.1
+      done
+      if command losetup "$reused_dev" "$swapped_img" 2>/dev/null; then
+        echo "probe: number re-used"
+      else
+        echo "probe: number not re-used"
+      fi
+    fi
+    command sleep "$@"
+  }
+  _lab_free_nested_loop "$reused_dev" "$reused_img"
+) 2>&1 || FREE_RC=$?
+wait "$holder" 2>/dev/null || true
+holder=
+if ((FREE_RC == 0)) && [[ "$(backing_of "$reused_dev")" == "$swapped_img" ]] \
+   && [[ "$FREE_OUT" == *"probe: backing before the swap '$reused_img'"* && "$FREE_OUT" == *"probe: number re-used"* ]]; then
+  ok "a number re-used by another file right after the detach is not reported as still attached"
+else
+  bad "freeing $reused_dev whose number was re-used: status $FREE_RC, backing now '$(backing_of "$reused_dev")': $FREE_OUT"
+fi
+
+# 4d. A device already marked autoclear and still held by another opener (here
+#     a process of this test): when that opener lets go, the kernel frees the
+#     number, and another lab could take it. While _lab_free_nested_loop holds
+#     the device open, the number must stay this device's. The probe runs at the
+#     moment the other opener is gone, just before the detach, and tries to take
+#     the number with another file this test owns.
+held_img="$disk/nested-loop-held.img"
+taken_img="$disk/nested-loop-taken.img"
+attach "$held_img" 16M
+held_dev=$ATTACHED
+truncate -s 16M "$taken_img"
+attached[$taken_img]=$held_dev
+sleep 60 3<"$held_dev" &
+holder=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  holds_dev "$held_dev" && break
+  sleep 0.1
+done
+holds_dev "$held_dev" || die "positive control: the holder process does not have $held_dev open"
+losetup -d "$held_dev"
+is_attached "$held_dev" || die "positive control: $held_dev was freed by losetup -d though a process holds it"
 FREE_RC=0
 FREE_OUT=$(
   # shellcheck disable=SC2317,SC2329 # called by _lab_free_nested_loop
   losetup() {
-    command losetup "$@" || return
-    [[ "$1" == "-d" ]] && command losetup "$2" "$swapped_img"
+    if [[ "$1" == "-d" ]]; then
+      kill "$holder"
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        holds_dev "$held_dev" || break
+        sleep 0.1
+      done
+      holds_dev "$held_dev" && echo "probe: the holder still has the device open"
+      sleep 0.3
+      echo "probe: backing '$(backing_of "$held_dev")'"
+      if command losetup "$held_dev" "$taken_img" 2>/dev/null; then
+        echo "probe: number re-used"
+      else
+        echo "probe: number not re-usable"
+      fi
+    fi
+    command losetup "$@"
   }
-  _lab_free_nested_loop "$reused_dev" "$reused_img"
+  _lab_free_nested_loop "$held_dev" "$held_img"
 ) 2>&1 || FREE_RC=$?
-if ((FREE_RC == 0)) && [[ "$(backing_of "$reused_dev")" == "$swapped_img" ]]; then
-  ok "a number re-used by another file right after the detach is not reported as still attached"
+wait "$holder" 2>/dev/null || true
+holder=
+if ((FREE_RC == 0)) && ! is_attached "$held_dev" \
+   && [[ "$FREE_OUT" == *"probe: backing '$held_img'"* && "$FREE_OUT" == *"probe: number not re-usable"* ]]; then
+  ok "a device held by another opener cannot be freed or re-used while the step holds it, and is freed once it lets go"
 else
-  bad "freeing $reused_dev whose number was re-used: status $FREE_RC, backing now '$(backing_of "$reused_dev")': $FREE_OUT"
+  bad "freeing the held device $held_dev: status $FREE_RC, attached=$(is_attached "$held_dev" && echo yes || echo no): $FREE_OUT"
+fi
+
+# 4e. A device that cannot be opened. A number that is not there at all counts
+#     as freed. A device that is attached but cannot be opened (the path below
+#     names a loop device of this test through a non-directory, so open fails
+#     while /sys still resolves it) is not detached, and the step dies.
+free_nested /dev/loop99999 "$LAB/nested-loop-none.img"
+if ((FREE_RC == 0)); then
+  ok "a device number that is gone when the step opens it counts as freed"
+else
+  bad "freeing a loop device that is not there: status $FREE_RC: $FREE_OUT"
+fi
+free_nested "$other_dev/../${other_dev#/dev/}" "$other_img"
+if ((FREE_RC != 0)) && is_attached "$other_dev" && [[ "$(backing_of "$other_dev")" == "$other_img" ]] \
+   && [[ "$FREE_OUT" == *"cannot open"* && "$FREE_OUT" != *"failed to detach"* ]]; then
+  ok "an attached device that cannot be opened is not detached, and the step dies at the open"
+else
+  bad "freeing $other_dev through an unopenable path: status $FREE_RC, backing now '$(backing_of "$other_dev")': $FREE_OUT"
 fi
 
 # destroy-array.sh must run the step before its first unmount: the detach has
