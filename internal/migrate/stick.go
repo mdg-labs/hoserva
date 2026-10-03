@@ -271,7 +271,7 @@ func (s *Service) StartDeviceScan(ctx context.Context, device string, opts ScanO
 	}); err != nil {
 		return err
 	}
-	rec := &scanRecord{File: devicePrefix + dev.Device, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout}
+	rec := &scanRecord{File: devicePrefix + dev.Device, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout, FullChecksums: opts.FullChecksums}
 	return s.queue(ctx, sess, rec, submit)
 }
 
@@ -287,7 +287,7 @@ func (s *Service) scanDevice(ctx context.Context, rec scanRecord) (*Report, erro
 	var report *Report
 	err = s.withStick(ctx, dev, func(src FlashSource) error {
 		var err error
-		report, err = s.Scanner.Scan(ctx, src, ScanOptions{UnverifiedLayout: rec.UnverifiedLayout})
+		report, err = s.Scanner.Scan(ctx, src, rec.options(ctx))
 		return err
 	})
 	if err != nil {

@@ -1838,7 +1838,7 @@ export interface paths {
         put?: never;
         /**
          * Scan a Flash Backup zip
-         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every data disk the capture records, through a read-only mount at a private mountpoint under the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
          */
         post: operations["startMigrationScan"];
         delete?: never;
@@ -4603,7 +4603,7 @@ export interface components {
             smartStatus?: string;
             /** @description True when udev reports an existing filesystem on the disk. */
             containsData?: boolean;
-            /** @description True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a conservative heuristic that never mounts the disk to look for `super.dat`. */
+            /** @description True when the disk is laid out the way Unraid lays out an array or pool disk (doc 05 §3): an MBR or GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role. */
             looksLikeUnraid?: boolean;
             /** @description Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when the partition is picked. */
             cachePartitions?: components["schemas"]["CachePartition"][];
@@ -5352,7 +5352,7 @@ export interface components {
         /** @enum {string} */
         MigrationVerdict: "go" | "go_with_warnings" | "no_go";
         MigrationReportRow: {
-            /** @description Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`, `parity_size`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without changing this shape. */
+            /** @description Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`, `parity_size`, `data_disks`, `disk_integrity`, `baseline`, `content_space`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without changing this shape. */
             check: string;
             status: components["schemas"]["MigrationCheckStatus"];
             /** @description A slot, pool or device the row is about. Absent for the whole system. */
@@ -8270,6 +8270,8 @@ export interface operations {
                     file: string;
                     /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
                     unverifiedLayout?: boolean;
+                    /** @description Hash every file of every data disk for the baseline, instead of every file of 1 MiB or less plus a deterministic sample of the larger ones. It takes much longer. */
+                    fullChecksums?: boolean;
                 };
             };
         };
@@ -8300,6 +8302,8 @@ export interface operations {
                     device: string;
                     /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
                     unverifiedLayout?: boolean;
+                    /** @description Hash every file of every data disk for the baseline, as for the zip scan (`startMigrationScan`). */
+                    fullChecksums?: boolean;
                 };
             };
         };

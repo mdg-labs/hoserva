@@ -6317,8 +6317,10 @@ type DiskInventoryEntry struct {
 	SmartStatus OptString `json:"smartStatus"`
 	// True when udev reports an existing filesystem on the disk.
 	ContainsData OptBool `json:"containsData"`
-	// True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a
-	// conservative heuristic that never mounts the disk to look for `super.dat`.
+	// True when the disk is laid out the way Unraid lays out an array or pool disk (doc 05 §3): an MBR or
+	// GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real
+	// Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's
+	// cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role.
 	LooksLikeUnraid OptBool `json:"looksLikeUnraid"`
 	// Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc
 	// 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no
@@ -9962,10 +9964,10 @@ func (s *MigrationReport) SetRows(val []MigrationReportRow) {
 // Ref: #/components/schemas/MigrationReportRow
 type MigrationReportRow struct {
 	// Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`,
-	// `disk_identity`, `parity_config`, `parity_size`, `smart`, `parity_history`, `shares`,
-	// `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`,
-	// `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without
-	// changing this shape.
+	// `disk_identity`, `parity_config`, `parity_size`, `data_disks`, `disk_integrity`, `baseline`,
+	// `content_space`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`,
+	// `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`.
+	// Later parts of the scan add checks without changing this shape.
 	Check  string               `json:"check"`
 	Status MigrationCheckStatus `json:"status"`
 	// A slot, pool or device the row is about. Absent for the whole system.
@@ -18382,6 +18384,8 @@ type StartMigrationDeviceScanReq struct {
 	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
 	// (Q24).
 	UnverifiedLayout OptBool `json:"unverifiedLayout"`
+	// Hash every file of every data disk for the baseline, as for the zip scan (`startMigrationScan`).
+	FullChecksums OptBool `json:"fullChecksums"`
 }
 
 // GetDevice returns the value of Device.
@@ -18394,6 +18398,11 @@ func (s *StartMigrationDeviceScanReq) GetUnverifiedLayout() OptBool {
 	return s.UnverifiedLayout
 }
 
+// GetFullChecksums returns the value of FullChecksums.
+func (s *StartMigrationDeviceScanReq) GetFullChecksums() OptBool {
+	return s.FullChecksums
+}
+
 // SetDevice sets the value of Device.
 func (s *StartMigrationDeviceScanReq) SetDevice(val string) {
 	s.Device = val
@@ -18404,12 +18413,20 @@ func (s *StartMigrationDeviceScanReq) SetUnverifiedLayout(val OptBool) {
 	s.UnverifiedLayout = val
 }
 
+// SetFullChecksums sets the value of FullChecksums.
+func (s *StartMigrationDeviceScanReq) SetFullChecksums(val OptBool) {
+	s.FullChecksums = val
+}
+
 type StartMigrationScanReq struct {
 	// The Flash Backup zip, its root being `/boot`.
 	File ht.MultipartFile `json:"file"`
 	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
 	// (Q24).
 	UnverifiedLayout OptBool `json:"unverifiedLayout"`
+	// Hash every file of every data disk for the baseline, instead of every file of 1 MiB or less plus a
+	// deterministic sample of the larger ones. It takes much longer.
+	FullChecksums OptBool `json:"fullChecksums"`
 }
 
 // GetFile returns the value of File.
@@ -18422,6 +18439,11 @@ func (s *StartMigrationScanReq) GetUnverifiedLayout() OptBool {
 	return s.UnverifiedLayout
 }
 
+// GetFullChecksums returns the value of FullChecksums.
+func (s *StartMigrationScanReq) GetFullChecksums() OptBool {
+	return s.FullChecksums
+}
+
 // SetFile sets the value of File.
 func (s *StartMigrationScanReq) SetFile(val ht.MultipartFile) {
 	s.File = val
@@ -18430,6 +18452,11 @@ func (s *StartMigrationScanReq) SetFile(val ht.MultipartFile) {
 // SetUnverifiedLayout sets the value of UnverifiedLayout.
 func (s *StartMigrationScanReq) SetUnverifiedLayout(val OptBool) {
 	s.UnverifiedLayout = val
+}
+
+// SetFullChecksums sets the value of FullChecksums.
+func (s *StartMigrationScanReq) SetFullChecksums(val OptBool) {
+	s.FullChecksums = val
 }
 
 // Ref: #/components/schemas/StartRebalanceRequest

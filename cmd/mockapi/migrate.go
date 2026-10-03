@@ -65,10 +65,11 @@ func errNoMigrationReport() error {
 	return &mockError{code: "no_migration_report", statusCode: 404, message: migrate.ErrNoReport.Error()}
 }
 
-// mockMigrationReport is a completed scan of a healthy single-parity array:
-// what the UI shows after a scan, with one SMART finding so a flagged row has
-// something to render, and one row group per part of the configuration
-// inventory, including the flagged containers and shares.
+// mockMigrationReport is a completed scan of a single-parity array with one data
+// disk whose filesystem check failed: what the UI shows after a scan, with that
+// refused disk, one SMART finding so a flagged row has something to render, and
+// one row group per part of the configuration inventory, including the flagged
+// containers and shares.
 func mockMigrationReport(version string, unverified bool, at time.Time) *migrate.Report {
 	r := &migrate.Report{GeneratedAt: at, UnraidVersion: version, UnverifiedLayout: unverified, BootMode: "usb"}
 	add := func(check string, st migrate.Status, subject, detail string) {
@@ -83,7 +84,17 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckMapping, migrate.StatusPass, "parity", "serial EXAMPLE_PARITY is Unraid parity slot 0; this machine has it as /dev/sdb, 8.0 TiB.")
 	add(migrate.CheckMapping, migrate.StatusPass, "disk1", "serial EXAMPLE_DISK1 is Unraid disk 1 (xfs); this machine has it as /dev/sdc, 4.0 TiB.")
 	add(migrate.CheckMapping, migrate.StatusFlag, "disk2", "Unraid had a disk with serial EXAMPLE_DISK2 here, and no disk on this machine has this serial or WWN. Attach it before the import.")
+	add(migrate.CheckMapping, migrate.StatusPass, "disk3", "serial EXAMPLE_DISK3 is Unraid disk 3 (xfs); this machine has it as /dev/sdd, 4.0 TiB.")
 	add(migrate.CheckIdentity, migrate.StatusPass, "parity", "/dev/sdb has a WWN or serial.")
+	add(migrate.CheckDataDisks, migrate.StatusInfo, "parity", "A parity slot: /dev/sdb is never mounted or checked, and its role comes from its slot, never from its filesystem. Its device reports xfs: a parity disk's bytes are an XOR of the data disks', which can leave a valid-looking superblock.")
+	add(migrate.CheckDataDisks, migrate.StatusPass, "disk1", "xfs on /dev/sdc, a single filesystem; the flash and the device agree on it.")
+	add(migrate.CheckDataDisks, migrate.StatusPass, "disk3", "xfs on /dev/sdd, a single filesystem; the flash and the device agree on it.")
+	add(migrate.CheckIntegrity, migrate.StatusPass, "disk1", "The read-only xfs check of /dev/sdc is clean.")
+	add(migrate.CheckIntegrity, migrate.StatusRefuse, "disk3", "disk3 is not adopted: its read-only xfs check failed (xfs_repair -n exit status 1: a bad free-space B-tree block in allocation group 0). Computing parity over a damaged filesystem would keep the damage. An XFS disk that was not unmounted cleanly has a log that needs replaying: start Unraid, stop the array cleanly, and scan again. Hoserva never replays a log on a disk it does not own yet.")
+	add(migrate.CheckBaseline, migrate.StatusInfo, "", "Recorded for the verify phase, with the session. Content hashes: every file of 1.0 MiB or less is hashed, plus a deterministic 1 in 100 (at least 200) of the larger files on each disk, chosen by a stable hash of the path. Every file's size, every symlink with its target and every special file by type is recorded as well.")
+	add(migrate.CheckBaseline, migrate.StatusInfo, "disk1", "48210 files (3.6 TiB), 12 symlinks and 0 special files; 31044 files (96.2 GiB) hashed.")
+	add(migrate.CheckBaseline, migrate.StatusInfo, "media", "41007 files (3.4 TiB), 0 symlinks and 0 special files, on disk1.")
+	add(migrate.CheckContentSpace, migrate.StatusPass, "", "3 content-file copies can be placed (Q18): the boot device, 2 data disks, with room for about 9.4 MiB for the content file (48210 files, a planning figure of 200 bytes per file and 24 per 256 KiB block).")
 	add(migrate.CheckParity, migrate.StatusInfo, "", "1 parity disk(s). Parity is rewritten from scratch either way.")
 	add(migrate.CheckParitySize, migrate.StatusPass, "", "The smallest parity disk (8.0 TiB) is at least as large as the largest data disk (4.0 TiB).")
 	add(migrate.CheckSMART, migrate.StatusPass, "parity", "/dev/sdb has no reallocated or pending sectors.")
@@ -110,7 +121,7 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckSettings, migrate.StatusInfo, "mover schedule", "40 3 * * *. It can be offered as Hoserva's mover schedule.")
 	add(migrate.CheckUID99, migrate.StatusPass, "", "UID 99 is free for the hoserva-apps user.")
 	add(migrate.CheckSyncEstimate, migrate.StatusInfo, "", "About 2.8 hours for 4.0 TiB of data disks, if they are full, at an assumed 400 MB/s. It is a planning figure, not a measurement: the first sync is a long job, and it runs only when you start it.")
-	r.Verdict = migrate.VerdictGoWithWarnings
+	r.Verdict = migrate.VerdictNoGo
 	return r
 }
 

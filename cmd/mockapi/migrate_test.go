@@ -96,8 +96,17 @@ func TestMockMigration_StartsEmptyExceptInTheMigrationPendingScenario(t *testing
 	h, _ := newHandler("migration-pending")
 	m, _ := h.GetMigration(ctx)
 	report, ok := m.Report.Get()
-	if !ok || len(report.Rows) == 0 || report.Verdict != apiv1.MigrationVerdictGoWithWarnings {
-		t.Fatalf("the migration-pending session has no completed report: %+v", m)
+	if !ok || len(report.Rows) == 0 || report.Verdict != apiv1.MigrationVerdictNoGo {
+		t.Fatalf("the migration-pending session has no completed report that refuses a disk: %+v", m)
+	}
+	refused := ""
+	for _, row := range report.Rows {
+		if row.Status == apiv1.MigrationCheckStatusRefuse && row.Check == "disk_integrity" {
+			refused = row.Subject.Or("")
+		}
+	}
+	if refused != "disk3" {
+		t.Errorf("the migration-pending report refuses %q, want its disk3 with a failed filesystem check", refused)
 	}
 	doc, err := h.GetMigrationReport(ctx)
 	if err != nil {
@@ -124,7 +133,7 @@ func TestMockMigration_TheReportIncludesTheConfigurationInventory(t *testing.T) 
 			flagged[row.Subject.Or("")] = true
 		}
 	}
-	for _, check := range []string{"parity_history", "shares", "cache_contents", "users", "docker_templates", "containers", "user_scripts", "plugins", "custom_config", "settings"} {
+	for _, check := range []string{"data_disks", "disk_integrity", "baseline", "content_space", "parity_history", "shares", "cache_contents", "users", "docker_templates", "containers", "user_scripts", "plugins", "custom_config", "settings"} {
 		if _, ok := checks[check]; !ok {
 			t.Errorf("the report has no %s row", check)
 		}

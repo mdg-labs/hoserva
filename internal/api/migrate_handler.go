@@ -64,7 +64,7 @@ func (h *Handler) StartMigrationScan(ctx context.Context, req *apiv1.StartMigrat
 	if req == nil || req.File.File == nil {
 		return nil, &apiError{code: "file_required", statusCode: 400, message: "the Flash Backup zip is required as the file part"}
 	}
-	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false)}
+	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false), FullChecksums: req.FullChecksums.Or(false)}
 	var queued *job.Job
 	err := h.Migration.StartScan(ctx, req.File.File, opts, func(ctx context.Context, upload string) (string, error) {
 		params, err := json.Marshal(job.MigrationScanParams{Upload: upload})
@@ -94,7 +94,7 @@ func (h *Handler) StartMigrationDeviceScan(ctx context.Context, req *apiv1.Start
 	if req == nil || req.Device == "" {
 		return nil, &apiError{code: "invalid_flash_device", statusCode: 400, message: "the device is required"}
 	}
-	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false)}
+	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false), FullChecksums: req.FullChecksums.Or(false)}
 	var queued *job.Job
 	err := h.Migration.StartDeviceScan(ctx, req.Device, opts, func(ctx context.Context, scan string) (string, error) {
 		params, err := json.Marshal(job.MigrationScanParams{Upload: scan})

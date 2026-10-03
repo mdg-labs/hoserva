@@ -35101,11 +35101,18 @@ func (s *StartMigrationDeviceScanReq) encodeFields(e *jx.Encoder) {
 			s.UnverifiedLayout.Encode(e)
 		}
 	}
+	{
+		if s.FullChecksums.Set {
+			e.FieldStart("fullChecksums")
+			s.FullChecksums.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfStartMigrationDeviceScanReq = [2]string{
+var jsonFieldsNameOfStartMigrationDeviceScanReq = [3]string{
 	0: "device",
 	1: "unverifiedLayout",
+	2: "fullChecksums",
 }
 
 // Decode decodes StartMigrationDeviceScanReq from json.
@@ -35138,6 +35145,16 @@ func (s *StartMigrationDeviceScanReq) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"unverifiedLayout\"")
+			}
+		case "fullChecksums":
+			if err := func() error {
+				s.FullChecksums.Reset()
+				if err := s.FullChecksums.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"fullChecksums\"")
 			}
 		default:
 			return d.Skip()

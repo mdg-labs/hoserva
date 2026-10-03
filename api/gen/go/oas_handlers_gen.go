@@ -32487,7 +32487,14 @@ func (s *Server) handleStartMigrationDeviceScanRequest(args [0]string, argsEscap
 // unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
 // `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
 // layout refusal; the override is recorded in the report and printed at its top. The scan reads the
-// disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+// disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every
+// data disk the capture records, through a read-only mount at a private mountpoint under the daemon's
+// state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk
+// that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the
+// report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as
+// the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is
+// written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed
+// or was cancelled. The job reports its progress and can be cancelled.
 //
 // POST /migrate/scan
 func (s *Server) handleStartMigrationScanRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

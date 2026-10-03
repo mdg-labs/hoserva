@@ -15,8 +15,9 @@ import (
 
 // ReadOnlyMounter mounts a filesystem so that nothing Hoserva does can write to
 // it, for a device that is the user's rollback or backup and not Hoserva's to
-// change: the Unraid USB stick (doc 05 §3, Q25). It is not the external-disk
-// path (external.go), which mounts read-write for containers.
+// change: the Unraid USB stick (doc 05 §3, Q25) and the Unraid data disks the
+// scan reads. It is not the external-disk path (external.go), which mounts
+// read-write for containers.
 //
 // A mount is judged from the kernel's mount table, never from the exit status
 // of the command that made it: MountReadOnly returns nil only once the table
@@ -48,8 +49,17 @@ var ErrReadOnlyMount = errors.New("disk: read-only mount")
 // FAT's long names are read as UTF-8 whatever the kernel's default character
 // set is, so a name with an accent is the one the zip of the same flash holds.
 // A type that is not here is refused rather than mounted with a guess.
+//
+// A source data disk is mounted without replaying its journal: a plain ro mount
+// of XFS still recovers the log and rewrites the superblock (norecovery stops
+// it, doc 08 §2), and ext4's journal is replayed on a ro mount unless it is not
+// loaded (noload). btrfs replays a pending tree log on a plain ro mount too, so
+// it is mounted with rescue=nologreplay, which stops that.
 var readOnlyOptions = map[string]string{
-	"vfat": "ro,noatime,nodiratime,nosuid,nodev,noexec,utf8=1",
+	"vfat":  "ro,noatime,nodiratime,nosuid,nodev,noexec,utf8=1",
+	"xfs":   "ro,norecovery,noatime,nodiratime,nosuid,nodev,noexec",
+	"ext4":  "ro,noload,noatime,nodiratime,nosuid,nodev,noexec",
+	"btrfs": "ro,rescue=nologreplay,noatime,nodiratime,nosuid,nodev,noexec",
 }
 
 // KernelReadOnlyMounter is the real ReadOnlyMounter: mount(8) and umount(8) as

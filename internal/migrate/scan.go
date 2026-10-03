@@ -32,6 +32,13 @@ type ScanOptions struct {
 	// UnverifiedLayout lets a version or layout outside the allowlist through,
 	// recorded in the report.
 	UnverifiedLayout bool
+	// FullChecksums hashes every file of every data disk for the baseline,
+	// instead of the default sample (doc 05 §3). It takes much longer.
+	FullChecksums bool
+	// Progress, when set, is told how far the scan has got, as a percentage of
+	// the whole, with a line for the job's log. It is a hook of this run and is
+	// never persisted.
+	Progress func(pct int, line string)
 }
 
 // Scanner runs the pre-flight checks of doc 05 §3 that this part of the scan
@@ -43,6 +50,18 @@ type Scanner struct {
 	// from the config of one that no longer exists. Nil means the scan does not
 	// read the disks' contents.
 	Dirs DiskDirs
+	// Runner runs the read-only filesystem checks of the data disks. Runner,
+	// Mounter and Dir are all needed to check and read them: with any missing
+	// the scan says it did not.
+	Runner disk.Runner
+	// Mounter mounts a data disk read-only to read it.
+	Mounter disk.ReadOnlyMounter
+	// Dir is the session's directory: the private mountpoints are under it, and
+	// so are the baseline file and the scratch space a scan uses.
+	Dir string
+	// FreeSpace returns the bytes free on the filesystem at path. Nil asks the
+	// system.
+	FreeSpace func(path string) (int64, error)
 	// UIDOwner returns the account holding uid on this host, or "" when it is
 	// free. Nil asks the system's user database.
 	UIDOwner func(uid int) (string, error)
@@ -106,6 +125,20 @@ type member struct {
 	unraid  int64 // size Unraid recorded, in bytes; 0 when unknown
 	disk    *disk.Disk
 	problem string // why disk is nil
+
+	// slotFs is the filesystem disks.ini records for the slot.
+	slotFs string
+	// fs is the filesystem a data disk is adopted as, set once its filesystem
+	// passed; refusal says why it is not adopted instead.
+	fs      disk.FilesystemType
+	refusal string
+	// free is the space free on the data disk, when the scan mounted it.
+	free      int64
+	freeKnown bool
+	// dirs are the names of the top-level directories read from the mounted
+	// data disk, when dirsRead.
+	dirs     []string
+	dirsRead bool
 }
 
 // Scan runs every check against the source and the machine's disks, and returns
@@ -142,9 +175,15 @@ func (s *Scanner) Scan(ctx context.Context, src FlashSource, opts ScanOptions) (
 	}
 	s.checkUID(r)
 	checkSyncEstimate(r, f, members)
+	opts.progress(1, "reading the data disks, read-only")
+	if err := s.checkDataDisks(ctx, r, f, members, disks, opts); err != nil {
+		return nil, err
+	}
+	s.checkContentSpace(r, f, members)
 	if err := s.inventory(ctx, r, src, f, members, r.GeneratedAt); err != nil {
 		return nil, err
 	}
+	opts.progress(100, "scan finished")
 	r.conclude()
 	return r, nil
 }
@@ -180,7 +219,7 @@ func buildMembers(f *Flash, disks []disk.Disk) []*member {
 		if (role != RoleParity && role != RoleData) || !sl.Assigned() {
 			continue
 		}
-		out = append(out, &member{subject: sl.Name, role: role, id: sl.ID, index: sl.Index, unraid: sl.SizeKiB * 1024})
+		out = append(out, &member{subject: sl.Name, role: role, id: sl.ID, index: sl.Index, unraid: sl.SizeKiB * 1024, slotFs: sl.FsType})
 	}
 	for _, p := range f.Pools {
 		out = append(out, &member{subject: "pool " + p.Pool, role: RoleCache, id: p.ID})
@@ -233,6 +272,14 @@ func idMatches(id string, d disk.Disk) bool {
 }
 
 func checkBoot(r *Report, f *Flash, disks []disk.Disk) {
+	for _, d := range disks {
+		switch {
+		case d.UnraidBoot:
+			r.add(CheckBootDevice, StatusInfo, d.Device, "Unraid boot device: %s carries the partition layout of Unraid 7.3's internal boot (BIOS Boot, EFI System and Unraid Boot partitions, then a data partition). It is left alone: never adopted, and its ZFS boot pool is not refused as a ZFS data disk (Q23).", d.Device)
+		case disk.IsUnraidStick(d):
+			r.add(CheckBootDevice, StatusInfo, d.Device, "Unraid boot device: %s is a FAT filesystem labelled %s, the Unraid USB stick. It is left alone: never adopted, never written, and the rollback.", d.Device, disk.UnraidStickLabel)
+		}
+	}
 	if f.Capture == nil || f.Capture.Boot.Mode == "" {
 		r.add(CheckBootDevice, StatusWarn, "", "The boot mode is unknown: the capture does not say whether Unraid boots from a USB stick or an internal device.")
 		return

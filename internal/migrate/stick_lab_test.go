@@ -400,6 +400,16 @@ func TestLabStick_ScanNeverWritesTheStick(t *testing.T) {
 		t.Fatal(err)
 	}
 	fromZip, _ := zipSvc.State(ctx)
+	// The scan reports the stick itself as an Unraid boot device, which only
+	// the stick's machine has; every other row is the zip's.
+	var rows []Row
+	for _, row := range fromStick.Report.Rows {
+		if row.Check == CheckBootDevice && row.Subject == dev {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	fromStick.Report.Rows = rows
 	if !reflect.DeepEqual(fromStick.Report, fromZip.Report) {
 		t.Errorf("the report read from the FAT stick differs from the zip's:\nstick %+v\nzip   %+v", fromStick.Report, fromZip.Report)
 	}

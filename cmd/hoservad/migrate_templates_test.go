@@ -19,7 +19,7 @@ func TestMigrationWiring_TemplatePreviewsAreServedFromTheScan(t *testing.T) {
 	w := newContainersWiringHarness(t)
 	disks := disk.NewFakeProvider()
 	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "WIREDSERIAL", Size: 1 << 40})
-	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	if status, body := w.do(t, http.MethodGet, "/migrate/templates"); status != http.StatusNotFound || !strings.Contains(string(body), "no_migration_report") {

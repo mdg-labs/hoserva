@@ -24,7 +24,7 @@ func migrateCmd() *cobra.Command {
 
 func migrateScanCmd() *cobra.Command {
 	var zipPath, device string
-	var unverified bool
+	var unverified, fullChecksums bool
 	cmd := &cobra.Command{
 		Use:   "scan (--flash-backup <zip> | --flash-device <device>)",
 		Short: "Scan an Unraid Flash Backup or the Unraid USB stick and print the go / no-go report",
@@ -32,7 +32,12 @@ func migrateScanCmd() *cobra.Command {
 			"(--flash-device /dev/sdX, one of the devices `hoserva migrate status` lists), matches Unraid's disks to this machine's, " +
 			"runs the pre-flight checks and prints the written report. Nothing is written to a disk, to the zip or to the stick: the stick " +
 			"is mounted read-only for the scan and unmounted again, and nothing is copied from it. An Unraid version or flash layout " +
-			"Hoserva has not been verified against is refused unless --unverified-layout is given, and the report says so.",
+			"Hoserva has not been verified against is refused unless --unverified-layout is given, and the report says so. " +
+			"The scan also reads every data disk the capture records, each through a read-only mount after its read-only filesystem " +
+			"check: a disk that fails is refused by name and the scan goes on. It lists every file and hashes every file of 1 MiB or " +
+			"less plus a deterministic sample of the larger ones (--full-checksums hashes them all, which takes much longer) as the " +
+			"baseline the verify phase compares against. It can take hours on a full array; Ctrl-C stops waiting and the scan " +
+			"keeps running as a job, which the API's cancelJob operation stops.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("flash-device") && device == "" {
@@ -48,10 +53,13 @@ func migrateScanCmd() *cobra.Command {
 				if unverified {
 					req.UnverifiedLayout = apiv1.NewOptBool(true)
 				}
+				if fullChecksums {
+					req.FullChecksums = apiv1.NewOptBool(true)
+				}
 				if j, err = c.StartMigrationDeviceScan(apiCtx(), req); err != nil {
 					return mapAPIErr(err)
 				}
-			} else if j, err = uploadFlashBackup(zipPath, unverified); err != nil {
+			} else if j, err = uploadFlashBackup(zipPath, unverified, fullChecksums); err != nil {
 				return err
 			}
 			ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
@@ -86,12 +94,13 @@ func migrateScanCmd() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("flash-backup", "flash-device")
 	cmd.MarkFlagsOneRequired("flash-backup", "flash-device")
 	cmd.Flags().BoolVar(&unverified, "unverified-layout", false, "Scan an Unraid version or flash layout Hoserva has not been verified against; the override is recorded in the report")
+	cmd.Flags().BoolVar(&fullChecksums, "full-checksums", false, "Hash every file of every data disk for the verify baseline, not only a sample; it takes much longer")
 	return cmd
 }
 
 // uploadFlashBackup sends the zip at zipPath to the daemon and returns the scan
 // job it queued.
-func uploadFlashBackup(zipPath string, unverified bool) (*apiv1.Job, error) {
+func uploadFlashBackup(zipPath string, unverified, fullChecksums bool) (*apiv1.Job, error) {
 	f, err := os.Open(zipPath)
 	if err != nil {
 		return nil, err
@@ -111,6 +120,9 @@ func uploadFlashBackup(zipPath string, unverified bool) (*apiv1.Job, error) {
 	req := &apiv1.StartMigrationScanReq{File: ht.MultipartFile{Name: filepath.Base(zipPath), File: f, Size: st.Size()}}
 	if unverified {
 		req.UnverifiedLayout = apiv1.NewOptBool(true)
+	}
+	if fullChecksums {
+		req.FullChecksums = apiv1.NewOptBool(true)
 	}
 	j, err := uploader.StartMigrationScan(apiCtx(), req)
 	if err != nil {

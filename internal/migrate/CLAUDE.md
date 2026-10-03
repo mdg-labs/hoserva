@@ -87,3 +87,25 @@ implementation of this package loses a user's data.
   found", never as none or off, and a config is called an orphan only when every
   disk it could be on was matched and listed: keeping an orphan is cheaper than
   dropping a real share.
+- **The data disks are only ever read, mounted read-only through
+  `disk.ReadOnlyMounter`, and only after their read-only check.** Only the slots
+  `disks.ini` records as data are checked; a parity slot is never mounted or
+  checked, whatever its device reports. A disk that fails a check or a filesystem
+  rule is refused by name and the scan goes on with the others; a disk that cannot
+  be read completely is refused, never recorded with a hole in it. The mounts are
+  at private mountpoints under `<Dir>/mnt`, one at a time, XFS with `norecovery`
+  (a plain `ro` mount writes the superblock and the log), ext4 with `noload` and
+  btrfs with `rescue=nologreplay`. A btrfs disk with a pending tree log
+  (`log_root`) and an ext4 disk with `needs_recovery` are refused before any mount
+  (`pendingLog`, from the superblock), and a `DiskReader` does not read such a
+  device or one it cannot inspect. Every mount is released before the scan ends, whether it succeeded, failed or
+  was cancelled; a mount that cannot be released fails the scan. Nothing under
+  `<Dir>/mnt` is ever deleted or recursed into by cleanup. Scratch space is a
+  separate `tmp-*` directory.
+- **The verify baseline is a file the session's row names, not a table.** It
+  holds a row per file, which on a real array is millions, and a config archive
+  must not carry it. It is written under a name no reader opens and published
+  only once the scan reached its end, so a failed or cancelled scan leaves no
+  baseline and a reader never takes a cut-short one for whole (`OpenBaseline`
+  needs its header and trailer). The row is written before a baseline file it no
+  longer names is pruned. A name the row gives is never trusted as a path.

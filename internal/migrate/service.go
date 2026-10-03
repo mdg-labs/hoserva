@@ -57,6 +57,7 @@ type scanRecord struct {
 	Size             int64
 	ReceivedAt       time.Time
 	UnverifiedLayout bool
+	FullChecksums    bool
 	Error            string
 }
 
@@ -148,7 +149,7 @@ func (s *Service) load(ctx context.Context) (*session, error) {
 		}
 	}
 	if row.ScanFile != "" {
-		sess.Scan = &scanRecord{File: row.ScanFile, Size: row.ScanSize, ReceivedAt: row.ScanReceivedAt, UnverifiedLayout: row.ScanUnverifiedLayout, Error: row.ScanError}
+		sess.Scan = &scanRecord{File: row.ScanFile, Size: row.ScanSize, ReceivedAt: row.ScanReceivedAt, UnverifiedLayout: row.ScanUnverifiedLayout, FullChecksums: row.ScanFullChecksums, Error: row.ScanError}
 	}
 	return sess, nil
 }
@@ -170,7 +171,7 @@ func (s *Service) save(ctx context.Context, sess *session) error {
 		row.Report = data
 	}
 	if sc := sess.Scan; sc != nil {
-		row.ScanFile, row.ScanSize, row.ScanReceivedAt, row.ScanUnverifiedLayout, row.ScanError = sc.File, sc.Size, sc.ReceivedAt, sc.UnverifiedLayout, sc.Error
+		row.ScanFile, row.ScanSize, row.ScanReceivedAt, row.ScanUnverifiedLayout, row.ScanFullChecksums, row.ScanError = sc.File, sc.Size, sc.ReceivedAt, sc.UnverifiedLayout, sc.FullChecksums, sc.Error
 	}
 	return s.Sessions.Put(ctx, row)
 }
@@ -216,8 +217,9 @@ func (s *Service) ensureDir() error {
 	return os.Chmod(s.Dir, 0o700)
 }
 
-// prune removes every zip in Dir the session does not name: an upload that was
-// refused, a source a newer scan replaced, or one a crash left behind.
+// prune removes every zip and baseline file in Dir the session does not name: an
+// upload that was refused, a source or baseline a newer scan replaced, or one a
+// crash left behind.
 func (s *Service) prune(sess *session) error {
 	keep := map[string]bool{}
 	if sess.Source != nil {
@@ -226,13 +228,16 @@ func (s *Service) prune(sess *session) error {
 	if sess.Scan != nil {
 		keep[sess.Scan.File] = true
 	}
+	if sess.Report != nil && sess.Report.Baseline != nil {
+		keep[sess.Report.Baseline.File] = true
+	}
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), uploadPrefix) && !keep[e.Name()] {
+		if (strings.HasPrefix(e.Name(), uploadPrefix) || strings.HasPrefix(e.Name(), baselinePrefix)) && !keep[e.Name()] {
 			if err := os.Remove(s.path(e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				errs = append(errs, err)
 			}
@@ -280,14 +285,30 @@ func (s *Service) Recover(ctx context.Context) error {
 		}
 	}
 	s.recoverStick(ctx)
+	s.recoverDiskMounts(ctx)
 	if err := s.removeStaging(); err != nil {
 		return err
 	}
 	return s.prune(sess)
 }
 
-// removeStaging removes the uploads a previous process was still receiving.
-// Only Recover calls it: at any other time a staging file is a live upload.
+// recoverDiskMounts runs at start: a source disk mounted at one of the private
+// mountpoints is a mount of an earlier process, and is released. One that stays
+// does not stop the zip scans, only the next disk read, which refuses until it is
+// gone.
+func (s *Service) recoverDiskMounts(ctx context.Context) {
+	if s.Mounter == nil {
+		return
+	}
+	if err := releaseMounts(ctx, s.Mounter, s.Dir); err != nil {
+		log.Printf("migrate: %v", err)
+	}
+}
+
+// removeStaging removes the uploads a previous process was still receiving and
+// the scratch space and baseline file of a scan it was still running. Only
+// Recover calls it: at any other time they belong to a live upload or scan. A
+// scratch directory never holds a mount: the mountpoints are under mnt/.
 func (s *Service) removeStaging() error {
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
@@ -295,13 +316,39 @@ func (s *Service) removeStaging() error {
 	}
 	var errs []error
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), stagingPrefix) {
+		switch {
+		case strings.HasPrefix(e.Name(), stagingPrefix):
 			if err := os.Remove(s.path(e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, err)
+			}
+		case strings.HasPrefix(e.Name(), tmpPrefix):
+			if err := os.RemoveAll(s.path(e.Name())); err != nil {
 				errs = append(errs, err)
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// OpenBaseline opens the baseline the session's latest report was made with, for
+// the verify phase. It returns ErrNoBaseline when the session has none, or when
+// its file is not on this machine, as after a config import of another
+// installation's archive.
+func (s *Service) OpenBaseline(ctx context.Context) (*BaselineReader, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, err := s.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if sess.Report == nil || sess.Report.Baseline == nil {
+		return nil, ErrNoBaseline
+	}
+	name := sess.Report.Baseline.File
+	if name == "" || filepath.Base(name) != name || !strings.HasPrefix(name, baselinePrefix) {
+		return nil, fmt.Errorf("%w: the session names %q", ErrNoBaseline, name)
+	}
+	return OpenBaseline(s.path(name))
 }
 
 // StartScan stages the upload, refuses it unless it is a usable Flash Backup,
@@ -353,7 +400,7 @@ func (s *Service) StartScan(ctx context.Context, upload io.Reader, opts ScanOpti
 		return fmt.Errorf("staging the upload: %w", err)
 	}
 
-	rec := &scanRecord{File: name, Size: size, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout}
+	rec := &scanRecord{File: name, Size: size, ReceivedAt: time.Now().UTC(), UnverifiedLayout: opts.UnverifiedLayout, FullChecksums: opts.FullChecksums}
 	if err := s.queue(ctx, sess, rec, submit); err != nil {
 		return err
 	}
@@ -465,7 +512,7 @@ func (s *Service) RunScan(ctx context.Context, out io.Writer, upload string) err
 		return err
 	}
 
-	report, err := s.scan(ctx, rec)
+	report, err := s.scan(withLog(ctx, out), rec)
 	if err != nil {
 		if rerr := s.recordFailure(ctx, upload, err); rerr != nil {
 			return errors.Join(err, fmt.Errorf("recording the failure: %w", rerr))
@@ -482,6 +529,40 @@ func (s *Service) RunScan(ctx context.Context, out io.Writer, upload string) err
 	return nil
 }
 
+type progressKey struct{}
+type logKey struct{}
+
+// WithProgress returns a context in which a scan run through it reports its
+// progress, as a percentage of the whole, to fn. It is called when the
+// percentage changes.
+func WithProgress(ctx context.Context, fn func(pct int)) context.Context {
+	return context.WithValue(ctx, progressKey{}, fn)
+}
+
+func withLog(ctx context.Context, out io.Writer) context.Context {
+	return context.WithValue(ctx, logKey{}, out)
+}
+
+// options are the scan options the record stands for, with the progress hook the
+// context carries: each line goes to the job's log and each new percentage to the
+// job.
+func (rec scanRecord) options(ctx context.Context) ScanOptions {
+	opts := ScanOptions{UnverifiedLayout: rec.UnverifiedLayout, FullChecksums: rec.FullChecksums}
+	out, _ := ctx.Value(logKey{}).(io.Writer)
+	pct, _ := ctx.Value(progressKey{}).(func(int))
+	last := -1
+	opts.Progress = func(p int, line string) {
+		if out != nil && line != "" {
+			_, _ = fmt.Fprintln(out, line)
+		}
+		if pct != nil && p != last {
+			last = p
+			pct(p)
+		}
+	}
+	return opts
+}
+
 func (s *Service) scan(ctx context.Context, rec scanRecord) (*Report, error) {
 	if isDeviceScan(rec.File) {
 		return s.scanDevice(ctx, rec)
@@ -491,7 +572,7 @@ func (s *Service) scan(ctx context.Context, rec scanRecord) (*Report, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return s.Scanner.Scan(ctx, src, ScanOptions{UnverifiedLayout: rec.UnverifiedLayout})
+	return s.Scanner.Scan(ctx, src, rec.options(ctx))
 }
 
 // commit makes the finished scan the session's source in one write of the row;

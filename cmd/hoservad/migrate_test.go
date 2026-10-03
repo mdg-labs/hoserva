@@ -150,7 +150,7 @@ func TestMigrationWiring_ScanIsReachableOverHTTP(t *testing.T) {
 	w := newContainersWiringHarness(t)
 	disks := disk.NewFakeProvider()
 	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "WIREDSERIAL", Size: 1 << 40})
-	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,11 +233,9 @@ func TestMigrationWiring_ScanIsReachableOverHTTP(t *testing.T) {
 // in GET /migrate and the document GET /migrate/report downloads.
 func TestMigrationWiring_TheConfigurationInventoryIsInTheServedReport(t *testing.T) {
 	w := newContainersWiringHarness(t)
-	disks := disk.NewFakeProvider()
-	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "WIREDSERIAL", Size: 1 << 40})
-	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
-		t.Fatal(err)
-	}
+	wireDataDisk(t, w, func(where string) error {
+		return writeFiles(where, map[string]string{"media/a": "a", "backup/b": "b"})
+	})
 	inspect := func(name, label string) string {
 		return `{"Name":"/` + name + `","State":{"Status":"running","Running":true},"Config":{"Labels":{` + label + `}}}`
 	}
@@ -335,7 +333,7 @@ func TestMigrationWiring_AScanLeftRunningByThePreviousProcessIsFailedAtStart(t *
 	if err := sessions.Put(context.Background(), store.MigrationSession{ScanFile: "upload-x.zip", ScanSize: 3, ScanReceivedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), sessions, root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), sessions, root); err != nil {
 		t.Fatal(err)
 	}
 	status, body := w.do(t, http.MethodGet, "/migrate")
@@ -345,9 +343,11 @@ func TestMigrationWiring_AScanLeftRunningByThePreviousProcessIsFailedAtStart(t *
 }
 
 // main.go must call wireMigration with the real disk provider, the real
-// read-only mounter, the database and the state directory: a handler nobody
-// wires answers 501 to every migrate operation, and a mounter that is not the
-// read-only one would mount the Unraid stick read-write.
+// read-only mounter, the command runner the filesystem checks go through, the
+// database and the state directory: a handler nobody wires answers 501 to every
+// migrate operation, a mounter that is not the read-only one would mount the
+// Unraid stick and the data disks read-write, and a scan without a runner checks
+// no disk.
 func TestMain_WiresTheMigrator(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
 	if err != nil {
@@ -359,12 +359,13 @@ func TestMain_WiresTheMigrator(t *testing.T) {
 		if !ok {
 			return true
 		}
-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "wireMigration" && len(call.Args) == 7 {
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "wireMigration" && len(call.Args) == 8 {
 			disks, okDisks := call.Args[3].(*ast.Ident)
 			mounter, okMounter := call.Args[4].(*ast.CompositeLit)
-			sessions, okSessions := call.Args[5].(*ast.CallExpr)
-			dir, okDir := call.Args[6].(*ast.Ident)
-			if okDisks && okMounter && okSessions && okDir && disks.Name == "disks" && dir.Name == "absStateDir" {
+			runner, okRunner := call.Args[5].(*ast.SelectorExpr)
+			sessions, okSessions := call.Args[6].(*ast.CallExpr)
+			dir, okDir := call.Args[7].(*ast.Ident)
+			if okDisks && okMounter && okRunner && okSessions && okDir && disks.Name == "disks" && dir.Name == "absStateDir" && runner.Sel.Name == "Exec" {
 				sel, okSel := mounter.Type.(*ast.SelectorExpr)
 				if sessSel, ok := sessions.Fun.(*ast.SelectorExpr); ok && okSel && sel.Sel.Name == "KernelReadOnlyMounter" && sessSel.Sel.Name == "NewMigrationSessionStore" {
 					found = true
@@ -374,7 +375,7 @@ func TestMain_WiresTheMigrator(t *testing.T) {
 		return true
 	})
 	if !found {
-		t.Fatal("main.go does not call wireMigration(ctx, handler, registry, disks, disk.KernelReadOnlyMounter{...}, store.NewMigrationSessionStore(db), absStateDir)")
+		t.Fatal("main.go does not call wireMigration(ctx, handler, registry, disks, disk.KernelReadOnlyMounter{...}, linuxDisks.Exec, store.NewMigrationSessionStore(db), absStateDir)")
 	}
 }
 
@@ -425,7 +426,7 @@ func TestMigrationZipIsNeverInAConfigArchive(t *testing.T) {
 // held to: the upload goes through the daemon's own body limit.
 func TestMigrationWiring_AScanUploadLargerThanTheGeneralBodyLimitIsAccepted(t *testing.T) {
 	w := newContainersWiringHarness(t)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	data := paddedFlashBackupZip(t, "7.3.2", 8<<20)
@@ -454,7 +455,7 @@ func TestMigrationWiring_AScanUploadLargerThanTheGeneralBodyLimitIsAccepted(t *t
 // zip_too_large, and the ordinary limit still holds for every other operation.
 func TestMigrationWiring_AScanUploadPastItsBodyLimitIsRefusedAsTooLarge(t *testing.T) {
 	w := newContainersWiringHarness(t)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	server, err := apiv1.NewServer(w.handler, api.TrustedSecurityHandler{}, apiv1.WithPathPrefix(apiPathPrefix), apiv1.WithErrorHandler(decodeError))
@@ -510,7 +511,7 @@ func TestMigrationWiring_AScanUploadPastItsBodyLimitIsRefusedAsTooLarge(t *testi
 // unauthenticated caller.
 func TestMigrationWiring_AnUnauthenticatedScanUploadIsRefusedBeforeItsBodyIsRead(t *testing.T) {
 	w := newContainersWiringHarness(t)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	server, err := apiv1.NewServer(w.handler, &api.SessionSecurityHandler{}, apiv1.WithPathPrefix(apiPathPrefix), apiv1.WithErrorHandler(decodeError))
@@ -604,7 +605,7 @@ func queueScanBehindAScrub(t *testing.T, w *containersWiringHarness) (scanID str
 // zip it holds can be forgotten and a new scan started.
 func TestMigrationWiring_ACancelledQueuedScanIsFailedAndCanBeForgottenAndRepeated(t *testing.T) {
 	w := newContainersWiringHarness(t)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	scanID, release := queueScanBehindAScrub(t, w)
@@ -643,7 +644,7 @@ func TestMigrationWiring_ACancelledQueuedScanIsFailedAndCanBeForgottenAndRepeate
 // is failed, not stuck.
 func TestMigrationWiring_AQueuedScanDroppedByMaintenanceIsFailedAndCanBeForgottenAndRepeated(t *testing.T) {
 	w := newContainersWiringHarness(t)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	scanID, _ := queueScanBehindAScrub(t, w)
@@ -717,7 +718,7 @@ func wireStick(t *testing.T, w *containersWiringHarness, version string) *disk.F
 		return nil
 	}
 	w.handler.ArrayStore = w.arrays
-	if err := wireMigration(context.Background(), w.handler, w.registry, disks, mounter, store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disks, mounter, disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	return mounter
@@ -861,7 +862,7 @@ func TestMigrationWiring_AStickMountLeftByThePreviousProcessIsReleasedAtStart(t 
 		t.Fatal(err)
 	}
 	mounter.SetMounted(where)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), mounter, store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), mounter, disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	if got := mounter.MountedPaths(); len(got) != 0 {

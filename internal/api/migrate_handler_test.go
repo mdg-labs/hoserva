@@ -159,6 +159,55 @@ func TestHandler_StartMigrationScan_RunsAScanAndServesItsReport(t *testing.T) {
 	}
 }
 
+// fullChecksums reaches the job through the session row: the scan's baseline
+// says whether every file was hashed.
+func TestHandler_StartMigrationScan_FullChecksumsReachTheJob(t *testing.T) {
+	h, _, registry := newTestHandler(t)
+	disks := disk.NewFakeProvider()
+	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "PARITYSERIAL", Size: 2 << 40})
+	disks.AddDisk("/dev/sdc", disk.Disk{Serial: "DATASERIAL", Size: 1 << 40, Filesystem: "xfs", FSDevice: "/dev/sdc1", FSUUID: "11111111-2222-4333-8444-555555555555"})
+	mounter := disk.NewFakeReadOnlyMounter()
+	mounter.OnMount = func(where string) error {
+		if err := os.MkdirAll(filepath.Join(where, "media"), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(where, "media", "a"), []byte("a"), 0o644)
+	}
+	dir := filepath.Join(t.TempDir(), "migrate")
+	svc := &migrate.Service{
+		Dir: dir,
+		Scanner: &migrate.Scanner{
+			Disks: disks, Runner: disk.NewFakeRunner(), Mounter: mounter, Dir: dir,
+			UIDOwner: func(int) (string, error) { return "", nil },
+		},
+		Sessions: store.NewMigrationSessionStore(openTestDB(t)),
+	}
+	h.Migration = svc
+	registry.Register(job.TypeMigrationScan, true, job.RunMigrationScan(svc.RunScan))
+	ctx := context.Background()
+
+	for _, full := range []bool{false, true} {
+		req := scanRequest(flashZip(t, "7.3.2", nil), false)
+		if full {
+			req.FullChecksums = apiv1.NewOptBool(true)
+		}
+		j, err := h.StartMigrationScan(ctx, req)
+		if err != nil {
+			t.Fatalf("StartMigrationScan: %v", err)
+		}
+		if done, err := h.Scheduler.Await(ctx, j.ID.String()); err != nil || done.Status != job.StatusSucceeded {
+			t.Fatalf("the scan = %+v, %v", done, err)
+		}
+		st, err := svc.State(ctx)
+		if err != nil || st.Report == nil || st.Report.Baseline == nil {
+			t.Fatalf("State = %+v, %v; want a report with its baseline", st, err)
+		}
+		if st.Report.Baseline.Rule.Full != full {
+			t.Errorf("fullChecksums %v: the baseline's rule is %+v", full, st.Report.Baseline.Rule)
+		}
+	}
+}
+
 func TestHandler_StartMigrationScan_RefusalsQueueNothingAndKeepNothing(t *testing.T) {
 	cases := map[string]struct {
 		req    func(t *testing.T) *apiv1.StartMigrationScanReq

@@ -24,6 +24,7 @@ type MigrationSession struct {
 	ScanSize             int64
 	ScanReceivedAt       time.Time
 	ScanUnverifiedLayout bool
+	ScanFullChecksums    bool
 	ScanError            string
 }
 
@@ -72,7 +73,7 @@ func (s *MigrationSessionStore) Get(ctx context.Context) (MigrationSession, bool
 	m := MigrationSession{
 		SourceFile: row.SourceFile, SourceSize: row.SourceSize, SourceReceivedAt: received,
 		ScanFile: row.ScanFile, ScanSize: row.ScanSize, ScanReceivedAt: scanReceived,
-		ScanUnverifiedLayout: row.ScanUnverifiedLayout != 0, ScanError: row.ScanError,
+		ScanUnverifiedLayout: row.ScanUnverifiedLayout != 0, ScanFullChecksums: row.ScanFullChecksums != 0, ScanError: row.ScanError,
 	}
 	if row.Report != "" {
 		m.Report = []byte(row.Report)
@@ -92,6 +93,7 @@ func (s *MigrationSessionStore) Put(ctx context.Context, m MigrationSession) err
 		ScanReceivedAt:       formatOptionalTime(m.ScanReceivedAt),
 		ScanUnverifiedLayout: boolInt(m.ScanUnverifiedLayout),
 		ScanError:            m.ScanError,
+		ScanFullChecksums:    boolInt(m.ScanFullChecksums),
 	})
 	if err != nil {
 		return fmt.Errorf("store: saving the migration session: %w", err)

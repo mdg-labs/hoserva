@@ -210,6 +210,7 @@ type MigrationSession struct {
 	ScanReceivedAt       string `json:"scan_received_at"`
 	ScanUnverifiedLayout int64  `json:"scan_unverified_layout"`
 	ScanError            string `json:"scan_error"`
+	ScanFullChecksums    int64  `json:"scan_full_checksums"`
 }
 
 type MoverRunResult struct {
