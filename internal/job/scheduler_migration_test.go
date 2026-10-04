@@ -242,3 +242,110 @@ func TestScheduler_EndsARefusedQueuedJobCancelledWhenCancelledDuringItsAbort(t *
 		t.Errorf("queued job = %s after %d runs, want cancelled and never run", got.Status, h.ran.Load())
 	}
 }
+
+type interruptedResumable struct {
+	s       *Scheduler
+	job     *Job
+	pending atomic.Bool
+	checkFn atomic.Pointer[func(context.Context) (bool, error)]
+	ran     atomic.Int32
+}
+
+func resumableParams(typ Type) []byte {
+	if typ == TypeShareRelocation {
+		return []byte(`{"share":"media","to":"array"}`)
+	}
+	return nil
+}
+
+func newInterruptedResumable(t *testing.T, typ Type) *interruptedResumable {
+	t.Helper()
+	h := &interruptedResumable{s: newTestScheduler(t)}
+	h.s.registry.Register(typ, false, func(context.Context, *RunContext) error {
+		h.ran.Add(1)
+		return nil
+	})
+	h.s.SetMigrationPending(func(ctx context.Context) (bool, error) {
+		if fn := h.checkFn.Load(); fn != nil {
+			return (*fn)(ctx)
+		}
+		return h.pending.Load(), nil
+	})
+
+	ctx := context.Background()
+	j, err := h.s.Submit(ctx, typ, nil, resumableParams(typ))
+	if err != nil {
+		t.Fatalf("submitting %s while nothing is pending: %v", typ, err)
+	}
+	waitSucceeded(t, h.s, j.ID)
+	if err := h.s.store.UpdateStatus(ctx, j.ID, StatusInterrupted, nil, "", "", nil, timePtr(time.Now().UTC())); err != nil {
+		t.Fatalf("marking the job interrupted: %v", err)
+	}
+	h.ran.Store(0)
+	h.job = j
+	return h
+}
+
+func (h *interruptedResumable) status(t *testing.T) Status {
+	t.Helper()
+	got, err := h.s.store.Get(context.Background(), h.job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got.Status
+}
+
+func TestScheduler_RefusesResumingAStorageJobWhileAMigrationIsPending(t *testing.T) {
+	for _, typ := range []Type{TypeMover, TypeShareRelocation} {
+		t.Run(string(typ), func(t *testing.T) {
+			h := newInterruptedResumable(t, typ)
+			h.pending.Store(true)
+
+			if _, err := h.s.Resume(context.Background(), h.job.ID); !errors.Is(err, ErrMigrationInProgress) {
+				t.Fatalf("Resume(%s) while a migration is pending = %v, want ErrMigrationInProgress", typ, err)
+			}
+			if got := h.status(t); got != StatusInterrupted {
+				t.Errorf("refused %s status = %s, want interrupted", typ, got)
+			}
+			if h.ran.Load() != 0 {
+				t.Errorf("%s ran %d times against the pending adoption", typ, h.ran.Load())
+			}
+			if blocking := h.s.BlockingStorageJob(); blocking != nil {
+				t.Errorf("a refused resume still blocks storage: %+v", blocking)
+			}
+		})
+	}
+}
+
+func TestScheduler_RefusesResumingAStorageJobWhenTheMigrationCheckFails(t *testing.T) {
+	h := newInterruptedResumable(t, TypeMover)
+	fn := func(context.Context) (bool, error) { return false, errors.New("injected: the database is gone") }
+	h.checkFn.Store(&fn)
+
+	_, err := h.s.Resume(context.Background(), h.job.ID)
+	if err == nil || errors.Is(err, ErrMigrationInProgress) || !strings.Contains(err.Error(), "injected: the database is gone") {
+		t.Fatalf("Resume with a failing migration check = %v, want the check's error", err)
+	}
+	if got := h.status(t); got != StatusInterrupted {
+		t.Errorf("refused job status = %s, want interrupted", got)
+	}
+	if h.ran.Load() != 0 {
+		t.Errorf("the job ran %d times although the check could not confirm nothing is pending", h.ran.Load())
+	}
+}
+
+func TestScheduler_ResumesAStorageJobWhenNoMigrationIsPending(t *testing.T) {
+	for _, typ := range []Type{TypeMover, TypeShareRelocation} {
+		t.Run(string(typ), func(t *testing.T) {
+			h := newInterruptedResumable(t, typ)
+
+			if _, err := h.s.Resume(context.Background(), h.job.ID); err != nil {
+				t.Fatalf("Resume(%s) with nothing pending: %v", typ, err)
+			}
+			waitSucceeded(t, h.s, h.job.ID)
+			if h.ran.Load() != 1 {
+				t.Errorf("%s ran %d times, want 1", typ, h.ran.Load())
+			}
+		})
+	}
+}

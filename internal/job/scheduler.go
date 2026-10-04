@@ -334,15 +334,16 @@ func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 }
 
 // SetMigrationPending sets the check made before a parity, array-write or
-// topology job is admitted and again before a queued one starts: while it
-// reports true the array is an Unraid import's adoption, mounted read-only with
-// parity and cache not yet formatted (doc 05 §4 steps 14-16), and only the
-// migration import's own retry is admitted. A check that fails refuses the job:
-// an unknown state is not "nothing pending". Submit makes the check
-// (admitLocked), and so does dispatch() for a job that waited in the queue,
-// because the import may have recorded its pending array while that job waited
-// behind it. Unset, nothing is refused. cmd/hoservad's main.go calls this once,
-// before any job can be submitted.
+// topology job is admitted, again before a queued one starts and before an
+// interrupted one resumes: while it reports true the array is an Unraid
+// import's adoption, mounted read-only with parity and cache not yet formatted
+// (doc 05 §4 steps 14-16), and only the migration import's own retry is
+// admitted. A check that fails refuses the job: an unknown state is not
+// "nothing pending". Submit makes the check (admitLocked), and so do dispatch()
+// for a job that waited in the queue and Resume (resumableJobLocked) for an
+// interrupted one, because the import may have recorded its pending array while
+// that job waited or after it was interrupted. Unset, nothing is refused.
+// cmd/hoservad's main.go calls this once, before any job can be submitted.
 func (s *Scheduler) SetMigrationPending(check func(ctx context.Context) (bool, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -351,8 +352,9 @@ func (s *Scheduler) SetMigrationPending(check func(ctx context.Context) (bool, e
 
 // admitMigrationLocked refuses a job that could write parity or the array, or
 // change its topology, while a migration is pending. Both admitLocked, for a
-// job being submitted, and dispatch(), for a queued job about to start, call
-// it. Callers must hold s.mu.
+// job being submitted, dispatch(), for a queued job about to start, and
+// resumableJobLocked, for an interrupted job being resumed, call it. Callers
+// must hold s.mu.
 func (s *Scheduler) admitMigrationLocked(ctx context.Context, t Type) error {
 	if s.migrationPending == nil || t == TypeMigrationImport {
 		return nil
@@ -882,8 +884,9 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 }
 
 // resumableJobLocked reads id's row and decides whether Resume may start
-// it now: every refusal Resume owns except the per-job in-flight markers.
-// The caller holds s.mu.
+// it now: every refusal Resume owns except the per-job in-flight markers,
+// including the migration gate (admitMigrationLocked) an interrupted
+// parity, array-write or topology job meets again here. The caller holds s.mu.
 func (s *Scheduler) resumableJobLocked(ctx context.Context, id string) (*Job, registryEntry, error) {
 	if s.databaseRestore {
 		return nil, registryEntry{}, ErrDatabaseRestoreInProgress
@@ -914,6 +917,9 @@ func (s *Scheduler) resumableJobLocked(ctx context.Context, id string) (*Job, re
 	}
 	if s.batteryHold && isBatteryHeldType(existing.Type) {
 		return nil, registryEntry{}, ErrOnBattery
+	}
+	if err := s.admitMigrationLocked(ctx, existing.Type); err != nil {
+		return nil, registryEntry{}, err
 	}
 	return existing, entry, nil
 }
