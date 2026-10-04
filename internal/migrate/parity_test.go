@@ -324,3 +324,34 @@ func TestRollbackNotes_StateTheLayoutThePlanGave(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckBootCacheNotMirrored_ACachePartitionWhoseDiskCannotBeIdentifiedIsRefused(t *testing.T) {
+	no := false
+	review := &Review{Boot: ReviewBoot{Mode: "internal", Mirrored: &no}}
+	plan := func(serial string) disk.AdoptionPlan {
+		return disk.AdoptionPlan{Cache: &disk.RecordedDisk{AssignedDisk: disk.AssignedDisk{
+			Device: "/dev/nvme0n1p4", ByIDName: "nvme-EX_" + serial + "-part4", Serial: serial,
+		}}}
+	}
+	disks := func(serials ...string) []disk.Disk {
+		var out []disk.Disk
+		for _, s := range serials {
+			out = append(out, disk.Disk{Device: "/dev/" + s, Serial: s, UnraidBoot: s == "BOOT"})
+		}
+		return out
+	}
+
+	for name, listed := range map[string][]disk.Disk{
+		"no listed disk has the identity":    disks("OTHER"),
+		"two listed disks have the identity": disks("CAC1", "CAC1"),
+	} {
+		err := CheckBootCacheNotMirrored(review, listed, plan("CAC1"))
+		if !errors.Is(err, ErrMirroredBootPool) {
+			t.Errorf("%s: CheckBootCacheNotMirrored = %v, want ErrMirroredBootPool", name, err)
+		}
+	}
+
+	if err := CheckBootCacheNotMirrored(review, disks("CAC1"), plan("CAC1")); err != nil {
+		t.Errorf("a cache partition of an identified disk that is not an Unraid boot device: %v, want nil", err)
+	}
+}

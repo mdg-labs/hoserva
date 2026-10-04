@@ -157,14 +157,19 @@ func (s *Service) PlanParityInit(ctx context.Context) (disk.AdoptionPlan, error)
 // partition of an Unraid internal boot device unless the capture says the boot
 // pool is not a mirrored pair: formatting a partition of a mirrored pair's
 // member is never done, and a capture that does not say is not read as "not
-// mirrored". Any other cache passes.
+// mirrored". A partition whose disk cannot be identified (no listed disk, or
+// more than one, has its identity) is refused the same way, as the check cannot
+// run. Any other cache passes.
 func CheckBootCacheNotMirrored(review *Review, listed []disk.Disk, plan disk.AdoptionPlan) error {
 	c := plan.Cache
 	if c == nil || !disk.IsPartition(c.Device, c.ByIDName) {
 		return nil
 	}
 	parent, err := parentOf(listed, c.WWN, c.Serial)
-	if err != nil || !parent.UnraidBoot {
+	if err != nil {
+		return fmt.Errorf("%w (%s): its disk cannot be identified: %v", ErrMirroredBootPool, c.Device, err)
+	}
+	if !parent.UnraidBoot {
 		return nil
 	}
 	if review == nil || review.Boot.Mirrored == nil || *review.Boot.Mirrored {
