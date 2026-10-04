@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // SambaCustomInclude is the user-owned escape hatch every generated
@@ -34,6 +36,20 @@ type SambaShare struct {
 	Recycle            bool   `json:"recycle"`
 	TimeMachine        bool   `json:"time_machine"`
 	TimeMachineMaxSize string `json:"time_machine_max_size,omitempty"`
+	// Access restricts a non-guest share to the accounts it names. Nil
+	// renders no user restriction, which only callers that never serve
+	// real shares rely on; an Access with no ValidUsers renders the share
+	// closed. Guest shares ignore it.
+	Access *SambaAccess `json:"access,omitempty"`
+}
+
+// SambaAccess is the per-account access of one share, already resolved
+// to account names (Hoserva groups have no Unix group, so they are never
+// rendered as groups). WriteList names are written only when they are also
+// in ValidUsers.
+type SambaAccess struct {
+	ValidUsers []string `json:"valid_users"`
+	WriteList  []string `json:"write_list"`
 }
 
 // SambaState is the JSON shape of testdata/configs/*/state.json for
@@ -86,8 +102,12 @@ func RenderSambaConf(shares []SambaShare) string {
 		fmt.Fprintf(&b, "\n[%s]\n", s.Name)
 		fmt.Fprintf(&b, "   path = /mnt/user/%s\n", s.Name)
 		fmt.Fprintf(&b, "   browseable = %s\n", sambaYesNo(s.Browseable))
-		fmt.Fprintf(&b, "   read only = %s\n", sambaYesNo(s.ReadOnly))
+		restricted := s.Access != nil && !s.Guest
+		fmt.Fprintf(&b, "   read only = %s\n", sambaYesNo(s.ReadOnly || restricted))
 		fmt.Fprintf(&b, "   guest ok = %s\n", sambaYesNo(s.Guest))
+		if restricted {
+			writeSambaAccess(&b, s)
+		}
 		b.WriteString("   create mask = 0664\n")
 		b.WriteString("   force create mode = 0664\n")
 		b.WriteString("   directory mask = 2775\n")
@@ -109,6 +129,82 @@ func RenderSambaConf(shares []SambaShare) string {
 
 	fmt.Fprintf(&b, "\ninclude = %s\n", SambaCustomInclude)
 	return b.String()
+}
+
+// writeSambaAccess renders the account restriction of a non-guest share.
+// An empty `valid users =` would mean "everyone", so a share nobody may
+// reach is rendered unavailable instead. Names that cannot be written
+// safely are left out, which denies them.
+func writeSambaAccess(b *strings.Builder, s SambaShare) {
+	valid, listed := sambaUserList(s.Access.ValidUsers)
+	if len(valid) == 0 {
+		b.WriteString("   available = no\n")
+		return
+	}
+	fmt.Fprintf(b, "   valid users = %s\n", strings.Join(valid, " "))
+	if s.ReadOnly {
+		return
+	}
+	var writers []string
+	for _, name := range s.Access.WriteList {
+		if entry, ok := sambaListEntry(name); ok && listed[name] {
+			writers = append(writers, entry)
+		}
+	}
+	if len(writers) > 0 {
+		fmt.Fprintf(b, "   write list = %s\n", strings.Join(writers, " "))
+	}
+}
+
+func sambaUserList(names []string) ([]string, map[string]bool) {
+	var out []string
+	listed := map[string]bool{}
+	for _, name := range names {
+		entry, ok := sambaListEntry(name)
+		if !ok || listed[name] {
+			continue
+		}
+		listed[name] = true
+		out = append(out, entry)
+	}
+	return out, listed
+}
+
+// SambaUserListable reports whether name can be written into a Samba user
+// list.
+func SambaUserListable(name string) bool {
+	_, ok := sambaListEntry(name)
+	return ok
+}
+
+// sambaListEntry returns name as one entry of a Samba user list, quoted
+// when it holds anything but letters, digits, '.', '_' and '-'. A name that
+// could be read as something other than one account is refused: a leading
+// '@', '+' or '&' names a Unix or NIS group to Samba, a '%' is expanded
+// (%U would match every connecting user), and a quote, backslash, comma,
+// separator or comment character, or any control character, could end the
+// entry or the line.
+func sambaListEntry(name string) (string, bool) {
+	if name == "" || !utf8.ValidString(name) || name != strings.TrimSpace(name) {
+		return "", false
+	}
+	switch name[0] {
+	case '@', '+', '&':
+		return "", false
+	}
+	bare := true
+	for _, r := range name {
+		if !unicode.IsPrint(r) || strings.ContainsRune("\"'\\%,;#=[]*?`", r) {
+			return "", false
+		}
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
+			bare = false
+		}
+	}
+	if bare {
+		return name, true
+	}
+	return `"` + name + `"`, true
 }
 
 func sambaYesNo(v bool) string {

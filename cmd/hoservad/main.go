@@ -560,7 +560,7 @@ func run(cfg config) error {
 	// was registered before any disk listing, above) is re-evaluated here
 	// even if systemd never delivered a SIGHUP for it at all (#372).
 	installReloadHandler(ctx, sighup, rebuildArraySequence)
-	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, parity.NewUsageStore(db))
+	shareService := newShareServiceWithAccess(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, parity.NewUsageStore(db), authStore)
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook, built by
 	// wireTopologyHooks below so the lab tests (parity_registrar_lab_test.go,

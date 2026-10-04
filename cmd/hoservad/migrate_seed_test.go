@@ -160,6 +160,11 @@ func TestMigrationImportWiring_SeedsSharesAndUsersWithoutWritingToAdoptedDisks(t
 	if err != nil || !strings.Contains(string(smb), "[media]") || !strings.Contains(string(smb), "[documents]") || strings.Contains(string(smb), "read only = no") {
 		t.Errorf("smb.conf = %s, %v: want both shares exported read-only", smb, err)
 	}
+	// The seeded grants are what smb.conf enforces: bob and alice may reach
+	// the private share, and neither writes while the import is pending.
+	if media := string(smb); !strings.Contains(media, "[media]\n   path = /mnt/user/media\n   browseable = yes\n   read only = yes\n   guest ok = no\n   valid users = alice bob\n   create mask") {
+		t.Errorf("smb.conf = %s: want media restricted to its seeded users and read-only", smb)
+	}
 	im.shareMounts.mu.Lock()
 	nMounts := len(im.shareMounts.mounted)
 	im.shareMounts.mu.Unlock()

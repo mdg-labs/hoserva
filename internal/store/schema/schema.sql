@@ -592,9 +592,10 @@ CREATE INDEX user_group_members_user_id_idx ON user_group_members (user_id);
 
 -- Per-user share access (#49, Q27, doc 03 §7): none/read-only/read-write,
 -- editable from the user or the share. A user with no row for a share is
--- not represented — none of the three levels is assumed. Enforcing this
--- in generated Samba/mergerfs config, and the file ownership/mode a grant
--- implies, is a later issue; this table is the stored grant itself.
+-- not represented — none of the three levels is assumed. internal/share
+-- renders these grants, with the group grants below, into each non-guest
+-- share's smb.conf section (valid users, write list); the file ownership
+-- and mode a grant implies is not derived from them.
 CREATE TABLE share_user_permissions (
     share_name TEXT NOT NULL REFERENCES shares (name) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,

@@ -2,11 +2,35 @@ package api
 
 import (
 	"context"
+	"log"
+	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
+
+// smbRefreshTimeout bounds the smb.conf regeneration that follows a
+// grant change, which runs detached from the request: the change is
+// already stored by then.
+const smbRefreshTimeout = 30 * time.Second
+
+// refreshSMBAccess regenerates smb.conf after a change to who may reach
+// which share (D4). Without a share service there is no smb.conf to
+// regenerate.
+func (h *Handler) refreshSMBAccess(ctx context.Context) error {
+	if h.Shares == nil {
+		return nil
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), smbRefreshTimeout)
+	defer cancel()
+	if err := h.Shares.RefreshAccess(rctx); err != nil {
+		log.Printf("api: regenerating smb.conf after an access change: %v", err)
+		return &apiError{code: "smb_regeneration_failed", statusCode: http.StatusInternalServerError, message: "the access change was saved, but smb.conf could not be regenerated, so Samba still enforces the previous access"}
+	}
+	return nil
+}
 
 func sharePermissionUsersToAPI(entries []SharePermissionUser) []apiv1.UserPermissionEntry {
 	out := make([]apiv1.UserPermissionEntry, 0, len(entries))
@@ -75,6 +99,9 @@ func (h *Handler) UpdateSharePermissions(ctx context.Context, req *apiv1.UpdateS
 	}
 	if err := h.Auth.SetSharePermissions(ctx, name, users, groups); err != nil {
 		return nil, mapAuthError(err)
+	}
+	if err := h.refreshSMBAccess(ctx); err != nil {
+		return nil, err
 	}
 
 	updatedUsers, updatedGroups, err := h.Auth.GetSharePermissions(ctx, name)

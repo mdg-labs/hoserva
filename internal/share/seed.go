@@ -185,6 +185,8 @@ func (s *Service) seedRows(in SeedInput) ([]store.SeedUser, []store.SeedShare, e
 // them is unmanaged or a host file Hoserva has not taken over (Q76); written
 // says whether it got as far as writing the first file.
 func (s *Service) applySeeded(ctx context.Context) (written bool, err error) {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
 	state, smb, nfs, err := s.shareFiles(ctx)
 	if err != nil {
 		return false, err

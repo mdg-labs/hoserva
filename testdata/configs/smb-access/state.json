@@ -1,0 +1,64 @@
+{
+  "shares": [
+    {
+      "name": "projects",
+      "guest": false,
+      "read_only": false,
+      "browseable": true,
+      "recycle": false,
+      "time_machine": false,
+      "access": {
+        "valid_users": ["alice", "bob", "carol"],
+        "write_list": ["alice", "carol"]
+      }
+    },
+    {
+      "name": "archive",
+      "guest": false,
+      "read_only": true,
+      "browseable": true,
+      "recycle": false,
+      "time_machine": false,
+      "access": {
+        "valid_users": ["alice", "bob"],
+        "write_list": ["alice"]
+      }
+    },
+    {
+      "name": "nobody-here",
+      "guest": false,
+      "read_only": false,
+      "browseable": false,
+      "recycle": false,
+      "time_machine": false,
+      "access": {
+        "valid_users": [],
+        "write_list": []
+      }
+    },
+    {
+      "name": "public",
+      "guest": true,
+      "read_only": false,
+      "browseable": true,
+      "recycle": false,
+      "time_machine": false,
+      "access": {
+        "valid_users": ["alice"],
+        "write_list": []
+      }
+    },
+    {
+      "name": "unsafe-names",
+      "guest": false,
+      "read_only": false,
+      "browseable": true,
+      "recycle": false,
+      "time_machine": false,
+      "access": {
+        "valid_users": ["dave", "@staff", "+wheel", "&nis", "%U", "eve, root", "x\nforce user = root", "say \"hi\"", "two words", "frank"],
+        "write_list": ["dave", "@staff", "two words", "mallory"]
+      }
+    }
+  ]
+}

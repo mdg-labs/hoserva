@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/config"
@@ -146,7 +147,16 @@ type Service struct {
 	// service never computes usage itself, only reads what the sync job
 	// already persisted.
 	Usages UsageReader
-	Now    func() time.Time
+	// Access supplies each share's per-user and per-group grants for
+	// smb.conf. Nil is no grants at all, which renders every non-guest
+	// share closed.
+	Access AccessReader
+	// filesMu is held from the moment the generated files are computed
+	// (the share rows and the grants are read) until the last of them is
+	// written, by every writer of smb.conf: a writer that read the grants
+	// before a change must not write its file after the change's own.
+	filesMu sync.Mutex
+	Now     func() time.Time
 	// CatchAll is the directory browse lists under. Empty uses
 	// pool.CatchAllPath. Tests point it at a temp dir so listing never
 	// walks the host's /mnt/user.
@@ -697,6 +707,8 @@ func (s *Service) rollbackFiles(ctx context.Context, applyErr error) error {
 }
 
 func (s *Service) restoreGenerated(ctx context.Context) error {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
 	state, smb, nfs, err := s.shareFiles(ctx)
 	if err != nil {
 		return err
@@ -719,6 +731,8 @@ func shareFileWriteSkippable(err error) bool {
 }
 
 func (s *Service) applyTopologyFiles(ctx context.Context) error {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
 	state, smb, nfs, err := s.shareFiles(ctx)
 	if err != nil {
 		return err
@@ -809,6 +823,7 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 	}
 	var smb []config.SambaShare
 	var nfs []config.NFSShare
+	var grants map[string]ShareGrants
 	for _, row := range rows {
 		sh := shareFromStore(row)
 		state.Shares = append(state.Shares, config.PoolShare{
@@ -818,7 +833,7 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 			MinFreeSpace: sh.MinFreeSpace,
 		})
 		if sh.SMB.Enabled {
-			smb = append(smb, config.SambaShare{
+			ss := config.SambaShare{
 				Name:               sh.Name,
 				Guest:              sh.SMB.Guest,
 				ReadOnly:           sh.SMB.ReadOnly || settings.MigrationPending,
@@ -826,7 +841,17 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 				Recycle:            sh.SMB.Recycle,
 				TimeMachine:        sh.SMB.TimeMachine,
 				TimeMachineMaxSize: sh.SMB.TimeMachineMaxSize,
-			})
+			}
+			if !sh.SMB.Guest {
+				if grants == nil && s.Access != nil {
+					if grants, err = s.Access.ShareGrants(ctx); err != nil {
+						return config.PoolState{}, nil, nil, fmt.Errorf("share: reading the access grants for smb.conf: %w", err)
+					}
+				}
+				valid, write := effectiveAccess(grants[sh.Name])
+				ss.Access = &config.SambaAccess{ValidUsers: valid, WriteList: write}
+			}
+			smb = append(smb, ss)
 		}
 		if sh.NFS.Enabled {
 			nfs = append(nfs, config.NFSShare{
@@ -840,22 +865,9 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 }
 
 func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, prevMode pool.CacheMode) error {
-	state, smb, nfs, err := s.shareFiles(ctx)
+	state, err := s.writeShareFiles(ctx)
 	if err != nil {
 		return err
-	}
-	if err := s.Gen.CanWriteShareFiles(ctx, state); err != nil {
-		return err
-	}
-	now := s.now()
-	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
-		return &applyWrittenError{err: err}
-	}
-	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil {
-		return &applyWrittenError{err: err}
-	}
-	if err := s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now); err != nil {
-		return &applyWrittenError{err: err}
 	}
 	if mountLatest && s.Mounter != nil && latest.Name != "" {
 		dropMover := latest.CacheMode == pool.CacheOnly && prevMode != "" && prevMode != pool.CacheOnly
@@ -864,6 +876,32 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, pre
 		}
 	}
 	return nil
+}
+
+// writeShareFiles generates the pool units, smb.conf and exports from the
+// stored state under filesMu. A failure after the first file was written is an
+// applyWrittenError.
+func (s *Service) writeShareFiles(ctx context.Context) (config.PoolState, error) {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
+	state, smb, nfs, err := s.shareFiles(ctx)
+	if err != nil {
+		return config.PoolState{}, err
+	}
+	if err := s.Gen.CanWriteShareFiles(ctx, state); err != nil {
+		return config.PoolState{}, err
+	}
+	now := s.now()
+	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
+		return config.PoolState{}, &applyWrittenError{err: err}
+	}
+	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil {
+		return config.PoolState{}, &applyWrittenError{err: err}
+	}
+	if err := s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now); err != nil {
+		return config.PoolState{}, &applyWrittenError{err: err}
+	}
+	return state, nil
 }
 
 // syncLiveMounts applies latest's own share and mover-target mounts to

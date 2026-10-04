@@ -1,0 +1,81 @@
+[global]
+   workgroup = WORKGROUP
+   server string = Hoserva
+   security = user
+   map to guest = Bad User
+   min protocol = SMB2
+   ea support = yes
+   vfs objects = catia fruit streams_xattr
+   fruit:metadata = stream
+   fruit:posix_rename = yes
+   fruit:veto_appledouble = no
+   fruit:nfs_aces = no
+   fruit:wipe_intentionally_left_blank_rfork = yes
+   fruit:delete_empty_adfiles = yes
+   load printers = no
+   printing = bsd
+   printcap name = /dev/null
+   disable spoolss = yes
+
+[archive]
+   path = /mnt/user/archive
+   browseable = yes
+   read only = yes
+   guest ok = no
+   valid users = alice bob
+   create mask = 0664
+   force create mode = 0664
+   directory mask = 2775
+   force directory mode = 2775
+   force group = users
+
+[nobody-here]
+   path = /mnt/user/nobody-here
+   browseable = no
+   read only = yes
+   guest ok = no
+   available = no
+   create mask = 0664
+   force create mode = 0664
+   directory mask = 2775
+   force directory mode = 2775
+   force group = users
+
+[projects]
+   path = /mnt/user/projects
+   browseable = yes
+   read only = yes
+   guest ok = no
+   valid users = alice bob carol
+   write list = alice carol
+   create mask = 0664
+   force create mode = 0664
+   directory mask = 2775
+   force directory mode = 2775
+   force group = users
+
+[public]
+   path = /mnt/user/public
+   browseable = yes
+   read only = no
+   guest ok = yes
+   create mask = 0664
+   force create mode = 0664
+   directory mask = 2775
+   force directory mode = 2775
+   force group = users
+
+[unsafe-names]
+   path = /mnt/user/unsafe-names
+   browseable = yes
+   read only = yes
+   guest ok = no
+   valid users = dave "two words" frank
+   write list = dave "two words"
+   create mask = 0664
+   force create mode = 0664
+   directory mask = 2775
+   force directory mode = 2775
+   force group = users
+
+include = /etc/hoserva/smb.custom.conf

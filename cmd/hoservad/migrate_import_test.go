@@ -143,10 +143,10 @@ func wireImport(t *testing.T) *importWiring {
 	im.rebuild = rebuild
 	im.generator = cfggen.NewGenerator(im.root)
 	im.shareFS, im.shareMounts = &noWriteFS{}, &recordingShareMounter{}
-	im.shares = newShareService(shares, w.arrays, im.generator, im.shareMounts, nil)
+	authStore := api.NewAuthStore(w.db)
+	im.shares = newShareServiceWithAccess(shares, w.arrays, im.generator, im.shareMounts, nil, authStore)
 	im.shares.FS = im.shareFS
 	im.shares.PostCommit = rebuild
-	authStore := api.NewAuthStore(w.db)
 	machineKey, err := auth.LoadOrGenerateMachineKey(context.Background(), filepath.Join(w.root, "secret.key"), authStore)
 	if err != nil {
 		t.Fatal(err)

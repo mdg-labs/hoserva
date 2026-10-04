@@ -212,3 +212,57 @@ func TestSetSharePermissionsReplacesExistingRows(t *testing.T) {
 		t.Fatalf("share permissions after replace = %+v, want only bob at none", users)
 	}
 }
+
+// ShareGrants is what smb.conf is generated from: each share's own grants
+// by username, and each group grant with its members' usernames — a group
+// with no members still counts as a grant, and a share nobody was granted
+// has no entry.
+func TestShareGrantsReadsUsersAndGroupMembers(t *testing.T) {
+	svc, db := newAuthTestService(t)
+	ctx := context.Background()
+	seedShare(t, db, "media")
+	seedShare(t, db, "backups")
+	alice, err := svc.CreateUser(ctx, "alice", "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := svc.CreateUser(ctx, "bob", "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := svc.CreateGroup(ctx, "family")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetGroupMembers(ctx, family.ID, []string{bob.ID}); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := svc.CreateGroup(ctx, "empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetSharePermissions(ctx, "media",
+		[]api.PermissionGrant{{ID: alice.ID, Access: "none"}},
+		[]api.PermissionGrant{{ID: family.ID, Access: "read-write"}, {ID: empty.ID, Access: "read-only"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.Store.ShareGrants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ShareGrants = %+v, want only media", got)
+	}
+	media := got["media"]
+	if media.Users["alice"] != "none" || len(media.Users) != 1 {
+		t.Errorf("media users = %v, want alice none", media.Users)
+	}
+	byAccess := map[string][]string{}
+	for _, g := range media.Groups {
+		byAccess[g.Access] = g.Members
+	}
+	if len(media.Groups) != 2 || len(byAccess["read-write"]) != 1 || byAccess["read-write"][0] != "bob" || len(byAccess["read-only"]) != 0 {
+		t.Errorf("media groups = %+v, want family (bob) read-write and the empty group read-only", media.Groups)
+	}
+}
