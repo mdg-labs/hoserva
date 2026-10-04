@@ -668,15 +668,147 @@
       "import": "Import",
       "verify": "Verify",
       "current": "Current",
-      "later": "Not available yet",
       "scanDescription": "Read the Unraid configuration and check this machine against it. Nothing is written to any disk or to the stick.",
-      "reviewDescription": "Check what the scan found and choose the role of each disk. Nothing is written to any disk yet."
+      "reviewDescription": "Check what the scan found and choose the role of each disk. Nothing is written to any disk yet.",
+      "importDescription": "Adopt the Unraid data disks into the pool, read-only, and create the shares and accounts the scan found. Nothing is written to a data disk.",
+      "verifyDescription": "Compare every adopted disk and share with what the scan recorded. Parity is offered only after a clean comparison."
     },
     "actions": {
       "startScan": "Start scan",
       "review": "Review",
       "import": "Import",
-      "scanAgain": "Scan again"
+      "scanAgain": "Scan again",
+      "continueToVerify": "Continue to verification",
+      "verify": "Run verify",
+      "rerunVerify": "Re-run verify",
+      "initializeParity": "Initialise parity",
+      "finishParity": "Finish initialisation",
+      "done": "Done"
+    },
+    "jobsLoadFailed": "Could not load the migration's jobs.",
+    "cancelFailed": "Could not cancel the job.",
+    "jobEnded": {
+      "failed": "The job failed.",
+      "cancelled": "The job was cancelled.",
+      "interrupted": "The job was interrupted by a restart."
+    },
+    "import": {
+      "startFailed": "Could not start the import.",
+      "refusedTitle": "The import was refused",
+      "running": "Adopting the data disks. Each disk is read and mounted read-only; nothing is written to them.",
+      "waiting": "Waiting for the import to start.",
+      "failedTitle": "The import did not finish",
+      "doneTitle": "The data disks are adopted",
+      "doneDescription": "They are mounted read-only and the shares are shared read-only until you initialise parity. Nothing has been written to a data disk. Check the result next.",
+      "shares": {
+        "title": "Shares created",
+        "description": "The shares the scan found now exist. What Hoserva has no exact equivalent for is noted on its row.",
+        "loadFailed": "Could not load the shares.",
+        "columns": {
+          "name": "Share",
+          "cache": "Cache",
+          "notes": "Notes"
+        },
+        "cacheNow": "{{mode}}",
+        "cacheLater": "{{mode}} once the cache exists",
+        "noNotes": "Mapped exactly",
+        "none": "The import created no new shares."
+      },
+      "users": {
+        "title": "Accounts that need a password",
+        "description": "Accounts are created without a password, because passwords are never read from the Unraid flash. Set one for each account before its owner needs to use the shares.",
+        "loadFailed": "Could not load the accounts.",
+        "item": "{{name}} has no password yet",
+        "action": "Set passwords",
+        "none": "No imported account is waiting for a password."
+      }
+    },
+    "verify": {
+      "startFailed": "Could not start the verify.",
+      "intro": "The verify reads every adopted disk, and every share through the read-only pool, and compares it with what the scan recorded: file counts, sizes, links and a sample of checksums. Nothing is written.",
+      "running": "Comparing the adopted disks and shares with the scan. This reads every file's details and can take a long time.",
+      "jobFailed": "The verify did not finish",
+      "passed": "Every disk and share matches what the scan recorded.",
+      "failed": {
+        "title": "Stop and investigate",
+        "mismatch": "The adopted disks or shares do not match what the scan recorded.",
+        "notFinished": "The verify could not finish: {{error}}",
+        "stop": "Do not initialise parity. Find out what changed, fix it, then run the verify again."
+      },
+      "columns": {
+        "name": "Disk or share",
+        "files": "Files",
+        "bytes": "Size",
+        "checksums": "Checksum sample",
+        "result": "Result"
+      },
+      "kinds": {
+        "disk": "Disk {{name}}",
+        "share": "Share {{name}}"
+      },
+      "poolRoot": "Files in the pool's root",
+      "expectedFound": "{{expected}} expected, {{found}} found",
+      "linksAndSpecial": "{{links}}, {{special}}",
+      "links_one": "{{count}} link",
+      "links_other": "{{count}} links",
+      "special_one": "{{count}} special file",
+      "special_other": "{{count}} special files",
+      "checksumsDisk": "{{checked}} checked, {{mismatches}}",
+      "mismatches_one": "{{count}} mismatch",
+      "mismatches_other": "{{count}} mismatches",
+      "result": {
+        "match": "Matches",
+        "mismatch": "Mismatch",
+        "problem": "Could not compare"
+      },
+      "mismatchedFiles": "Files that do not match",
+      "lists": {
+        "missing_one": "{{count}} file or link is missing:",
+        "missing_other": "{{count}} files or links are missing:",
+        "extra_one": "{{count}} path is here but not in the scan:",
+        "extra_other": "{{count}} paths are here but not in the scan:",
+        "sizeChanged_one": "{{count}} file has a different size:",
+        "sizeChanged_other": "{{count}} files have a different size:",
+        "checksumChanged_one": "{{count}} file has different content:",
+        "checksumChanged_other": "{{count}} files have different content:",
+        "changed_one": "{{count}} link or special file differs:",
+        "changed_other": "{{count}} links or special files differ:"
+      },
+      "notShown_one": "and {{count}} more, not shown",
+      "notShown_other": "and {{count}} more, not shown",
+      "duplicates_one": "{{count}} path exists on more than one disk. The pool shows it once; it is not counted as missing or extra.",
+      "duplicates_other": "{{count}} paths exist on more than one disk. The pool shows each once; they are not counted as missing or extra.",
+      "duplicateOn": "{{path}} (on {{disks}})"
+    },
+    "parity": {
+      "startFailed": "Could not start the parity initialisation.",
+      "title": "Initialise parity",
+      "description": "This is the point of no return. It erases the disks listed here, and going back after it means restoring from a backup.",
+      "finishTitle": "Finish the parity initialisation",
+      "finishDescription": "The former parity and cache disks are already formatted. This finishes the remaining steps and erases nothing.",
+      "erase": {
+        "whole": "Erases all of {{device}}{{details}} and formats it as the array's {{role}}.",
+        "partition": "Erases only the spare partition {{device}}{{details}} and formats it as the array's {{role}}. The rest of that disk is left alone.",
+        "details": " ({{details}})",
+        "roles": {
+          "parity": "parity disk",
+          "cache": "cache"
+        }
+      },
+      "unavailable": "The server did not offer the point of no return for this session.",
+      "problem": "Parity cannot be initialised now",
+      "refused": "The initialisation was refused",
+      "jobFailed": "The initialisation did not finish",
+      "running": "Formatting the former parity and cache disks and preparing the array. Your data disks are not formatted.",
+      "formattedTitle": "The array is set up",
+      "formatted": "The parity and cache disks are formatted and the data disks are writable. Until the first sync finishes the array has no redundancy.",
+      "syncWaiting": "Waiting for the first parity sync to be queued.",
+      "syncLoadFailed": "Could not load the first parity sync.",
+      "syncDoneTitle": "The first sync is complete",
+      "syncDone": "Parity now protects the array.",
+      "syncFailedTitle": "The first sync did not complete",
+      "syncFailed": "The array still has no redundancy. Start a sync from the Parity page once the cause is fixed.",
+      "openParity": "Open Parity"
     },
     "status": {
       "pass": "Pass",
@@ -910,6 +1042,29 @@
       "noReview": {
         "title": "This scan has no disk mapping data",
         "description": "It was made before the scan kept the disks, shares and boot mode as data, so the roles cannot be chosen here. The report rows below still apply. Scan again to choose the disk roles."
+      },
+      "import": {
+        "title": "Import the disks",
+        "description": "The import adopts the data disks read-only and creates the shares and accounts. It does not format or write to any disk.",
+        "confirm": "I have checked each disk's serial number and role against my Unraid server",
+        "confirmHint": "Roles are matched by serial number, so a wrong role can adopt the wrong disk.",
+        "noGo": "The scan found a problem that blocks the migration, so the import is not offered. Fix it and scan again.",
+        "blockers": {
+          "violations": "Some roles above are marked as refused. Change them to continue.",
+          "parity": "Choose one or two parity disks to continue.",
+          "noRoles": "Choose a role for at least one disk to continue.",
+          "noIdentity": "A disk with a role has neither a serial number nor a WWN, so the import cannot name it. Set it to Ignore.",
+          "needsPartition": "The cache is on the disk this machine boots from. Choose its spare partition to continue."
+        },
+        "partition": {
+          "title": "Cache partition",
+          "description": "Only a spare partition of the boot disk can be the cache. Nothing is erased until you initialise parity.",
+          "label": "Spare partition",
+          "placeholder": "Choose a partition",
+          "option": "{{device}} ({{size}})",
+          "none": "The boot disk has no spare partition that can be the cache.",
+          "loadFailed": "Could not load the disks."
+        }
       },
       "mapping": {
         "title": "Disk roles",

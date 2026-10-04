@@ -13,6 +13,13 @@ export type MigrationBoot = components["schemas"]["MigrationBoot"];
 export type MigrationTemplates = components["schemas"]["MigrationTemplates"];
 export type TemplateClass = components["schemas"]["MigrationTemplateClass"];
 export type TemplateStatus = components["schemas"]["MigrationTemplateStatus"];
+export type MigrationVerify = components["schemas"]["MigrationVerify"];
+export type VerifyScope = components["schemas"]["MigrationVerifyScope"];
+export type VerifyList = components["schemas"]["MigrationVerifyList"];
+export type ParityInit = components["schemas"]["MigrationParityInit"];
+export type ParityErase = components["schemas"]["MigrationParityErase"];
+export type Job = components["schemas"]["Job"];
+export type ImportDisk = components["schemas"]["MigrationImportDisk"];
 
 export const DOCS_UNPROTECTED_WINDOW_URL = "https://hoserva.dev/migrating-from-unraid/before-you-start";
 export const DOCS_CAPTURE_URL = "https://hoserva.dev/migrating-from-unraid/the-migration";
@@ -230,4 +237,27 @@ export function classFilterMatches(filter: string, templateClass: TemplateClass)
 
 export function reportRowKey(row: ReportRow): string {
   return `${row.check}|${row.subject ?? ""}|${row.detail}`;
+}
+
+const VERIFY_LISTS = ["missing", "extra", "sizeChanged", "checksumChanged", "changed"] as const;
+export type VerifyListKey = (typeof VERIFY_LISTS)[number];
+export const VERIFY_LIST_KEYS: readonly VerifyListKey[] = VERIFY_LISTS;
+
+export function scopeMatches(scope: VerifyScope): boolean {
+  return scope.passed && scope.problem === undefined && VERIFY_LIST_KEYS.every((key) => scope[key].total === 0);
+}
+
+// The server's `passed` is the verdict; a scope that disagrees with it keeps
+// the result from reading as green.
+export function verifyGreen(verify: MigrationVerify): boolean {
+  return verify.status === "passed" && [...(verify.disks ?? []), ...(verify.shares ?? [])].every(scopeMatches);
+}
+
+export function jobActive(job: Job | undefined): boolean {
+  return job?.status === "queued" || job?.status === "running";
+}
+
+// Jobs come newest first.
+export function latestJob(jobs: Job[], type: Job["type"]): Job | undefined {
+  return jobs.find((job) => job.type === type);
 }

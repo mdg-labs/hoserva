@@ -1,5 +1,8 @@
 import type { components } from "@/lib/api/client";
 
+import verifyFailedJson from "../../fixtures/migration-pending/verify-failed.json";
+import verifyPassedJson from "../../fixtures/migration-pending/verify-passed.json";
+
 // The answers cmd/mockapi gives for GET /migrate and GET /migrate/templates in
 // its migration-pending scenario (a no-go report with a refused disk, flagged
 // containers, one clean and one warning template, a Compose project and an
@@ -488,4 +491,51 @@ export const migrationPendingTemplates: MigrationTemplates = {
       "status": "previewed"
     }
   ]
+};
+
+export type MigrationVerify = components["schemas"]["MigrationVerify"];
+export type ParityInit = components["schemas"]["MigrationParityInit"];
+
+// The verify results are the scenario's own fixtures, the documents cmd/mockapi
+// serves as getMigration's `verify`.
+export const verifyFailed = verifyFailedJson as MigrationVerify;
+export const verifyPassed = verifyPassedJson as MigrationVerify;
+
+// What the scenario's getMigration serves for the point of no return once a
+// verify has passed: the typed confirmation, the devices it names, the window
+// and the rollback text for a USB boot with a separate Debian device.
+export const parityInit: ParityInit = {
+  "finishing": false,
+  "confirmation": "ERASE /dev/nvme0n1, /dev/sdb",
+  "erases": [
+    {
+      "role": "parity",
+      "device": "/dev/sdb",
+      "serial": "EXAMPLE_PARITY",
+      "wwn": "0x5000c500a1b2c3d4",
+      "size": 8796093022208,
+      "partition": false
+    },
+    {
+      "role": "cache",
+      "device": "/dev/nvme0n1",
+      "serial": "EXAMPLE_CACHE",
+      "size": 536870912000,
+      "partition": false
+    }
+  ],
+  "unprotectedWindow": "Between the moment Unraid's array stopped and the moment the initial sync completes, the array has no redundancy whatsoever. Unraid's parity is destroyed when the former parity disk(s) are formatted now, and SnapRAID's parity does not exist until the initial sync finishes, which takes hours and is I/O-heavy. A disk that fails in that window loses its data. Irreplaceable data must have a backup that is not this array; do not write significant new data until the sync has completed.",
+  "rollback": [
+    "Until you confirm, going back is clean: nothing has been written to the data disks. Once the former parity disk(s) are formatted, Unraid's parity is destroyed and its array cannot be started as it was: going back means restoring from backup. The cache device or partition is erased too.",
+    "Unraid boots from a USB stick and Debian is on a separate device: to boot Unraid again, reinsert the stick and boot."
+  ]
+};
+
+export const migrationImported: Migration = { ...migrationPending, phase: "imported" };
+export const migrationVerifyFailed: Migration = { ...migrationImported, phase: "verify_failed", verify: verifyFailed };
+export const migrationVerified: Migration = {
+...migrationImported,
+phase: "verified",
+verify: verifyPassed,
+parityInit,
 };
