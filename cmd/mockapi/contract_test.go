@@ -251,6 +251,7 @@ var contractNoValidCase = map[string]string{
 	// refusals are compared; each side's own accepted mapping is tested in its
 	// own package (internal/migrate, internal/api, cmd/mockapi).
 	"StartMigrationImport": "an accepted mapping names disks the scan listed: the rig's production scan lists the rig's inventory and the mock's canned scan its own EXAMPLE disks, so none is valid on both",
+	"StartMigrationVerify": "a verify is accepted only while an adopted array is pending its point of no return: the rig's production side has no adoption (it would need mounted disks and a pool), and the mock's import is a canned one, so none is valid on both",
 
 	"FinishDiskRemoval": "needs an evacuation job to actually run to completion and mark the disk evacuated (job.RunEvacuation); this rig's job types run no-op (job-timing state, out of scope)",
 

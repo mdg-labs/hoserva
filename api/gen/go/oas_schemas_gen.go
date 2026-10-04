@@ -8446,6 +8446,7 @@ const (
 	JobTypePoolRemount           JobType = "pool_remount"
 	JobTypeMigrationScan         JobType = "migration_scan"
 	JobTypeMigrationImport       JobType = "migration_import"
+	JobTypeMigrationVerify       JobType = "migration_verify"
 	JobTypeAppdataBackup         JobType = "appdata_backup"
 	JobTypeAppdataRestore        JobType = "appdata_restore"
 	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
@@ -8485,6 +8486,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeMigrationScan,
 		JobTypeMigrationImport,
+		JobTypeMigrationVerify,
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
 		JobTypeAppdataRestorePreview,
@@ -8542,6 +8544,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeMigrationScan:
 		return []byte(s), nil
 	case JobTypeMigrationImport:
+		return []byte(s), nil
+	case JobTypeMigrationVerify:
 		return []byte(s), nil
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
@@ -8636,6 +8640,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeMigrationImport:
 		*s = JobTypeMigrationImport
+		return nil
+	case JobTypeMigrationVerify:
+		*s = JobTypeMigrationVerify
 		return nil
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
@@ -9602,6 +9609,7 @@ type Migration struct {
 	// the only source and no stick is offered (Q25).
 	ZipOnly bool               `json:"zipOnly"`
 	Report  OptMigrationReport `json:"report"`
+	Verify  OptMigrationVerify `json:"verify"`
 }
 
 // GetPhase returns the value of Phase.
@@ -9644,6 +9652,11 @@ func (s *Migration) GetReport() OptMigrationReport {
 	return s.Report
 }
 
+// GetVerify returns the value of Verify.
+func (s *Migration) GetVerify() OptMigrationVerify {
+	return s.Verify
+}
+
 // SetPhase sets the value of Phase.
 func (s *Migration) SetPhase(val MigrationPhase) {
 	s.Phase = val
@@ -9682,6 +9695,11 @@ func (s *Migration) SetZipOnly(val bool) {
 // SetReport sets the value of Report.
 func (s *Migration) SetReport(val OptMigrationReport) {
 	s.Report = val
+}
+
+// SetVerify sets the value of Verify.
+func (s *Migration) SetVerify(val OptMigrationVerify) {
+	s.Verify = val
 }
 
 // Where Unraid boots from, for the planned layout and rollback wording of doc 05 §5. Every field is
@@ -10405,16 +10423,22 @@ func (s *MigrationImportRole) UnmarshalText(data []byte) error {
 }
 
 // `imported` is an adopted array waiting for its point of no return: the data disks are mounted
-// read-only and parity and cache are untouched (`startMigrationImport`).
+// read-only and parity and cache are untouched (`startMigrationImport`). The verify phase
+// (`startMigrationVerify`) moves it to `verifying` while it runs, to `verify_failed` when it found a
+// mismatch or did not finish, and to `verified` when every comparison passed; only `verified` leads to
+// the point of no return.
 // Ref: #/components/schemas/MigrationPhase
 type MigrationPhase string
 
 const (
-	MigrationPhaseNone       MigrationPhase = "none"
-	MigrationPhaseScanning   MigrationPhase = "scanning"
-	MigrationPhaseScanFailed MigrationPhase = "scan_failed"
-	MigrationPhaseScanned    MigrationPhase = "scanned"
-	MigrationPhaseImported   MigrationPhase = "imported"
+	MigrationPhaseNone         MigrationPhase = "none"
+	MigrationPhaseScanning     MigrationPhase = "scanning"
+	MigrationPhaseScanFailed   MigrationPhase = "scan_failed"
+	MigrationPhaseScanned      MigrationPhase = "scanned"
+	MigrationPhaseImported     MigrationPhase = "imported"
+	MigrationPhaseVerifying    MigrationPhase = "verifying"
+	MigrationPhaseVerifyFailed MigrationPhase = "verify_failed"
+	MigrationPhaseVerified     MigrationPhase = "verified"
 )
 
 // AllValues returns all MigrationPhase values.
@@ -10425,6 +10449,9 @@ func (MigrationPhase) AllValues() []MigrationPhase {
 		MigrationPhaseScanFailed,
 		MigrationPhaseScanned,
 		MigrationPhaseImported,
+		MigrationPhaseVerifying,
+		MigrationPhaseVerifyFailed,
+		MigrationPhaseVerified,
 	}
 }
 
@@ -10440,6 +10467,12 @@ func (s MigrationPhase) MarshalText() ([]byte, error) {
 	case MigrationPhaseScanned:
 		return []byte(s), nil
 	case MigrationPhaseImported:
+		return []byte(s), nil
+	case MigrationPhaseVerifying:
+		return []byte(s), nil
+	case MigrationPhaseVerifyFailed:
+		return []byte(s), nil
+	case MigrationPhaseVerified:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -10463,6 +10496,15 @@ func (s *MigrationPhase) UnmarshalText(data []byte) error {
 		return nil
 	case MigrationPhaseImported:
 		*s = MigrationPhaseImported
+		return nil
+	case MigrationPhaseVerifying:
+		*s = MigrationPhaseVerifying
+		return nil
+	case MigrationPhaseVerifyFailed:
+		*s = MigrationPhaseVerifyFailed
+		return nil
+	case MigrationPhaseVerified:
+		*s = MigrationPhaseVerified
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -11566,6 +11608,390 @@ func (s *MigrationVerdict) UnmarshalText(data []byte) error {
 		return nil
 	case MigrationVerdictNoGo:
 		*s = MigrationVerdictNoGo
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// The result of the latest verify (`startMigrationVerify`), present while an import is pending its
+// point of no return. `running` is a verify that has not finished; `failed` is a mismatch, an error or
+// a cancelled run; only `passed` means every comparison matched.
+// Ref: #/components/schemas/MigrationVerify
+type MigrationVerify struct {
+	Status MigrationVerifyStatus `json:"status"`
+	// Why the verify could not finish. Absent for a mismatch.
+	Error      OptString              `json:"error"`
+	StartedAt  time.Time              `json:"startedAt"`
+	FinishedAt OptDateTime            `json:"finishedAt"`
+	Disks      []MigrationVerifyScope `json:"disks"`
+	Shares     []MigrationVerifyScope `json:"shares"`
+	// How many paths exist on more than one disk. The pool shows each once, from the first disk; they are
+	// never counted as missing or extra.
+	Duplicates int64 `json:"duplicates"`
+	// The first of the paths counted in `duplicates`.
+	DuplicateSample []MigrationVerifyDuplicate `json:"duplicateSample"`
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationVerify) GetStatus() MigrationVerifyStatus {
+	return s.Status
+}
+
+// GetError returns the value of Error.
+func (s *MigrationVerify) GetError() OptString {
+	return s.Error
+}
+
+// GetStartedAt returns the value of StartedAt.
+func (s *MigrationVerify) GetStartedAt() time.Time {
+	return s.StartedAt
+}
+
+// GetFinishedAt returns the value of FinishedAt.
+func (s *MigrationVerify) GetFinishedAt() OptDateTime {
+	return s.FinishedAt
+}
+
+// GetDisks returns the value of Disks.
+func (s *MigrationVerify) GetDisks() []MigrationVerifyScope {
+	return s.Disks
+}
+
+// GetShares returns the value of Shares.
+func (s *MigrationVerify) GetShares() []MigrationVerifyScope {
+	return s.Shares
+}
+
+// GetDuplicates returns the value of Duplicates.
+func (s *MigrationVerify) GetDuplicates() int64 {
+	return s.Duplicates
+}
+
+// GetDuplicateSample returns the value of DuplicateSample.
+func (s *MigrationVerify) GetDuplicateSample() []MigrationVerifyDuplicate {
+	return s.DuplicateSample
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationVerify) SetStatus(val MigrationVerifyStatus) {
+	s.Status = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationVerify) SetError(val OptString) {
+	s.Error = val
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *MigrationVerify) SetStartedAt(val time.Time) {
+	s.StartedAt = val
+}
+
+// SetFinishedAt sets the value of FinishedAt.
+func (s *MigrationVerify) SetFinishedAt(val OptDateTime) {
+	s.FinishedAt = val
+}
+
+// SetDisks sets the value of Disks.
+func (s *MigrationVerify) SetDisks(val []MigrationVerifyScope) {
+	s.Disks = val
+}
+
+// SetShares sets the value of Shares.
+func (s *MigrationVerify) SetShares(val []MigrationVerifyScope) {
+	s.Shares = val
+}
+
+// SetDuplicates sets the value of Duplicates.
+func (s *MigrationVerify) SetDuplicates(val int64) {
+	s.Duplicates = val
+}
+
+// SetDuplicateSample sets the value of DuplicateSample.
+func (s *MigrationVerify) SetDuplicateSample(val []MigrationVerifyDuplicate) {
+	s.DuplicateSample = val
+}
+
+// Ref: #/components/schemas/MigrationVerifyCounts
+type MigrationVerifyCounts struct {
+	Files    int64 `json:"files"`
+	Symlinks int64 `json:"symlinks"`
+	// The special files, meaning FIFOs, sockets and device nodes.
+	Special int64 `json:"special"`
+	// The sum of the regular files' sizes.
+	Bytes int64 `json:"bytes"`
+}
+
+// GetFiles returns the value of Files.
+func (s *MigrationVerifyCounts) GetFiles() int64 {
+	return s.Files
+}
+
+// GetSymlinks returns the value of Symlinks.
+func (s *MigrationVerifyCounts) GetSymlinks() int64 {
+	return s.Symlinks
+}
+
+// GetSpecial returns the value of Special.
+func (s *MigrationVerifyCounts) GetSpecial() int64 {
+	return s.Special
+}
+
+// GetBytes returns the value of Bytes.
+func (s *MigrationVerifyCounts) GetBytes() int64 {
+	return s.Bytes
+}
+
+// SetFiles sets the value of Files.
+func (s *MigrationVerifyCounts) SetFiles(val int64) {
+	s.Files = val
+}
+
+// SetSymlinks sets the value of Symlinks.
+func (s *MigrationVerifyCounts) SetSymlinks(val int64) {
+	s.Symlinks = val
+}
+
+// SetSpecial sets the value of Special.
+func (s *MigrationVerifyCounts) SetSpecial(val int64) {
+	s.Special = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *MigrationVerifyCounts) SetBytes(val int64) {
+	s.Bytes = val
+}
+
+// A path the baseline has on more than one disk.
+// Ref: #/components/schemas/MigrationVerifyDuplicate
+type MigrationVerifyDuplicate struct {
+	Path  string   `json:"path"`
+	Disks []string `json:"disks"`
+}
+
+// GetPath returns the value of Path.
+func (s *MigrationVerifyDuplicate) GetPath() string {
+	return s.Path
+}
+
+// GetDisks returns the value of Disks.
+func (s *MigrationVerifyDuplicate) GetDisks() []string {
+	return s.Disks
+}
+
+// SetPath sets the value of Path.
+func (s *MigrationVerifyDuplicate) SetPath(val string) {
+	s.Path = val
+}
+
+// SetDisks sets the value of Disks.
+func (s *MigrationVerifyDuplicate) SetDisks(val []string) {
+	s.Disks = val
+}
+
+// A capped list of paths from the root of the disk or pool, with how many there were in all.
+// Ref: #/components/schemas/MigrationVerifyList
+type MigrationVerifyList struct {
+	Total int64    `json:"total"`
+	Paths []string `json:"paths"`
+}
+
+// GetTotal returns the value of Total.
+func (s *MigrationVerifyList) GetTotal() int64 {
+	return s.Total
+}
+
+// GetPaths returns the value of Paths.
+func (s *MigrationVerifyList) GetPaths() []string {
+	return s.Paths
+}
+
+// SetTotal sets the value of Total.
+func (s *MigrationVerifyList) SetTotal(val int64) {
+	s.Total = val
+}
+
+// SetPaths sets the value of Paths.
+func (s *MigrationVerifyList) SetPaths(val []string) {
+	s.Paths = val
+}
+
+// The comparison of one disk, or of one share through the pool. A scope passes only when `problem` is
+// absent, the expected and found counts are equal and every list is empty.
+// Ref: #/components/schemas/MigrationVerifyScope
+type MigrationVerifyScope struct {
+	// The disk's slot (`disk1`) or the share's name; an empty name is the files directly in the pool's
+	// root.
+	Name   string `json:"name"`
+	Passed bool   `json:"passed"`
+	// Why the scope could not be compared at all, such as a disk of the baseline that no adopted disk
+	// matches.
+	Problem  OptString             `json:"problem"`
+	Expected MigrationVerifyCounts `json:"expected"`
+	Found    MigrationVerifyCounts `json:"found"`
+	// How many of the baseline's sample were hashed again on this disk. 0 for a share: its checksum
+	// mismatches are the disks'.
+	Hashed          int64               `json:"hashed"`
+	Missing         MigrationVerifyList `json:"missing"`
+	Extra           MigrationVerifyList `json:"extra"`
+	SizeChanged     MigrationVerifyList `json:"sizeChanged"`
+	ChecksumChanged MigrationVerifyList `json:"checksumChanged"`
+	Changed         MigrationVerifyList `json:"changed"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationVerifyScope) GetName() string {
+	return s.Name
+}
+
+// GetPassed returns the value of Passed.
+func (s *MigrationVerifyScope) GetPassed() bool {
+	return s.Passed
+}
+
+// GetProblem returns the value of Problem.
+func (s *MigrationVerifyScope) GetProblem() OptString {
+	return s.Problem
+}
+
+// GetExpected returns the value of Expected.
+func (s *MigrationVerifyScope) GetExpected() MigrationVerifyCounts {
+	return s.Expected
+}
+
+// GetFound returns the value of Found.
+func (s *MigrationVerifyScope) GetFound() MigrationVerifyCounts {
+	return s.Found
+}
+
+// GetHashed returns the value of Hashed.
+func (s *MigrationVerifyScope) GetHashed() int64 {
+	return s.Hashed
+}
+
+// GetMissing returns the value of Missing.
+func (s *MigrationVerifyScope) GetMissing() MigrationVerifyList {
+	return s.Missing
+}
+
+// GetExtra returns the value of Extra.
+func (s *MigrationVerifyScope) GetExtra() MigrationVerifyList {
+	return s.Extra
+}
+
+// GetSizeChanged returns the value of SizeChanged.
+func (s *MigrationVerifyScope) GetSizeChanged() MigrationVerifyList {
+	return s.SizeChanged
+}
+
+// GetChecksumChanged returns the value of ChecksumChanged.
+func (s *MigrationVerifyScope) GetChecksumChanged() MigrationVerifyList {
+	return s.ChecksumChanged
+}
+
+// GetChanged returns the value of Changed.
+func (s *MigrationVerifyScope) GetChanged() MigrationVerifyList {
+	return s.Changed
+}
+
+// SetName sets the value of Name.
+func (s *MigrationVerifyScope) SetName(val string) {
+	s.Name = val
+}
+
+// SetPassed sets the value of Passed.
+func (s *MigrationVerifyScope) SetPassed(val bool) {
+	s.Passed = val
+}
+
+// SetProblem sets the value of Problem.
+func (s *MigrationVerifyScope) SetProblem(val OptString) {
+	s.Problem = val
+}
+
+// SetExpected sets the value of Expected.
+func (s *MigrationVerifyScope) SetExpected(val MigrationVerifyCounts) {
+	s.Expected = val
+}
+
+// SetFound sets the value of Found.
+func (s *MigrationVerifyScope) SetFound(val MigrationVerifyCounts) {
+	s.Found = val
+}
+
+// SetHashed sets the value of Hashed.
+func (s *MigrationVerifyScope) SetHashed(val int64) {
+	s.Hashed = val
+}
+
+// SetMissing sets the value of Missing.
+func (s *MigrationVerifyScope) SetMissing(val MigrationVerifyList) {
+	s.Missing = val
+}
+
+// SetExtra sets the value of Extra.
+func (s *MigrationVerifyScope) SetExtra(val MigrationVerifyList) {
+	s.Extra = val
+}
+
+// SetSizeChanged sets the value of SizeChanged.
+func (s *MigrationVerifyScope) SetSizeChanged(val MigrationVerifyList) {
+	s.SizeChanged = val
+}
+
+// SetChecksumChanged sets the value of ChecksumChanged.
+func (s *MigrationVerifyScope) SetChecksumChanged(val MigrationVerifyList) {
+	s.ChecksumChanged = val
+}
+
+// SetChanged sets the value of Changed.
+func (s *MigrationVerifyScope) SetChanged(val MigrationVerifyList) {
+	s.Changed = val
+}
+
+type MigrationVerifyStatus string
+
+const (
+	MigrationVerifyStatusRunning MigrationVerifyStatus = "running"
+	MigrationVerifyStatusPassed  MigrationVerifyStatus = "passed"
+	MigrationVerifyStatusFailed  MigrationVerifyStatus = "failed"
+)
+
+// AllValues returns all MigrationVerifyStatus values.
+func (MigrationVerifyStatus) AllValues() []MigrationVerifyStatus {
+	return []MigrationVerifyStatus{
+		MigrationVerifyStatusRunning,
+		MigrationVerifyStatusPassed,
+		MigrationVerifyStatusFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationVerifyStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationVerifyStatusRunning:
+		return []byte(s), nil
+	case MigrationVerifyStatusPassed:
+		return []byte(s), nil
+	case MigrationVerifyStatusFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationVerifyStatus) UnmarshalText(data []byte) error {
+	switch MigrationVerifyStatus(data) {
+	case MigrationVerifyStatusRunning:
+		*s = MigrationVerifyStatusRunning
+		return nil
+	case MigrationVerifyStatusPassed:
+		*s = MigrationVerifyStatusPassed
+		return nil
+	case MigrationVerifyStatusFailed:
+		*s = MigrationVerifyStatusFailed
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -14809,6 +15235,52 @@ func (o OptMigrationUnraidRole) Get() (v MigrationUnraidRole, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptMigrationUnraidRole) Or(d MigrationUnraidRole) MigrationUnraidRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationVerify returns new OptMigrationVerify with value set to v.
+func NewOptMigrationVerify(v MigrationVerify) OptMigrationVerify {
+	return OptMigrationVerify{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationVerify is optional MigrationVerify.
+type OptMigrationVerify struct {
+	Value MigrationVerify
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationVerify was set.
+func (o OptMigrationVerify) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationVerify) Reset() {
+	var v MigrationVerify
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationVerify) SetTo(v MigrationVerify) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationVerify) Get() (v MigrationVerify, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationVerify) Or(d MigrationVerify) MigrationVerify {
 	if v, ok := o.Get(); ok {
 		return v
 	}

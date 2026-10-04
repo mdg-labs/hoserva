@@ -1887,6 +1887,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/migrate/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify the adopted disks against the scan's baseline
+         * @description Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a `migration_verify` job (topology class, read-only, and admitted while the import is pending) that walks every adopted data disk through its read-only mount and every share through the read-only pool at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it compares the file, symlink and special-file counts, the total bytes, every file's size, every symlink's target and every special file's type, and it hashes again exactly the files the baseline hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is written to a source disk. The result is in `getMigration`; the job reports its progress and can be cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending` unless an import is pending its point of no return (`startMigrationImport`), 409 `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+         */
+        post: operations["startMigrationVerify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/migrate/report": {
         parameters: {
             query?: never;
@@ -3299,7 +3319,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "migration_import" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "migration_import" | "migration_verify" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -5363,10 +5383,10 @@ export interface components {
             error?: string | null;
         };
         /**
-         * @description `imported` is an adopted array waiting for its point of no return: the data disks are mounted read-only and parity and cache are untouched (`startMigrationImport`).
+         * @description `imported` is an adopted array waiting for its point of no return: the data disks are mounted read-only and parity and cache are untouched (`startMigrationImport`). The verify phase (`startMigrationVerify`) moves it to `verifying` while it runs, to `verify_failed` when it found a mismatch or did not finish, and to `verified` when every comparison passed; only `verified` leads to the point of no return.
          * @enum {string}
          */
-        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned" | "imported";
+        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned" | "imported" | "verifying" | "verify_failed" | "verified";
         /** @enum {string} */
         MigrationImportRole: "parity" | "data" | "cache" | "ignore";
         /** @description One disk of the mapping, named by its stable identity and never by a `/dev` name. Give `serial` or `wwn`; the cache on a spare partition of the boot disk gives `byId` and `partUuid` instead. */
@@ -5538,6 +5558,74 @@ export interface components {
             /** @description True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is the only source and no stick is offered (Q25). */
             zipOnly: boolean;
             report?: components["schemas"]["MigrationReport"];
+            verify?: components["schemas"]["MigrationVerify"];
+        };
+        MigrationVerifyCounts: {
+            /** Format: int64 */
+            files: number;
+            /** Format: int64 */
+            symlinks: number;
+            /**
+             * Format: int64
+             * @description The special files, meaning FIFOs, sockets and device nodes.
+             */
+            special: number;
+            /**
+             * Format: int64
+             * @description The sum of the regular files' sizes.
+             */
+            bytes: number;
+        };
+        /** @description A capped list of paths from the root of the disk or pool, with how many there were in all. */
+        MigrationVerifyList: {
+            /** Format: int64 */
+            total: number;
+            paths: string[];
+        };
+        /** @description The comparison of one disk, or of one share through the pool. A scope passes only when `problem` is absent, the expected and found counts are equal and every list is empty. */
+        MigrationVerifyScope: {
+            /** @description The disk's slot (`disk1`) or the share's name; an empty name is the files directly in the pool's root. */
+            name: string;
+            passed: boolean;
+            /** @description Why the scope could not be compared at all, such as a disk of the baseline that no adopted disk matches. */
+            problem?: string;
+            expected: components["schemas"]["MigrationVerifyCounts"];
+            found: components["schemas"]["MigrationVerifyCounts"];
+            /**
+             * Format: int64
+             * @description How many of the baseline's sample were hashed again on this disk. 0 for a share: its checksum mismatches are the disks'.
+             */
+            hashed: number;
+            missing: components["schemas"]["MigrationVerifyList"];
+            extra: components["schemas"]["MigrationVerifyList"];
+            sizeChanged: components["schemas"]["MigrationVerifyList"];
+            checksumChanged: components["schemas"]["MigrationVerifyList"];
+            changed: components["schemas"]["MigrationVerifyList"];
+        };
+        /** @description A path the baseline has on more than one disk. */
+        MigrationVerifyDuplicate: {
+            path: string;
+            disks: string[];
+        };
+        /** @description The result of the latest verify (`startMigrationVerify`), present while an import is pending its point of no return. `running` is a verify that has not finished; `failed` is a mismatch, an error or a cancelled run; only `passed` means every comparison matched. */
+        MigrationVerify: {
+            /** @enum {string} */
+            status: "running" | "passed" | "failed";
+            /** @description Why the verify could not finish. Absent for a mismatch. */
+            error?: string;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt?: string;
+            disks?: components["schemas"]["MigrationVerifyScope"][];
+            shares?: components["schemas"]["MigrationVerifyScope"][];
+            /**
+             * Format: int64
+             * @description How many paths exist on more than one disk. The pool shows each once, from the first disk; they are never counted as missing or extra.
+             */
+            duplicates: number;
+            /** @description The first of the paths counted in `duplicates`. */
+            duplicateSample?: components["schemas"]["MigrationVerifyDuplicate"][];
         };
         /**
          * @description What a dockerMan template stands for in the Phase A capture: `autostart` (on Unraid's autostart list), `running`, `stopped`, `template_only` (a template with no container), or `unknown` for every template when the capture has no usable container list.
@@ -8471,6 +8559,27 @@ export interface operations {
         };
         responses: {
             /** @description The queued `migration_import` job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startMigrationVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued `migration_verify` job. */
             200: {
                 headers: {
                     [name: string]: unknown;

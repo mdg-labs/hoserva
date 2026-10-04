@@ -21,7 +21,7 @@ func (q *Queries) DeleteMigrationSession(ctx context.Context) error {
 const getMigrationSession = `-- name: GetMigrationSession :one
 
 SELECT source_file, source_size, source_received_at, report,
-       scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums
+       scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums, verify
 FROM migration_session
 WHERE id = 1
 `
@@ -37,6 +37,7 @@ type GetMigrationSessionRow struct {
 	ScanUnverifiedLayout int64  `json:"scan_unverified_layout"`
 	ScanError            string `json:"scan_error"`
 	ScanFullChecksums    int64  `json:"scan_full_checksums"`
+	Verify               string `json:"verify"`
 }
 
 // sqlc input (#75): the one Unraid migration session, generated into
@@ -55,6 +56,7 @@ func (q *Queries) GetMigrationSession(ctx context.Context) (*GetMigrationSession
 		&i.ScanUnverifiedLayout,
 		&i.ScanError,
 		&i.ScanFullChecksums,
+		&i.Verify,
 	)
 	return &i, err
 }
@@ -62,8 +64,8 @@ func (q *Queries) GetMigrationSession(ctx context.Context) (*GetMigrationSession
 const upsertMigrationSession = `-- name: UpsertMigrationSession :exec
 INSERT INTO migration_session (
     id, source_file, source_size, source_received_at, report,
-    scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums, verify
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     source_file = excluded.source_file,
     source_size = excluded.source_size,
@@ -74,7 +76,8 @@ ON CONFLICT (id) DO UPDATE SET
     scan_received_at = excluded.scan_received_at,
     scan_unverified_layout = excluded.scan_unverified_layout,
     scan_error = excluded.scan_error,
-    scan_full_checksums = excluded.scan_full_checksums
+    scan_full_checksums = excluded.scan_full_checksums,
+    verify = excluded.verify
 `
 
 type UpsertMigrationSessionParams struct {
@@ -88,6 +91,7 @@ type UpsertMigrationSessionParams struct {
 	ScanUnverifiedLayout int64  `json:"scan_unverified_layout"`
 	ScanError            string `json:"scan_error"`
 	ScanFullChecksums    int64  `json:"scan_full_checksums"`
+	Verify               string `json:"verify"`
 }
 
 func (q *Queries) UpsertMigrationSession(ctx context.Context, arg UpsertMigrationSessionParams) error {
@@ -102,6 +106,7 @@ func (q *Queries) UpsertMigrationSession(ctx context.Context, arg UpsertMigratio
 		arg.ScanUnverifiedLayout,
 		arg.ScanError,
 		arg.ScanFullChecksums,
+		arg.Verify,
 	)
 	return err
 }

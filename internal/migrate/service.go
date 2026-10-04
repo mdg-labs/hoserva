@@ -49,6 +49,12 @@ const (
 	// read-only and parity and cache are untouched, until the point of no
 	// return.
 	PhaseImported Phase = "imported"
+	// PhaseVerifying, PhaseVerifyFailed and PhaseVerified are the imported
+	// array's verify phase: running, finished with a mismatch or without
+	// finishing, and finished with every comparison passing.
+	PhaseVerifying    Phase = "verifying"
+	PhaseVerifyFailed Phase = "verify_failed"
+	PhaseVerified     Phase = "verified"
 )
 
 // SourceInfo describes what a report was made from: an uploaded zip, or a flash
@@ -74,6 +80,7 @@ type session struct {
 	Source *SourceInfo
 	Report *Report
 	Scan   *scanRecord
+	Verify *VerifyResult
 }
 
 // State is the session as the API shows it. Source is what the Report was made
@@ -84,6 +91,9 @@ type State struct {
 	ScanError string
 	Source    *SourceInfo
 	Report    *Report
+	// Verify is the verify phase's result, present only while an import is
+	// pending its point of no return.
+	Verify *VerifyResult
 }
 
 // An upload is written under stagingPrefix while it arrives and is inspected,
@@ -123,6 +133,12 @@ type Service struct {
 	// ArrayDevices returns the devices in this machine's array, which are never
 	// offered as the flash. Nil means none are known.
 	ArrayDevices func(ctx context.Context) (map[string]struct{}, error)
+	// Adopted returns the adopted array's data disks, in the pool's branch order,
+	// and where the pool is mounted, for the verify phase. ConfirmReadOnly
+	// returns nil only when the mount at where is read-only, from the kernel's
+	// mount table. Verify refuses to run while either is nil.
+	Adopted         func(ctx context.Context) (Adoption, error)
+	ConfirmReadOnly func(ctx context.Context, where string) error
 
 	// stickMu serialises the one private mountpoint a flash device is read at.
 	// It is taken after mu, never before.
@@ -159,6 +175,12 @@ func (s *Service) load(ctx context.Context) (*session, error) {
 			return nil, fmt.Errorf("decoding the migration report: %w", err)
 		}
 	}
+	if len(row.Verify) > 0 {
+		sess.Verify = &VerifyResult{}
+		if err := json.Unmarshal(row.Verify, sess.Verify); err != nil {
+			sess.Verify = &VerifyResult{Status: VerifyFailed, Error: "the stored verify result could not be read: run verify again"}
+		}
+	}
 	if row.ScanFile != "" {
 		sess.Scan = &scanRecord{File: row.ScanFile, Size: row.ScanSize, ReceivedAt: row.ScanReceivedAt, UnverifiedLayout: row.ScanUnverifiedLayout, FullChecksums: row.ScanFullChecksums, Error: row.ScanError}
 	}
@@ -167,7 +189,7 @@ func (s *Service) load(ctx context.Context) (*session, error) {
 
 // save writes sess as the session's row, or deletes the row when sess is empty.
 func (s *Service) save(ctx context.Context, sess *session) error {
-	if sess.Source == nil && sess.Report == nil && sess.Scan == nil {
+	if sess.Source == nil && sess.Report == nil && sess.Scan == nil && sess.Verify == nil {
 		return s.Sessions.Delete(ctx)
 	}
 	var row store.MigrationSession
@@ -180,6 +202,13 @@ func (s *Service) save(ctx context.Context, sess *session) error {
 			return fmt.Errorf("encoding the migration report: %w", err)
 		}
 		row.Report = data
+	}
+	if sess.Verify != nil {
+		data, err := json.Marshal(sess.Verify)
+		if err != nil {
+			return fmt.Errorf("encoding the verify result: %w", err)
+		}
+		row.Verify = data
 	}
 	if sc := sess.Scan; sc != nil {
 		row.ScanFile, row.ScanSize, row.ScanReceivedAt, row.ScanUnverifiedLayout, row.ScanFullChecksums, row.ScanError = sc.File, sc.Size, sc.ReceivedAt, sc.UnverifiedLayout, sc.FullChecksums, sc.Error
@@ -288,6 +317,10 @@ func (s *Service) Recover(ctx context.Context) error {
 	}
 	if sess.Source != nil && !isDeviceScan(sess.Source.File) && !s.fileExists(sess.Source.File) {
 		sess.Source = nil
+		changed = true
+	}
+	if sess.Verify != nil && sess.Verify.Status == VerifyRunning {
+		sess.Verify = &VerifyResult{Status: VerifyFailed, StartedAt: sess.Verify.StartedAt, Error: "the verify was interrupted by a restart: run it again"}
 		changed = true
 	}
 	if changed {
@@ -614,6 +647,7 @@ func (s *Service) commit(ctx context.Context, upload string, rec scanRecord, rep
 	sess.Source = &SourceInfo{File: rec.File, Size: rec.Size, ReceivedAt: rec.ReceivedAt}
 	sess.Report = report
 	sess.Scan = nil
+	sess.Verify = nil
 	if err := s.save(ctx, sess); err != nil {
 		return fmt.Errorf("saving the report: %w", err)
 	}
@@ -667,6 +701,17 @@ func (s *Service) State(ctx context.Context) (*State, error) {
 		}
 		if pending {
 			st.Phase = PhaseImported
+			if v := sess.Verify; v != nil {
+				st.Verify = v
+				switch v.Status {
+				case VerifyRunning:
+					st.Phase = PhaseVerifying
+				case VerifyPassed:
+					st.Phase = PhaseVerified
+				default:
+					st.Phase = PhaseVerifyFailed
+				}
+			}
 		}
 	}
 	return st, nil

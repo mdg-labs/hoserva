@@ -904,7 +904,9 @@ CREATE TABLE registry_credentials (
 -- uploaded; report is that scan's report as JSON. scan_* is a scan that has not
 -- finished: scan_file is its staged upload, scan_unverified_layout and
 -- scan_full_checksums are the options it was started with, scan_error is empty
--- while it runs and says why it stopped otherwise. Every column is empty ('' or 0) when it
+-- while it runs and says why it stopped otherwise. verify is the result of the
+-- verify phase against the scan's baseline, as JSON, which the migrate package
+-- owns. Every column is empty ('' or 0) when it
 -- does not apply. The zip itself is never in the database or in a config
 -- archive: it holds secrets.
 CREATE TABLE migration_session (
@@ -918,5 +920,6 @@ CREATE TABLE migration_session (
     scan_received_at TEXT NOT NULL DEFAULT '',
     scan_unverified_layout INTEGER NOT NULL DEFAULT 0 CHECK (scan_unverified_layout IN (0, 1)),
     scan_error TEXT NOT NULL DEFAULT '',
-    scan_full_checksums INTEGER NOT NULL DEFAULT 0 CHECK (scan_full_checksums IN (0, 1))
+    scan_full_checksums INTEGER NOT NULL DEFAULT 0 CHECK (scan_full_checksums IN (0, 1)),
+    verify TEXT NOT NULL DEFAULT ''
 ) STRICT;

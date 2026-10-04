@@ -359,3 +359,79 @@ func TestNewArraySequence_APendingImportIsReadOnlyAndDeviceBound(t *testing.T) {
 		t.Errorf("an ordinary array's pool is read-only: %+v", mc.Mnt)
 	}
 }
+
+// POST /migrate/verify is reachable through the daemon's own server, job registry
+// and scheduler: refused until an import is pending, admitted beside the pending
+// import that refuses every other topology job, and its job reads the adopted
+// disks from the array store, checks their mounts against the kernel's mount
+// table through the daemon's runner and records its result in the session. The
+// adopted disk's mountpoint is not a directory on this machine, so the verify
+// cannot read it and must fail, never pass.
+func TestMigrationVerifyWiring_IsReachableOverHTTPWhileTheImportIsPending(t *testing.T) {
+	im := wireImport(t)
+	w := im.w
+
+	if status, body := w.doBody(t, http.MethodPost, "/migrate/verify", ``); status != http.StatusConflict || !bytes.Contains(body, []byte("no_import_pending")) {
+		t.Fatalf("POST /migrate/verify before an import = %d %s, want 409 no_import_pending", status, body)
+	}
+	im.scan(t)
+	status, body := w.doBody(t, http.MethodPost, "/migrate/import", importBody)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/import = %d %s", status, body)
+	}
+	var imp struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &imp); err != nil {
+		t.Fatal(err)
+	}
+	if done := w.awaitJobByID(t, imp.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("import job = %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/migrate/verify", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/verify while the import is pending = %d %s, want 200", status, body)
+	}
+	var queued struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Class string `json:"class"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil || queued.Type != "migration_verify" || queued.Class != "topology" {
+		t.Fatalf("queued job = %s (%v)", body, err)
+	}
+	done := w.awaitJobByID(t, queued.ID)
+	if done.Status != job.StatusFailed {
+		t.Fatalf("verify job = %s %s, want failed: the adopted disk's mountpoint is not readable here", done.Status, done.ErrorMessage)
+	}
+	var sawDisk, sawPool bool
+	for _, c := range im.runner.Calls() {
+		args := strings.Join(c.Args, " ")
+		if c.Name == "findmnt" && strings.HasSuffix(args, "OPTIONS /mnt/disk1") {
+			sawDisk = true
+		}
+	}
+	for _, c := range im.runner.Calls() {
+		if c.Name == "findmnt" && strings.HasSuffix(strings.Join(c.Args, " "), "OPTIONS "+pool.CatchAllPath) {
+			sawPool = true
+		}
+	}
+	if !sawDisk || !sawPool {
+		t.Errorf("the mount table was not asked about the adopted disk (%v) and the pool (%v) before they were read", sawDisk, sawPool)
+	}
+	status, body = w.do(t, http.MethodGet, "/migrate")
+	var session struct {
+		Phase  string `json:"phase"`
+		Verify struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"verify"`
+	}
+	if err := json.Unmarshal(body, &session); status != http.StatusOK || err != nil {
+		t.Fatalf("GET /migrate = %d %s (%v)", status, body, err)
+	}
+	if session.Phase != "verify_failed" || session.Verify.Status != "failed" || !strings.Contains(session.Verify.Error, "disk1") {
+		t.Errorf("GET /migrate = %s, want the verify_failed phase and a failed result naming the unreadable disk", body)
+	}
+}

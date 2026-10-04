@@ -75,9 +75,15 @@ type labArray struct {
 // filesystem the way udev would report it.
 func attachFixture(t *testing.T, variant string) *labArray {
 	t.Helper()
+	return attachFixtureAt(t, variant, labFixture(t, variant))
+}
+
+// attachFixtureAt attaches the disks of the variant's fixture built in dir,
+// which is the lab's own build or a copy of it a test may change.
+func attachFixtureAt(t *testing.T, variant, dir string) *labArray {
+	t.Helper()
 	ctx := context.Background()
 	r := disk.CommandRunner{}
-	dir := labFixture(t, variant)
 	src, err := OpenDir(filepath.Join(dir, "flash"))
 	if err != nil {
 		t.Fatal(err)

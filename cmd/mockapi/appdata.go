@@ -139,7 +139,7 @@ func (h *handler) queueMockJobIn(typ apiv1.JobType, class apiv1.JobClass) (*apiv
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
-	if class != apiv1.JobClassService && class != apiv1.JobClassVM && typ != apiv1.JobTypeMigrationImport && h.migration.imported.Load() {
+	if class != apiv1.JobClassService && class != apiv1.JobClassVM && typ != apiv1.JobTypeMigrationImport && typ != apiv1.JobTypeMigrationVerify && h.migration.imported.Load() {
 		return nil, errMigrationInProgress()
 	}
 	j := apiv1.Job{

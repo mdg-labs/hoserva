@@ -130,3 +130,14 @@ implementation of this package loses a user's data.
   confirmed device and read-only. `import_lab_test.go` is the proof that matters:
   every source disk's whole-device sha256 is the same after the import, a stop and
   a start, so keep it passing before anything else here changes.
+- **Verify reads only, and a pass is only ever the latest run's.** The verify phase
+  (`verify.go`) walks the adopted disks and the pool, compares them with the
+  baseline and writes nothing to a source disk; it reads a mount only after the
+  kernel's table shows it read-only. A walk error, an unreadable file, a baseline
+  that is not whole, a disk or pool that is not confirmed read-only and a
+  cancelled run all fail it: an error is never a pass. A run clears the earlier
+  result before it reads anything, a restart turns a running one into a failed
+  one, and a new scan clears it. The baseline is never loaded whole: it is split
+  into per-disk lists and merged in walk order. A share's expected figures are the
+  union of the disks' baselines, not the sum: a path two disks hold is shown once
+  by the pool, from the first branch.

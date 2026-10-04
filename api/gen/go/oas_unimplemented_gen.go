@@ -2225,6 +2225,30 @@ func (UnimplementedHandler) StartMigrationScan(ctx context.Context, req *StartMi
 	return r, ht.ErrNotImplemented
 }
 
+// StartMigrationVerify implements startMigrationVerify operation.
+//
+// Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a
+// `migration_verify` job (topology class, read-only, and admitted while the import is pending) that
+// walks every adopted data disk through its read-only mount and every share through the read-only pool
+// at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it
+// compares the file, symlink and special-file counts, the total bytes, every file's size, every
+// symlink's target and every special file's type, and it hashes again exactly the files the baseline
+// hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are
+// the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first
+// disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or
+// directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the
+// result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A
+// disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is
+// written to a source disk. The result is in `getMigration`; the job reports its progress and can be
+// cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending`
+// unless an import is pending its point of no return (`startMigrationImport`), 409
+// `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+//
+// POST /migrate/verify
+func (UnimplementedHandler) StartMigrationVerify(ctx context.Context) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartMover implements startMover operation.
 //
 // Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job

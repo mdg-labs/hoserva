@@ -26,6 +26,10 @@ type MigrationSession struct {
 	ScanUnverifiedLayout bool
 	ScanFullChecksums    bool
 	ScanError            string
+
+	// Verify is the verify phase's result as JSON, which the migrate package
+	// owns. Empty when no verify has run against the current baseline.
+	Verify []byte
 }
 
 // MigrationSessionStore persists the one migration session in the central
@@ -78,6 +82,9 @@ func (s *MigrationSessionStore) Get(ctx context.Context) (MigrationSession, bool
 	if row.Report != "" {
 		m.Report = []byte(row.Report)
 	}
+	if row.Verify != "" {
+		m.Verify = []byte(row.Verify)
+	}
 	return m, true, nil
 }
 
@@ -94,6 +101,7 @@ func (s *MigrationSessionStore) Put(ctx context.Context, m MigrationSession) err
 		ScanUnverifiedLayout: boolInt(m.ScanUnverifiedLayout),
 		ScanError:            m.ScanError,
 		ScanFullChecksums:    boolInt(m.ScanFullChecksums),
+		Verify:               string(m.Verify),
 	})
 	if err != nil {
 		return fmt.Errorf("store: saving the migration session: %w", err)

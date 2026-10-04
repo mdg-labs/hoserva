@@ -1,0 +1,261 @@
+{
+  "status": "failed",
+  "startedAt": "2026-01-06T02:10:00Z",
+  "finishedAt": "2026-01-06T04:51:08Z",
+  "disks": [
+    {
+      "name": "disk1",
+      "passed": false,
+      "expected": {
+        "files": 41872,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 3180241778101
+      },
+      "found": {
+        "files": 41871,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 3180240729525
+      },
+      "hashed": 20210,
+      "missing": {
+        "total": 1,
+        "paths": [
+          "backup/2025/photos-0412.tar"
+        ]
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 1,
+        "paths": [
+          "media/movies/Example (2019)/example.mkv"
+        ]
+      },
+      "checksumChanged": {
+        "total": 1,
+        "paths": [
+          "documents/taxes/2024/return.pdf"
+        ]
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "disk3",
+      "passed": true,
+      "expected": {
+        "files": 18340,
+        "symlinks": 0,
+        "special": 1,
+        "bytes": 1402019443712
+      },
+      "found": {
+        "files": 18340,
+        "symlinks": 0,
+        "special": 1,
+        "bytes": 1402019443712
+      },
+      "hashed": 9104,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "disk4",
+      "passed": true,
+      "expected": {
+        "files": 2210,
+        "symlinks": 3,
+        "special": 0,
+        "bytes": 88410233990
+      },
+      "found": {
+        "files": 2210,
+        "symlinks": 3,
+        "special": 0,
+        "bytes": 88410233990
+      },
+      "hashed": 2210,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    }
+  ],
+  "shares": [
+    {
+      "name": "backup",
+      "passed": false,
+      "expected": {
+        "files": 1203,
+        "symlinks": 0,
+        "special": 0,
+        "bytes": 92114003211
+      },
+      "found": {
+        "files": 1202,
+        "symlinks": 0,
+        "special": 0,
+        "bytes": 92113478923
+      },
+      "hashed": 0,
+      "missing": {
+        "total": 1,
+        "paths": [
+          "backup/2025/photos-0412.tar"
+        ]
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "documents",
+      "passed": false,
+      "expected": {
+        "files": 20112,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 214003998101
+      },
+      "found": {
+        "files": 20112,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 214003998101
+      },
+      "hashed": 0,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 1,
+        "paths": [
+          "documents/taxes/2024/return.pdf"
+        ]
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "media",
+      "passed": false,
+      "expected": {
+        "files": 41105,
+        "symlinks": 3,
+        "special": 1,
+        "bytes": 4364312001003
+      },
+      "found": {
+        "files": 41105,
+        "symlinks": 3,
+        "special": 1,
+        "bytes": 4364311476715
+      },
+      "hashed": 0,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 1,
+        "paths": [
+          "media/movies/Example (2019)/example.mkv"
+        ]
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    }
+  ],
+  "duplicates": 2,
+  "duplicateSample": [
+    {
+      "path": "documents/old/notes.txt",
+      "disks": [
+        "disk1",
+        "disk3"
+      ]
+    },
+    {
+      "path": "media/.keep",
+      "disks": [
+        "disk1",
+        "disk3",
+        "disk4"
+      ]
+    }
+  ]
+}

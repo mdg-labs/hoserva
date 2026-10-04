@@ -181,13 +181,14 @@ func labInventory(t *testing.T, a *labArray, withLinks bool, slots ...string) *d
 // labImport is the daemon's part of the import, built the way hoservad builds
 // it, over this lab's disks.
 type labImport struct {
-	t       *testing.T
-	a       *labArray
-	rr      *recordingRunner
-	svc     *Service
-	arrays  *store.ArrayStore
-	genRoot string
-	sched   *job.Scheduler
+	t        *testing.T
+	a        *labArray
+	rr       *recordingRunner
+	svc      *Service
+	arrays   *store.ArrayStore
+	genRoot  string
+	sched    *job.Scheduler
+	registry *job.Registry
 
 	mu  sync.Mutex
 	seq *job.ArraySequence
@@ -238,6 +239,7 @@ func newLabImport(t *testing.T, a *labArray, mounter func(disk.UnitMounter) disk
 		ArrayReady: li.rebuild,
 		Array:      li.current,
 	}))
+	li.registry = registry
 	li.sched = job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), registry)
 	li.sched.SetMigrationPending(li.arrays.MigrationPending)
 	t.Cleanup(li.cleanup)

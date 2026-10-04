@@ -812,3 +812,65 @@ func TestMockMigration_TheCacheOfAnUnraidBootAndDataDeviceIsItsDataPartition(t *
 		t.Errorf("cache = %+v, want partition 4 only", c)
 	}
 }
+
+// The verify phase is refused until an import is pending, as production refuses
+// it. Once one is, the first run fails with the scenario's failing result (the
+// job failed, the phase verify_failed, the files named) and the next passes, so a
+// UI sees both.
+func TestMockMigration_VerifyFailsOnceThenPasses(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	if _, err := h.StartMigrationVerify(ctx); err == nil {
+		t.Fatal("a verify before an import was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "no_import_pending" {
+		t.Errorf("before an import = %d %s, want 409 no_import_pending", st, code)
+	}
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := h.StartMigrationVerify(ctx)
+	if err != nil {
+		t.Fatalf("StartMigrationVerify after the import: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationVerify || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %+v", j)
+	}
+	done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID})
+	if err != nil || done.Status != apiv1.JobStatusFailed {
+		t.Fatalf("the first verify job = %+v, %v, want failed", done, err)
+	}
+	m, _ := h.GetMigration(ctx)
+	v, ok := m.Verify.Get()
+	if m.Phase != apiv1.MigrationPhaseVerifyFailed || !ok || v.Status != apiv1.MigrationVerifyStatusFailed {
+		t.Fatalf("after the first verify: phase = %s, verify = %+v", m.Phase, v)
+	}
+	var named bool
+	for _, d := range v.Disks {
+		named = named || (!d.Passed && len(d.SizeChanged.Paths) == 1 && len(d.ChecksumChanged.Paths) == 1 && len(d.Missing.Paths) == 1)
+	}
+	if !named {
+		t.Errorf("the failing result names no file of each kind: %+v", v.Disks)
+	}
+
+	j, err = h.StartMigrationVerify(ctx)
+	if err != nil {
+		t.Fatalf("the re-run: %v", err)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
+		t.Fatalf("the re-run job = %+v, %v, want succeeded", done, err)
+	}
+	m, _ = h.GetMigration(ctx)
+	v, _ = m.Verify.Get()
+	if m.Phase != apiv1.MigrationPhaseVerified || v.Status != apiv1.MigrationVerifyStatusPassed || v.Duplicates == 0 {
+		t.Errorf("after the re-run: phase = %s, verify = %+v", m.Phase, v)
+	}
+	for _, scope := range append(append([]apiv1.MigrationVerifyScope{}, v.Disks...), v.Shares...) {
+		if !scope.Passed {
+			t.Errorf("scope %s did not pass in the passing fixture", scope.Name)
+		}
+	}
+}

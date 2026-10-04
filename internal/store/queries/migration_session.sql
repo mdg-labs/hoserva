@@ -3,15 +3,15 @@
 
 -- name: GetMigrationSession :one
 SELECT source_file, source_size, source_received_at, report,
-       scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums
+       scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums, verify
 FROM migration_session
 WHERE id = 1;
 
 -- name: UpsertMigrationSession :exec
 INSERT INTO migration_session (
     id, source_file, source_size, source_received_at, report,
-    scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums, verify
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     source_file = excluded.source_file,
     source_size = excluded.source_size,
@@ -22,7 +22,8 @@ ON CONFLICT (id) DO UPDATE SET
     scan_received_at = excluded.scan_received_at,
     scan_unverified_layout = excluded.scan_unverified_layout,
     scan_error = excluded.scan_error,
-    scan_full_checksums = excluded.scan_full_checksums;
+    scan_full_checksums = excluded.scan_full_checksums,
+    verify = excluded.verify;
 
 -- name: DeleteMigrationSession :exec
 DELETE FROM migration_session WHERE id = 1;

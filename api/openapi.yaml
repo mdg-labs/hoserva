@@ -3479,6 +3479,46 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /migrate/verify:
+    post:
+      operationId: startMigrationVerify
+      summary: Verify the adopted disks against the scan's baseline
+      description: >-
+        Step 16 of the migration (doc 05 §4), the last checkpoint before
+        parity is touched: queues a `migration_verify` job (topology class,
+        read-only, and admitted while the import is pending) that walks every
+        adopted data disk through its read-only mount and every share through
+        the read-only pool at `/mnt/user`, and compares what it finds with the
+        scan's baseline. For each disk and each share it compares the file,
+        symlink and special-file counts, the total bytes, every file's size, every
+        symlink's target and every special file's type, and it hashes again
+        exactly the files the baseline hashed (`fullChecksums` of the scan
+        decides how many that is). The expected figures of a share are the
+        union of the disks' baselines: a path two disks hold is shown once by
+        the pool, from the first disk, and is listed in `duplicates`, never as
+        missing or extra. Any difference, and any file or directory that cannot
+        be read, fails the job and leaves `getMigration` in `verify_failed`
+        with the result in `verify`; a verify can be run again, and a run
+        clears the earlier result when it starts. A disk or the pool that the
+        kernel's mount table does not show read-only is not read. Nothing is
+        written to a source disk. The result is in `getMigration`; the job
+        reports its progress and can be cancelled, which leaves a failed
+        result. Refused before anything is queued: 409 `no_import_pending`
+        unless an import is pending its point of no return
+        (`startMigrationImport`), 409 `no_migration_baseline` when the scan
+        recorded no baseline, and 501 `not_configured`.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued `migration_verify` job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
   /migrate/report:
     get:
       operationId: getMigrationReport
@@ -6171,6 +6211,7 @@ components:
         - pool_remount
         - migration_scan
         - migration_import
+        - migration_verify
         # Service
         - appdata_backup
         - appdata_restore
@@ -10553,8 +10594,12 @@ components:
       description: >-
         `imported` is an adopted array waiting for its point of no return:
         the data disks are mounted read-only and parity and cache are
-        untouched (`startMigrationImport`).
-      enum: [none, scanning, scan_failed, scanned, imported]
+        untouched (`startMigrationImport`). The verify phase
+        (`startMigrationVerify`) moves it to `verifying` while it runs, to
+        `verify_failed` when it found a mismatch or did not finish, and to
+        `verified` when every comparison passed; only `verified` leads to the
+        point of no return.
+      enum: [none, scanning, scan_failed, scanned, imported, verifying, verify_failed, verified]
 
     MigrationImportRole:
       type: string
@@ -10937,6 +10982,137 @@ components:
             stick is offered (Q25).
         report:
           $ref: '#/components/schemas/MigrationReport'
+        verify:
+          $ref: '#/components/schemas/MigrationVerify'
+
+    MigrationVerifyCounts:
+      type: object
+      required: [files, symlinks, special, bytes]
+      properties:
+        files:
+          type: integer
+          format: int64
+        symlinks:
+          type: integer
+          format: int64
+        special:
+          type: integer
+          format: int64
+          description: The special files, meaning FIFOs, sockets and device nodes.
+        bytes:
+          type: integer
+          format: int64
+          description: The sum of the regular files' sizes.
+
+    MigrationVerifyList:
+      type: object
+      description: >-
+        A capped list of paths from the root of the disk or pool, with how
+        many there were in all.
+      required: [total, paths]
+      properties:
+        total:
+          type: integer
+          format: int64
+        paths:
+          type: array
+          items:
+            type: string
+
+    MigrationVerifyScope:
+      type: object
+      description: >-
+        The comparison of one disk, or of one share through the pool. A scope
+        passes only when `problem` is absent, the expected and found counts are
+        equal and every list is empty.
+      required: [name, passed, expected, found, hashed, missing, extra, sizeChanged, checksumChanged, changed]
+      properties:
+        name:
+          type: string
+          description: >-
+            The disk's slot (`disk1`) or the share's name; an empty name is the
+            files directly in the pool's root.
+        passed:
+          type: boolean
+        problem:
+          type: string
+          description: >-
+            Why the scope could not be compared at all, such as a disk of the
+            baseline that no adopted disk matches.
+        expected:
+          $ref: '#/components/schemas/MigrationVerifyCounts'
+        found:
+          $ref: '#/components/schemas/MigrationVerifyCounts'
+        hashed:
+          type: integer
+          format: int64
+          description: >-
+            How many of the baseline's sample were hashed again on this disk.
+            0 for a share: its checksum mismatches are the disks'.
+        missing:
+          $ref: '#/components/schemas/MigrationVerifyList'
+        extra:
+          $ref: '#/components/schemas/MigrationVerifyList'
+        sizeChanged:
+          $ref: '#/components/schemas/MigrationVerifyList'
+        checksumChanged:
+          $ref: '#/components/schemas/MigrationVerifyList'
+        changed:
+          $ref: '#/components/schemas/MigrationVerifyList'
+
+    MigrationVerifyDuplicate:
+      type: object
+      description: A path the baseline has on more than one disk.
+      required: [path, disks]
+      properties:
+        path:
+          type: string
+        disks:
+          type: array
+          items:
+            type: string
+
+    MigrationVerify:
+      type: object
+      description: >-
+        The result of the latest verify (`startMigrationVerify`), present while
+        an import is pending its point of no return. `running` is a verify
+        that has not finished; `failed` is a mismatch, an error or a cancelled
+        run; only `passed` means every comparison matched.
+      required: [status, startedAt, duplicates]
+      properties:
+        status:
+          type: string
+          enum: [running, passed, failed]
+        error:
+          type: string
+          description: Why the verify could not finish. Absent for a mismatch.
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationVerifyScope'
+        shares:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationVerifyScope'
+        duplicates:
+          type: integer
+          format: int64
+          description: >-
+            How many paths exist on more than one disk. The pool shows each
+            once, from the first disk; they are never counted as missing or
+            extra.
+        duplicateSample:
+          type: array
+          description: The first of the paths counted in `duplicates`.
+          items:
+            $ref: '#/components/schemas/MigrationVerifyDuplicate'
 
     MigrationTemplateClass:
       type: string

@@ -38,6 +38,12 @@ type mockMigration struct {
 	// topology jobs are refused as production's scheduler refuses them. It is read
 	// without mu, from handlers that hold the handler's own lock.
 	imported atomic.Bool
+	// verify is the result of the latest verify, and verifyRuns how many have
+	// run: the first fails with the scenario's failing result and every later
+	// one passes with its passing result, so a UI sees a mismatch and then the
+	// re-run that clears it.
+	verify     *apiv1.MigrationVerify
+	verifyRuns int
 }
 
 func errMigrationInProgress() error {
@@ -76,6 +82,8 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("migration_no_go", 409, err)
 	case errors.Is(err, migrate.ErrImportNoReview):
 		return errMigrationRefusal("scan_outdated", 409, err)
+	case errors.Is(err, migrate.ErrVerifyNotPending):
+		return errMigrationRefusal("no_import_pending", 409, err)
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errMigrationRefusal("unraid_stick", 409, err)
 	case migrate.IsImportRoleError(err):
@@ -354,6 +362,13 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	}
 	if h.migration.imported.Load() {
 		out.Phase = apiv1.MigrationPhaseImported
+		if v := h.migration.verify; v != nil {
+			out.Verify = apiv1.NewOptMigrationVerify(*v)
+			out.Phase = apiv1.MigrationPhaseVerifyFailed
+			if v.Status == apiv1.MigrationVerifyStatusPassed {
+				out.Phase = apiv1.MigrationPhaseVerified
+			}
+		}
 	}
 	if !out.ZipOnly {
 		out.FlashDevices = append(out.FlashDevices, apiv1.MigrationFlashDevice{
@@ -362,6 +377,54 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 		})
 	}
 	return out, nil
+}
+
+// StartMigrationVerify answers as production does before the job: nothing is
+// verified unless an import is pending. The job it queues has finished at once,
+// as the scans do. The first run fails with the scenario's failing result and
+// the job failed, every later run passes.
+func (h *handler) StartMigrationVerify(ctx context.Context) (*apiv1.Job, error) {
+	if !h.migration.imported.Load() {
+		return nil, mockMigrateError(migrate.ErrVerifyNotPending)
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationVerify, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	h.migration.verifyRuns++
+	name := "verify-failed.json"
+	if h.migration.verifyRuns > 1 {
+		name = "verify-passed.json"
+	}
+	h.migration.mu.Unlock()
+	raw, err := migrationpending.Verify.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	var result apiv1.MigrationVerify
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", name, err)
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("%s does not match the API's MigrationVerify: %w", name, err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	result.StartedAt, result.FinishedAt = now, apiv1.NewOptDateTime(now)
+	h.mu.Lock()
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	j.Status = apiv1.JobStatusSucceeded
+	if result.Status != apiv1.MigrationVerifyStatusPassed {
+		j.Status = apiv1.JobStatusFailed
+		j.Error = apiv1.NewOptNilError(apiv1.Error{Code: "job_failed", Message: "migration verify: " + migrate.ErrVerifyMismatch.Error()})
+	}
+	h.jobs[j.ID] = *j
+	h.mu.Unlock()
+	h.migration.mu.Lock()
+	h.migration.verify = &result
+	h.migration.mu.Unlock()
+	return j, nil
 }
 
 func mockMigrationReportToAPI(r *migrate.Report) apiv1.MigrationReport {
