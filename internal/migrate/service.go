@@ -29,6 +29,10 @@ var (
 	ErrZipTooLarge = errors.New("the Flash Backup zip is larger than the limit")
 	// ErrScanInProgress is returned for a new scan, or a forget, while a scan runs.
 	ErrScanInProgress = errors.New("a migration scan is already running")
+	// ErrImportPending is returned for a forget while an import's adoption is
+	// waiting for its point of no return: the session's baseline is what the
+	// verify step compares the adopted disks against.
+	ErrImportPending = errors.New("an Unraid import is pending its point of no return: its scan baseline is kept until then")
 	// ErrNoReport is returned when no scan has produced a report.
 	ErrNoReport = errors.New("there is no migration report")
 )
@@ -41,6 +45,10 @@ const (
 	PhaseScanning   Phase = "scanning"
 	PhaseScanFailed Phase = "scan_failed"
 	PhaseScanned    Phase = "scanned"
+	// PhaseImported is the import's adoption: the data disks are mounted
+	// read-only and parity and cache are untouched, until the point of no
+	// return.
+	PhaseImported Phase = "imported"
 )
 
 // SourceInfo describes what a report was made from: an uploaded zip, or a flash
@@ -109,6 +117,9 @@ type Service struct {
 	// Mounter mounts the Unraid flash device read-only for a scan of it. Nil
 	// means this daemon reads zips only.
 	Mounter disk.ReadOnlyMounter
+	// Pending reports whether an import's adoption is waiting for its point of
+	// no return (store.ArrayStore.MigrationPending). Nil means it never is.
+	Pending func(ctx context.Context) (bool, error)
 	// ArrayDevices returns the devices in this machine's array, which are never
 	// offered as the flash. Nil means none are known.
 	ArrayDevices func(ctx context.Context) (map[string]struct{}, error)
@@ -649,6 +660,15 @@ func (s *Service) State(ctx context.Context) (*State, error) {
 	case sess.Report != nil:
 		st.Phase = PhaseScanned
 	}
+	if s.Pending != nil {
+		pending, err := s.Pending(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("reading whether an import is pending: %w", err)
+		}
+		if pending {
+			st.Phase = PhaseImported
+		}
+	}
 	return st, nil
 }
 
@@ -667,12 +687,22 @@ func (s *Service) ReportMarkdown(ctx context.Context) (string, error) {
 // Forget deletes the session's row and then every zip in Dir, the uploaded zip
 // included. It is refused while a scan runs, which has the zip open. A zip that
 // cannot be removed is reported, the row already being gone, and removed by the
-// next Forget or start.
+// next Forget or start. It is refused with ErrImportPending while an import's
+// adoption is pending.
 func (s *Service) Forget(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.ensureDir(); err != nil {
 		return err
+	}
+	if s.Pending != nil {
+		pending, err := s.Pending(ctx)
+		if err != nil {
+			return fmt.Errorf("reading whether an import is pending: %w", err)
+		}
+		if pending {
+			return ErrImportPending
+		}
 	}
 	sess, err := s.load(ctx)
 	if err != nil {

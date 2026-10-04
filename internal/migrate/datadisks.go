@@ -274,19 +274,42 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 		candidates = append(candidates, m)
 	}
 
-	// Two disks with one filesystem UUID cannot be told apart by a mount by UUID.
+	// Two data disks with one filesystem UUID cannot both be adopted: an XFS
+	// filesystem is not mounted twice under one UUID, and the array's records
+	// are keyed by it. A data disk whose UUID another disk that is not adopted
+	// also carries (a former parity disk holds a byte copy of a one-data-disk
+	// array's filesystem) is adopted through its own device, a by-id link, and
+	// never found by its UUID, so the copy cannot be mounted in its place; with
+	// no such link nothing but the UUID could tell the two apart, and it is
+	// refused.
+	dataDevices := map[string]bool{}
+	for _, m := range candidates {
+		dataDevices[m.disk.Device] = true
+	}
 	var unique []*member
 	for _, m := range candidates {
-		var others []string
+		var sharedData, sharedOther []string
 		for _, dev := range uuids[strings.ToLower(m.disk.FSUUID)] {
-			if dev != m.disk.Device {
-				others = append(others, dev)
+			switch {
+			case dev == m.disk.Device:
+			case dataDevices[dev]:
+				sharedData = append(sharedData, dev)
+			default:
+				sharedOther = append(sharedOther, dev)
 			}
 		}
-		if len(others) > 0 {
-			sort.Strings(others)
-			r.refuseDisk(m, CheckDataDisks, RefuseDuplicateUUID, "its filesystem UUID is also on %s, and Hoserva mounts by filesystem UUID, which could not tell the two apart (Unraid mounts XFS with nouuid, so this can happen there)", joinNames(others))
+		switch {
+		case len(sharedData) > 0:
+			sort.Strings(sharedData)
+			r.refuseDisk(m, CheckDataDisks, RefuseDuplicateUUID, "its filesystem UUID is also on %s, another data disk, and two data disks with one UUID cannot both be adopted (Unraid mounts XFS with nouuid, so this can happen there)", joinNames(sharedData))
 			continue
+		case len(sharedOther) > 0 && m.disk.FSByIDName == "":
+			sort.Strings(sharedOther)
+			r.refuseDisk(m, CheckDataDisks, RefuseDuplicateUUID, "its filesystem UUID is also on %s, and it has no /dev/disk/by-id link to be mounted through instead of by UUID", joinNames(sharedOther))
+			continue
+		case len(sharedOther) > 0:
+			sort.Strings(sharedOther)
+			r.add(CheckDataDisks, StatusInfo, m.subject, "Its filesystem UUID is also on %s, which is not adopted (the parity disk of a one-data-disk array holds a copy of it): %s is mounted through its own /dev/disk/by-id link, never by UUID.", joinNames(sharedOther), m.disk.Device)
 		}
 		unique = append(unique, m)
 	}

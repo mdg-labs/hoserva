@@ -154,6 +154,7 @@ const (
 	StartArrayOperation                     OperationName = "StartArray"
 	StartFixOperation                       OperationName = "StartFix"
 	StartMigrationDeviceScanOperation       OperationName = "StartMigrationDeviceScan"
+	StartMigrationImportOperation           OperationName = "StartMigrationImport"
 	StartMigrationScanOperation             OperationName = "StartMigrationScan"
 	StartMoverOperation                     OperationName = "StartMover"
 	StartRebalanceOperation                 OperationName = "StartRebalance"

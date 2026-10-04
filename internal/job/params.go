@@ -212,6 +212,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeMigrationScan {
 			return fmt.Errorf("job: migration_scan params require an upload")
 		}
+		if t == TypeMigrationImport {
+			return fmt.Errorf("job: migration_import params require the disk-role mapping")
+		}
 		return nil
 	}
 	switch t {
@@ -265,6 +268,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeMigrationScan:
 		_, err := decodeMigrationScanParams(params)
+		return err
+	case TypeMigrationImport:
+		_, err := decodeMigrationImportParams(params)
 		return err
 	case TypeAppdataBackup:
 		_, err := decodeAppdataBackupParams(params)
@@ -464,6 +470,33 @@ func decodeMigrationScanParams(params []byte) (MigrationScanParams, error) {
 	}
 	if p.Upload == "" {
 		return MigrationScanParams{}, fmt.Errorf("job: migration_scan params require an upload")
+	}
+	return p, nil
+}
+
+// MigrationImportParams is startMigrationImport's persisted payload: the
+// disk-role mapping the user confirmed, keyed by serial or WWN, and the plan
+// it resolved to when the request was accepted. The job resolves the mapping
+// again from a fresh inventory and refuses when that is not the confirmed
+// plan.
+type MigrationImportParams struct {
+	Assignments []disk.AdoptionAssignment `json:"assignments"`
+	Plan        disk.AdoptionPlan         `json:"plan"`
+}
+
+func decodeMigrationImportParams(params []byte) (MigrationImportParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return MigrationImportParams{}, fmt.Errorf("job: migration_import params require the disk-role mapping")
+	}
+	var p MigrationImportParams
+	if err := decodeJSON(params, &p); err != nil {
+		return MigrationImportParams{}, err
+	}
+	if len(p.Assignments) == 0 {
+		return MigrationImportParams{}, fmt.Errorf("job: migration_import params require the disk-role mapping")
+	}
+	if err := p.Plan.Validate(); err != nil {
+		return MigrationImportParams{}, fmt.Errorf("job: migration_import params: %w", err)
 	}
 	return p, nil
 }

@@ -106,6 +106,12 @@ var (
 	ErrJobAlreadyRunning = errors.New("job: this job is already running")
 )
 
+// ErrMigrationInProgress refuses a parity, array-write or topology job while an
+// Unraid import's adoption is pending: its data disks are mounted read-only and
+// nothing may write parity or change the array before the point of no return
+// (doc 05 §4 steps 14-16, §5).
+var ErrMigrationInProgress = errors.New("job: an Unraid migration is in progress — parity, array-write and topology jobs are refused until its point of no return")
+
 // stopReason is set on a runningJob before it is asked to stop, so its
 // completion handler (Scheduler.runJob) knows which terminal status to
 // record — the same context cancellation is used for both a user Cancel
@@ -268,6 +274,9 @@ type Scheduler struct {
 	// never directly — every other Scheduler hook that isn't a test-only
 	// field is reached the same way.
 	topologyBackup ConfigBackup
+	// migrationPending reports whether an Unraid import's adoption is waiting
+	// for its point of no return (SetMigrationPending).
+	migrationPending func(ctx context.Context) (bool, error)
 	// dispatching holds, for the window between dispatch() removing a
 	// queued ClassTopology job from s.queue and its outcome being decided
 	// — its start-time backup, and, if it was cancelled or that backup
@@ -324,6 +333,47 @@ func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 	s.topologyBackup = b
 }
 
+// SetMigrationPending sets the check made before a parity, array-write or
+// topology job is admitted, again before a queued one starts and before an
+// interrupted one resumes: while it reports true the array is an Unraid
+// import's adoption, mounted read-only with parity and cache not yet formatted
+// (doc 05 §4 steps 14-16), and only the migration import's own retry is
+// admitted. A check that fails refuses the job: an unknown state is not
+// "nothing pending". Submit makes the check (admitLocked), and so do dispatch()
+// for a job that waited in the queue and Resume (resumableJobLocked) for an
+// interrupted one, because the import may have recorded its pending array while
+// that job waited or after it was interrupted. Unset, nothing is refused.
+// cmd/hoservad's main.go calls this once, before any job can be submitted.
+func (s *Scheduler) SetMigrationPending(check func(ctx context.Context) (bool, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationPending = check
+}
+
+// admitMigrationLocked refuses a job that could write parity or the array, or
+// change its topology, while a migration is pending. Both admitLocked, for a
+// job being submitted, dispatch(), for a queued job about to start, and
+// resumableJobLocked, for an interrupted job being resumed, call it. Callers
+// must hold s.mu.
+func (s *Scheduler) admitMigrationLocked(ctx context.Context, t Type) error {
+	if s.migrationPending == nil || t == TypeMigrationImport {
+		return nil
+	}
+	switch class, _ := ClassOf(t); class {
+	case ClassParity, ClassArrayWrite, ClassTopology:
+	default:
+		return nil
+	}
+	pending, err := s.migrationPending(ctx)
+	if err != nil {
+		return fmt.Errorf("job: checking whether a migration is pending: %w", err)
+	}
+	if pending {
+		return ErrMigrationInProgress
+	}
+	return nil
+}
+
 // takesTopologyBackup reports whether a job of type t, in class, starts with the
 // pre-topology config backup. A migration scan is in the Topology class so no
 // storage job runs beside it, but it only reads: it changes no topology, and its
@@ -373,6 +423,9 @@ func (s *Scheduler) admitLocked(ctx context.Context, t Type) error {
 	}
 	if s.batteryHold && isBatteryHeldType(t) {
 		return ErrOnBattery
+	}
+	if err := s.admitMigrationLocked(ctx, t); err != nil {
+		return err
 	}
 	if t == TypeEvacuation {
 		if err := s.admitEvacuationLocked(ctx); err != nil {
@@ -831,8 +884,9 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 }
 
 // resumableJobLocked reads id's row and decides whether Resume may start
-// it now: every refusal Resume owns except the per-job in-flight markers.
-// The caller holds s.mu.
+// it now: every refusal Resume owns except the per-job in-flight markers,
+// including the migration gate (admitMigrationLocked) an interrupted
+// parity, array-write or topology job meets again here. The caller holds s.mu.
 func (s *Scheduler) resumableJobLocked(ctx context.Context, id string) (*Job, registryEntry, error) {
 	if s.databaseRestore {
 		return nil, registryEntry{}, ErrDatabaseRestoreInProgress
@@ -863,6 +917,9 @@ func (s *Scheduler) resumableJobLocked(ctx context.Context, id string) (*Job, re
 	}
 	if s.batteryHold && isBatteryHeldType(existing.Type) {
 		return nil, registryEntry{}, ErrOnBattery
+	}
+	if err := s.admitMigrationLocked(ctx, existing.Type); err != nil {
+		return nil, registryEntry{}, err
 	}
 	return existing, entry, nil
 }
@@ -1705,6 +1762,13 @@ func (s *Scheduler) startJobLocked(j *Job, run RunFunc, cancellable bool) {
 // isn't held up behind it. In maintenance mode only a data-disk upgrade,
 // the one type it admits, is started (doc 02 §4 E1 Queued).
 //
+// A queued job that no longer conflicts is also checked against the migration
+// gate (admitMigrationLocked) before it starts, since Submit admitted it before
+// an Unraid import recorded its pending array. A job the gate now refuses is
+// removed from s.queue, recorded in s.dispatching, and left to refuseQueuedJob
+// (called below, after this function has released s.mu) to end: its type's
+// AbortFunc runs outside s.mu, and it ends failed, never started.
+//
 // A queued ClassTopology job's turn is decided under s.mu exactly like any
 // other job's, but starting it is not: its start-time pre-topology backup
 // (doc 10 §1, #406, #408), and, if it is cancelled or that backup fails,
@@ -1724,6 +1788,7 @@ func (s *Scheduler) dispatch() {
 	var remaining []*queuedJob
 	decided := make([]*Job, 0, len(s.queue))
 	var toStart []*queuedJob
+	var toRefuse []refusedJob
 	for _, q := range s.queue {
 		if s.maintenance && q.job.Type != TypeDiskUpgradeData {
 			remaining = append(remaining, q)
@@ -1744,6 +1809,15 @@ func (s *Scheduler) dispatch() {
 		}
 		if conflict {
 			remaining = append(remaining, q)
+			continue
+		}
+
+		if err := s.admitMigrationLocked(context.Background(), q.job.Type); err != nil {
+			if s.dispatching == nil {
+				s.dispatching = make(map[string]*queuedJob)
+			}
+			s.dispatching[q.job.ID] = q
+			toRefuse = append(toRefuse, refusedJob{q: q, err: err})
 			continue
 		}
 
@@ -1772,9 +1846,67 @@ func (s *Scheduler) dispatch() {
 	s.queue = remaining
 	s.mu.Unlock()
 
+	for _, r := range toRefuse {
+		s.refuseQueuedJob(r.q, r.err)
+	}
 	for _, q := range toStart {
 		s.startQueuedTopologyJob(q)
 	}
+}
+
+// refusedJob is a queued job dispatch() found a migration now refuses, and
+// the reason (admitMigrationLocked's error).
+type refusedJob struct {
+	q   *queuedJob
+	err error
+}
+
+// refuseQueuedJob ends a queued job dispatch() found the migration gate now
+// refuses (admitMigrationLocked): it was admitted by Submit before an Unraid
+// import recorded its pending array, and must not start against that
+// adoption. Always called without s.mu held — dispatch() has already removed
+// q from s.queue and recorded it in s.dispatching, where it stays, excluding
+// what it conflicts with, until the outcome is recorded.
+//
+// If q's type registered an AbortFunc it runs first, outside s.mu, exactly as
+// for a cancelled or backup-failed queued topology job
+// (runQueuedTopologyAbort); a failed abort leaves q interrupted with the
+// abort's own error instead (doc 02 §4 invariant 3). Otherwise q ends failed
+// with refusal as its error — migration_in_progress, or
+// migration_check_failed when the pending check itself failed, which refuses
+// rather than admits. A Cancel that landed meanwhile takes precedence and ends
+// q cancelled, as it does for a dispatching topology job. RunFunc is never
+// called.
+func (s *Scheduler) refuseQueuedJob(q *queuedJob, refusal error) {
+	if abort, hasAbort := s.registry.lookupAbort(q.job.Type); hasAbort {
+		if code, message, ok := s.runQueuedTopologyAbort(q, abort); !ok {
+			s.finishQueuedTopologyJobInterrupted(q, code, message)
+			return
+		}
+	}
+
+	code := "migration_check_failed"
+	if errors.Is(refusal, ErrMigrationInProgress) {
+		code = "migration_in_progress"
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	if q.cancelRequested {
+		s.mu.Unlock()
+		s.finishQueuedTopologyJobCancelled(q)
+		return
+	}
+	delete(s.dispatching, q.job.ID)
+	q.job.Status = StatusFailed
+	q.job.ErrorCode = code
+	q.job.ErrorMessage = refusal.Error()
+	q.job.FinishedAt = &now
+	snapshot := *q.job
+	s.mu.Unlock()
+
+	s.recordTerminalOutcomeWithRetry(snapshot)
+	s.hub.Publish(&snapshot)
+	s.dispatch()
 }
 
 // recordTerminalOutcomeWithRetry persists j's already-decided terminal

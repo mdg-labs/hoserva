@@ -42,6 +42,12 @@ import (
 // shared by every rebuild, since it remembers across an array stop which
 // containers array start still owes a start.
 //
+// While an Unraid import is pending (settings.MigrationPending) the data
+// disks' units are read-only and bound to each disk's own device, the
+// catch-all is read-only, and Start confirms each disk against that device as
+// well as its UUID; parity and cache are not in the sequence at all, being
+// only recorded.
+//
 // A data disk that has left the pool (unpooled, #358) is in no pool
 // mount's branch list; an unlisted one is not part of the sequence at all.
 //
@@ -75,7 +81,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		if d.RemovalState == store.RemovalStateUnlisted {
 			continue
 		}
-		checked = append(checked, disk.MountUnit{Where: d.Mountpoint, UUID: d.FSUUID})
+		checked = append(checked, disk.MountUnit{Where: d.Mountpoint, UUID: d.FSUUID, What: d.MountSource})
 		// A cache on a boot-disk partition is matched by its parent
 		// disk's identity, and the inventory's cached filesystem for that
 		// disk is its first partition's, never this partition's — so the
@@ -107,6 +113,8 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 					Where:      d.Mountpoint,
 					UUID:       d.FSUUID,
 					Filesystem: disk.FilesystemType(d.Filesystem),
+					ReadOnly:   settings.MigrationPending,
+					What:       d.MountSource,
 				},
 				Runner: runner,
 			},
@@ -176,7 +184,9 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	}
 
 	var catchAll pool.Mount
-	if removingDisk == "" {
+	if settings.MigrationPending {
+		catchAll, err = pool.CatchAllMountReadOnly(dataMounts, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	} else if removingDisk == "" {
 		catchAll, err = pool.CatchAllMount(dataMounts, pool.Options{MinFreeSpace: settings.MinFreeSpace})
 	} else {
 		catchAll, err = pool.CatchAllMountRemoving(dataMounts, removingDisk, pool.Options{MinFreeSpace: settings.MinFreeSpace})

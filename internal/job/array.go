@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -180,7 +181,12 @@ type ArrayDiskCheck interface {
 }
 
 // ArrayDiskUUIDCheck confirms each of Disks, when mounted, by filesystem
-// UUID from the mount table (doc 02 §4 UR9). Disks come from SQLite.
+// UUID from the mount table (doc 02 §4 UR9). Disks come from SQLite. A disk
+// whose unit names a device (What, an adopted Unraid data disk) is also
+// confirmed to be mounted from that device: its former parity disk can carry
+// a copy of the same filesystem, so the UUID alone could not tell them apart.
+// Mounts must then provide MountedSource (disk.KernelMounts does); without it
+// such a disk cannot be confirmed and the check fails.
 type ArrayDiskUUIDCheck struct {
 	Mounts MountTable
 	Disks  []disk.MountUnit
@@ -204,12 +210,44 @@ func (c ArrayDiskUUIDCheck) ConfirmArrayDisks(ctx context.Context) error {
 		}
 		if got != u.UUID {
 			bad = append(bad, fmt.Sprintf("%s holds %s, SQLite names %s", u.Where, got, u.UUID))
+			continue
+		}
+		if u.What == "" {
+			continue
+		}
+		sources, ok := c.Mounts.(interface {
+			MountedSource(ctx context.Context, path string) (string, error)
+		})
+		if !ok {
+			return fmt.Errorf("job: cannot confirm which device is mounted at %s: the mount table reader cannot report a mount's source", u.Where)
+		}
+		src, err := sources.MountedSource(ctx, u.Where)
+		if err != nil {
+			return fmt.Errorf("job: reading the device mounted at %s: %w", u.Where, err)
+		}
+		if !sameDevice(src, u.What) {
+			bad = append(bad, fmt.Sprintf("%s is mounted from %s, SQLite names %s", u.Where, src, u.What))
 		}
 	}
 	if len(bad) > 0 {
 		return fmt.Errorf("%w: %s", ErrArrayDiskMismatch, strings.Join(bad, "; "))
 	}
 	return nil
+}
+
+// sameDevice reports whether the device node src and the path what (a device
+// node or a /dev/disk/by-id link) resolve to the same node. A path that cannot
+// be resolved is not the same device.
+func sameDevice(src, what string) bool {
+	a, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return false
+	}
+	b, err := filepath.EvalSymlinks(what)
+	if err != nil {
+		return false
+	}
+	return a == b
 }
 
 // PendingUpgradeGate is the storage readiness gate (doc 02 §1, Q69) with
@@ -707,23 +745,25 @@ func RegenerateArrayMountsFromStore(ctx context.Context, arrays *store.ArrayStor
 	if err != nil {
 		return err
 	}
-	units, err := mountUnitsFromStore(disks)
+	units, err := ArrayMountUnits(settings, disks)
 	if err != nil {
 		return err
 	}
 	if err := g.WriteDiskMounts(ctx, units, arrayCreateCommand, 1, now); err != nil {
 		return err
 	}
-	body, err := layoutFromStore(disks).Render()
-	if err != nil {
-		return err
-	}
-	if err := g.Write(ctx, config.File{
-		Path:    "snapraid.conf",
-		Command: arrayCreateCommand,
-		Body:    []byte(body),
-	}, 1, now); err != nil {
-		return err
+	if !settings.MigrationPending {
+		body, err := layoutFromStore(disks).Render()
+		if err != nil {
+			return err
+		}
+		if err := g.Write(ctx, config.File{
+			Path:    "snapraid.conf",
+			Command: arrayCreateCommand,
+			Body:    []byte(body),
+		}, 1, now); err != nil {
+			return err
+		}
 	}
 
 	state := poolStateFromStore(settings, disks)

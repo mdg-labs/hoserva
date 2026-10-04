@@ -4194,6 +4194,40 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartMigrationImport",
+		name: "confirmation_required",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Roles: []apiv1.MigrationImportDisk{{Role: apiv1.MigrationImportRoleData, Serial: apiv1.NewOptString("X")}}})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: []apiv1.MigrationImportDisk{{Role: apiv1.MigrationImportRoleData, Serial: apiv1.NewOptString("X")}}})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "a_disk_the_scan_did_not_list",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			// The second scan is the one the mock's canned report finds disk3
+			// repaired in, so neither side's verdict is no-go.
+			for i := 0; i < 2; i++ {
+				if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+					return err
+				}
+				if err := contractAwaitScanned(ctx, h); err != nil {
+					return err
+				}
+			}
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: []apiv1.MigrationImportDisk{{Role: apiv1.MigrationImportRoleData, Serial: apiv1.NewOptString("NO-SUCH-SERIAL")}}})
+			return err
+		},
+	},
+	{
 		op:   "GetMigration",
 		name: "valid_after_a_scan_of_the_stick",
 		run: func(ctx context.Context, h apiv1.Handler) error {

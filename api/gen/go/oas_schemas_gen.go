@@ -8445,6 +8445,7 @@ const (
 	JobTypeDiskUpgradeParity     JobType = "disk_upgrade_parity"
 	JobTypePoolRemount           JobType = "pool_remount"
 	JobTypeMigrationScan         JobType = "migration_scan"
+	JobTypeMigrationImport       JobType = "migration_import"
 	JobTypeAppdataBackup         JobType = "appdata_backup"
 	JobTypeAppdataRestore        JobType = "appdata_restore"
 	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
@@ -8483,6 +8484,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeDiskUpgradeParity,
 		JobTypePoolRemount,
 		JobTypeMigrationScan,
+		JobTypeMigrationImport,
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
 		JobTypeAppdataRestorePreview,
@@ -8538,6 +8540,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypePoolRemount:
 		return []byte(s), nil
 	case JobTypeMigrationScan:
+		return []byte(s), nil
+	case JobTypeMigrationImport:
 		return []byte(s), nil
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
@@ -8629,6 +8633,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeMigrationScan:
 		*s = JobTypeMigrationScan
+		return nil
+	case JobTypeMigrationImport:
+		*s = JobTypeMigrationImport
 		return nil
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
@@ -10251,6 +10258,154 @@ func (s *MigrationFlashDevice) SetSerial(val OptString) {
 	s.Serial = val
 }
 
+// One disk of the mapping, named by its stable identity and never by a `/dev` name. Give `serial` or
+// `wwn`; the cache on a spare partition of the boot disk gives `byId` and `partUuid` instead.
+// Ref: #/components/schemas/MigrationImportDisk
+type MigrationImportDisk struct {
+	Role   MigrationImportRole `json:"role"`
+	Serial OptString           `json:"serial"`
+	Wwn    OptString           `json:"wwn"`
+	// The spare boot-disk partition's `/dev/disk/by-id` name (cache only).
+	ById OptString `json:"byId"`
+	// The spare boot-disk partition's PARTUUID (cache only).
+	PartUuid OptString `json:"partUuid"`
+}
+
+// GetRole returns the value of Role.
+func (s *MigrationImportDisk) GetRole() MigrationImportRole {
+	return s.Role
+}
+
+// GetSerial returns the value of Serial.
+func (s *MigrationImportDisk) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetWwn returns the value of Wwn.
+func (s *MigrationImportDisk) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetById returns the value of ById.
+func (s *MigrationImportDisk) GetById() OptString {
+	return s.ById
+}
+
+// GetPartUuid returns the value of PartUuid.
+func (s *MigrationImportDisk) GetPartUuid() OptString {
+	return s.PartUuid
+}
+
+// SetRole sets the value of Role.
+func (s *MigrationImportDisk) SetRole(val MigrationImportRole) {
+	s.Role = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *MigrationImportDisk) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *MigrationImportDisk) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetById sets the value of ById.
+func (s *MigrationImportDisk) SetById(val OptString) {
+	s.ById = val
+}
+
+// SetPartUuid sets the value of PartUuid.
+func (s *MigrationImportDisk) SetPartUuid(val OptString) {
+	s.PartUuid = val
+}
+
+// Ref: #/components/schemas/MigrationImportRequest
+type MigrationImportRequest struct {
+	Roles []MigrationImportDisk `json:"roles"`
+	// Must be true: the user has checked the mapping against the serial table.
+	Confirm bool `json:"confirm"`
+}
+
+// GetRoles returns the value of Roles.
+func (s *MigrationImportRequest) GetRoles() []MigrationImportDisk {
+	return s.Roles
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *MigrationImportRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetRoles sets the value of Roles.
+func (s *MigrationImportRequest) SetRoles(val []MigrationImportDisk) {
+	s.Roles = val
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *MigrationImportRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
+
+// Ref: #/components/schemas/MigrationImportRole
+type MigrationImportRole string
+
+const (
+	MigrationImportRoleParity MigrationImportRole = "parity"
+	MigrationImportRoleData   MigrationImportRole = "data"
+	MigrationImportRoleCache  MigrationImportRole = "cache"
+	MigrationImportRoleIgnore MigrationImportRole = "ignore"
+)
+
+// AllValues returns all MigrationImportRole values.
+func (MigrationImportRole) AllValues() []MigrationImportRole {
+	return []MigrationImportRole{
+		MigrationImportRoleParity,
+		MigrationImportRoleData,
+		MigrationImportRoleCache,
+		MigrationImportRoleIgnore,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationImportRole) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationImportRoleParity:
+		return []byte(s), nil
+	case MigrationImportRoleData:
+		return []byte(s), nil
+	case MigrationImportRoleCache:
+		return []byte(s), nil
+	case MigrationImportRoleIgnore:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationImportRole) UnmarshalText(data []byte) error {
+	switch MigrationImportRole(data) {
+	case MigrationImportRoleParity:
+		*s = MigrationImportRoleParity
+		return nil
+	case MigrationImportRoleData:
+		*s = MigrationImportRoleData
+		return nil
+	case MigrationImportRoleCache:
+		*s = MigrationImportRoleCache
+		return nil
+	case MigrationImportRoleIgnore:
+		*s = MigrationImportRoleIgnore
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// `imported` is an adopted array waiting for its point of no return: the data disks are mounted
+// read-only and parity and cache are untouched (`startMigrationImport`).
 // Ref: #/components/schemas/MigrationPhase
 type MigrationPhase string
 
@@ -10259,6 +10414,7 @@ const (
 	MigrationPhaseScanning   MigrationPhase = "scanning"
 	MigrationPhaseScanFailed MigrationPhase = "scan_failed"
 	MigrationPhaseScanned    MigrationPhase = "scanned"
+	MigrationPhaseImported   MigrationPhase = "imported"
 )
 
 // AllValues returns all MigrationPhase values.
@@ -10268,6 +10424,7 @@ func (MigrationPhase) AllValues() []MigrationPhase {
 		MigrationPhaseScanning,
 		MigrationPhaseScanFailed,
 		MigrationPhaseScanned,
+		MigrationPhaseImported,
 	}
 }
 
@@ -10281,6 +10438,8 @@ func (s MigrationPhase) MarshalText() ([]byte, error) {
 	case MigrationPhaseScanFailed:
 		return []byte(s), nil
 	case MigrationPhaseScanned:
+		return []byte(s), nil
+	case MigrationPhaseImported:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -10301,6 +10460,9 @@ func (s *MigrationPhase) UnmarshalText(data []byte) error {
 		return nil
 	case MigrationPhaseScanned:
 		*s = MigrationPhaseScanned
+		return nil
+	case MigrationPhaseImported:
+		*s = MigrationPhaseImported
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

@@ -46,6 +46,9 @@ type PoolState struct {
 	// the plain one (#359). Empty keeps every path byte-identical to
 	// before this field existed: the plain builders, same as always.
 	RemovingDisk string `json:"removing_disk,omitempty"`
+	// ReadOnly builds the catch-all read-only (pool.CatchAllMountReadOnly), for
+	// the array of a pending Unraid migration. RemovingDisk is not used with it.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 // unitFileName is pool.UnitFileName — kept as a local alias so this
@@ -191,7 +194,9 @@ func (g *Generator) CanWriteShareFiles(ctx context.Context, state PoolState) err
 func catchAllMount(state PoolState) (pool.Mount, error) {
 	var catchAll pool.Mount
 	var err error
-	if state.RemovingDisk == "" {
+	if state.ReadOnly {
+		catchAll, err = pool.CatchAllMountReadOnly(state.DataDisks, state.Options)
+	} else if state.RemovingDisk == "" {
 		catchAll, err = pool.CatchAllMount(state.DataDisks, state.Options)
 	} else {
 		catchAll, err = pool.CatchAllMountRemoving(state.DataDisks, state.RemovingDisk, state.Options)

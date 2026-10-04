@@ -1194,7 +1194,7 @@ export interface paths {
         put?: never;
         /**
          * Create the storage array
-         * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused with `unmanaged_device`.
+         * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's rollback (doc 05 §4 step 11), is refused in every role with `unraid_stick` (409). Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return (`startMigrationImport`).
          */
         post: operations["createArray"];
         delete?: never;
@@ -1819,7 +1819,7 @@ export interface paths {
         post?: never;
         /**
          * Delete the migration session
-         * @description Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs.
+         * @description Deletes the session, its report and the uploaded Flash Backup zip, which holds secrets (password hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan runs, and with 409 `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`): the scan's baseline is what the adopted disks are verified against.
          */
         delete: operations["forgetMigration"];
         options?: never;
@@ -1838,7 +1838,7 @@ export interface paths {
         put?: never;
         /**
          * Scan a Flash Backup zip
-         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every data disk the capture records, through a read-only mount at a private mountpoint under the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
+         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409 `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`), and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every data disk the capture records, through a read-only mount at a private mountpoint under the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
          */
         post: operations["startMigrationScan"];
         delete?: never;
@@ -1861,6 +1861,26 @@ export interface paths {
          * @description The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private mountpoint under the daemon's state directory for the one read made here before anything is queued and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing is copied from it. The stick is the user's rollback. Refused before anything is queued: 400 `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service or cannot read a flash device. The result is the report the same flash's zip gives.
          */
         post: operations["startMigrationDeviceScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adopt the Unraid data disks
+         * @description Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class) that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay` (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact. The former parity and cache disks are recorded by identity and are neither formatted, mounted nor opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity engine exists and no sync can run. While the import is pending (`getMigration` `phase` is `imported`), parity, array-write and topology jobs other than this one's own retry are refused with 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code. `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk, keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity disk is never parity (Q21); the disk this machine boots from is never parity or data and is the cache only by a spare partition of it; parity is one or two disks, each at least as large as the largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only filesystem check immediately before mounting; a disk that changed since the request, or now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+         */
+        post: operations["startMigrationImport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3279,7 +3299,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "migration_import" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -5342,8 +5362,28 @@ export interface components {
             /** @description Why the destination failed. Absent when it passed. */
             error?: string | null;
         };
+        /**
+         * @description `imported` is an adopted array waiting for its point of no return: the data disks are mounted read-only and parity and cache are untouched (`startMigrationImport`).
+         * @enum {string}
+         */
+        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned" | "imported";
         /** @enum {string} */
-        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned";
+        MigrationImportRole: "parity" | "data" | "cache" | "ignore";
+        /** @description One disk of the mapping, named by its stable identity and never by a `/dev` name. Give `serial` or `wwn`; the cache on a spare partition of the boot disk gives `byId` and `partUuid` instead. */
+        MigrationImportDisk: {
+            role: components["schemas"]["MigrationImportRole"];
+            serial?: string;
+            wwn?: string;
+            /** @description The spare boot-disk partition's `/dev/disk/by-id` name (cache only). */
+            byId?: string;
+            /** @description The spare boot-disk partition's PARTUUID (cache only). */
+            partUuid?: string;
+        };
+        MigrationImportRequest: {
+            roles: components["schemas"]["MigrationImportDisk"][];
+            /** @description Must be true: the user has checked the mapping against the serial table. */
+            confirm: boolean;
+        };
         /**
          * @description `refuse` blocks the migration; `flag` and `warn` need attention before it goes ahead; `info` and `pass` do not.
          * @enum {string}
@@ -8406,6 +8446,31 @@ export interface operations {
         };
         responses: {
             /** @description The queued `migration_scan` job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startMigrationImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MigrationImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued `migration_import` job. */
             200: {
                 headers: {
                     [name: string]: unknown;

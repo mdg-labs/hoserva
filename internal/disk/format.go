@@ -89,8 +89,10 @@ func FormatAssignedProbed(ctx context.Context, p Provider, probe BlankProber, pl
 //
 // Otherwise it refuses (ErrBootDevice) the moment the matched disk turns
 // out to be the boot device — before ever constructing a by-id path for
-// it — and refuses (ErrDiskIdentityChanged) when no disk at all currently
-// carries the confirmed identity, a disk pulled between discovery and
+// it — or (ErrUnraidStick) the Unraid USB stick, the user's rollback and
+// never an array member (doc 05 §4 step 11), and refuses
+// (ErrDiskIdentityChanged) when no disk at all currently carries the
+// confirmed identity, a disk pulled between discovery and
 // this call. Once a non-boot match is confirmed to still exist: when
 // byIDName is known, it first refuses (ErrDiskIdentityChanged) if the
 // matched disk's own current by-id name has since changed — matching by
@@ -117,6 +119,9 @@ func resolveFormatTarget(ctx context.Context, p Provider, dev, wwn, serial, byID
 			if d.Device == dev && d.Boot {
 				return "", fmt.Errorf("%s: %w", dev, ErrBootDevice)
 			}
+			if d.Device == dev && IsUnraidStick(d) {
+				return "", fmt.Errorf("%s: %w", dev, ErrUnraidStick)
+			}
 		}
 		return dev, nil
 	}
@@ -131,6 +136,9 @@ func resolveFormatTarget(ctx context.Context, p Provider, dev, wwn, serial, byID
 		}
 		if d.Boot {
 			return "", fmt.Errorf("%s: %w", dev, ErrBootDevice)
+		}
+		if IsUnraidStick(d) {
+			return "", fmt.Errorf("%s: %w", dev, ErrUnraidStick)
 		}
 		if byIDName != "" {
 			if d.ByIDName != byIDName {

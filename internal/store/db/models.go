@@ -50,6 +50,7 @@ type ArrayDisk struct {
 	Mountpoint   string         `json:"mountpoint"`
 	RemovalState sql.NullString `json:"removal_state"`
 	RemovalJobID sql.NullString `json:"removal_job_id"`
+	MountSource  sql.NullString `json:"mount_source"`
 }
 
 type ArrayMaintenance struct {
@@ -60,10 +61,12 @@ type ArrayMaintenance struct {
 }
 
 type ArraySetting struct {
-	ID           int64  `json:"id"`
-	CreatePolicy string `json:"create_policy"`
-	MinFreeSpace string `json:"min_free_space"`
-	CreatedAt    string `json:"created_at"`
+	ID                int64  `json:"id"`
+	CreatePolicy      string `json:"create_policy"`
+	MinFreeSpace      string `json:"min_free_space"`
+	CreatedAt         string `json:"created_at"`
+	MigrationPending  int64  `json:"migration_pending"`
+	MigrationRecorded string `json:"migration_recorded"`
 }
 
 type AuditLog struct {

@@ -256,7 +256,10 @@ func (UnimplementedHandler) CreateApiToken(ctx context.Context, req *CreateApiTo
 // in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition
 // and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or
 // `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported
-// spare partitions is refused with `unmanaged_device`.
+// spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's
+// rollback (doc 05 §4 step 11), is refused in every role with `unraid_stick` (409). Refused with 409
+// `migration_in_progress` while an Unraid import is pending its point of no return
+// (`startMigrationImport`).
 //
 // POST /disks/array
 func (UnimplementedHandler) CreateArray(ctx context.Context, req *CreateArrayRequest) (r *Job, _ error) {
@@ -553,7 +556,8 @@ func (UnimplementedHandler) FinishDiskRemoval(ctx context.Context, req *FinishDi
 // hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A
 // scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied
 // from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
-// runs.
+// runs, and with 409 `migration_in_progress` while an import is pending its point of no return
+// (`startMigrationImport`): the scan's baseline is what the adopted disks are verified against.
 //
 // DELETE /migrate
 func (UnimplementedHandler) ForgetMigration(ctx context.Context) error {
@@ -2153,6 +2157,45 @@ func (UnimplementedHandler) StartMigrationDeviceScan(ctx context.Context, req *S
 	return r, ht.ErrNotImplemented
 }
 
+// StartMigrationImport implements startMigrationImport operation.
+//
+// Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class)
+// that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without
+// writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID
+// another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay`
+// (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact.
+// The former parity and cache disks are recorded by identity and are neither formatted, mounted nor
+// opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity
+// engine exists and no sync can run. While the import is pending (`getMigration` `phase` is
+// `imported`), parity, array-write and topology jobs other than this one's own retry are refused with
+// 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code.
+// `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk,
+// keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture
+// names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by
+// that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with
+// 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan
+// listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB
+// stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever
+// filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity
+// disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
+// cache only by a spare partition of it; parity is one or two disks, each at least as large as the
+// largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
+// is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`.
+// Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404
+// `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one
+// failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report
+// made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and
+// 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only
+// filesystem check immediately before mounting; a disk that changed since the request, or now fails,
+// is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted,
+// deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
+// Nothing is read from the Unraid flash: the import uses the report the scan stored.
+//
+// POST /migrate/import
+func (UnimplementedHandler) StartMigrationImport(ctx context.Context, req *MigrationImportRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartMigrationScan implements startMigrationScan operation.
 //
 // Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
@@ -2164,17 +2207,18 @@ func (UnimplementedHandler) StartMigrationDeviceScan(ctx context.Context, req *S
 // refused as soon as the request body, which is the zip and its multipart framing, passes that size
 // plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
 // (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
-// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
-// `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
-// layout refusal; the override is recorded in the report and printed at its top. The scan reads the
-// disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every
-// data disk the capture records, through a read-only mount at a private mountpoint under the daemon's
-// state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk
-// that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the
-// report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as
-// the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is
-// written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed
-// or was cancelled. The job reports its progress and can be cancelled.
+// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409
+// `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`),
+// and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides
+// only the layout refusal; the override is recorded in the report and printed at its top. The scan
+// reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also
+// reads every data disk the capture records, through a read-only mount at a private mountpoint under
+// the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem
+// check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by
+// name in the report and the scan goes on with the rest. Each data disk's files are listed and a
+// sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every
+// file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it
+// succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
 //
 // POST /migrate/scan
 func (UnimplementedHandler) StartMigrationScan(ctx context.Context, req *StartMigrationScanReq) (r *Job, _ error) {

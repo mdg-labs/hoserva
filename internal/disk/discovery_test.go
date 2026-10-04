@@ -111,6 +111,24 @@ func TestLister_List_RecognisesAnUnraidInternalBootDevice(t *testing.T) {
 	if got[0].LooksLikeUnraid {
 		t.Error("an internal boot device has no partition at sector 64 holding XFS, btrfs or ext4")
 	}
+	if p := got[0].UnraidDataPartition; p == nil || p.Device != "/dev/sda4" || p.ByIDName != "" || p.PartUUID != "" {
+		t.Errorf("UnraidDataPartition = %+v, want partition 4 with no identity while it has no by-id link or PARTUUID", p)
+	}
+
+	mustWriteFile(t, filepath.Join(l.SysBlockDir, "sda4", "size"), "800000\n")
+	mustWriteFile(t, filepath.Join(udev, "b8:4"), "I:1\nE:ID_PART_ENTRY_TYPE=0fc63daf-8483-4772-8e79-3d69d8477de4\nE:ID_PART_ENTRY_UUID=cccc-dddd\nE:ID_FS_TYPE=xfs\nE:ID_FS_UUID=77777777-7777-4777-8777-777777777777\n")
+	mustSymlink(t, "../../sda4", filepath.Join(l.ByIDDir, "wwn-0x5000cca0b1c2d3e4-part4"))
+	got, err = l.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	want := BootPartition{Device: "/dev/sda4", Size: 800000 * 512, ByIDName: "wwn-0x5000cca0b1c2d3e4-part4", PartUUID: "cccc-dddd", Filesystem: "xfs", FSUUID: "77777777-7777-4777-8777-777777777777"}
+	if p := got[0].UnraidDataPartition; p == nil || *p != want {
+		t.Errorf("UnraidDataPartition = %+v, want %+v: partition 4 by its own identity", p, want)
+	}
+	if got[1].UnraidDataPartition != nil {
+		t.Errorf("a disk that is not an Unraid boot device has UnraidDataPartition %+v", got[1].UnraidDataPartition)
+	}
 
 	mustWriteFile(t, filepath.Join(udev, "b8:3"), "I:1\nE:ID_PART_ENTRY_TYPE=0fc63daf-8483-4772-8e79-3d69d8477de4\nE:ID_PART_ENTRY_NAME=Boot\nE:ID_FS_TYPE=zfs_member\n")
 	got, err = l.List(context.Background())

@@ -3400,7 +3400,10 @@ func (s *Server) handleCreateApiTokenRequest(args [1]string, argsEscaped bool, w
 // in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition
 // and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or
 // `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported
-// spare partitions is refused with `unmanaged_device`.
+// spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's
+// rollback (doc 05 §4 step 11), is refused in every role with `unraid_stick` (409). Refused with 409
+// `migration_in_progress` while an Unraid import is pending its point of no return
+// (`startMigrationImport`).
 //
 // POST /disks/array
 func (s *Server) handleCreateArrayRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -8481,7 +8484,8 @@ func (s *Server) handleFinishDiskRemovalRequest(args [0]string, argsEscaped bool
 // hashes, SSH host keys, WireGuard and rclone config, the licence key, containers' environment). A
 // scan of the Unraid USB stick keeps nothing of it: the stick is never written and nothing is copied
 // from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
-// runs.
+// runs, and with 409 `migration_in_progress` while an import is pending its point of no return
+// (`startMigrationImport`): the scan's baseline is what the adopted disks are verified against.
 //
 // DELETE /migrate
 func (s *Server) handleForgetMigrationRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -32476,6 +32480,255 @@ func (s *Server) handleStartMigrationDeviceScanRequest(args [0]string, argsEscap
 	}
 }
 
+// handleStartMigrationImportRequest handles startMigrationImport operation.
+//
+// Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class)
+// that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without
+// writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID
+// another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay`
+// (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact.
+// The former parity and cache disks are recorded by identity and are neither formatted, mounted nor
+// opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity
+// engine exists and no sync can run. While the import is pending (`getMigration` `phase` is
+// `imported`), parity, array-write and topology jobs other than this one's own retry are refused with
+// 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code.
+// `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk,
+// keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture
+// names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by
+// that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with
+// 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan
+// listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB
+// stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever
+// filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity
+// disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
+// cache only by a spare partition of it; parity is one or two disks, each at least as large as the
+// largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
+// is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`.
+// Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404
+// `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one
+// failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report
+// made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and
+// 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only
+// filesystem check immediately before mounting; a disk that changed since the request, or now fails,
+// is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted,
+// deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
+// Nothing is read from the Unraid flash: the import uses the report the scan stored.
+//
+// POST /migrate/import
+func (s *Server) handleStartMigrationImportRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startMigrationImport"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/migrate/import"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), StartMigrationImportOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: StartMigrationImportOperation,
+			ID:   "startMigrationImport",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, StartMigrationImportOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, StartMigrationImportOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeStartMigrationImportRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    StartMigrationImportOperation,
+			OperationSummary: "Adopt the Unraid data disks",
+			OperationID:      "startMigrationImport",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *MigrationImportRequest
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.StartMigrationImport(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.StartMigrationImport(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeStartMigrationImportResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleStartMigrationScanRequest handles startMigrationScan operation.
 //
 // Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
@@ -32487,17 +32740,18 @@ func (s *Server) handleStartMigrationDeviceScanRequest(args [0]string, argsEscap
 // refused as soon as the request body, which is the zip and its multipart framing, passes that size
 // plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
 // (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
-// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501
-// `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the
-// layout refusal; the override is recorded in the report and printed at its top. The scan reads the
-// disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every
-// data disk the capture records, through a read-only mount at a private mountpoint under the daemon's
-// state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk
-// that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the
-// report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as
-// the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is
-// written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed
-// or was cancelled. The job reports its progress and can be cancelled.
+// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409
+// `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`),
+// and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides
+// only the layout refusal; the override is recorded in the report and printed at its top. The scan
+// reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also
+// reads every data disk the capture records, through a read-only mount at a private mountpoint under
+// the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem
+// check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by
+// name in the report and the scan goes on with the rest. Each data disk's files are listed and a
+// sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every
+// file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it
+// succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
 //
 // POST /migrate/scan
 func (s *Server) handleStartMigrationScanRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

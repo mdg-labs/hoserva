@@ -538,3 +538,156 @@ func TestArrayDisk_LeavingArrayAndLeftPool(t *testing.T) {
 		}
 	}
 }
+
+func pendingArrayRows() ([]ArrayDisk, []RecordedDisk) {
+	disks := []ArrayDisk{
+		{Role: ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Serial: "DATA1", Mountpoint: "/mnt/disk1", Size: 4 << 40, SizeSet: true, MountSource: "/dev/disk/by-id/ata-X_DATA1-part1"},
+		{Role: ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "ext4", FSUUID: "uuid-d2", Serial: "DATA2", Mountpoint: "/mnt/disk2", Size: 2 << 40, SizeSet: true},
+	}
+	recorded := []RecordedDisk{
+		{Role: ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Size: 8 << 40, WWN: "wwn-p", Serial: "PAR1", ByIDName: "wwn-p"},
+		{Role: ArrayRoleCache, RoleIndex: 1, Device: "/dev/nvme0n1p3", Size: 400 << 30, Serial: "NVME", ByIDName: "nvme-x-part3", PartUUID: "aaaa-bbbb"},
+	}
+	return disks, recorded
+}
+
+func TestArrayStore_PutPendingArray_RoundTripsAndFlagsTheArrayPending(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	if pending, err := st.MigrationPending(ctx); err != nil || pending {
+		t.Fatalf("MigrationPending with no array = %v, %v, want false", pending, err)
+	}
+	disks, recorded := pendingArrayRows()
+	settings := ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)}
+	if err := st.PutPendingArray(ctx, settings, disks, recorded); err != nil {
+		t.Fatalf("PutPendingArray: %v", err)
+	}
+	if pending, err := st.MigrationPending(ctx); err != nil || !pending {
+		t.Fatalf("MigrationPending = %v, %v, want true", pending, err)
+	}
+	gotSettings, gotDisks, err := st.GetArray(ctx)
+	if err != nil || !gotSettings.MigrationPending {
+		t.Fatalf("GetArray = %+v, %v", gotSettings, err)
+	}
+	if len(gotDisks) != 2 || gotDisks[0].MountSource != "/dev/disk/by-id/ata-X_DATA1-part1" || gotDisks[1].MountSource != "" {
+		t.Fatalf("disks = %+v, want the mount source of disk 1 and none for disk 2", gotDisks)
+	}
+	gotRecorded, err := st.RecordedDisks(ctx)
+	if err != nil || len(gotRecorded) != 2 || gotRecorded[0] != recorded[0] || gotRecorded[1] != recorded[1] {
+		t.Fatalf("RecordedDisks = %+v, %v, want %+v", gotRecorded, err, recorded)
+	}
+	// The recorded disks are never array disks: nothing mounts them or lists them
+	// in a pool.
+	for _, d := range gotDisks {
+		if d.Role != ArrayRoleData {
+			t.Errorf("array disk %+v: a pending array holds only the adopted data disks", d)
+		}
+	}
+	if err := st.PutPendingArray(ctx, settings, disks, recorded); !errors.Is(err, ErrArrayExists) {
+		t.Errorf("a second PutPendingArray = %v, want ErrArrayExists", err)
+	}
+}
+
+func TestArrayStore_PutPendingArray_IsOneTransaction(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	disks, recorded := pendingArrayRows()
+	disks[1].FSUUID = disks[0].FSUUID
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err == nil {
+		t.Fatal("PutPendingArray accepted two data disks with one filesystem UUID")
+	}
+	if exists, err := st.Exists(ctx); err != nil || exists {
+		t.Errorf("Exists = %v, %v after a failed PutPendingArray: its settings were committed without its disks", exists, err)
+	}
+	if rec, err := st.RecordedDisks(ctx); err != nil || len(rec) != 0 {
+		t.Errorf("recorded disks = %+v, %v after a failed PutPendingArray", rec, err)
+	}
+}
+
+// A one-data-disk array whose parity disk carries a copy of the data disk's
+// filesystem, and so its UUID, can be recorded: the parity disk is a recorded
+// identity, not an array_disks row with a UUID of its own to be unique.
+func TestArrayStore_PutPendingArray_AParityDiskMayCarryTheDataDisksUUID(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	disks, recorded := pendingArrayRows()
+	disks = disks[:1]
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := st.RecordedDisks(ctx); err != nil || len(rec) != 1 || rec[0].Role != ArrayRoleParity {
+		t.Errorf("recorded = %+v, %v", rec, err)
+	}
+}
+
+func TestArrayStore_PutArray_IsNotPending(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	if err := st.PutArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []ArrayDisk{
+		{Role: ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := st.MigrationPending(ctx); err != nil || pending {
+		t.Errorf("MigrationPending of an array made by hand = %v, %v, want false", pending, err)
+	}
+}
+
+// DeletePendingArray undoes a failed adoption and can never delete an array
+// that is not a pending migration's.
+func TestArrayStore_DeletePendingArray(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	if deleted, err := st.DeletePendingArray(ctx); err != nil || deleted {
+		t.Fatalf("DeletePendingArray with no array = %v, %v", deleted, err)
+	}
+
+	disks, recorded := pendingArrayRows()
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := st.DeletePendingArray(ctx); err != nil || !deleted {
+		t.Fatalf("DeletePendingArray = %v, %v, want it deleted", deleted, err)
+	}
+	if exists, _ := st.Exists(ctx); exists {
+		t.Error("the array is still there")
+	}
+	if rec, err := st.RecordedDisks(ctx); err != nil || len(rec) != 0 {
+		t.Errorf("recorded disks = %+v, %v after the delete", rec, err)
+	}
+	if _, got, err := st.GetArray(ctx); !errors.Is(err, ErrNoArray) || len(got) != 0 {
+		t.Errorf("GetArray = %+v, %v", got, err)
+	}
+
+	// An array created by hand, or one past the point of no return, is not
+	// touched.
+	if err := st.PutArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []ArrayDisk{
+		{Role: ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := st.DeletePendingArray(ctx); err != nil || deleted {
+		t.Fatalf("DeletePendingArray of an ordinary array = %v, %v, want nothing deleted", deleted, err)
+	}
+	if _, got, err := st.GetArray(ctx); err != nil || len(got) != 1 {
+		t.Errorf("the ordinary array's disks = %+v, %v after DeletePendingArray: they were deleted", got, err)
+	}
+}
+
+// A replacement disk is formatted and mounted by UUID: the slot's old by-id
+// binding does not follow it.
+func TestArrayStore_ReplaceDataDisk_ClearsTheMountSource(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	disks, recorded := pendingArrayRows()
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceDataDisk(ctx, "/mnt/disk1", ArrayDisk{Device: "/dev/sdz", Filesystem: "xfs", FSUUID: "uuid-new", Serial: "NEW"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+	if err != nil || got.MountSource != "" || got.FSUUID != "uuid-new" {
+		t.Errorf("replaced disk = %+v, %v, want no mount source", got, err)
+	}
+}

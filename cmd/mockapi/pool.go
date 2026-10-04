@@ -356,6 +356,9 @@ func (h *handler) submitParityJob(jobType apiv1.JobType, cancellable bool) (*api
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.imported.Load() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),
@@ -429,13 +432,13 @@ func (h *handler) AcknowledgeDegradedArray(ctx context.Context) (*apiv1.SystemSt
 // not stopped. GetPool and the backup destination test both read it, so the
 // two endpoints cannot disagree. Callers hold h.mu.
 func (h *handler) poolMountedLocked() bool {
-	return mockPoolStatus(h.scenario).Mounted && !h.maintenance
+	return mockPoolStatus(h.arrayScenario()).Mounted && !h.maintenance
 }
 
 func (h *handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	status := mockPoolStatus(h.scenario)
+	status := mockPoolStatus(h.arrayScenario())
 	status.Mounted = h.poolMountedLocked()
 	return status, nil
 }
@@ -577,6 +580,9 @@ func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.imported.Load() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),
@@ -624,6 +630,8 @@ func mockTopologyPlan(req *apiv1.CreateArrayRequest, listed []disk.Disk, sizes m
 		}
 		if i := slices.IndexFunc(listed, func(d disk.Disk) bool { return d.Device == a.Device }); i >= 0 && listed[i].Boot {
 			return disk.TopologyPlan{}, errInvalidPlan(fmt.Errorf("disk: refusing to assign the boot device %s", a.Device))
+		} else if i >= 0 && disk.IsUnraidStick(listed[i]) {
+			return disk.TopologyPlan{}, errUnraidStick(a.Device)
 		}
 		if bound, size, isPart, err := disk.BindBootPartition(listed, assigned, a.Role == apiv1.ArrayDiskRoleCache); isPart {
 			if err != nil {

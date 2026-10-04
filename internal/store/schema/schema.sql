@@ -346,11 +346,24 @@ CREATE TABLE backup_recipient (
 -- create_policy / min_free_space are the pool-wide mergerfs options the
 -- wizard collected (doc 02 §1); omitted request fields persist as the
 -- engine defaults (mspmfs / 50G).
+-- migration_pending is 1 from the Unraid import's adoption (doc 05 §4 steps
+-- 14-16) until the point of no return clears it: the data disks in
+-- array_disks are mounted read-only and the catch-all pool is read-only, no
+-- snapraid.conf is generated, and the former parity and cache disks are only
+-- recorded, never formatted or mounted. migration_recorded is that record: a
+-- JSON array of each disk's role, role index, device, size, WWN, serial,
+-- by-id name, weak-identity flag and (for a cache on a spare partition of the
+-- boot disk) PARTUUID, written with the row and empty otherwise. The disks are
+-- not array_disks rows because that table holds a mounted filesystem's UUID,
+-- unique across the array, and a parity disk of a one-data-disk array carries
+-- a copy of the data disk's.
 CREATE TABLE array_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     create_policy TEXT NOT NULL,
     min_free_space TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    migration_pending INTEGER NOT NULL DEFAULT 0 CHECK (migration_pending IN (0, 1)),
+    migration_recorded TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 -- One assigned disk per row. role_index is 1-based for the documented
@@ -393,6 +406,7 @@ CREATE TABLE array_disks (
     mountpoint TEXT NOT NULL,
     removal_state TEXT CHECK (removal_state IS NULL OR removal_state IN ('evacuating', 'evacuated', 'unpooled', 'unlisted')),
     removal_job_id TEXT,
+    mount_source TEXT,
     UNIQUE (role, role_index),
     UNIQUE (device),
     UNIQUE (fs_uuid),
@@ -400,6 +414,11 @@ CREATE TABLE array_disks (
 ) STRICT;
 
 CREATE INDEX array_disks_role_idx ON array_disks (role, role_index);
+
+-- mount_source is the /dev/disk/by-id path a disk's mount unit binds to
+-- instead of its filesystem UUID: set only for a data disk adopted from an
+-- Unraid array, whose former parity disk can carry a byte copy of the same
+-- filesystem and so the same UUID (doc 05 §3). NULL means mount by UUID.
 
 -- Array maintenance mode (#387, doc 02 §4, Q70): singleton row, same
 -- pattern as array_settings. Held only in job.Scheduler's own memory

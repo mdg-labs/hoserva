@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -31,6 +33,15 @@ type mockMigration struct {
 	size       int64
 	device     string
 	receivedAt time.Time
+	// imported is set once an import has adopted the data disks and cleared
+	// when no disk is adopted any more; while it is set, parity, array-write and
+	// topology jobs are refused as production's scheduler refuses them. It is read
+	// without mu, from handlers that hold the handler's own lock.
+	imported atomic.Bool
+}
+
+func errMigrationInProgress() error {
+	return &mockError{code: "migration_in_progress", statusCode: 409, message: "an Unraid migration is in progress — parity, array-write and topology jobs are refused until its point of no return"}
 }
 
 func (m *mockMigration) zipOnly() bool {
@@ -57,6 +68,18 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("invalid_flash_device", 400, err)
 	case errors.Is(err, migrate.ErrZipOnly):
 		return errMigrationRefusal("zip_only_source", 409, err)
+	case errors.Is(err, migrate.ErrImportNoReport):
+		return errMigrationRefusal("no_migration_report", 404, err)
+	case errors.Is(err, migrate.ErrImportScanUnfinished):
+		return errMigrationRefusal("scan_not_finished", 409, err)
+	case errors.Is(err, migrate.ErrImportNoGo):
+		return errMigrationRefusal("migration_no_go", 409, err)
+	case errors.Is(err, migrate.ErrImportNoReview):
+		return errMigrationRefusal("scan_outdated", 409, err)
+	case errors.Is(err, disk.ErrUnraidStick):
+		return errMigrationRefusal("unraid_stick", 409, err)
+	case migrate.IsImportRoleError(err):
+		return errMigrationRefusal("invalid_import_roles", 400, err)
 	}
 	return err
 }
@@ -71,8 +94,11 @@ func errNoMigrationReport() error {
 // one row group per part of the configuration inventory, including the flagged
 // containers and shares. flash is the uploaded zip's capture, which production
 // reads the boot mode and the capture's state from; nil is the seeded session,
-// which booted from the stick with a capture that is there and fresh.
-func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, at time.Time) *migrate.Report {
+// which booted from the stick with a capture that is there and fresh. A scan
+// that follows an earlier one finds disk3 repaired (disk3Fixed: its filesystem
+// was checked clean after the first report refused it), so the report no longer
+// says no-go and an import can go ahead.
+func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, at time.Time, disk3Fixed bool) *migrate.Report {
 	r := &migrate.Report{GeneratedAt: at, UnraidVersion: version, UnverifiedLayout: unverified, BootMode: "usb"}
 	add := func(check string, st migrate.Status, subject, detail string) {
 		r.Rows = append(r.Rows, migrate.Row{Check: check, Status: st, Subject: subject, Detail: detail})
@@ -96,8 +122,13 @@ func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, 
 	add(migrate.CheckDataDisks, migrate.StatusPass, "disk3", "xfs on /dev/sdd, a single filesystem; the flash and the device agree on it.")
 	add(migrate.CheckDataDisks, migrate.StatusPass, "disk4", "xfs on /dev/sde, a single filesystem; the flash and the device agree on it.")
 	add(migrate.CheckIntegrity, migrate.StatusPass, "disk1", "The read-only xfs check of /dev/sdc is clean.")
-	const disk3Refusal = "disk3 is not adopted: its read-only xfs check failed (xfs_repair -n exit status 1: a bad free-space B-tree block in allocation group 0). Computing parity over a damaged filesystem would keep the damage. An XFS disk that was not unmounted cleanly has a log that needs replaying: start Unraid, stop the array cleanly, and scan again. Hoserva never replays a log on a disk it does not own yet."
-	add(migrate.CheckIntegrity, migrate.StatusRefuse, "disk3", disk3Refusal)
+	disk3Refusal := "disk3 is not adopted: its read-only xfs check failed (xfs_repair -n exit status 1: a bad free-space B-tree block in allocation group 0). Computing parity over a damaged filesystem would keep the damage. An XFS disk that was not unmounted cleanly has a log that needs replaying: start Unraid, stop the array cleanly, and scan again. Hoserva never replays a log on a disk it does not own yet."
+	if disk3Fixed {
+		disk3Refusal = ""
+		add(migrate.CheckIntegrity, migrate.StatusPass, "disk3", "The read-only xfs check of /dev/sdd is clean.")
+	} else {
+		add(migrate.CheckIntegrity, migrate.StatusRefuse, "disk3", disk3Refusal)
+	}
 	add(migrate.CheckIntegrity, migrate.StatusPass, "disk4", "The read-only xfs check of /dev/sde is clean.")
 	add(migrate.CheckBaseline, migrate.StatusInfo, "", "Recorded for the verify phase, with the session. Content hashes: every file of 1.0 MiB or less is hashed, plus a deterministic 1 in 100 (at least 200) of the larger files on each disk, chosen by a stable hash of the path. Every file's size, every symlink with its target and every special file by type is recorded as well.")
 	add(migrate.CheckBaseline, migrate.StatusInfo, "disk1", "48210 files (3.6 TiB), 12 symlinks and 0 special files; 31044 files (96.2 GiB) hashed.")
@@ -130,6 +161,9 @@ func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, 
 	add(migrate.CheckUID99, migrate.StatusPass, "", "UID 99 is free for the hoserva-apps user.")
 	add(migrate.CheckSyncEstimate, migrate.StatusInfo, "", "About 2.8 hours for 4.0 TiB of data disks, if they are full, at an assumed 400 MB/s. It is a planning figure, not a measurement: the first sync is a long job, and it runs only when you start it.")
 	r.Verdict = migrate.VerdictNoGo
+	if disk3Fixed {
+		r.Verdict = migrate.VerdictGoWithWarnings
+	}
 	r.Review = mockReview(flash, at, disk3Refusal)
 	return r
 }
@@ -151,11 +185,17 @@ func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrat
 	weak := true
 	strong := false
 	rv := &migrate.Review{Boot: f.ReviewBoot(), Capture: f.ReviewCapture()}
+	disk3 := migrate.ReviewDisk{Slot: "disk3", DiskNumber: 3, UnraidID: "EXAMPLE_DISK3", UnraidRole: migrate.UnraidData, Device: "/dev/sdd", Serial: "EXAMPLE_DISK3", ByID: "ata-EXAMPLE_DISK3", Model: "EXAMPLE 4TB", Size: 4 * tib, Filesystem: "xfs", WeakIdentity: &strong}
+	if disk3Refusal != "" {
+		disk3.Refused, disk3.RefusalCode, disk3.Refusal = true, migrate.RefuseIntegrity, disk3Refusal
+	} else {
+		disk3.ProposedRole = migrate.ProposeData
+	}
 	rv.Disks = []migrate.ReviewDisk{
 		{Slot: "parity", UnraidID: "EXAMPLE_PARITY", UnraidRole: migrate.UnraidParity, ProposedRole: migrate.ProposeParity, Device: "/dev/sdb", Serial: "EXAMPLE_PARITY", WWN: "0x5000c500a1b2c3d4", ByID: "ata-EXAMPLE_PARITY", Model: "EXAMPLE 8TB", Size: 8 * tib, Filesystem: "xfs", WeakIdentity: &strong},
 		{Slot: "disk1", DiskNumber: 1, UnraidID: "EXAMPLE_DISK1", UnraidRole: migrate.UnraidData, ProposedRole: migrate.ProposeData, Device: "/dev/sdc", Serial: "EXAMPLE_DISK1", ByID: "ata-EXAMPLE_DISK1", Model: "EXAMPLE 4TB", Size: 4 * tib, Filesystem: "xfs", WeakIdentity: &strong},
 		{Slot: "disk2", DiskNumber: 2, UnraidID: "EXAMPLE_DISK2", UnraidRole: migrate.UnraidData, Size: 4 * tib, Problem: "no disk on this machine has this serial or WWN"},
-		{Slot: "disk3", DiskNumber: 3, UnraidID: "EXAMPLE_DISK3", UnraidRole: migrate.UnraidData, Device: "/dev/sdd", Serial: "EXAMPLE_DISK3", ByID: "ata-EXAMPLE_DISK3", Model: "EXAMPLE 4TB", Size: 4 * tib, Filesystem: "xfs", WeakIdentity: &strong, Refused: true, RefusalCode: migrate.RefuseIntegrity, Refusal: disk3Refusal},
+		disk3,
 		{Slot: "disk4", DiskNumber: 4, UnraidID: "EXAMPLE_DISK4", UnraidRole: migrate.UnraidData, ProposedRole: migrate.ProposeData, Device: "/dev/sde", Serial: "EXAMPLE_DISK4", Model: "EXAMPLE USB 2TB", Size: 2 * tib, Filesystem: "xfs", WeakIdentity: &weak},
 		{Slot: "pool cache", UnraidID: "EXAMPLE_CACHE", UnraidRole: migrate.UnraidCache, ProposedRole: migrate.ProposeCache, Device: "/dev/nvme0n1", Serial: "EXAMPLE_CACHE", ByID: "nvme-EXAMPLE_CACHE", Model: "EXAMPLE NVMe 500GB", Size: 500 * gib, Filesystem: "btrfs", WeakIdentity: &strong},
 	}
@@ -209,7 +249,7 @@ func seededMigration(scenario string) *mockMigration {
 	m := &mockMigration{}
 	if scenario == "migration-pending" {
 		at := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
-		m.report, m.size, m.receivedAt = mockMigrationReport(nil, "7.3.2", false, at), 612<<20, at
+		m.report, m.size, m.receivedAt = mockMigrationReport(nil, "7.3.2", false, at, false), 612<<20, at
 	}
 	return m
 }
@@ -238,7 +278,10 @@ func (h *handler) StartMigrationScan(ctx context.Context, req *apiv1.StartMigrat
 	h.jobs[j.ID] = *j
 	h.mu.Unlock()
 
-	report := mockMigrationReport(flash, flash.Version, flash.LayoutProblem() != "", now)
+	h.migration.mu.Lock()
+	rescan := h.migration.report != nil
+	h.migration.mu.Unlock()
+	report := mockMigrationReport(flash, flash.Version, flash.LayoutProblem() != "", now, rescan)
 	if flash.Capture != nil {
 		report.BootMode = flash.Capture.Boot.Mode
 	}
@@ -278,7 +321,7 @@ func (h *handler) StartMigrationDeviceScan(ctx context.Context, req *apiv1.Start
 	h.mu.Unlock()
 
 	h.migration.mu.Lock()
-	h.migration.report = mockMigrationReport(nil, "7.3.2", req.UnverifiedLayout.Or(false), now)
+	h.migration.report = mockMigrationReport(nil, "7.3.2", req.UnverifiedLayout.Or(false), now, h.migration.report != nil)
 	h.migration.size, h.migration.device, h.migration.receivedAt = 0, req.Device, now
 	h.migration.mu.Unlock()
 	return j, nil
@@ -308,6 +351,9 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 			out.SourceSize = apiv1.NewOptInt64(h.migration.size)
 		}
 		out.Report = apiv1.NewOptMigrationReport(mockMigrationReportToAPI(r))
+	}
+	if h.migration.imported.Load() {
+		out.Phase = apiv1.MigrationPhaseImported
 	}
 	if !out.ZipOnly {
 		out.FlashDevices = append(out.FlashDevices, apiv1.MigrationFlashDevice{
@@ -413,6 +459,9 @@ func (h *handler) GetMigrationReport(ctx context.Context) (apiv1.GetMigrationRep
 }
 
 func (h *handler) ForgetMigration(ctx context.Context) error {
+	if h.migration.imported.Load() {
+		return errMigrationInProgress()
+	}
 	h.migration.mu.Lock()
 	defer h.migration.mu.Unlock()
 	h.migration.report, h.migration.size, h.migration.device, h.migration.receivedAt = nil, 0, "", time.Time{}
@@ -565,4 +614,107 @@ func (h *handler) GetMigrationTemplate(ctx context.Context, params apiv1.GetMigr
 		return out, nil
 	}
 	return nil, &mockError{code: "template_not_found", statusCode: 404, message: migrate.ErrTemplateNotFound.Error()}
+}
+
+// mockMachineDisks is this mock machine's disk inventory as production's
+// listing would give it for the scenario's review: one disk per row with a
+// device, each with a filesystem on its first partition, a by-id link when the
+// row has one, and a UUID of its own. The stick is the FAT disk labelled
+// UNRAID.
+func mockMachineDisks(rv *migrate.Review) []disk.Disk {
+	var out []disk.Disk
+	for _, r := range rv.Disks {
+		if r.Device == "" {
+			continue
+		}
+		d := disk.Disk{
+			Device: r.Device, Serial: r.Serial, WWN: r.WWN, ByIDName: r.ByID, Model: r.Model, Size: r.Size,
+			Filesystem: r.Filesystem, FSDevice: r.Device + "1", UnraidBoot: r.UnraidBoot,
+		}
+		if r.WeakIdentity != nil {
+			d.WeakIdentity = *r.WeakIdentity
+		}
+		if r.HostBoot != nil {
+			d.Boot = *r.HostBoot
+		}
+		if r.ByID != "" {
+			d.FSByIDName = r.ByID + "-part1"
+		}
+		if r.UnraidBoot && r.ByID != "" && r.Size > 0 {
+			d.UnraidDataPartition = &disk.BootPartition{
+				Device: r.Device + "p4", Size: r.Size / 2, ByIDName: r.ByID + "-part4",
+				PartUUID: fmt.Sprintf("%s-04", r.Serial),
+			}
+		}
+		if r.Device == mockFlashDevice {
+			d.Filesystem, d.Label = disk.UnraidStickFilesystem, disk.UnraidStickLabel
+		}
+		if d.Filesystem != "" {
+			h := fnv.New64a()
+			_, _ = h.Write([]byte(r.Device + r.Serial))
+			d.FSUUID = fmt.Sprintf("00000000-0000-4000-8000-%012x", h.Sum64()&0xffffffffffff)
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// arrayScenario is the scenario the pool answers for. migration-pending is the
+// machine at the start of the import: Unraid's disks are not adopted yet, so it
+// serves no array until an import has recorded one; every other scenario serves
+// its own.
+func (h *handler) arrayScenario() string {
+	if h.scenario == "migration-pending" && !h.migration.imported.Load() {
+		return "fresh-install"
+	}
+	return h.scenario
+}
+
+func errArrayExistsNotPending() error {
+	return &mockError{code: "array_exists", statusCode: 409, message: "an array already exists and is not an Unraid import waiting for its point of no return"}
+}
+
+// StartMigrationImport answers as production does: the same checks of the
+// report and of the mapping (migrate.CheckImportable and migrate.PlanFromReview,
+// over this mock's own disks) with the same error codes, and the same refusal
+// of an array that is not a pending import's (array_exists), which is every
+// scenario's array but migration-pending's once imported. The job it queues has
+// finished at once, as the scans do, and leaves the session in the imported
+// phase.
+func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.MigrationImportRequest) (*apiv1.Job, error) {
+	if req == nil || !req.Confirm {
+		return nil, &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+	}
+	assignments := make([]disk.AdoptionAssignment, 0, len(req.Roles))
+	for _, r := range req.Roles {
+		assignments = append(assignments, disk.AdoptionAssignment{
+			Role: disk.AdoptionRole(r.Role), Serial: r.Serial.Or(""), WWN: r.Wwn.Or(""),
+			ByIDName: r.ById.Or(""), PartUUID: r.PartUuid.Or(""),
+		})
+	}
+	h.migration.mu.Lock()
+	report := h.migration.report
+	h.migration.mu.Unlock()
+	if err := migrate.CheckImportable(report, false); err != nil {
+		return nil, mockMigrateError(err)
+	}
+	if _, err := migrate.PlanFromReview(report.Review, mockMachineDisks(report.Review), assignments); err != nil {
+		return nil, mockMigrateError(err)
+	}
+	if mockArrayDisks(h.arrayScenario()) != nil && !h.migration.imported.Load() {
+		return nil, errArrayExistsNotPending()
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationImport, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	h.mu.Lock()
+	j.Status = apiv1.JobStatusSucceeded
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	h.jobs[j.ID] = *j
+	h.mu.Unlock()
+	h.migration.imported.Store(true)
+	return j, nil
 }

@@ -45,6 +45,7 @@ existing line by adding its PR number.
 - **atomicity** — a clear or mark keyed only on the row, not on the state and holder the caller checked, so a transition that lands between read and write is wiped (a stale-alert mark over a success recorded after the check read the row) — PR 382, 433
 - **atomicity** — a maintenance check that returns before the mutation, so array stop can unmount while the mutation is still writing under the mountpoint — PR 344
 - **atomicity** — a cancel or stop flag read in one lock hold and the start done in a later one, so a request that lands in the gap is accepted and then ignored — PR 412
+- **atomicity** — an admission gate checked only when a job is submitted, not again when a queued job is dispatched or an interrupted one resumed, so a state change while it waited (a migration recording its pending array) is bypassed — PR 592
 - **ordering** — a side effect that takes a bounded resource (a pre-change archive's retention slot) runs before the admission check that can refuse the operation, so refused retries use up what real changes rely on — PR 412
 - **atomicity** — two paths that each rebuild and publish the same live object (degraded acknowledge vs. array-sequence rebuild) under no shared lock, so one publishes state computed before the other's change landed and silently undoes it — PR 394
 - **atomicity** — a mutex held across slow I/O that only needs a value read under it (a client's request body streaming to disk, a whole-file read that validates a large baseline), so every other operation on that lock (status, delete, a running job's commit) stalls for as long as the I/O takes — PR 575, 589
@@ -63,6 +64,7 @@ existing line by adding its PR number.
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
+- **errors** — a refusal of the user's input returned as an unnamed `errors.New`, so the API's sentinel classifier cannot match it and a bad request answers 500 — PR 592
 - **errors** — a catch-all default maps every unclassified error to 502, so a local database or filesystem failure is blamed on an upstream; reserve 502 for errors wrapped as coming from the external process — PR 491
 - **errors** — a per-group result (one row per image) failed by one member that cannot be evaluated, hiding the result its comparable siblings produced — PR 491
 - **efficiency** — a per-item lookup that resolves its item by listing every item, called once per item on a request path, so one request costs N full listings — PR 510
@@ -97,7 +99,7 @@ existing line by adding its PR number.
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
 ## Validation and contracts
-- **validation** — duplicate entries accepted (same device in two roles, repeated mount path, duplicate grant ids) — PR 150, 221
+- **validation** — duplicate entries accepted (same device in two roles, repeated mount path, duplicate grant ids, a second cache that silently replaces the first when only some branches of a resolver check) — PR 150, 221, 592
 - **validation** — a file accepted because it parses, without the structure its format requires (a compose.yaml that is empty, comment-only or has no `services` map), so it is reported and counted as read — PR 579
 - **validation** — an "exact duplicate" rule compares only some fields, so entries that differ in access mode or bind address count as identical and one is silently dropped — PR 491
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
@@ -132,7 +134,7 @@ existing line by adding its PR number.
 - **security** — a file the CLI saves for the user that names accounts, shares or containers is left world-readable (0644) where the daemon keeps the same data 0600 — PR 575
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic, a fixture key spelled differently from the one the parser reads so the scenario is never built) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589, 592
 - **tests** — a short real deadline also bounds setup I/O ahead of the code under test (the SQLite write entering maintenance), so on a loaded runner the error comes from the setup step and an `errors.Is` check still passes; trip the deadline once the step under test is reached and assert its own error text — PR 433
 - **tests** — an end-to-end failure detector defined as "any banner but this list of informational ones", not extended when the change adds a new informational note, so the expected note fails the journey — PR 474
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246

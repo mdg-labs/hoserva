@@ -102,6 +102,9 @@ func diskFormatParamsFromRequest(req *apiv1.CreateArrayRequest, listed []disk.Di
 			if d.Boot {
 				return job.DiskFormatParams{}, disk.TopologyPlan{}, errInvalidPlan(fmt.Errorf("disk: refusing to assign the boot device %s", a.Device))
 			}
+			if disk.IsUnraidStick(d) {
+				return job.DiskFormatParams{}, disk.TopologyPlan{}, errUnraidStick(fmt.Errorf("%s: %w", a.Device, disk.ErrUnraidStick))
+			}
 			assigned.WWN = d.WWN
 			assigned.Serial = d.Serial
 			assigned.WeakIdentity = d.WeakIdentity
@@ -350,6 +353,9 @@ func resolveAssignedDisk(device string, fsOpt apiv1.OptArrayDiskFilesystem, adop
 	if d, err := disk.LookupDisk(listed, device); err == nil {
 		if d.Boot {
 			return disk.AssignedDisk{}, errInvalidPlan(fmt.Errorf("disk: refusing to assign the boot device %s", device))
+		}
+		if disk.IsUnraidStick(d) {
+			return disk.AssignedDisk{}, errUnraidStick(fmt.Errorf("%s: %w", device, disk.ErrUnraidStick))
 		}
 		assigned.WWN = d.WWN
 		assigned.Serial = d.Serial

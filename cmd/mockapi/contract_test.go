@@ -245,6 +245,13 @@ var contractNoValidCase = map[string]string{
 	// This rig registers TypeEvacuation with a no-op RunFunc (job-timing/
 	// run-behaviour state, out of scope per #272's own "jobs, SSE
 	// timing").
+	// A mapping that production's import accepts has to name disks its scan
+	// listed, and the rig's scan lists the rig's own inventory while the mock's
+	// canned scan names its EXAMPLE disks, so no mapping is valid in both. The
+	// refusals are compared; each side's own accepted mapping is tested in its
+	// own package (internal/migrate, internal/api, cmd/mockapi).
+	"StartMigrationImport": "an accepted mapping names disks the scan listed: the rig's production scan lists the rig's inventory and the mock's canned scan its own EXAMPLE disks, so none is valid on both",
+
 	"FinishDiskRemoval": "needs an evacuation job to actually run to completion and mark the disk evacuated (job.RunEvacuation); this rig's job types run no-op (job-timing state, out of scope)",
 
 	// GetJobLog's own log file is created by Scheduler.runJob, which

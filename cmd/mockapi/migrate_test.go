@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ import (
 	ht "github.com/ogen-go/ogen/http"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/migrate"
 )
 
 // contractFlashFiles is a minimal Flash Backup: a version, a kernel and a
@@ -586,5 +589,226 @@ func TestMockMigration_ADeviceScanAndAForgetKeepTheReviewConsistent(t *testing.T
 	}
 	if m, _ := h.GetMigration(ctx); m.Report.Set {
 		t.Errorf("a forgotten session still has a report: %+v", m)
+	}
+}
+
+func mockImportRole(role apiv1.MigrationImportRole, serial string) apiv1.MigrationImportDisk {
+	return apiv1.MigrationImportDisk{Role: role, Serial: apiv1.NewOptString(serial)}
+}
+
+func mockImportAll() []apiv1.MigrationImportDisk {
+	return []apiv1.MigrationImportDisk{
+		mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY"),
+		mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1"),
+		mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK3"),
+		mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK4"),
+		mockImportRole(apiv1.MigrationImportRoleCache, "EXAMPLE_CACHE"),
+	}
+}
+
+func mockErrCode(t *testing.T, err error) (int, string) {
+	t.Helper()
+	var me *mockError
+	if !errors.As(err, &me) {
+		t.Fatalf("error %v is not a mock error", err)
+	}
+	return me.statusCode, me.code
+}
+
+// The seeded session's report refuses disk3, so production would refuse an
+// import from it; a rescan finds the disk repaired, and the import can go ahead
+// and leaves the session imported, which refuses what production refuses.
+func TestMockMigration_TheMigrationPendingScenarioAdvancesToAnImportedState(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Roles: mockImportAll()}); err == nil {
+		t.Fatal("an import without confirm was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "confirmation_required" {
+		t.Errorf("without confirm = %d %s", st, code)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err == nil {
+		t.Fatal("an import from the no-go report was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_no_go" {
+		t.Errorf("from the seeded no-go report = %d %s, want 409 migration_no_go", st, code)
+	}
+
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := h.GetMigration(ctx)
+	if report, _ := m.Report.Get(); report.Verdict == apiv1.MigrationVerdictNoGo {
+		t.Fatalf("the rescan is still no-go: %+v", report.Rows)
+	}
+
+	j, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()})
+	if err != nil {
+		t.Fatalf("StartMigrationImport: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationImport || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %+v", j)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
+		t.Errorf("the import job = %+v, %v, want it finished", done, err)
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseImported {
+		t.Errorf("phase = %s, want imported", m.Phase)
+	}
+
+	// Like production, from here on.
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err == nil {
+		t.Error("a scan was accepted while an import is pending")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_in_progress" {
+		t.Errorf("scan = %d %s, want 409 migration_in_progress", st, code)
+	}
+	if err := h.ForgetMigration(ctx); err == nil {
+		t.Error("a forget was accepted while an import is pending")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_in_progress" {
+		t.Errorf("forget = %d %s", st, code)
+	}
+	if _, err := h.StartSync(ctx, &apiv1.StartSyncRequest{}); err == nil {
+		t.Error("a sync was accepted while an import is pending")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_in_progress" {
+		t.Errorf("sync = %d %s", st, code)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Errorf("a retry of the pending import = %v, want it accepted", err)
+	}
+}
+
+func TestMockMigration_ImportRefusesWhatProductionRefuses(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	base := func(extra ...apiv1.MigrationImportDisk) []apiv1.MigrationImportDisk {
+		return append([]apiv1.MigrationImportDisk{
+			mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY"),
+			mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1"),
+		}, extra...)
+	}
+	for _, tc := range []struct {
+		name   string
+		roles  []apiv1.MigrationImportDisk
+		status int
+		code   string
+	}{
+		{"the stick as data", base(mockImportRole(apiv1.MigrationImportRoleData, "4C530001240603119335")), 409, "unraid_stick"},
+		{"the stick as parity", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "4C530001240603119335"), mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}, 409, "unraid_stick"},
+		{"the stick as cache", base(mockImportRole(apiv1.MigrationImportRoleCache, "4C530001240603119335")), 409, "unraid_stick"},
+		{"Unraid's parity disk as data", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_DISK1"), mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_PARITY")}, 400, "invalid_import_roles"},
+		{"a data disk as parity", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_DISK4"), mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}, 400, "invalid_import_roles"},
+		{"a disk the scan did not list", base(mockImportRole(apiv1.MigrationImportRoleData, "NO-SUCH-SERIAL")), 400, "invalid_import_roles"},
+		{"no parity", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}, 400, "invalid_import_roles"},
+		{"no data", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY")}, 400, "invalid_import_roles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: tc.roles})
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if st, code := mockErrCode(t, err); st != tc.status || code != tc.code {
+				t.Errorf("= %d %s (%v), want %d %s", st, code, err, tc.status, tc.code)
+			}
+			if m, _ := h.GetMigration(ctx); m.Phase == apiv1.MigrationPhaseImported {
+				t.Error("a refused import left the session imported")
+			}
+		})
+	}
+}
+
+// The shared NVMe of an internal-boot server is the disk this mock boots from:
+// as a whole disk it is never parity, data or cache.
+func TestMockMigration_TheBootDiskIsNeverAWholeDiskRole(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	zipData := contractFlashZip("7.3.2", func(f map[string]string) {
+		f["config/hoserva/capture.json"] = `{"boot":{"mode":"internal","filesystem":"zfs","mirrored":false,"shared_with_data_pool":true,"devices":[{"serial":"BOOTNVME1","model":"EXAMPLE NVMe"}]}}`
+	})
+	for i := 0; i < 2; i++ {
+		if _, err := h.StartMigrationScan(ctx, contractScanRequest(zipData, false)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rv := servedReview(t, h); !rv.Boot.SharedWithCache.Or(false) {
+		t.Fatalf("boot = %+v, want the boot disk shared with the cache", rv.Boot)
+	}
+	for _, role := range []apiv1.MigrationImportRole{apiv1.MigrationImportRoleParity, apiv1.MigrationImportRoleData, apiv1.MigrationImportRoleCache} {
+		roles := []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY"), mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}
+		if role == apiv1.MigrationImportRoleParity {
+			roles = []apiv1.MigrationImportDisk{mockImportRole(role, "BOOTNVME1"), mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}
+		} else {
+			roles = append(roles, mockImportRole(role, "BOOTNVME1"))
+		}
+		_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: roles})
+		if err == nil {
+			t.Errorf("the boot disk was accepted as %s", role)
+			continue
+		}
+		if st, code := mockErrCode(t, err); st != 400 || code != "invalid_import_roles" {
+			t.Errorf("the boot disk as %s = %d %s (%v)", role, st, code, err)
+		}
+	}
+}
+
+// An import over an array that is not a pending import's is refused as
+// production refuses it, once the report and the mapping are accepted.
+func TestMockMigration_ImportRefusesAnOrdinaryArray(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("healthy")
+	for i := 0; i < 2; i++ {
+		if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()})
+	if err == nil {
+		t.Fatal("an import over the healthy scenario's array was accepted")
+	}
+	if st, code := mockErrCode(t, err); st != 409 || code != "array_exists" {
+		t.Errorf("= %d %s (%v), want 409 array_exists", st, code, err)
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase == apiv1.MigrationPhaseImported {
+		t.Error("a refused import left the session imported")
+	}
+}
+
+// migration-pending serves no array until the import has recorded one.
+func TestMockMigration_ThePoolIsEmptyUntilTheImportAdoptsIt(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	if pool, _ := h.GetPool(ctx); pool.Mounted || len(pool.Disks) != 0 {
+		t.Fatalf("pool before the import = %+v, want no array", pool)
+	}
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(pool.Disks) == 0 {
+		t.Errorf("pool after the import = %+v, want the adopted pool", pool)
+	}
+}
+
+// The cache pool's row of an internal boot that shares its disk with the cache
+// is imported as that device's data partition, never the disk.
+func TestMockMigration_TheCacheOfAnUnraidBootAndDataDeviceIsItsDataPartition(t *testing.T) {
+	rv := mockMigrationReport(nil, "7.3.2", false, time.Now(), true).Review
+	cache := slices.IndexFunc(rv.Disks, func(d migrate.ReviewDisk) bool { return d.Serial == "EXAMPLE_CACHE" })
+	rv.Disks[cache].UnraidBoot = true
+	rv.Boot.SharedWithCache = new(bool)
+	*rv.Boot.SharedWithCache = true
+	assignments := []disk.AdoptionAssignment{
+		{Role: disk.AdoptParity, Serial: "EXAMPLE_PARITY"}, {Role: disk.AdoptData, Serial: "EXAMPLE_DISK1"},
+		{Role: disk.AdoptCache, Serial: "EXAMPLE_CACHE"},
+	}
+	p, err := migrate.PlanFromReview(rv, mockMachineDisks(rv), assignments)
+	if err != nil {
+		t.Fatalf("PlanFromReview: %v", err)
+	}
+	if c := p.Plan.Cache; c == nil || c.Device != "/dev/nvme0n1p4" || c.ByIDName != "nvme-EXAMPLE_CACHE-part4" || c.PartUUID == "" {
+		t.Errorf("cache = %+v, want partition 4 only", c)
 	}
 }

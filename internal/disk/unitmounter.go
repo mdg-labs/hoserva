@@ -32,21 +32,41 @@ type DirectMounter struct {
 	Runner Runner
 }
 
-// Mount creates unit.Where if needed and mounts UUID=unit.UUID there.
-// A disk already mounted at unit.Where by that same UUID is success, so
-// a create-array retry after a partial apply does not fail as a second
-// format would. Success is only returned once the mount table shows
-// unit.UUID at unit.Where, whatever mount's exit status was.
+// Mount creates unit.Where if needed and mounts the unit's filesystem there:
+// by the device unit.What names when it is set (a read-only adoption mount
+// bound to the disk's own identity), else UUID=unit.UUID. A disk already
+// mounted at unit.Where by that same UUID is success, so a create-array retry
+// after a partial apply does not fail as a second format would. Success is
+// only returned once the mount table shows unit.UUID at unit.Where, whatever
+// mount's exit status was; a unit with What also shows that exact device as
+// the mount's source, which a UUID alone could not (a byte copy of the
+// filesystem on another disk has the same one), and a read-only unit shows
+// the mount read-only.
 func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	opts := "defaults,nofail"
+	if unit.ReadOnly {
+		ro, ok := ReadOnlyOptions(unit.Filesystem)
+		if !ok {
+			return fmt.Errorf("disk: no read-only mount options are known for filesystem type %q", unit.Filesystem)
+		}
+		// nofail would make mount exit 0 for a device that is not there.
+		opts = ro
+	}
 	if err := os.MkdirAll(unit.Where, 0o755); err != nil {
 		return fmt.Errorf("disk: creating mountpoint %s: %w", unit.Where, err)
 	}
-	if _, err := m.Runner.Run(ctx, "mount", "-t", string(unit.Filesystem), "-o", "defaults,nofail", "-U", unit.UUID, unit.Where); err != nil {
+	argv := []string{"-t", string(unit.Filesystem), "-o", opts}
+	if unit.What != "" {
+		argv = append(argv, unit.What, unit.Where)
+	} else {
+		argv = append(argv, "-U", unit.UUID, unit.Where)
+	}
+	if _, err := m.Runner.Run(ctx, "mount", argv...); err != nil {
 		out, findErr := m.Runner.Run(ctx, "findmnt", "-n", "-o", "UUID", unit.Where)
-		if findErr == nil && strings.TrimSpace(string(out)) == unit.UUID {
+		if findErr == nil && strings.TrimSpace(string(out)) == unit.UUID && m.confirmUnit(ctx, unit) == nil {
 			return nil
 		}
 		return fmt.Errorf("disk: mounting %s at %s: %w", unit.UUID, unit.Where, err)
@@ -55,6 +75,23 @@ func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 	// exit status alone does not say the filesystem is there.
 	if err := ConfirmMountedUUID(ctx, m.Runner, unit.Where, unit.UUID); err != nil {
 		return fmt.Errorf("disk: mounting %s at %s exited 0 but the filesystem is not mounted there: %w", unit.UUID, unit.Where, err)
+	}
+	if err := m.confirmUnit(ctx, unit); err != nil {
+		return fmt.Errorf("disk: mounting %s at %s: %w", unit.UUID, unit.Where, err)
+	}
+	return nil
+}
+
+// confirmUnit shows what a unit's own options promise: the mount's source is
+// the device unit.What names, and a read-only unit is mounted read-only.
+func (m DirectMounter) confirmUnit(ctx context.Context, unit MountUnit) error {
+	if unit.What != "" {
+		if err := ConfirmMountedSource(ctx, m.Runner, unit.Where, unit.What); err != nil {
+			return err
+		}
+	}
+	if unit.ReadOnly {
+		return ConfirmMountedReadOnly(ctx, m.Runner, unit.Where)
 	}
 	return nil
 }

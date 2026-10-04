@@ -35,6 +35,12 @@ type migrateDaemon struct {
 
 	zipOnly      bool
 	sourceDevice string
+
+	// review is the disk table GET /migrate serves; importReq is the body of
+	// the last POST /migrate/import and importRefusal answers it.
+	review        []apiv1.MigrationDisk
+	importReq     string
+	importRefusal *apiv1.Error
 }
 
 func startMigrateDaemon(t *testing.T) *migrateDaemon {
@@ -120,7 +126,23 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 			GeneratedAt: time.Now().UTC(), UnraidVersion: apiv1.NewOptString("7.3.2"), UnverifiedLayout: true, Verdict: apiv1.MigrationVerdictGoWithWarnings,
 			Rows: []apiv1.MigrationReportRow{{Check: "smart", Status: apiv1.MigrationCheckStatusFlag, Detail: "x"}},
 		})
+		if d.review != nil {
+			rep := m.Report.Value
+			rep.Review = apiv1.NewOptMigrationReview(apiv1.MigrationReview{Disks: d.review, Shares: []apiv1.MigrationSharePreview{}, Capture: apiv1.MigrationCapture{State: apiv1.MigrationCaptureStatePresent}})
+			m.Report = apiv1.NewOptMigrationReport(rep)
+		}
 		out, err := m.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/migrate/import":
+		body, _ := io.ReadAll(r.Body)
+		d.importReq = string(body)
+		if d.importRefusal != nil {
+			out, err := d.importRefusal.MarshalJSON()
+			reply(http.StatusBadRequest, out, err)
+			return
+		}
+		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationImport, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
+		out, err := j.MarshalJSON()
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/migrate/report":
 		w.Header().Set("Content-Type", "text/markdown")
@@ -373,5 +395,203 @@ func TestMigrateStatusSaysWhenTheZipIsTheOnlySourceAndNamesAStickSource(t *testi
 	}
 	if strings.Contains(printed, "Flash device: ") {
 		t.Errorf("status offers a stick although the zip is the only source:\n%s", printed)
+	}
+}
+
+func (d *migrateDaemon) importRequest() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.importReq
+}
+
+func reviewDisk(slot, serial string, proposed apiv1.MigrationProposedRole, mod func(*apiv1.MigrationDisk)) apiv1.MigrationDisk {
+	d := apiv1.MigrationDisk{Slot: apiv1.NewOptString(slot), Serial: apiv1.NewOptString(serial), Device: apiv1.NewOptString("/dev/" + slot)}
+	if proposed != "" {
+		d.ProposedRole = apiv1.NewOptMigrationProposedRole(proposed)
+	}
+	if mod != nil {
+		mod(&d)
+	}
+	return d
+}
+
+// importDaemon serves the disk table of a scanned array.
+func importDaemon(t *testing.T) *migrateDaemon {
+	t.Helper()
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	d := startMigrateDaemon(t)
+	d.review = []apiv1.MigrationDisk{
+		reviewDisk("parity", "PAR1", apiv1.MigrationProposedRoleParity, nil),
+		reviewDisk("disk1", "DAT1", apiv1.MigrationProposedRoleData, nil),
+		reviewDisk("disk2", "DAT2", apiv1.MigrationProposedRoleData, nil),
+		reviewDisk("disk3", "DAT3", "", func(m *apiv1.MigrationDisk) { m.Refused = true }),
+		reviewDisk("cache", "CAC1", apiv1.MigrationProposedRoleCache, nil),
+		reviewDisk("boot", "STICK1", apiv1.MigrationProposedRoleIgnore, nil),
+		reviewDisk("nvme0n1", "NVME1", apiv1.MigrationProposedRoleCache, func(m *apiv1.MigrationDisk) { m.HostBoot = apiv1.NewOptBool(true) }),
+	}
+	return d
+}
+
+func TestMigrateImportSendsTheScansProposalAfterTheUserConfirms(t *testing.T) {
+	d := importDaemon(t)
+	printed, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes")
+	if err != nil {
+		t.Fatalf("migrate import --yes: %v", err)
+	}
+	for _, want := range []string{"parity", "serial PAR1", "serial DAT2", "serial CAC1", "adopted read-only"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+	for _, never := range []string{"DAT3", "STICK1", "NVME1"} {
+		if strings.Contains(d.importRequest(), never) || strings.Contains(printed, never) {
+			t.Errorf("%s was sent or printed: a refused disk has no role, a stick is not listed, and the boot disk is never a whole-disk cache\nrequest %s", never, d.importRequest())
+		}
+	}
+	var req apiv1.MigrationImportRequest
+	if err := req.UnmarshalJSON([]byte(d.importRequest())); err != nil || !req.Confirm || len(req.Roles) != 4 {
+		t.Fatalf("request = %s (%v), want confirm and four roles", d.importRequest(), err)
+	}
+	got := d.seen()
+	if len(got) != 3 || got[0] != "GET /api/v1/migrate" || got[1] != "POST /api/v1/migrate/import" || got[2] != "GET /api/v1/jobs/"+d.id.String() {
+		t.Errorf("requests = %v", got)
+	}
+}
+
+// The command never confirms for the user: without --yes it prints the mapping,
+// says what the flag is for, and sends nothing.
+func TestMigrateImportWithoutYesSendsNothing(t *testing.T) {
+	d := importDaemon(t)
+	printed, err := runBackupCLI(t, d.sock, "migrate", "import")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("migrate import = %v, want it to ask for --yes", err)
+	}
+	if !strings.Contains(printed, "serial DAT1") {
+		t.Errorf("the mapping was not printed:\n%s", printed)
+	}
+	if d.importRequest() != "" {
+		t.Errorf("a request was sent without --yes: %s", d.importRequest())
+	}
+}
+
+func TestMigrateImportRoleFlagsOverrideTheProposalAndAddDisks(t *testing.T) {
+	d := importDaemon(t)
+	if _, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes",
+		"--role", "DAT2=ignore", "--role", "wwn:0x5000c500a1=data", "--role", "CAC1=cache",
+		"--cache-partition", "nvme-x-part3:aaaa-bbbb"); err != nil {
+		t.Fatal(err)
+	}
+	var req apiv1.MigrationImportRequest
+	if err := req.UnmarshalJSON([]byte(d.importRequest())); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]apiv1.MigrationImportRole{}
+	for _, r := range req.Roles {
+		key := r.Serial.Or("") + "|" + r.Wwn.Or("") + "|" + r.ById.Or("")
+		byKey[key] = r.Role
+	}
+	want := map[string]apiv1.MigrationImportRole{
+		"PAR1||": apiv1.MigrationImportRoleParity, "DAT1||": apiv1.MigrationImportRoleData, "DAT2||": apiv1.MigrationImportRoleIgnore,
+		"CAC1||": apiv1.MigrationImportRoleCache, "|0x5000c500a1|": apiv1.MigrationImportRoleData, "||nvme-x-part3": apiv1.MigrationImportRoleCache,
+	}
+	if len(byKey) != len(want) {
+		t.Fatalf("roles = %v, want %v", byKey, want)
+	}
+	for k, v := range want {
+		if byKey[k] != v {
+			t.Errorf("role %q = %q, want %q (all: %v)", k, byKey[k], v, byKey)
+		}
+	}
+	if len(req.Roles) > 0 && req.Roles[len(req.Roles)-1].PartUuid.Or("") != "aaaa-bbbb" {
+		t.Errorf("the cache partition's PARTUUID = %q", req.Roles[len(req.Roles)-1].PartUuid.Or(""))
+	}
+}
+
+// The scan keys a proposal by WWN when the disk has one; a --role naming the
+// same disk by serial, or by WWN in other letters, replaces that proposal and
+// does not send the disk twice.
+func TestMigrateImportRoleFlagReplacesAProposalKeyedByWWN(t *testing.T) {
+	d := importDaemon(t)
+	withWWN := func(wwn string) func(*apiv1.MigrationDisk) {
+		return func(m *apiv1.MigrationDisk) { m.Wwn = apiv1.NewOptString(wwn) }
+	}
+	d.review = append(d.review,
+		reviewDisk("disk4", "DAT4", apiv1.MigrationProposedRoleData, withWWN("0x5000c500beef")),
+		reviewDisk("disk5", "DAT5", apiv1.MigrationProposedRoleData, withWWN("0x5000c500cafe")),
+		reviewDisk("disk6", "DAT6", "", withWWN("0x5000c500f00d")))
+	if _, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes",
+		"--role", "DAT4=ignore", "--role", "wwn:0x5000C500CAFE=cache", "--role", "DAT6=data"); err != nil {
+		t.Fatal(err)
+	}
+	var req apiv1.MigrationImportRequest
+	if err := req.UnmarshalJSON([]byte(d.importRequest())); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]apiv1.MigrationImportRole{}
+	for _, r := range req.Roles {
+		key := r.Serial.Or("") + "|" + r.Wwn.Or("")
+		if _, dup := byKey[key]; dup {
+			t.Errorf("%q was sent twice", key)
+		}
+		byKey[key] = r.Role
+	}
+	for k, v := range map[string]apiv1.MigrationImportRole{
+		"|0x5000c500beef": apiv1.MigrationImportRoleIgnore, "|0x5000c500cafe": apiv1.MigrationImportRoleCache, "|0x5000c500f00d": apiv1.MigrationImportRoleData,
+	} {
+		if byKey[k] != v {
+			t.Errorf("role %q = %q, want %q (all: %v)", k, byKey[k], v, byKey)
+		}
+	}
+	for _, serial := range []string{"DAT4", "DAT5", "DAT6"} {
+		if _, ok := byKey[serial+"|"]; ok {
+			t.Errorf("%s was sent by serial beside its WWN", serial)
+		}
+	}
+	if len(byKey) != 7 {
+		t.Errorf("roles = %v, want one entry per disk", byKey)
+	}
+}
+
+func TestMigrateImportRefusesWhatCannotBeSent(t *testing.T) {
+	d := importDaemon(t)
+	for _, args := range [][]string{
+		{"--role", "DAT1"},
+		{"--role", "=data"},
+		{"--role", "DAT1=boot"},
+		{"--cache-partition", "nvme-x-part3"},
+		{"--cache-partition", ":aaaa"},
+	} {
+		if _, err := runBackupCLI(t, d.sock, append([]string{"migrate", "import", "--yes"}, args...)...); err == nil {
+			t.Errorf("migrate import %v was accepted", args)
+		}
+	}
+	if d.importRequest() != "" {
+		t.Errorf("a malformed flag sent %s", d.importRequest())
+	}
+
+	// With nothing proposed, as when the capture has no disks.ini, every role is
+	// the user's and none is invented.
+	bare := startMigrateDaemon(t)
+	_, err := runBackupCLI(t, bare.sock, "migrate", "import", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "--role") {
+		t.Errorf("migrate import with nothing to send = %v, want it to ask for --role", err)
+	}
+	if bare.importRequest() != "" {
+		t.Errorf("a request was sent with no roles: %s", bare.importRequest())
+	}
+}
+
+func TestMigrateImportRefusalAndFailedJobAreCommandFailures(t *testing.T) {
+	d := importDaemon(t)
+	d.importRefusal = &apiv1.Error{Code: "invalid_import_roles", Message: "this role is not allowed for this disk"}
+	if _, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes"); err == nil || !strings.Contains(err.Error(), "this role is not allowed for this disk") {
+		t.Errorf("migrate import = %v, want the refusal", err)
+	}
+	d.importRefusal = nil
+	d.jobStatus = apiv1.JobStatusFailed
+	if _, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes"); err == nil || !strings.Contains(err.Error(), "migration import") {
+		t.Errorf("migrate import with a failed job = %v, want it named", err)
 	}
 }

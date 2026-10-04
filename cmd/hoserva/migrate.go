@@ -18,7 +18,7 @@ import (
 
 func migrateCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "migrate", Short: "Migrate from Unraid (doc 05)"}
-	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateForgetCmd())
+	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateForgetCmd())
 	return cmd
 }
 
@@ -145,6 +145,7 @@ var migrationPhaseLabels = map[apiv1.MigrationPhase]string{
 	apiv1.MigrationPhaseScanning:   "scanning",
 	apiv1.MigrationPhaseScanFailed: "the last scan did not finish",
 	apiv1.MigrationPhaseScanned:    "scanned",
+	apiv1.MigrationPhaseImported:   "imported: the data disks are adopted read-only, waiting for the point of no return",
 }
 
 func migrateStatusCmd() *cobra.Command {
@@ -386,4 +387,176 @@ func writeFileAtomic(path string, r io.Reader) error {
 		return err
 	}
 	return nil
+}
+
+func migrateImportCmd() *cobra.Command {
+	var roles, cachePartitions []string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "import [--role <serial>=<role> ...] [--cache-partition <by-id>:<partuuid>] --yes",
+		Short: "Adopt the Unraid data disks read-only, without formatting or writing them",
+		Long: "Phase C of the migration (doc 05 §4 steps 14-16). Adopts the Unraid data disks into the pool at /mnt/user without " +
+			"formatting them and without writing a byte to them: each is mounted read-only by its own device, and the pool over them " +
+			"is read-only. The former parity and cache disks are recorded and left untouched; formatting them is the point of no " +
+			"return, a later step. The roles are pre-filled from the scan's disk table (`hoserva migrate status`); without the " +
+			"capture's disks.ini nothing is pre-filled and every role is yours. --role <serial>=<role> (or wwn:<wwn>=<role>) sets or " +
+			"overrides one disk's role: parity, data, cache or ignore. A cache on a spare partition of the boot disk is named with " +
+			"--cache-partition. The mapping is printed; check it against the serial table you noted from Unraid, then give --yes. " +
+			"While the import is pending, parity, array-write and topology jobs are refused.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			m, err := c.GetMigration(apiCtx())
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			mapping, err := importMapping(m, roles, cachePartitions)
+			if err != nil {
+				return err
+			}
+			printImportMapping(os.Stdout, mapping)
+			if !yes {
+				return fmt.Errorf("migrate import adopts these disks read-only, and records the parity and cache disks as they are to be formatted later; check the mapping above against your serial table and run it again with --yes")
+			}
+			j, err := c.StartMigrationImport(apiCtx(), &apiv1.MigrationImportRequest{Roles: mapping, Confirm: true})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			done, err := waitForJob(ctx, c, j.ID)
+			if err != nil {
+				return err
+			}
+			switch done.Status {
+			case apiv1.JobStatusSucceeded:
+			case apiv1.JobStatusFailed:
+				if e, ok := done.Error.Get(); ok && e.Message != "" {
+					return fmt.Errorf("migration import %s failed: %s", done.ID, e.Message)
+				}
+				return fmt.Errorf("migration import %s failed", done.ID)
+			default:
+				return fmt.Errorf("migration import %s ended %s", done.ID, done.Status)
+			}
+			if jsonOutput {
+				emit(done)
+				return nil
+			}
+			fmt.Println("The data disks are adopted read-only at /mnt/user. Check the pool, then verify before parity is touched.")
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVar(&roles, "role", nil, "A disk's role as <serial>=<role> or wwn:<wwn>=<role> (parity, data, cache or ignore); repeatable. Overrides the scan's proposal")
+	cmd.Flags().StringArrayVar(&cachePartitions, "cache-partition", nil, "A spare partition of the boot disk as the cache, as <by-id name>:<partuuid>")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm the mapping shown (required)")
+	return cmd
+}
+
+// importMapping is the disk-role mapping the import sends: the scan's proposals
+// for the disks it could match to this machine, then the user's own --role and
+// --cache-partition entries over them. A proposal for a disk this machine
+// boots from is not sent as a whole-disk cache: only a spare partition of it
+// can be one. A disk is never given a role the user did not see in the printed
+// table; without a proposal and without --role nothing is sent for it.
+func importMapping(m *apiv1.Migration, roles, cachePartitions []string) ([]apiv1.MigrationImportDisk, error) {
+	type key struct{ serial, wwn string }
+	var order []key
+	byKey := map[key]apiv1.MigrationImportRole{}
+	set := func(k key, r apiv1.MigrationImportRole) {
+		if _, ok := byKey[k]; !ok {
+			order = append(order, k)
+		}
+		byKey[k] = r
+	}
+	var rows []key
+	if rep, ok := m.Report.Get(); ok {
+		if rv, ok := rep.Review.Get(); ok {
+			for _, d := range rv.Disks {
+				rows = append(rows, key{serial: d.Serial.Or(""), wwn: d.Wwn.Or("")})
+				p, ok := d.ProposedRole.Get()
+				if !ok || p == apiv1.MigrationProposedRoleIgnore || d.Refused {
+					continue
+				}
+				if p == apiv1.MigrationProposedRoleCache && d.HostBoot.Or(false) {
+					continue
+				}
+				switch {
+				case d.Wwn.Or("") != "":
+					set(key{wwn: d.Wwn.Value}, apiv1.MigrationImportRole(p))
+				case d.Serial.Or("") != "":
+					set(key{serial: d.Serial.Value}, apiv1.MigrationImportRole(p))
+				}
+			}
+		}
+	}
+	// A --role names a disk by serial or WWN; the proposals are keyed by WWN
+	// when the disk has one. The override takes the key of the table row it
+	// names, so it replaces that disk's proposal instead of adding a second
+	// entry for the same disk.
+	rowKey := func(k key) key {
+		for _, r := range rows {
+			if k.wwn != "" && strings.EqualFold(r.wwn, k.wwn) || k.serial != "" && r.serial == k.serial {
+				if r.wwn != "" {
+					return key{wwn: r.wwn}
+				}
+				return key{serial: r.serial}
+			}
+		}
+		return k
+	}
+	for _, spec := range roles {
+		id, role, ok := strings.Cut(spec, "=")
+		if !ok || id == "" {
+			return nil, fmt.Errorf("--role %q: want <serial>=<role> or wwn:<wwn>=<role>", spec)
+		}
+		r := apiv1.MigrationImportRole(role)
+		if err := r.Validate(); err != nil {
+			return nil, fmt.Errorf("--role %q: the role is parity, data, cache or ignore", spec)
+		}
+		if wwn, isWWN := strings.CutPrefix(id, "wwn:"); isWWN {
+			set(rowKey(key{wwn: wwn}), r)
+		} else {
+			set(rowKey(key{serial: id}), r)
+		}
+	}
+	out := make([]apiv1.MigrationImportDisk, 0, len(order)+len(cachePartitions))
+	for _, k := range order {
+		d := apiv1.MigrationImportDisk{Role: byKey[k]}
+		if k.wwn != "" {
+			d.Wwn = apiv1.NewOptString(k.wwn)
+		} else {
+			d.Serial = apiv1.NewOptString(k.serial)
+		}
+		out = append(out, d)
+	}
+	for _, spec := range cachePartitions {
+		byID, partUUID, ok := strings.Cut(spec, ":")
+		if !ok || byID == "" || partUUID == "" {
+			return nil, fmt.Errorf("--cache-partition %q: want <by-id name>:<partuuid>", spec)
+		}
+		out = append(out, apiv1.MigrationImportDisk{Role: apiv1.MigrationImportRoleCache, ById: apiv1.NewOptString(byID), PartUuid: apiv1.NewOptString(partUUID)})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("there is no disk-role mapping: the scan proposed no roles (without the capture's disks.ini every role is yours), so give each disk with --role <serial>=<role>")
+	}
+	return out, nil
+}
+
+func printImportMapping(w io.Writer, mapping []apiv1.MigrationImportDisk) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ROLE\tDISK")
+	for _, d := range mapping {
+		name := "serial " + d.Serial.Or("")
+		switch {
+		case d.Wwn.Or("") != "":
+			name = "WWN " + d.Wwn.Value
+		case d.ById.Or("") != "":
+			name = "boot-disk partition " + d.ById.Value + " (PARTUUID " + d.PartUuid.Or("") + ")"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\n", d.Role, name)
+	}
+	_ = tw.Flush()
 }

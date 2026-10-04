@@ -139,6 +139,9 @@ func mockResolveAssignedDisk(device string, fsOpt apiv1.OptArrayDiskFilesystem, 
 		if d.Boot {
 			return disk.AssignedDisk{}, errInvalidPlan(fmt.Errorf("disk: refusing to assign the boot device %s", device))
 		}
+		if disk.IsUnraidStick(disk.Disk{Filesystem: d.Filesystem.Or(""), Label: d.Label.Or("")}) {
+			return disk.AssignedDisk{}, errUnraidStick(device)
+		}
 		assigned.WWN = d.Wwn.Or("")
 		assigned.Serial = d.Serial.Or("")
 		assigned.WeakIdentity = d.WeakIdentity.Or(false)
@@ -190,6 +193,8 @@ func mockInventoryAsDisks(listed []apiv1.DiskInventoryEntry) []disk.Disk {
 			Serial:       d.Serial.Or(""),
 			WeakIdentity: d.WeakIdentity.Or(false),
 			Boot:         d.Boot,
+			Filesystem:   d.Filesystem.Or(""),
+			Label:        d.Label.Or(""),
 		}
 		for _, c := range d.CachePartitions {
 			entry.CachePartitions = append(entry.CachePartitions, disk.CachePartition{
