@@ -215,8 +215,16 @@ func scanOfACrashedDisk(t *testing.T, slot, fsType string, fs disk.FilesystemTyp
 		if d.FSDevice != dev {
 			continue
 		}
-		if names, err := s.Dirs.TopLevelDirs(ctx, d); err == nil {
+		names, err := s.Dirs.TopLevelDirs(ctx, d)
+		if err == nil {
 			t.Errorf("the DiskReader read %s, listing %v", dev, names)
+		} else if !strings.Contains(err.Error(), wantInRow) || !strings.Contains(err.Error(), "stop the array cleanly") {
+			t.Errorf("the DiskReader refused %s for some other reason than its log: %v, want it to name %q and the clean-stop advice", dev, err, wantInRow)
+		}
+	}
+	for _, m := range p.devices {
+		if m == dev {
+			t.Errorf("the DiskReader mounted %s, a %s disk with a pending log", dev, fsType)
 		}
 	}
 	a.assertUnchanged(before, "after the DiskReader")

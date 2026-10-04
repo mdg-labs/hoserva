@@ -278,7 +278,7 @@ func (a *labArray) scanner(t *testing.T, probe *readOnlyProbe) *Scanner {
 	}
 	return &Scanner{
 		Disks: a.disks, Runner: a.runner, Mounter: mounter, Dir: dir,
-		Dirs: &DiskReader{Mounter: mounter, Dir: dir}, UIDOwner: noUID, Now: fixedNow,
+		Dirs: &DiskReader{Mounter: mounter, Runner: a.runner, Dir: dir}, UIDOwner: noUID, Now: fixedNow,
 	}
 }
 
