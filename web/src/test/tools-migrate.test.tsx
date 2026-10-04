@@ -268,6 +268,30 @@ describe("the migration workspace", () => {
       await waitFor(() => expect(names).toEqual(["hoserva-migration-report.md"]));
       expect(blobs[0]?.size).toBe("# Hoserva migration scan report\n".length);
       expect(mockGet.mock.calls.some((call) => call[0] === "/migrate/report")).toBe(true);
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    });
+
+    it("revokes the report's object URL only after the download has had time to start", async () => {
+      URL.createObjectURL = vi.fn(() => "blob:report");
+      URL.revokeObjectURL = vi.fn();
+      const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+      const download = await screen.findByRole("button", { name: "Download the report" });
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        fireEvent.click(download);
+        await vi.waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:report");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("says when the report could not be downloaded instead of saving an empty file", async () => {

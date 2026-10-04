@@ -157,6 +157,8 @@ export function ScanProgress({ onChanged }: { onChanged: () => void }): React.Re
   );
 }
 
+const REVOKE_DELAY_MS = 10_000;
+
 function saveText(text: string, filename: string): void {
   const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
   const anchor = document.createElement("a");
@@ -165,7 +167,7 @@ function saveText(text: string, filename: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }
 
 function ReportRowItem({ row }: { row: ReportRow }): React.ReactElement {
