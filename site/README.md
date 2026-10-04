@@ -33,4 +33,4 @@ It writes `versioned_docs/version-X.Y/`, `versioned_sidebars/version-X.Y-sidebar
 
 **Fixing a version.** A docs fix lands in `docs/`, and also in the latest stable snapshot when it corrects something wrong there. To fix any snapshot, edit its files in `versioned_docs/version-X.Y/` and commit; the site rebuilds on the next push to `main`, with no Hoserva release. Older snapshots are not otherwise maintained.
 
-If the build time or the published size nears the limit (the 900 MiB canary in `assemble-pages-site.sh`), drop the oldest version from the site with `onlyIncludeVersions` in the docs options of `docusaurus.config.ts`.
+If the build time or the published size nears the limit (the 900 MiB canary in `assemble-pages-site.sh`), drop the oldest version: remove it from `versions.json` and delete its `versioned_docs/version-<ver>/` and `versioned_sidebars/version-<ver>-sidebars.json`. It stays in git history. Don't use `onlyIncludeVersions`: `scripts/check-layout.mjs` requires every version in `versions.json` to be built.
