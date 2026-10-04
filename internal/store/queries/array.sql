@@ -6,11 +6,11 @@
 -- on the hand-written Go wrapper in internal/store/array.go instead.
 
 -- name: InsertArraySettings :exec
-INSERT INTO array_settings (id, create_policy, min_free_space, created_at)
-VALUES (1, ?, ?, ?);
+INSERT INTO array_settings (id, create_policy, min_free_space, created_at, migration_pending, migration_recorded)
+VALUES (1, ?, ?, ?, ?, ?);
 
 -- name: GetArraySettings :one
-SELECT id, create_policy, min_free_space, created_at
+SELECT id, create_policy, min_free_space, created_at, migration_pending, migration_recorded
 FROM array_settings WHERE id = 1;
 
 -- name: CountArraySettings :one
@@ -19,16 +19,16 @@ SELECT COUNT(*) FROM array_settings;
 -- name: InsertArrayDisk :exec
 INSERT INTO array_disks (
     role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint
+    wwn, serial, by_id_name, weak_identity, mountpoint, mount_source
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?
 );
 
 -- name: ListArrayDisks :many
 SELECT
     id, role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id
+    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id, mount_source
 FROM array_disks
 ORDER BY
     CASE role
@@ -42,19 +42,19 @@ ORDER BY
 -- name: GetArrayDataDiskByMountpoint :one
 SELECT
     id, role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id
+    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id, mount_source
 FROM array_disks WHERE mountpoint = ? AND role = 'data';
 
 -- name: ReplaceArrayDataDiskIdentity :execrows
 UPDATE array_disks
 SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
-    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?, mount_source = NULL
 WHERE mountpoint = ? AND role = 'data';
 
 -- name: ReplaceArrayDataDiskIdentityAbandoningRemoval :execrows
 UPDATE array_disks
 SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
-    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?, mount_source = NULL,
     removal_state = NULL, removal_job_id = NULL
 WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuated', 'unpooled');
 
@@ -89,3 +89,9 @@ WHERE mountpoint = sqlc.arg(mountpoint) AND role = 'data'
 
 -- name: DeleteUnlistedArrayDataDisk :execrows
 DELETE FROM array_disks WHERE mountpoint = ? AND role = 'data' AND removal_state = 'unlisted';
+
+-- name: DeletePendingMigrationArrayDisks :execrows
+DELETE FROM array_disks WHERE EXISTS (SELECT 1 FROM array_settings WHERE migration_pending = 1);
+
+-- name: DeletePendingMigrationArraySettings :execrows
+DELETE FROM array_settings WHERE migration_pending = 1;

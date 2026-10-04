@@ -53,6 +53,24 @@ func CatchAllMount(dataDisks []string, opts Options) (Mount, error) {
 	return catchAllMount(dataDisks, "", opts)
 }
 
+// CatchAllMountReadOnly builds /mnt/user over every data disk with every
+// branch RO and the mount itself read-only (doc 05 §4 steps 14-16): the pool
+// of an Unraid migration that has not reached its point of no return, over
+// disks that are mounted read-only and must stay byte-identical.
+func CatchAllMountReadOnly(dataDisks []string, opts Options) (Mount, error) {
+	m, err := catchAllMount(dataDisks, "", opts)
+	if err != nil {
+		return Mount{}, err
+	}
+	branches := make([]string, len(dataDisks))
+	for i, d := range dataDisks {
+		branches[i] = d + "=RO"
+	}
+	m.What = strings.Join(branches, ":")
+	m.ReadOnly = true
+	return m, nil
+}
+
 // CatchAllMountRemoving builds /mnt/user exactly as CatchAllMount does,
 // except removingDisk's own branch reads NC instead of RW (doc 09 §4 step
 // 2: "set its branches to no-create in every mount, so nothing new lands

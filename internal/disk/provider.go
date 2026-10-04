@@ -118,15 +118,26 @@ type Disk struct {
 	// FSUUID belongs to: Device itself when the filesystem is on the whole
 	// disk, otherwise the partition that holds it. It is what a mount of
 	// that filesystem names, and is empty when no filesystem is known.
-	FSDevice        string
+	FSDevice string
+	// FSByIDName is the /dev/disk/by-id link basename of FSDevice that belongs
+	// to this disk's own identity (ByIDName, or ByIDName plus a -partN
+	// suffix), empty when there is none. A mount bound to it reaches this
+	// disk's filesystem even when another device carries a filesystem with the
+	// same UUID, which a mount by UUID could not tell apart.
+	FSByIDName      string
 	Filesystem      string
 	Label           string
 	FSUUID          string
 	ContainsData    bool
 	LooksLikeUnraid bool
 	UnraidBoot      bool
-	CachePartitions []CachePartition
-	Partitions      []BootPartition
+	// UnraidDataPartition is partition 4 of an UnraidBoot disk, where Unraid
+	// keeps its cache when the device is shared with it, with the identity
+	// udev and by-id hold for it. It is nil when the disk is not an UnraidBoot
+	// disk or the partition has none.
+	UnraidDataPartition *BootPartition
+	CachePartitions     []CachePartition
+	Partitions          []BootPartition
 }
 
 // ReasonSpareBootPartition is the CachePartition.Reason code for the one

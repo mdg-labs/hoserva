@@ -106,6 +106,12 @@ var (
 	ErrJobAlreadyRunning = errors.New("job: this job is already running")
 )
 
+// ErrMigrationInProgress refuses a parity, array-write or topology job while an
+// Unraid import's adoption is pending: its data disks are mounted read-only and
+// nothing may write parity or change the array before the point of no return
+// (doc 05 §4 steps 14-16, §5).
+var ErrMigrationInProgress = errors.New("job: an Unraid migration is in progress — parity, array-write and topology jobs are refused until its point of no return")
+
 // stopReason is set on a runningJob before it is asked to stop, so its
 // completion handler (Scheduler.runJob) knows which terminal status to
 // record — the same context cancellation is used for both a user Cancel
@@ -268,6 +274,9 @@ type Scheduler struct {
 	// never directly — every other Scheduler hook that isn't a test-only
 	// field is reached the same way.
 	topologyBackup ConfigBackup
+	// migrationPending reports whether an Unraid import's adoption is waiting
+	// for its point of no return (SetMigrationPending).
+	migrationPending func(ctx context.Context) (bool, error)
 	// dispatching holds, for the window between dispatch() removing a
 	// queued ClassTopology job from s.queue and its outcome being decided
 	// — its start-time backup, and, if it was cancelled or that backup
@@ -324,6 +333,40 @@ func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 	s.topologyBackup = b
 }
 
+// SetMigrationPending sets the check admitLocked makes before it admits a
+// parity, array-write or topology job: while it reports true the array is an
+// Unraid import's adoption, mounted read-only with parity and cache not yet
+// formatted (doc 05 §4 steps 14-16), and only the migration import's own retry
+// is admitted. A check that fails refuses the job: an unknown state is not
+// "nothing pending". Unset, nothing is refused. cmd/hoservad's main.go calls
+// this once, before any job can be submitted.
+func (s *Scheduler) SetMigrationPending(check func(ctx context.Context) (bool, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationPending = check
+}
+
+// admitMigrationLocked refuses a job that could write parity or the array, or
+// change its topology, while a migration is pending. Callers must hold s.mu.
+func (s *Scheduler) admitMigrationLocked(ctx context.Context, t Type) error {
+	if s.migrationPending == nil || t == TypeMigrationImport {
+		return nil
+	}
+	switch class, _ := ClassOf(t); class {
+	case ClassParity, ClassArrayWrite, ClassTopology:
+	default:
+		return nil
+	}
+	pending, err := s.migrationPending(ctx)
+	if err != nil {
+		return fmt.Errorf("job: checking whether a migration is pending: %w", err)
+	}
+	if pending {
+		return ErrMigrationInProgress
+	}
+	return nil
+}
+
 // takesTopologyBackup reports whether a job of type t, in class, starts with the
 // pre-topology config backup. A migration scan is in the Topology class so no
 // storage job runs beside it, but it only reads: it changes no topology, and its
@@ -373,6 +416,9 @@ func (s *Scheduler) admitLocked(ctx context.Context, t Type) error {
 	}
 	if s.batteryHold && isBatteryHeldType(t) {
 		return ErrOnBattery
+	}
+	if err := s.admitMigrationLocked(ctx, t); err != nil {
+		return err
 	}
 	if t == TypeEvacuation {
 		if err := s.admitEvacuationLocked(ctx); err != nil {

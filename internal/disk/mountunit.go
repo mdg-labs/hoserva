@@ -88,11 +88,50 @@ const StorageStoppedFlagName = "array-stopped"
 // /etc/fstab entry and is silently ignored in a native unit's own
 // Options=, so this renderer never emits it (previously rendered but
 // inert, doc 02 §1).
+//
+// An adopted Unraid data disk is mounted read-only until the migration's
+// point of no return (doc 05 §4, §5): ReadOnly gives it the no-write options
+// of ReadOnlyOptions, and What binds the mount to the disk's own identity
+// (a /dev/disk/by-id path) instead of its filesystem UUID, because a former
+// parity disk can carry a byte copy of the same filesystem and so the same
+// UUID (doc 05 §3).
 type MountUnit struct {
 	Where       string
 	UUID        string
 	Filesystem  FilesystemType
 	Description string
+	ReadOnly    bool
+	// What, when set, is the device node or by-id path to mount; UUID is then
+	// what the mount is confirmed to hold, not what it is looked up by.
+	What string
+}
+
+// ReadOnlyOptions returns the mount options that stop a mount of fs from
+// writing to the device, for a filesystem Hoserva adopts: ro, and the options
+// that keep a plain ro mount from replaying a journal or log (doc 08 §2).
+func ReadOnlyOptions(fs FilesystemType) (string, bool) {
+	opts, ok := readOnlyOptions[string(fs)]
+	return opts, ok
+}
+
+// options is the unit's mount option list.
+func (u MountUnit) options() (string, error) {
+	if !u.ReadOnly {
+		return "defaults,nofail", nil
+	}
+	opts, ok := ReadOnlyOptions(u.Filesystem)
+	if !ok {
+		return "", fmt.Errorf("disk: no read-only mount options are known for filesystem type %q", u.Filesystem)
+	}
+	return opts + ",nofail", nil
+}
+
+// device is what the unit mounts: What, or the by-uuid link.
+func (u MountUnit) device() string {
+	if u.What != "" {
+		return u.What
+	}
+	return "/dev/disk/by-uuid/" + u.UUID
 }
 
 // UnitFileName returns the systemd unit filename systemd-escape would
@@ -110,11 +149,17 @@ func UnitFileName(where string) string {
 // array-stopped flag the unit's condition checks (StorageStoppedFlagPath
 // under the default state directory).
 func (u MountUnit) Render(stoppedFlag string) string {
+	opts, err := u.options()
+	if err != nil {
+		// A read-only unit of an unknown filesystem must never be written as a
+		// read-write one.
+		opts = "ro,nofail"
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n", u.Description)
 	fmt.Fprintf(&b, "ConditionPathExists=!%s\n\n", stoppedFlag)
-	fmt.Fprintf(&b, "[Mount]\nWhat=/dev/disk/by-uuid/%s\nWhere=%s\nType=%s\n", u.UUID, u.Where, u.Filesystem)
-	fmt.Fprintf(&b, "Options=defaults,nofail\n")
+	fmt.Fprintf(&b, "[Mount]\nWhat=%s\nWhere=%s\nType=%s\n", u.device(), u.Where, u.Filesystem)
+	fmt.Fprintf(&b, "Options=%s\n", opts)
 	return b.String()
 }
 

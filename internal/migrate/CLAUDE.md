@@ -113,3 +113,20 @@ implementation of this package loses a user's data.
   baseline and a reader never takes a cut-short one for whole (`OpenBaseline`
   needs its header and trailer). The row is written before a baseline file it no
   longer names is pruned. A name the row gives is never trusted as a path.
+- **The import adopts, and nothing else, until the point of no return.** `PlanImport`
+  resolves the user's confirmed disk-role mapping (keyed by serial or WWN, never a
+  `/dev` name) against the session's report and a fresh inventory, and the
+  `migration_import` job (`internal/job`) mounts each data disk read-only through
+  its own `/dev/disk/by-id` partition link and records the former parity and cache
+  disks by identity. A role comes from the report's disk table, never a filesystem:
+  a disk `disks.ini` records as parity is never data, one it records as data is
+  never parity or cache, a disk the scan refused, an Unraid boot device and the
+  Unraid stick (`disk.IsUnraidStick`) have no role but `ignore`, and the disk this
+  machine boots from is never parity or data and is the cache only as a spare
+  partition, which `disk.ResolveAdoption` checks against the live inventory so a
+  stale report cannot let it through. Nothing here formats, repairs, mounts
+  read-write or opens a parity or cache device, and the import reads nothing from
+  the flash (Q25). A mount is trusted only once the kernel's table shows the
+  confirmed device and read-only. `import_lab_test.go` is the proof that matters:
+  every source disk's whole-device sha256 is the same after the import, a stop and
+  a start, so keep it passing before anything else here changes.

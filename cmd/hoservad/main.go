@@ -367,6 +367,10 @@ func run(cfg config) error {
 		},
 	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
+	// Whether an Unraid import's adoption is pending is asked of the array's own
+	// record, before any job can be submitted: a pending adoption is mounted
+	// read-only, and no parity, array-write or topology job may run beside it.
+	scheduler.SetMigrationPending(arrayStore.MigrationPending)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
@@ -629,6 +633,8 @@ func run(cfg config) error {
 		// The migrator is optional: without it its operations answer 501
 		// rather than failing the daemon's start.
 		log.Printf("hoservad: the Unraid migrator is not available: %v", err)
+	} else if err := wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}), rebuildArraySequence); err != nil {
+		log.Printf("hoservad: the Unraid import is not available: %v", err)
 	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{

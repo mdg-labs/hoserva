@@ -187,11 +187,11 @@ func (e *labUpgradeEnv) sync() {
 // rebuildSeq is the lab's ArrayReady: the array sequence rebuilt from
 // SQLite, with UR9's check over the real kernel mount table.
 func (e *labUpgradeEnv) rebuildSeq(ctx context.Context) error {
-	_, arrayDisks, err := e.st.GetArray(ctx)
+	settings, arrayDisks, err := e.st.GetArray(ctx)
 	if err != nil {
 		return err
 	}
-	units, err := mountUnitsFromStore(arrayDisks)
+	units, err := ArrayMountUnits(settings, arrayDisks)
 	if err != nil {
 		return err
 	}

@@ -355,3 +355,30 @@ func TestCanWriteShareFiles_RefusesUnmanagedExports(t *testing.T) {
 		t.Fatalf("CanWriteShareFiles = %v, want ErrUnmanaged", err)
 	}
 }
+
+// A pending Unraid migration's catch-all is written read-only, whatever else
+// the state says.
+func TestWriteCatchAllMount_ReadOnlyForAPendingMigration(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	state := PoolState{DataDisks: []string{"/mnt/disk1", "/mnt/disk2"}, Options: pool.Options{MinFreeSpace: "50G"}, ReadOnly: true}
+	if err := g.WriteCatchAllMount(context.Background(), state, "array create", 1, time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(g.Root, "systemd", "system", "mnt-user.mount"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"What=/mnt/disk1=RO:/mnt/disk2=RO", ",ro\n"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("mnt-user.mount:\n%s\nwant %q", body, want)
+		}
+	}
+	state.ReadOnly = false
+	if err := g.WriteCatchAllMount(context.Background(), state, "array create", 2, time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = os.ReadFile(filepath.Join(g.Root, "systemd", "system", "mnt-user.mount"))
+	if strings.Contains(string(body), "=RO") || strings.Contains(string(body), ",ro\n") {
+		t.Errorf("the ordinary catch-all is read-only:\n%s", body)
+	}
+}

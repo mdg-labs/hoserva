@@ -1407,3 +1407,65 @@ func TestDataDisks_ARefusedDiskKeepsEveryShareConfig(t *testing.T) {
 		t.Errorf("%d share configs kept, want all 8", len(r.Import.Shares))
 	}
 }
+
+// With one data disk and single parity, Unraid's parity is a copy of the data
+// disk, so the parity partition carries its filesystem UUID. The data disk is
+// adopted through its own by-id link and the scan says so; the parity disk is
+// still never mounted. Without the link the data disk is refused, because
+// nothing but the UUID could tell the two apart.
+func TestDataDisks_AParityDiskHoldingACopyOfADataDisksUUID(t *testing.T) {
+	copyUUID := func(e *dataEnv) {
+		list, _ := e.disks.List(context.Background())
+		for _, d := range list {
+			if d.Device == e.dev["disk1"] {
+				e.setDisk("parity", func(p *disk.Disk) { p.FSUUID = d.FSUUID })
+			}
+		}
+	}
+	t.Run("with an identity link", func(t *testing.T) {
+		e := newDataEnv(t, primary)
+		copyUUID(e)
+		e.setDisk("disk1", func(d *disk.Disk) { d.ByIDName, d.FSByIDName = "ata-EX_disk1", "ata-EX_disk1-part1" })
+		r := e.scan()
+		if !hasRowText(r, CheckDataDisks, StatusPass, "disk1", "single filesystem") || !hasRowText(r, CheckIntegrity, StatusPass, "disk1", "is clean") {
+			t.Errorf("disk1 was not adopted: %+v", rowsFor(r, CheckDataDisks))
+		}
+		if !hasRowText(r, CheckDataDisks, StatusInfo, "disk1", "never by UUID") {
+			t.Errorf("no row says disk1 is mounted through its own link: %+v", rowsFor(r, CheckDataDisks))
+		}
+		for _, d := range e.mountedDevices() {
+			if d == e.dev["parity"]+"1" {
+				t.Errorf("the parity disk was mounted: %v", e.mountedDevices())
+			}
+		}
+		if r.Verdict == VerdictNoGo {
+			t.Errorf("verdict = no_go: %+v", r.Rows)
+		}
+	})
+	t.Run("without one", func(t *testing.T) {
+		e := newDataEnv(t, primary)
+		copyUUID(e)
+		r := e.scan()
+		if !hasRowText(r, CheckDataDisks, StatusRefuse, "disk1", "no /dev/disk/by-id link") || r.Verdict != VerdictNoGo {
+			t.Errorf("disk1 was not refused: %+v (verdict %s)", rowsFor(r, CheckDataDisks), r.Verdict)
+		}
+		if review := r.Review.Disks; len(review) == 0 {
+			t.Fatal("no review")
+		} else {
+			found := false
+			for _, d := range review {
+				if d.Slot == "disk1" && d.RefusalCode == RefuseDuplicateUUID {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("disk1 has no duplicate_uuid refusal in the review: %+v", review)
+			}
+		}
+		for _, d := range e.mountedDevices() {
+			if d == e.dev["disk1"]+"1" || d == e.dev["parity"]+"1" {
+				t.Errorf("a disk of the ambiguous pair was mounted: %v", e.mountedDevices())
+			}
+		}
+	})
+}

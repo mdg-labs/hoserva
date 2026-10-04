@@ -235,11 +235,13 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
   |---|---|---|
   | **Parity** | sync, scrub, fix, check | Parity, Array-write, Topology |
   | **Array-write** | rebalance, evacuation, share relocation, mover, VM disk relocation | Parity, Topology, other Array-write on the same disks |
-  | **Topology** | disk format, add/remove/replace disk, pool remount, migration scan | Everything in the three storage classes |
+  | **Topology** | disk format, add/remove/replace disk, pool remount, migration scan, migration import | Everything in the three storage classes |
   | **Service** | appdata backup, config backup, container update | Other Service jobs on the same container (a config backup: another config backup) |
   | **VM** | VM start, stop, create, delete, snapshot, clone, migration-import (doc 14 §2, Q56) | Other VM jobs on the same VM |
 
   A migration scan only reads, but it is a Topology job so that no storage job runs beside it. It is the one Topology job that does not take the pre-topology config backup, since it changes nothing that backup protects and repeated scans must not use up the retention real changes rely on.
+
+  A migration import (doc 05 §4 steps 14-16) is a Topology job that adopts the Unraid data disks read-only and takes the pre-topology config backup like the others. From its adoption until the point of no return the array is *migration pending* (`array_settings.migration_pending`): the scheduler admits no Parity, Array-write or Topology job but the import's own retry, and refuses the rest with `migration_in_progress` (409). A scan is among the refused, so the baseline the verify step compares against is not replaced, and so is forgetting the session. The question is asked of the array's own record before any job is admitted, and a failure to answer refuses the job. Nothing else is gated: an Unraid import has no `snapraid.conf` yet, so there is no parity engine and the maintenance chain has nothing to sync.
 
   The nightly maintenance chain (Q30) runs its steps in sequence and holds each class in turn.
 - **Every sync goes through the threshold guard** (doc 02 §2), whatever triggered it — schedule, disk add, evacuation, or a manual click.

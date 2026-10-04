@@ -52,7 +52,7 @@ func writeArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Ge
 		return nil, err
 	}
 
-	units, err := mountUnitsFromStore(disks)
+	units, err := ArrayMountUnits(settings, disks)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +65,12 @@ func writeArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Ge
 		return nil, err
 	}
 
+	// A pending migration has no parity yet: snapraid.conf is generated at the
+	// point of no return, and with none there is no parity engine and nothing
+	// a sync could run against.
+	if settings.MigrationPending {
+		return units, nil
+	}
 	body, err := layoutFromStore(disks).Render()
 	if err != nil {
 		return nil, err
@@ -90,7 +96,11 @@ func alreadyMounted(where string) bool {
 	return err == nil && mounted
 }
 
-func mountUnitsFromStore(disks []store.ArrayDisk) ([]disk.MountUnit, error) {
+// ArrayMountUnits is the mount unit of each array disk as SQLite records it.
+// While a migration is pending (settings.MigrationPending) every unit is
+// read-only, and a disk with a MountSource is mounted through it, bound to its
+// own device rather than to a filesystem UUID another disk may share.
+func ArrayMountUnits(settings store.ArraySettings, disks []store.ArrayDisk) ([]disk.MountUnit, error) {
 	units := make([]disk.MountUnit, 0, len(disks))
 	for _, d := range disks {
 		if d.FSUUID == "" {
@@ -104,6 +114,8 @@ func mountUnitsFromStore(disks []store.ArrayDisk) ([]disk.MountUnit, error) {
 			UUID:        d.FSUUID,
 			Filesystem:  disk.FilesystemType(d.Filesystem),
 			Description: diskMountDescription(d),
+			ReadOnly:    settings.MigrationPending,
+			What:        d.MountSource,
 		})
 	}
 	return units, nil
@@ -148,6 +160,7 @@ func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) c
 		CreatePolicy: pool.CreatePolicy(settings.CreatePolicy),
 		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
 		RemovingDisk: removingDisk,
+		ReadOnly:     settings.MigrationPending,
 	}
 }
 

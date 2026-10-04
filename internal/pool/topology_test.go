@@ -333,3 +333,34 @@ func TestRWBranchesOrderPreserved(t *testing.T) {
 		t.Fatalf("rwBranches did not preserve branch order: %q", got)
 	}
 }
+
+// While an Unraid migration is pending the pool over the adopted disks is
+// read-only twice over: every branch is RO and the mount itself is ro, so
+// nothing can create, write or delete through it (doc 05 §5).
+func TestCatchAllMountReadOnly(t *testing.T) {
+	m, err := CatchAllMountReadOnly(testDisks, DefaultOptions())
+	if err != nil {
+		t.Fatalf("CatchAllMountReadOnly: %v", err)
+	}
+	if m.What != "/mnt/disk1=RO:/mnt/disk2=RO:/mnt/disk3=RO" || !m.ReadOnly {
+		t.Fatalf("What = %q, ReadOnly = %v, want every branch RO and the mount read-only", m.What, m.ReadOnly)
+	}
+	if m.Where != CatchAllPath || m.FSName != "hoserva-pool" {
+		t.Errorf("Where = %q, FSName = %q: the read-only pool is the catch-all", m.Where, m.FSName)
+	}
+	opts := m.Argv()[2]
+	if !strings.HasSuffix(opts, ",ro") && !strings.Contains(opts, ",ro,") {
+		t.Errorf("argv options = %q, want ro", opts)
+	}
+	if got := m.Render("/flag"); !strings.Contains(got, "ro\n") || !strings.Contains(got, "What=/mnt/disk1=RO:") {
+		t.Errorf("unit:\n%s", got)
+	}
+
+	rw, _ := CatchAllMount(testDisks, DefaultOptions())
+	if strings.Contains(rw.optionsString(), ",ro") || rw.ReadOnly {
+		t.Errorf("the ordinary catch-all became read-only: %q", rw.optionsString())
+	}
+	if _, err := CatchAllMountReadOnly(nil, DefaultOptions()); !errors.Is(err, ErrNoDataDisks) {
+		t.Errorf("CatchAllMountReadOnly(nil) = %v, want ErrNoDataDisks", err)
+	}
+}

@@ -70,23 +70,42 @@ func (l *Lister) bootPartitions(parentName string, parent Identity) []BootPartit
 	byID, _ := scanPartitionByID(l.ByIDDir)
 	var out []BootPartition
 	for _, part := range l.partitions(parentName) {
-		p := BootPartition{Device: "/dev/" + part}
-		if sectors, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "size")); err == nil && sectors > 0 {
-			p.Size = sectors * 512
-		}
-		if number := strings.TrimSpace(readSysString(filepath.Join(l.SysBlockDir, part, "partition"))); number != "" && parent.ByIDName != "" {
-			if want := parent.ByIDName + "-part" + number; slices.Contains(byID[part], want) {
-				p.ByIDName = want
-			}
-		}
-		if props, ok := l.udevProps(part); ok {
-			p.PartUUID = props["ID_PART_ENTRY_UUID"]
-			p.Filesystem = props["ID_FS_TYPE"]
-			p.FSUUID = props["ID_FS_UUID"]
-		}
-		out = append(out, p)
+		out = append(out, l.bootPartition(part, parent, byID))
 	}
 	return out
+}
+
+// unraidDataPartition is partition 4 of an Unraid internal boot device, the
+// one Unraid keeps its cache on when the device is shared with it (doc 05 §4),
+// with the identity udev's cache and by-id hold for it, or nil when the device
+// has none. It never opens a device.
+func (l *Lister) unraidDataPartition(parentName string, parent Identity) *BootPartition {
+	byID, _ := scanPartitionByID(l.ByIDDir)
+	for _, part := range l.partitions(parentName) {
+		if number, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "partition")); err == nil && number == unraidDataPartitionNumber {
+			p := l.bootPartition(part, parent, byID)
+			return &p
+		}
+	}
+	return nil
+}
+
+func (l *Lister) bootPartition(part string, parent Identity, byID map[string][]string) BootPartition {
+	p := BootPartition{Device: "/dev/" + part}
+	if sectors, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "size")); err == nil && sectors > 0 {
+		p.Size = sectors * 512
+	}
+	if number := strings.TrimSpace(readSysString(filepath.Join(l.SysBlockDir, part, "partition"))); number != "" && parent.ByIDName != "" {
+		if want := parent.ByIDName + "-part" + number; slices.Contains(byID[part], want) {
+			p.ByIDName = want
+		}
+	}
+	if props, ok := l.udevProps(part); ok {
+		p.PartUUID = props["ID_PART_ENTRY_UUID"]
+		p.Filesystem = props["ID_FS_TYPE"]
+		p.FSUUID = props["ID_FS_UUID"]
+	}
+	return p
 }
 
 func (l *Lister) cacheCandidate(part string, parent Identity, byIDNames, named []string) (CachePartition, bool) {

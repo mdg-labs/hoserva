@@ -20,6 +20,10 @@ type Mount struct {
 	Options           Options
 	Description       string
 	RequiresMountsFor []string
+	// ReadOnly mounts the pool read-only: nothing can create, write or delete
+	// through it. It is the catch-all of a pending Unraid migration (doc 05 §5),
+	// whose disks are not to be written until the point of no return.
+	ReadOnly bool
 }
 
 // UnitFileName returns the systemd .mount unit filename for a mount at
@@ -50,7 +54,11 @@ func UnitFileName(where string) string {
 // and Argv's -o argument both use, so the two are never able to drift
 // apart.
 func (m Mount) optionsString() string {
-	return fmt.Sprintf("category.create=%s,%s,fsname=%s", m.CreatePolicy, m.Options.render(), m.FSName)
+	opts := fmt.Sprintf("category.create=%s,%s,fsname=%s", m.CreatePolicy, m.Options.render(), m.FSName)
+	if m.ReadOnly {
+		opts += ",ro"
+	}
+	return opts
 }
 
 // Render returns m's systemd unit file content — the body a caller

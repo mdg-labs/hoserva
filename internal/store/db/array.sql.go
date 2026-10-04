@@ -71,6 +71,30 @@ func (q *Queries) CountArraySettings(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const deletePendingMigrationArrayDisks = `-- name: DeletePendingMigrationArrayDisks :execrows
+DELETE FROM array_disks WHERE EXISTS (SELECT 1 FROM array_settings WHERE migration_pending = 1)
+`
+
+func (q *Queries) DeletePendingMigrationArrayDisks(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deletePendingMigrationArrayDisks)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deletePendingMigrationArraySettings = `-- name: DeletePendingMigrationArraySettings :execrows
+DELETE FROM array_settings WHERE migration_pending = 1
+`
+
+func (q *Queries) DeletePendingMigrationArraySettings(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deletePendingMigrationArraySettings)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteUnlistedArrayDataDisk = `-- name: DeleteUnlistedArrayDataDisk :execrows
 DELETE FROM array_disks WHERE mountpoint = ? AND role = 'data' AND removal_state = 'unlisted'
 `
@@ -86,7 +110,7 @@ func (q *Queries) DeleteUnlistedArrayDataDisk(ctx context.Context, mountpoint st
 const getArrayDataDiskByMountpoint = `-- name: GetArrayDataDiskByMountpoint :one
 SELECT
     id, role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id
+    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id, mount_source
 FROM array_disks WHERE mountpoint = ? AND role = 'data'
 `
 
@@ -108,12 +132,13 @@ func (q *Queries) GetArrayDataDiskByMountpoint(ctx context.Context, mountpoint s
 		&i.Mountpoint,
 		&i.RemovalState,
 		&i.RemovalJobID,
+		&i.MountSource,
 	)
 	return &i, err
 }
 
 const getArraySettings = `-- name: GetArraySettings :one
-SELECT id, create_policy, min_free_space, created_at
+SELECT id, create_policy, min_free_space, created_at, migration_pending, migration_recorded
 FROM array_settings WHERE id = 1
 `
 
@@ -125,6 +150,8 @@ func (q *Queries) GetArraySettings(ctx context.Context) (*ArraySetting, error) {
 		&i.CreatePolicy,
 		&i.MinFreeSpace,
 		&i.CreatedAt,
+		&i.MigrationPending,
+		&i.MigrationRecorded,
 	)
 	return &i, err
 }
@@ -148,10 +175,10 @@ func (q *Queries) GetRemovingArrayDisk(ctx context.Context) (*GetRemovingArrayDi
 const insertArrayDisk = `-- name: InsertArrayDisk :exec
 INSERT INTO array_disks (
     role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint
+    wwn, serial, by_id_name, weak_identity, mountpoint, mount_source
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -167,6 +194,7 @@ type InsertArrayDiskParams struct {
 	ByIDName     sql.NullString `json:"by_id_name"`
 	WeakIdentity int64          `json:"weak_identity"`
 	Mountpoint   string         `json:"mountpoint"`
+	MountSource  sql.NullString `json:"mount_source"`
 }
 
 func (q *Queries) InsertArrayDisk(ctx context.Context, arg InsertArrayDiskParams) error {
@@ -182,20 +210,23 @@ func (q *Queries) InsertArrayDisk(ctx context.Context, arg InsertArrayDiskParams
 		arg.ByIDName,
 		arg.WeakIdentity,
 		arg.Mountpoint,
+		arg.MountSource,
 	)
 	return err
 }
 
 const insertArraySettings = `-- name: InsertArraySettings :exec
 
-INSERT INTO array_settings (id, create_policy, min_free_space, created_at)
-VALUES (1, ?, ?, ?)
+INSERT INTO array_settings (id, create_policy, min_free_space, created_at, migration_pending, migration_recorded)
+VALUES (1, ?, ?, ?, ?, ?)
 `
 
 type InsertArraySettingsParams struct {
-	CreatePolicy string `json:"create_policy"`
-	MinFreeSpace string `json:"min_free_space"`
-	CreatedAt    string `json:"created_at"`
+	CreatePolicy      string `json:"create_policy"`
+	MinFreeSpace      string `json:"min_free_space"`
+	CreatedAt         string `json:"created_at"`
+	MigrationPending  int64  `json:"migration_pending"`
+	MigrationRecorded string `json:"migration_recorded"`
 }
 
 // sqlc input (#180, Q60): typed Go query code for the array_settings and
@@ -205,14 +236,20 @@ type InsertArraySettingsParams struct {
 // mis-slicing raw source around extra comment lines). Doc comments live
 // on the hand-written Go wrapper in internal/store/array.go instead.
 func (q *Queries) InsertArraySettings(ctx context.Context, arg InsertArraySettingsParams) error {
-	_, err := q.db.ExecContext(ctx, insertArraySettings, arg.CreatePolicy, arg.MinFreeSpace, arg.CreatedAt)
+	_, err := q.db.ExecContext(ctx, insertArraySettings,
+		arg.CreatePolicy,
+		arg.MinFreeSpace,
+		arg.CreatedAt,
+		arg.MigrationPending,
+		arg.MigrationRecorded,
+	)
 	return err
 }
 
 const listArrayDisks = `-- name: ListArrayDisks :many
 SELECT
     id, role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id
+    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id, mount_source
 FROM array_disks
 ORDER BY
     CASE role
@@ -248,6 +285,7 @@ func (q *Queries) ListArrayDisks(ctx context.Context) ([]*ArrayDisk, error) {
 			&i.Mountpoint,
 			&i.RemovalState,
 			&i.RemovalJobID,
+			&i.MountSource,
 		); err != nil {
 			return nil, err
 		}
@@ -283,7 +321,7 @@ func (q *Queries) ReleaseArrayDiskRemovalState(ctx context.Context, arg ReleaseA
 const replaceArrayDataDiskIdentity = `-- name: ReplaceArrayDataDiskIdentity :execrows
 UPDATE array_disks
 SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
-    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?, mount_source = NULL
 WHERE mountpoint = ? AND role = 'data'
 `
 
@@ -320,7 +358,7 @@ func (q *Queries) ReplaceArrayDataDiskIdentity(ctx context.Context, arg ReplaceA
 const replaceArrayDataDiskIdentityAbandoningRemoval = `-- name: ReplaceArrayDataDiskIdentityAbandoningRemoval :execrows
 UPDATE array_disks
 SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
-    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?, mount_source = NULL,
     removal_state = NULL, removal_job_id = NULL
 WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuated', 'unpooled')
 `

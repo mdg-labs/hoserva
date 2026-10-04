@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path"
 	"strings"
 
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
 )
@@ -49,10 +51,73 @@ func migrateError(err error) error {
 		return &apiError{code: "zip_only_source", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrFlashDevice):
 		return &apiError{code: "flash_device_unreadable", statusCode: 409, message: err.Error()}
-	case errors.Is(err, migrate.ErrNoDeviceSource):
+	case errors.Is(err, migrate.ErrNoDeviceSource), errors.Is(err, migrate.ErrImportNotConfigured):
 		return errMigrationNotConfigured()
+	case errors.Is(err, migrate.ErrImportNoReport):
+		return &apiError{code: "no_migration_report", statusCode: 404, message: err.Error()}
+	case errors.Is(err, migrate.ErrImportScanUnfinished):
+		return &apiError{code: "scan_not_finished", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrImportNoGo):
+		return &apiError{code: "migration_no_go", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrImportNoReview):
+		return &apiError{code: "scan_outdated", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrImportPending):
+		return &apiError{code: "migration_in_progress", statusCode: 409, message: err.Error()}
+	case errors.Is(err, disk.ErrUnraidStick):
+		return errUnraidStick(err)
+	case migrate.IsImportRoleError(err):
+		return &apiError{code: "invalid_import_roles", statusCode: 400, message: err.Error()}
 	}
 	return err
+}
+
+func errArrayExistsNotPending() error {
+	return &apiError{code: "array_exists", statusCode: 409, message: "an array already exists and is not an Unraid import waiting for its point of no return"}
+}
+
+// StartMigrationImport checks the confirmed disk-role mapping against the
+// scan's report and this machine's disks and queues the migration_import job,
+// which adopts the Unraid data disks read-only (doc 05 §4 steps 14-16).
+func (h *Handler) StartMigrationImport(ctx context.Context, req *apiv1.MigrationImportRequest) (*apiv1.Job, error) {
+	if h.Migration == nil || h.Scheduler == nil || h.ArrayStore == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	if req == nil || !req.Confirm {
+		return nil, errConfirmRequired
+	}
+	assignments := make([]disk.AdoptionAssignment, 0, len(req.Roles))
+	for _, r := range req.Roles {
+		assignments = append(assignments, disk.AdoptionAssignment{
+			Role: disk.AdoptionRole(r.Role), Serial: r.Serial.Or(""), WWN: r.Wwn.Or(""),
+			ByIDName: r.ById.Or(""), PartUUID: r.PartUuid.Or(""),
+		})
+	}
+	plan, err := h.Migration.PlanImport(ctx, assignments)
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	exists, err := h.ArrayStore.Exists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		pending, err := h.ArrayStore.MigrationPending(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !pending {
+			return nil, errArrayExistsNotPending()
+		}
+	}
+	body, err := json.Marshal(job.MigrationImportParams{Assignments: plan.Assignments, Plan: plan.Plan})
+	if err != nil {
+		return nil, fmt.Errorf("encoding migration_import params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeMigrationImport, []string{migrate.JobResource}, body)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
 }
 
 // StartMigrationScan stages the uploaded Flash Backup zip, refuses it unless it

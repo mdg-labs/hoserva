@@ -4302,6 +4302,8 @@ func (s JobType) Validate() error {
 		return nil
 	case "migration_scan":
 		return nil
+	case "migration_import":
+		return nil
 	case "appdata_backup":
 		return nil
 	case "appdata_restore":
@@ -5606,6 +5608,92 @@ func (s *MigrationDisk) Validate() error {
 	return nil
 }
 
+func (s *MigrationImportDisk) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Role.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "role",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *MigrationImportRequest) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Roles == nil {
+			return errors.New("nil is invalid value")
+		}
+		if err := (validate.Array{
+			MinLength:    1,
+			MinLengthSet: true,
+			MaxLength:    0,
+			MaxLengthSet: false,
+		}).ValidateLength(len(s.Roles)); err != nil {
+			return errors.Wrap(err, "array")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.Roles {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "roles",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s MigrationImportRole) Validate() error {
+	switch s {
+	case "parity":
+		return nil
+	case "data":
+		return nil
+	case "cache":
+		return nil
+	case "ignore":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s MigrationPhase) Validate() error {
 	switch s {
 	case "none":
@@ -5615,6 +5703,8 @@ func (s MigrationPhase) Validate() error {
 	case "scan_failed":
 		return nil
 	case "scanned":
+		return nil
+	case "imported":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

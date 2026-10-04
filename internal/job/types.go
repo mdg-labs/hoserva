@@ -32,6 +32,7 @@ const (
 	TypeDiskUpgradeParity     Type = "disk_upgrade_parity"
 	TypePoolRemount           Type = "pool_remount"
 	TypeMigrationScan         Type = "migration_scan"
+	TypeMigrationImport       Type = "migration_import"
 	TypeAppdataBackup         Type = "appdata_backup"
 	TypeAppdataRestore        Type = "appdata_restore"
 	TypeAppdataRestorePreview Type = "appdata_restore_preview"
@@ -114,6 +115,7 @@ var classOf = map[Type]Class{
 	TypeDiskUpgradeParity: ClassTopology,
 	TypePoolRemount:       ClassTopology,
 	TypeMigrationScan:     ClassTopology,
+	TypeMigrationImport:   ClassTopology,
 
 	TypeAppdataBackup:         ClassService,
 	TypeAppdataRestore:        ClassService,

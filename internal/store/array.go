@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -78,6 +79,29 @@ type ArraySettings struct {
 	CreatePolicy string
 	MinFreeSpace string
 	CreatedAt    time.Time
+	// MigrationPending is true from an Unraid import's adoption until the
+	// point of no return clears it (doc 05 §4 steps 14-16): the data disks are
+	// mounted read-only, the catch-all pool is read-only, there is no
+	// snapraid.conf, and parity and cache are only recorded
+	// (RecordedDisk), never formatted or mounted.
+	MigrationPending bool
+}
+
+// RecordedDisk is a former Unraid parity or cache disk of a pending
+// migration: its identity, kept for the point of no return, and nothing
+// else. It has no filesystem UUID or mountpoint; it is never mounted.
+type RecordedDisk struct {
+	Role         string `json:"role"`
+	RoleIndex    int    `json:"roleIndex"`
+	Device       string `json:"device"`
+	Size         int64  `json:"size"`
+	WWN          string `json:"wwn,omitempty"`
+	Serial       string `json:"serial,omitempty"`
+	ByIDName     string `json:"byId,omitempty"`
+	WeakIdentity bool   `json:"weakIdentity,omitempty"`
+	// PartUUID is the partition table's identifier of a cache on a spare
+	// partition of the boot disk, empty for a whole disk.
+	PartUUID string `json:"partUuid,omitempty"`
 }
 
 // ArrayDisk is one assigned disk after a successful FormatPlan: role,
@@ -106,6 +130,10 @@ type ArrayDisk struct {
 	// RemovalJobID is the job holding RemovalState, or "" when there is
 	// none.
 	RemovalJobID string
+	// MountSource is the /dev/disk/by-id path the disk's mount unit binds to
+	// instead of its filesystem UUID, or "" to mount by UUID. Only an adopted
+	// Unraid data disk has one.
+	MountSource string
 }
 
 // LeavingArray reports whether d is in removal: from the moment an
@@ -153,6 +181,28 @@ func (s *ArrayStore) Exists(ctx context.Context) (bool, error) {
 // PutArray inserts settings and disks. It refuses (ErrArrayExists)
 // without writing if topology is already present, and never deletes.
 func (s *ArrayStore) PutArray(ctx context.Context, settings ArraySettings, disks []ArrayDisk) error {
+	return s.put(ctx, settings, disks, nil)
+}
+
+// PutPendingArray is PutArray for an Unraid import's adoption: settings is
+// stored with MigrationPending set, disks are the adopted data disks, and
+// recorded the former parity and cache disks, kept in the settings row.
+// Settings, disks and the record are written in one transaction. It refuses (ErrArrayExists) without writing when topology is
+// already present.
+func (s *ArrayStore) PutPendingArray(ctx context.Context, settings ArraySettings, disks []ArrayDisk, recorded []RecordedDisk) error {
+	settings.MigrationPending = true
+	return s.put(ctx, settings, disks, recorded)
+}
+
+func (s *ArrayStore) put(ctx context.Context, settings ArraySettings, disks []ArrayDisk, recorded []RecordedDisk) error {
+	var recordedJSON string
+	if len(recorded) > 0 {
+		raw, err := json.Marshal(recorded)
+		if err != nil {
+			return fmt.Errorf("store: encoding the recorded migration disks: %w", err)
+		}
+		recordedJSON = string(raw)
+	}
 	exists, err := s.Exists(ctx)
 	if err != nil {
 		return err
@@ -172,6 +222,9 @@ func (s *ArrayStore) PutArray(ctx context.Context, settings ArraySettings, disks
 		CreatePolicy: settings.CreatePolicy,
 		MinFreeSpace: settings.MinFreeSpace,
 		CreatedAt:    settings.CreatedAt.UTC().Format(TimeFormat),
+
+		MigrationPending:  boolToInt(settings.MigrationPending),
+		MigrationRecorded: recordedJSON,
 	}); err != nil {
 		return fmt.Errorf("store: inserting array settings: %w", err)
 	}
@@ -188,6 +241,7 @@ func (s *ArrayStore) PutArray(ctx context.Context, settings ArraySettings, disks
 			ByIDName:     nullString(d.ByIDName),
 			WeakIdentity: boolToInt(d.WeakIdentity),
 			Mountpoint:   d.Mountpoint,
+			MountSource:  nullString(d.MountSource),
 		}); err != nil {
 			return fmt.Errorf("store: inserting array disk %s: %w", d.Device, err)
 		}
@@ -212,9 +266,10 @@ func (s *ArrayStore) GetArray(ctx context.Context) (ArraySettings, []ArrayDisk, 
 		return ArraySettings{}, nil, fmt.Errorf("store: parsing array created_at: %w", err)
 	}
 	settings := ArraySettings{
-		CreatePolicy: row.CreatePolicy,
-		MinFreeSpace: row.MinFreeSpace,
-		CreatedAt:    createdAt,
+		CreatePolicy:     row.CreatePolicy,
+		MinFreeSpace:     row.MinFreeSpace,
+		CreatedAt:        createdAt,
+		MigrationPending: row.MigrationPending != 0,
 	}
 
 	rows, err := s.q.ListArrayDisks(ctx)
@@ -226,6 +281,65 @@ func (s *ArrayStore) GetArray(ctx context.Context) (ArraySettings, []ArrayDisk, 
 		disks = append(disks, arrayDiskFromRow(r))
 	}
 	return settings, disks, nil
+}
+
+// MigrationPending reports whether the array is an Unraid import's adoption
+// still waiting for the point of no return. No array is not pending.
+func (s *ArrayStore) MigrationPending(ctx context.Context) (bool, error) {
+	row, err := s.q.GetArraySettings(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("store: reading whether a migration is pending: %w", err)
+	}
+	return row.MigrationPending != 0, nil
+}
+
+// RecordedDisks returns the former parity and cache disks of a pending
+// migration, parity first. None is not an error: an array that is not a
+// pending migration's has none.
+func (s *ArrayStore) RecordedDisks(ctx context.Context) ([]RecordedDisk, error) {
+	row, err := s.q.GetArraySettings(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("store: reading the recorded migration disks: %w", err)
+	}
+	if row.MigrationRecorded == "" {
+		return nil, nil
+	}
+	var out []RecordedDisk
+	if err := json.Unmarshal([]byte(row.MigrationRecorded), &out); err != nil {
+		return nil, fmt.Errorf("store: decoding the recorded migration disks: %w", err)
+	}
+	return out, nil
+}
+
+// DeletePendingArray deletes the array and its disks (the recorded migration
+// disks go with the settings row) in one transaction, but only while the array is a pending migration's
+// (MigrationPending): it undoes a failed adoption, and can never delete an
+// array that has been through the point of no return or was created by hand.
+// It reports whether it deleted one.
+func (s *ArrayStore) DeletePendingArray(ctx context.Context) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: beginning pending-array deletion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.q.WithTx(tx)
+	if _, err := q.DeletePendingMigrationArrayDisks(ctx); err != nil {
+		return false, fmt.Errorf("store: deleting the pending array's disks: %w", err)
+	}
+	n, err := q.DeletePendingMigrationArraySettings(ctx)
+	if err != nil {
+		return false, fmt.Errorf("store: deleting the pending array: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: committing pending-array deletion: %w", err)
+	}
+	return n > 0, nil
 }
 
 // AddDataDisk inserts one new data-disk row into an already-existing array
@@ -399,6 +513,7 @@ func arrayDiskFromRow(r *storedb.ArrayDisk) ArrayDisk {
 		SizeSet:      r.SizeBytes.Valid,
 		RemovalState: r.RemovalState.String,
 		RemovalJobID: r.RemovalJobID.String,
+		MountSource:  r.MountSource.String,
 	}
 }
 

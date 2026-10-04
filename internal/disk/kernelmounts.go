@@ -89,6 +89,71 @@ func ConfirmMountedUUID(ctx context.Context, r Runner, where, uuid string) error
 	return nil
 }
 
+// MountedSource reads the device the filesystem mounted at where came from,
+// through findmnt. A btrfs subvolume suffix ("/dev/sdb1[/sub]") is dropped.
+func MountedSource(ctx context.Context, r Runner, where string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	out, err := r.Run(ctx, "findmnt", "-n", "-o", "SOURCE", where)
+	if err != nil {
+		return "", fmt.Errorf("disk: reading the device mounted at %s: %w", where, err)
+	}
+	src := strings.TrimSpace(string(out))
+	if i := strings.Index(src, "["); i >= 0 {
+		src = src[:i]
+	}
+	if src == "" {
+		return "", fmt.Errorf("disk: %s reported no mounted source device", where)
+	}
+	return src, nil
+}
+
+// ConfirmMountedSource returns nil only when the filesystem mounted at where
+// came from the device what names (a device node or a /dev/disk/by-id path),
+// both resolved to the node they point at. A UUID cannot say this: a byte copy
+// of a filesystem on another disk, as a former Unraid parity disk can be,
+// carries the same one.
+func ConfirmMountedSource(ctx context.Context, r Runner, where, what string) error {
+	got, err := MountedSource(ctx, r, where)
+	if err != nil {
+		return err
+	}
+	want, err := filepath.EvalSymlinks(what)
+	if err != nil {
+		return fmt.Errorf("disk: resolving %s: %w", what, err)
+	}
+	have, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		return fmt.Errorf("disk: resolving %s: %w", got, err)
+	}
+	if want != have {
+		return fmt.Errorf("disk: %s is mounted from %s, want %s (%s)", where, have, want, what)
+	}
+	return nil
+}
+
+// ConfirmMountedReadOnly returns nil only when the mount at where is
+// read-only, read from the mount table through findmnt.
+func ConfirmMountedReadOnly(ctx context.Context, r Runner, where string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	out, err := r.Run(ctx, "findmnt", "-n", "-o", "OPTIONS", where)
+	if err != nil {
+		return fmt.Errorf("disk: reading the mount options of %s: %w", where, err)
+	}
+	if !hasOption(strings.TrimSpace(string(out)), "ro") {
+		return fmt.Errorf("disk: %s is mounted read-write (%s)", where, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// MountedSource implements the source check of job.ArrayDiskUUIDCheck.
+func (k KernelMounts) MountedSource(ctx context.Context, path string) (string, error) {
+	return MountedSource(ctx, k.Runner, path)
+}
+
 // ParseMountInfo returns every mountpoint listed in a mountinfo(5) table,
 // in table order, with the kernel's octal escapes (\040 for a space and
 // so on) decoded.

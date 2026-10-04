@@ -65,6 +65,10 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", l.ByIDDir, err)
 	}
+	nodeByID, err := scanNodeByID(l.ByIDDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("reading %s: %w", l.ByIDDir, err)
+	}
 
 	// Boot-disk classification fails closed: a mounts listing List can't
 	// read, or a root device BootDevices can't resolve to real physical
@@ -105,35 +109,42 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		dev := "/dev/" + name
 
 		fsNode, fsType, fsLabel, fsUUID := l.discoveryFS(name)
-		fsDevice := ""
+		fsDevice, fsByID := "", ""
 		if fsNode != "" {
 			fsDevice = "/dev/" + fsNode
+			fsByID = ownFSByIDName(nodeByID[fsNode], id.ByIDName)
 		}
 		looksLikeUnraid, internalBoot := l.layoutFacts(name)
 		var cachePartitions []CachePartition
 		var partitions []BootPartition
+		var unraidData *BootPartition
+		if internalBoot {
+			unraidData = l.unraidDataPartition(name, id)
+		}
 		if bootSet[dev] {
 			cachePartitions = l.cacheCandidates(name, id, mounts)
 			partitions = l.bootPartitions(name, id)
 		}
 		disks = append(disks, Disk{
-			Device:          dev,
-			Size:            size * 512, // /sys/class/block/<dev>/size is always in 512-byte sectors
-			Model:           model,
-			Serial:          id.Serial,
-			WWN:             id.WWN,
-			WeakIdentity:    id.WeakIdentity,
-			ByIDName:        id.ByIDName,
-			Boot:            bootSet[dev],
-			FSDevice:        fsDevice,
-			Filesystem:      fsType,
-			Label:           fsLabel,
-			FSUUID:          fsUUID,
-			ContainsData:    fsType != "",
-			LooksLikeUnraid: looksLikeUnraid,
-			UnraidBoot:      internalBoot,
-			CachePartitions: cachePartitions,
-			Partitions:      partitions,
+			Device:              dev,
+			Size:                size * 512, // /sys/class/block/<dev>/size is always in 512-byte sectors
+			Model:               model,
+			Serial:              id.Serial,
+			WWN:                 id.WWN,
+			WeakIdentity:        id.WeakIdentity,
+			ByIDName:            id.ByIDName,
+			Boot:                bootSet[dev],
+			FSDevice:            fsDevice,
+			FSByIDName:          fsByID,
+			Filesystem:          fsType,
+			Label:               fsLabel,
+			FSUUID:              fsUUID,
+			ContainsData:        fsType != "",
+			LooksLikeUnraid:     looksLikeUnraid,
+			UnraidBoot:          internalBoot,
+			UnraidDataPartition: unraidData,
+			CachePartitions:     cachePartitions,
+			Partitions:          partitions,
 		})
 	}
 
@@ -167,6 +178,47 @@ func readSysString(path string) string {
 }
 
 var partitionByIDSuffix = regexp.MustCompile(`-part\d+$`)
+
+// scanNodeByID reads dir and returns, for every entry, whole disk or partition,
+// the device name it resolves to mapped to every by-id link name found for it.
+func scanNodeByID(dir string) (map[string][]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string)
+	for _, e := range entries {
+		target, err := os.Readlink(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		node := filepath.Base(target)
+		out[node] = append(out[node], e.Name())
+	}
+	return out, nil
+}
+
+// ownFSByIDName picks, from the by-id links of a filesystem's device node, the
+// one that belongs to the disk identified by diskByID: that link itself (the
+// filesystem is on the whole disk) or it plus a -partN suffix. A link of another
+// family (a wwn- link for a disk identified by its ata- name) is not chosen, so
+// the result always names this disk's identity. It is empty when none matches.
+func ownFSByIDName(names []string, diskByID string) string {
+	if diskByID == "" {
+		return ""
+	}
+	best := ""
+	for _, n := range names {
+		isPartition := strings.HasPrefix(n, diskByID) && partitionByIDSuffix.ReplaceAllString(n, "") == diskByID
+		if n != diskByID && !isPartition {
+			continue
+		}
+		if best == "" || n < best {
+			best = n
+		}
+	}
+	return best
+}
 
 // scanByID reads dir (normally /dev/disk/by-id) and returns, for every
 // whole-disk entry, the device name it resolves to mapped to every

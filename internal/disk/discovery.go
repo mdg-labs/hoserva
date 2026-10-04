@@ -45,6 +45,10 @@ const (
 	gptTypeLinuxData = "0fc63daf-8483-4772-8e79-3d69d8477de4"
 )
 
+// unraidDataPartitionNumber is the partition of an internal boot device that
+// holds Unraid's cache when the device is shared with it.
+const unraidDataPartitionNumber = 4
+
 // PartitionEntry is one GPT partition as udev's cached database reports it:
 // its number, its name (ID_PART_ENTRY_NAME, already decoded) and its type GUID
 // (ID_PART_ENTRY_TYPE).
