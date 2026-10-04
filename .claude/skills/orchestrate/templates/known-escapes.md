@@ -20,6 +20,7 @@ existing line by adding its PR number.
 - **wiring** — a second, independent path bypasses the one Hoserva owns (NUT `SHUTDOWNCMD` skipping the clean array stop) — PR 254
 - **wiring** — test or check script that no `make` target or CI job runs — #42, PR 221
 - **wiring** — a CI step calls a `make` target whose prerequisites redo the job's own earlier install and build, doubling the job's cost — PR 474
+- **wiring** — a build a deploy workflow now runs gets its toolchain setup (`setup-node` from `.nvmrc`, cache) only in the CI job that tests it, so the deploy builds on the runner's default version — PR 590
 - **scope** — API/CLI option accepted and silently ignored (`--follow`, `--json`, `dryRun`/`confirm`/`percent` payload) — PR 174
 - **scope** — stub or sample data presented as real (sample diff rows, hard-coded "Confirmed", `Mounted` from disk count) — PR 174, 187, 210
 - **scope** — feature covers only the first or common case (first NIC only, common timezones only, cache disks missing from a step) — PR 182, 213
@@ -78,6 +79,7 @@ existing line by adding its PR number.
 - **ui-states** — a dialog derives its options from state its own first step already changed, so a failure in the second step removes the retry (save mode, then relocate) — PR 357
 - **ui-states** — a "touched" flag sends a cleared field as an empty value the schema rejects, instead of omitting it to keep the stored secret — PR 357
 - **drift** — a domain rule (which mode change relocates where, which removal states leave the pool) copied between pages or packages instead of shared from one definition — PR 357, 370
+- **drift** — a check enforces an invariant that a documented maintenance procedure breaks (layout check requires every `versions.json` entry built; docs drop old versions with `onlyIncludeVersions`), so following the docs fails the build — PR 590
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228, 382
 - **ui-states** — a dialog, overlay or panel dismissable (Escape, backdrop, Cancel) while its request runs, so the later failure lands on a closed surface — PR 382
