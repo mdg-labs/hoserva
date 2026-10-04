@@ -37,6 +37,14 @@ type Share struct {
 	NFSSquash             string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+	// MinFreeSpace is the share's own mergerfs minfreespace; empty keeps the
+	// array's.
+	MinFreeSpace string
+	// TargetCacheMode is the cache mode an Unraid import wants once the cache
+	// exists, while CacheMode is array-only; empty when there is none.
+	TargetCacheMode string
+	// MigrationNotes is what the Unraid import could not map exactly.
+	MigrationNotes []string
 }
 
 // ShareStore persists shares in the central SQLite database (D4).
@@ -68,6 +76,9 @@ func (s *ShareStore) Insert(ctx context.Context, rec Share) error {
 		NfsSquash:             nfsSquashOrDefault(rec.NFSSquash),
 		CreatedAt:             rec.CreatedAt.UTC().Format(TimeFormat),
 		UpdatedAt:             rec.UpdatedAt.UTC().Format(TimeFormat),
+		MinFreeSpace:          rec.MinFreeSpace,
+		TargetCacheMode:       rec.TargetCacheMode,
+		MigrationNotes:        marshalNotes(rec.MigrationNotes),
 	})
 	if isUniqueConstraint(err) {
 		return fmt.Errorf("%w: %s", ErrShareExists, rec.Name)
@@ -124,6 +135,9 @@ func (s *ShareStore) Update(ctx context.Context, rec Share) error {
 		NfsHosts:              marshalNFSHosts(rec.NFSHosts),
 		NfsSquash:             nfsSquashOrDefault(rec.NFSSquash),
 		UpdatedAt:             rec.UpdatedAt.UTC().Format(TimeFormat),
+		MinFreeSpace:          rec.MinFreeSpace,
+		TargetCacheMode:       rec.TargetCacheMode,
+		MigrationNotes:        marshalNotes(rec.MigrationNotes),
 		Name:                  rec.Name,
 	})
 	if err != nil {
@@ -161,6 +175,10 @@ func shareFromRow(row *storedb.Share) (Share, error) {
 	if err != nil {
 		return Share{}, fmt.Errorf("store: parsing share %s nfs_hosts: %w", row.Name, err)
 	}
+	notes, err := unmarshalNotes(row.MigrationNotes)
+	if err != nil {
+		return Share{}, fmt.Errorf("store: parsing share %s migration_notes: %w", row.Name, err)
+	}
 	return Share{
 		Name:                  row.Name,
 		CacheMode:             row.CacheMode,
@@ -177,7 +195,35 @@ func shareFromRow(row *storedb.Share) (Share, error) {
 		NFSSquash:             nfsSquashOrDefault(row.NfsSquash),
 		CreatedAt:             createdAt,
 		UpdatedAt:             updatedAt,
+		MinFreeSpace:          row.MinFreeSpace,
+		TargetCacheMode:       row.TargetCacheMode,
+		MigrationNotes:        notes,
 	}, nil
+}
+
+func marshalNotes(notes []string) string {
+	if notes == nil {
+		notes = []string{}
+	}
+	b, err := json.Marshal(notes)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func unmarshalNotes(raw string) ([]string, error) {
+	if raw == "" {
+		return []string{}, nil
+	}
+	var notes []string
+	if err := json.Unmarshal([]byte(raw), &notes); err != nil {
+		return nil, err
+	}
+	if notes == nil {
+		notes = []string{}
+	}
+	return notes, nil
 }
 
 func marshalNFSHosts(hosts []string) string {

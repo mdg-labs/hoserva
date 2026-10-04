@@ -44,9 +44,9 @@ import (
 //
 // While an Unraid import is pending (settings.MigrationPending) the data
 // disks' units are read-only and bound to each disk's own device, the
-// catch-all is read-only, and Start confirms each disk against that device as
-// well as its UUID; parity and cache are not in the sequence at all, being
-// only recorded.
+// catch-all is read-only and the only pool mount (a share is a directory of
+// it), and Start confirms each disk against that device as well as its UUID;
+// parity and cache are not in the sequence at all, being only recorded.
 //
 // A data disk that has left the pool (unpooled, #358) is in no pool
 // mount's branch list; an unlisted one is not part of the sequence at all.
@@ -206,6 +206,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		Mounter: guardedCatchAllMounter{inner: pool.SystemdMounter{Runner: runner}, runner: runner},
 	}
 
+	// A pending migration has the catch-all only: /mnt/user/<share> is a
+	// directory of the read-only pool, and a share's directory may exist on no
+	// adopted disk.
+	if settings.MigrationPending {
+		return seq, nil
+	}
 	rows, err := shares.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("loading shares: %w", err)
@@ -216,6 +222,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			Name:         row.Name,
 			CacheMode:    pool.CacheMode(row.CacheMode),
 			CreatePolicy: pool.CreatePolicy(row.CreatePolicy),
+			MinFreeSpace: row.MinFreeSpace,
 		}
 		var shareMount pool.Mount
 		if removingDisk == "" {

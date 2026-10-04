@@ -12,9 +12,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/migrate"
+	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/template"
 	migrationpending "github.com/mdg-labs/hoserva/web/fixtures/migration-pending"
 )
@@ -172,6 +176,7 @@ func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, 
 	if disk3Fixed {
 		r.Verdict = migrate.VerdictGoWithWarnings
 	}
+	r.Import = mockMigrationImport()
 	r.Review = mockReview(flash, at, disk3Refusal)
 	return r
 }
@@ -251,6 +256,88 @@ func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrat
 		{Name: "documents", AllocationMethod: "mostfree", Include: []string{}, Exclude: []string{}},
 	}
 	return rv
+}
+
+// mockMigrationImport is what the report's scan parsed, matching the rows and
+// the share preview above: three shares and two accounts, which the import
+// seeds.
+func mockMigrationImport() migrate.Import {
+	return migrate.Import{
+		Shares: []migrate.Share{
+			{Name: "backup", Allocator: "fillup", CreatePolicy: pool.FillDisksInOrder, UseCache: "no", CacheMode: pool.ArrayOnly, Export: "-", Security: "private", Exclude: []string{"disk3"}, ReadList: []string{"bob"}},
+			{Name: "documents", Allocator: "mostfree", CreatePolicy: pool.BalanceAcrossDisks, UseCache: "yes", CacheMode: pool.CacheThenMove, Export: "e", Security: "public"},
+			{Name: "media", Allocator: "highwater", CreatePolicy: pool.BalanceAcrossDisks, UseCache: "no", CacheMode: pool.ArrayOnly, Export: "e", Security: "private", SplitLevel: "2", Floor: "50000000", ReadList: []string{"bob"}, WriteList: []string{"alice"}},
+		},
+		Users: []string{"alice", "bob"},
+	}
+}
+
+// seedMockMigration creates the shares and accounts the import seeds, from the
+// same plan production's job builds, and skips a name that already exists as
+// production does.
+func (h *handler) seedMockMigration(plan migrate.SeedPlan) {
+	now := time.Now().UTC().Truncate(time.Second)
+	h.usersMu.Lock()
+	ids := map[string]uuid.UUID{}
+	for _, u := range h.users {
+		ids[strings.ToLower(u.Username)] = u.ID
+	}
+	for _, name := range plan.Users {
+		if _, ok := ids[name]; ok {
+			continue
+		}
+		u := apiv1.UserSummary{ID: uuid.New(), Username: name, Role: apiv1.UserRoleShareOnly, CreatedAt: now}
+		u.LastLogin.SetToNull()
+		h.users[u.ID] = u
+		ids[name] = u.ID
+	}
+	h.usersMu.Unlock()
+
+	h.mu.Lock()
+	created := map[string]share.SeedShare{}
+	for _, sh := range plan.Shares {
+		if _, ok := h.shares[sh.Name]; ok {
+			continue
+		}
+		s := apiv1.Share{
+			Name:         apiv1.ShareName(sh.Name),
+			Path:         "/mnt/user/" + sh.Name,
+			CacheMode:    apiv1.ShareCacheModeArrayOnly,
+			CreatePolicy: apiv1.ArrayCreatePolicy(sh.CreatePolicy),
+			Smb:          apiv1.ShareSMB{Enabled: sh.SMB.Enabled, Guest: sh.SMB.Guest, Browseable: sh.SMB.Browseable},
+			Nfs:          defaultShareNFS(sh.Name),
+			Usage:        apiv1.NilShareUsage{Null: true},
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if sh.MinFreeSpace != "" {
+			s.MinFreeSpace = apiv1.NewOptString(sh.MinFreeSpace)
+		}
+		if sh.TargetCacheMode != "" || len(sh.Notes) > 0 {
+			m := apiv1.ShareMigration{Notes: append([]string{}, sh.Notes...)}
+			if sh.TargetCacheMode != "" {
+				m.TargetCacheMode = apiv1.NewOptShareCacheMode(apiv1.ShareCacheMode(sh.TargetCacheMode))
+			}
+			s.Migration = apiv1.NewOptShareMigration(m)
+		}
+		h.shares[sh.Name] = s
+		created[sh.Name] = sh
+	}
+	h.mu.Unlock()
+
+	h.usersMu.Lock()
+	defer h.usersMu.Unlock()
+	for name, sh := range created {
+		result := apiv1.SharePermissionsResult{Users: []apiv1.UserPermissionEntry{}, Groups: []apiv1.GroupPermissionEntry{}}
+		for _, a := range sh.Access {
+			id := ids[a.Username]
+			result.Users = append(result.Users, apiv1.UserPermissionEntry{UserId: id, Username: a.Username, Access: apiv1.ShareAccessLevel(a.Access)})
+			user := h.userSharePermissions[id]
+			user.Permissions = append(user.Permissions, apiv1.UserSharePermission{ShareName: apiv1.ShareName(name), Access: apiv1.ShareAccessLevel(a.Access)})
+			h.userSharePermissions[id] = user
+		}
+		h.sharePermissions[apiv1.ShareName(name)] = result
+	}
 }
 
 func seededMigration(scenario string) *mockMigration {
@@ -779,5 +866,6 @@ func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 	h.jobs[j.ID] = *j
 	h.mu.Unlock()
 	h.migration.imported.Store(true)
+	h.seedMockMigration(report.Import.SeedPlan())
 	return j, nil
 }

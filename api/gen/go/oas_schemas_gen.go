@@ -16063,6 +16063,52 @@ func (o OptShareCacheMode) Or(d ShareCacheMode) ShareCacheMode {
 	return d
 }
 
+// NewOptShareMigration returns new OptShareMigration with value set to v.
+func NewOptShareMigration(v ShareMigration) OptShareMigration {
+	return OptShareMigration{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptShareMigration is optional ShareMigration.
+type OptShareMigration struct {
+	Value ShareMigration
+	Set   bool
+}
+
+// IsSet returns true if OptShareMigration was set.
+func (o OptShareMigration) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptShareMigration) Reset() {
+	var v ShareMigration
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptShareMigration) SetTo(v ShareMigration) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptShareMigration) Get() (v ShareMigration, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptShareMigration) Or(d ShareMigration) ShareMigration {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptShareNFS returns new OptShareNFS with value set to v.
 func NewOptShareNFS(v ShareNFS) OptShareNFS {
 	return OptShareNFS{
@@ -18685,6 +18731,10 @@ type Share struct {
 	Usage     NilShareUsage `json:"usage"`
 	CreatedAt time.Time     `json:"createdAt"`
 	UpdatedAt time.Time     `json:"updatedAt"`
+	// The share's own mergerfs `minfreespace`, such as `1000K`. Absent when the share uses the array's. An
+	// Unraid import sets it from the share's floor (doc 09 §1).
+	MinFreeSpace OptString         `json:"minFreeSpace"`
+	Migration    OptShareMigration `json:"migration"`
 }
 
 // GetName returns the value of Name.
@@ -18732,6 +18782,16 @@ func (s *Share) GetUpdatedAt() time.Time {
 	return s.UpdatedAt
 }
 
+// GetMinFreeSpace returns the value of MinFreeSpace.
+func (s *Share) GetMinFreeSpace() OptString {
+	return s.MinFreeSpace
+}
+
+// GetMigration returns the value of Migration.
+func (s *Share) GetMigration() OptShareMigration {
+	return s.Migration
+}
+
 // SetName sets the value of Name.
 func (s *Share) SetName(val ShareName) {
 	s.Name = val
@@ -18775,6 +18835,16 @@ func (s *Share) SetCreatedAt(val time.Time) {
 // SetUpdatedAt sets the value of UpdatedAt.
 func (s *Share) SetUpdatedAt(val time.Time) {
 	s.UpdatedAt = val
+}
+
+// SetMinFreeSpace sets the value of MinFreeSpace.
+func (s *Share) SetMinFreeSpace(val OptString) {
+	s.MinFreeSpace = val
+}
+
+// SetMigration sets the value of Migration.
+func (s *Share) SetMigration(val OptShareMigration) {
+	s.Migration = val
 }
 
 // Q27, doc 03 §7 — a user or group's access to one share.
@@ -19019,6 +19089,36 @@ func (s *ShareDiskUsage) SetDisk(val string) {
 // SetBytes sets the value of Bytes.
 func (s *ShareDiskUsage) SetBytes(val int64) {
 	s.Bytes = val
+}
+
+// What the Unraid import recorded about a share it created (doc 05 §4 step 15). Absent on a share the
+// import did not create.
+// Ref: #/components/schemas/ShareMigration
+type ShareMigration struct {
+	TargetCacheMode OptShareCacheMode `json:"targetCacheMode"`
+	// What could not be mapped exactly, in plain language: High-water allocation mapped to Balance across
+	// disks, a split level Hoserva has no setting for, a security mode it has no equivalent of.
+	Notes []string `json:"notes"`
+}
+
+// GetTargetCacheMode returns the value of TargetCacheMode.
+func (s *ShareMigration) GetTargetCacheMode() OptShareCacheMode {
+	return s.TargetCacheMode
+}
+
+// GetNotes returns the value of Notes.
+func (s *ShareMigration) GetNotes() []string {
+	return s.Notes
+}
+
+// SetTargetCacheMode sets the value of TargetCacheMode.
+func (s *ShareMigration) SetTargetCacheMode(val OptShareCacheMode) {
+	s.TargetCacheMode = val
+}
+
+// SetNotes sets the value of Notes.
+func (s *ShareMigration) SetNotes(val []string) {
+	s.Notes = val
 }
 
 // Ref: #/components/schemas/ShareNFS

@@ -369,6 +369,9 @@ type Share struct {
 	NfsSquash             string         `json:"nfs_squash"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
+	MinFreeSpace          string         `json:"min_free_space"`
+	TargetCacheMode       string         `json:"target_cache_mode"`
+	MigrationNotes        string         `json:"migration_notes"`
 }
 
 type ShareGroupPermission struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/google/uuid"
 	ht "github.com/ogen-go/ogen/http"
 	"github.com/spf13/cobra"
 
@@ -199,6 +201,10 @@ func migrateStatusCmd() *cobra.Command {
 					counts[row.Status]++
 				}
 				fmt.Printf("Findings: %d refuse, %d flag, %d warn\n", counts[apiv1.MigrationCheckStatusRefuse], counts[apiv1.MigrationCheckStatusFlag], counts[apiv1.MigrationCheckStatusWarn])
+			}
+			switch m.Phase {
+			case apiv1.MigrationPhaseImported, apiv1.MigrationPhaseVerifying, apiv1.MigrationPhaseVerifyFailed, apiv1.MigrationPhaseVerified:
+				return printSeeded(c)
 			}
 			return nil
 		},
@@ -575,7 +581,8 @@ func migrateImportCmd() *cobra.Command {
 				emit(done)
 				return nil
 			}
-			fmt.Println("The data disks are adopted read-only at /mnt/user. Check the pool, then verify before parity is touched.")
+			printImportLog(c, j.ID)
+			fmt.Println("The data disks are adopted read-only at /mnt/user, with the shares and accounts of the Unraid configuration. Set a password for each account listed above, check the pool, then verify before parity is touched.")
 			return nil
 		},
 	}
@@ -583,6 +590,63 @@ func migrateImportCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&cachePartitions, "cache-partition", nil, "A spare partition of the boot disk as the cache, as <by-id name>:<partuuid>")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm the mapping shown (required)")
 	return cmd
+}
+
+// printImportLog prints what the finished import job says it did, which is
+// where each created account is listed with the reminder to set its password
+// and each share that was not created with the reason. The import has already
+// succeeded, so a log that cannot be read is said, not a failure.
+func printImportLog(c *apiv1.Client, id uuid.UUID) {
+	log, err := c.GetJobLog(apiCtx(), apiv1.GetJobLogParams{JobId: id})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "The import's log could not be read (%v); `hoserva logs --job %s` shows it.\n", err, id)
+		return
+	}
+	zr, err := gzip.NewReader(log.Data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "The import's log could not be read (%v); `hoserva logs --job %s` shows it.\n", err, id)
+		return
+	}
+	defer func() { _ = zr.Close() }()
+	fmt.Println("Import log:")
+	if _, err := io.Copy(os.Stdout, zr); err != nil {
+		fmt.Fprintf(os.Stderr, "The import's log could not be read to its end: %v\n", err)
+	}
+	fmt.Println()
+}
+
+// printSeeded lists what the import created: each share it seeded with the cache
+// mode still to be applied and what could not be mapped exactly, and each
+// account that has no password yet.
+func printSeeded(c *apiv1.Client) error {
+	shares, err := c.ListShares(apiCtx())
+	if err != nil {
+		return mapAPIErr(err)
+	}
+	users, err := c.ListUsers(apiCtx())
+	if err != nil {
+		return mapAPIErr(err)
+	}
+	for _, sh := range shares.Shares {
+		m, ok := sh.Migration.Get()
+		if !ok {
+			continue
+		}
+		line := fmt.Sprintf("Share %s: %s", sh.Name, sh.CacheMode)
+		if t, ok := m.TargetCacheMode.Get(); ok {
+			line += fmt.Sprintf(", cache mode %s once the cache exists", t)
+		}
+		fmt.Println(line)
+		for _, n := range m.Notes {
+			fmt.Printf("  %s\n", n)
+		}
+	}
+	for _, u := range users.Users {
+		if u.Role == apiv1.UserRoleShareOnly && !u.HasCredential {
+			fmt.Printf("Account %s: no password set yet\n", u.Username)
+		}
+	}
+	return nil
 }
 
 // importMapping is the disk-role mapping the import sends: the scan's proposals

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -11,13 +12,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/auth"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -42,6 +47,58 @@ type importWiring struct {
 	root    string
 	mounts  []string
 	unmount []string
+	// shares is the share service main.go hands the handler and the import job,
+	// over a filesystem that fails every write and a mounter that records the
+	// share mounts, so nothing under /mnt is ever touched.
+	shares      *share.Service
+	shareFS     *noWriteFS
+	shareMounts *recordingShareMounter
+	rebuild     func(ctx context.Context) error
+	generator   *cfggen.Generator
+	disks       *disk.FakeProvider
+}
+
+// noWriteFS is the share service's filesystem for a pending migration: it
+// records every call that could write to an adopted disk and refuses it, so a
+// test never writes a path under /mnt and fails on the attempt.
+type noWriteFS struct {
+	share.OSFS
+	calls []string
+}
+
+func (f *noWriteFS) deny(call string) error {
+	f.calls = append(f.calls, call)
+	return errors.New("the test's filesystem refuses writes: " + call)
+}
+
+func (f *noWriteFS) MkdirAll(path string, _ os.FileMode) error { return f.deny("MkdirAll " + path) }
+func (f *noWriteFS) Chmod(path string, _ os.FileMode) error    { return f.deny("Chmod " + path) }
+func (f *noWriteFS) Chown(path string, _, _ int) error         { return f.deny("Chown " + path) }
+func (f *noWriteFS) RemoveAll(path string) error               { return f.deny("RemoveAll " + path) }
+func (f *noWriteFS) RemoveConfined(root, rel string) error {
+	return f.deny("RemoveConfined " + root + " " + rel)
+}
+
+// recordingShareMounter fakes share.Mounter and keeps each mount it was given,
+// of which a pending migration has none.
+type recordingShareMounter struct {
+	mu       sync.Mutex
+	mounted  []pool.Mount
+	unmounts []string
+}
+
+func (m *recordingShareMounter) Mount(_ context.Context, mnt pool.Mount) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mounted = append(m.mounted, mnt)
+	return nil
+}
+
+func (m *recordingShareMounter) Unmount(_ context.Context, where string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unmounts = append(m.unmounts, where)
+	return nil
 }
 
 // wireImport wires the migrator and its import the way main.go does, over a
@@ -63,7 +120,7 @@ func wireImport(t *testing.T) *importWiring {
 	runner.Script("findmnt", []string{"-n", "-o", "UUID", "/mnt/disk1"}, []byte("10000000-0000-4000-8000-000000000002\n"), nil)
 	runner.Script("findmnt", []string{"-n", "-o", "OPTIONS", "/mnt/disk1"}, []byte("ro,nosuid,nodev,noexec,noatime\n"), nil)
 	runner.Script("findmnt", []string{"-n", "-o", "OPTIONS", pool.CatchAllPath}, []byte("ro,nosuid,nodev,relatime\n"), nil)
-	im := &importWiring{w: w, runner: runner, mounter: disk.NewFakeMounter(), root: filepath.Join(w.root, "etc")}
+	im := &importWiring{w: w, runner: runner, mounter: disk.NewFakeMounter(), root: filepath.Join(w.root, "etc"), disks: disks}
 
 	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), runner, store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
@@ -83,7 +140,20 @@ func wireImport(t *testing.T) *importWiring {
 		w.handler.SetArray(seq)
 		return nil
 	}
-	if err := wireMigrationImport(w.handler, w.registry, w.arrays, cfggen.NewGenerator(im.root), runner, im.mounter, rebuild); err != nil {
+	im.rebuild = rebuild
+	im.generator = cfggen.NewGenerator(im.root)
+	im.shareFS, im.shareMounts = &noWriteFS{}, &recordingShareMounter{}
+	im.shares = newShareService(shares, w.arrays, im.generator, im.shareMounts, nil)
+	im.shares.FS = im.shareFS
+	im.shares.PostCommit = rebuild
+	authStore := api.NewAuthStore(w.db)
+	machineKey, err := auth.LoadOrGenerateMachineKey(context.Background(), filepath.Join(w.root, "secret.key"), authStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.handler.Shares = im.shares
+	w.handler.Auth = api.NewAuthService(authStore, machineKey)
+	if err := wireMigrationImport(w.handler, w.registry, w.arrays, im.generator, runner, im.mounter, rebuild, im.shares); err != nil {
 		t.Fatal(err)
 	}
 	return im
@@ -224,7 +294,7 @@ func TestMigrationImportWiring_AFailedMountLeavesNoArray(t *testing.T) {
 func TestWireMigrationImport_FailsWithoutTheSessionOrTheArrayStore(t *testing.T) {
 	w := newContainersWiringHarness(t)
 	wire := func() error {
-		return wireMigrationImport(w.handler, job.NewRegistry(), w.arrays, cfggen.NewGenerator(t.TempDir()), disk.NewFakeRunner(), disk.NewFakeMounter(), func(context.Context) error { return nil })
+		return wireMigrationImport(w.handler, job.NewRegistry(), w.arrays, cfggen.NewGenerator(t.TempDir()), disk.NewFakeRunner(), disk.NewFakeMounter(), func(context.Context) error { return nil }, &share.Service{})
 	}
 	if err := wire(); err == nil {
 		t.Error("wireMigrationImport succeeded with no migration session")
@@ -262,14 +332,15 @@ func TestMain_WiresTheImportAndTheScheduler(t *testing.T) {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			if fn.Name == "wireMigrationImport" && len(call.Args) == 7 {
+			if fn.Name == "wireMigrationImport" && len(call.Args) == 8 {
 				handler, _ := call.Args[0].(*ast.Ident)
 				registry, _ := call.Args[1].(*ast.Ident)
 				arrays, _ := call.Args[2].(*ast.Ident)
 				mounter, _ := call.Args[5].(*ast.CallExpr)
 				ready, _ := call.Args[6].(*ast.Ident)
-				if handler != nil && registry != nil && arrays != nil && mounter != nil && ready != nil &&
-					handler.Name == "handler" && registry.Name == "registry" && arrays.Name == "arrayStore" && ready.Name == "rebuildArraySequence" {
+				shares, _ := call.Args[7].(*ast.Ident)
+				if handler != nil && registry != nil && arrays != nil && mounter != nil && ready != nil && shares != nil &&
+					handler.Name == "handler" && registry.Name == "registry" && arrays.Name == "arrayStore" && ready.Name == "rebuildArraySequence" && shares.Name == "shareService" {
 					if id, ok := mounter.Fun.(*ast.Ident); ok && id.Name == "newArrayDiskMounter" && len(mounter.Args) == 2 {
 						if lit, ok := mounter.Args[1].(*ast.CompositeLit); ok {
 							if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "SystemdMounter" {
@@ -293,7 +364,7 @@ func TestMain_WiresTheImportAndTheScheduler(t *testing.T) {
 		return true
 	})
 	if !imported {
-		t.Error("main.go does not call wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{...}), rebuildArraySequence)")
+		t.Error("main.go does not call wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{...}), rebuildArraySequence, shareService)")
 	}
 	if !gated {
 		t.Error("main.go does not call scheduler.SetMigrationPending(arrayStore.MigrationPending)")

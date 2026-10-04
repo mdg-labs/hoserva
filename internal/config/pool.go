@@ -22,6 +22,9 @@ type PoolShare struct {
 	Name         string            `json:"name"`
 	CacheMode    pool.CacheMode    `json:"cache_mode"`
 	CreatePolicy pool.CreatePolicy `json:"create_policy"`
+	// MinFreeSpace, when set, is the share's own mergerfs minfreespace
+	// (pool.Share.MinFreeSpace).
+	MinFreeSpace string `json:"min_free_space,omitempty"`
 }
 
 // PoolState is the slice of pool state WritePoolMounts needs to build every
@@ -46,8 +49,12 @@ type PoolState struct {
 	// the plain one (#359). Empty keeps every path byte-identical to
 	// before this field existed: the plain builders, same as always.
 	RemovingDisk string `json:"removing_disk,omitempty"`
-	// ReadOnly builds the catch-all read-only (pool.CatchAllMountReadOnly), for
-	// the array of a pending Unraid migration. RemovingDisk is not used with it.
+	// ReadOnly builds the catch-all read-only (pool.CatchAllMountReadOnly) and
+	// no share mount or mover target at all, for the array of a pending Unraid
+	// migration: /mnt/user/<share> is a directory of the read-only catch-all,
+	// and a share's directory may exist on no adopted disk (a share that lived
+	// only on the cache), where a per-share mount would have no branch and no
+	// mountpoint. RemovingDisk is not used with it.
 	ReadOnly bool `json:"read_only,omitempty"`
 }
 
@@ -133,8 +140,11 @@ func poolMounts(state PoolState) ([]pool.Mount, error) {
 		return nil, err
 	}
 	mounts := []pool.Mount{catchAll}
+	if state.ReadOnly {
+		return mounts, nil
+	}
 	for _, s := range state.Shares {
-		share := pool.Share{Name: s.Name, CacheMode: s.CacheMode, CreatePolicy: s.CreatePolicy}
+		share := pool.Share{Name: s.Name, CacheMode: s.CacheMode, CreatePolicy: s.CreatePolicy, MinFreeSpace: s.MinFreeSpace}
 		sm, err := shareMount(share, state)
 		if err != nil {
 			return nil, fmt.Errorf("config: building share mount for %q: %w", s.Name, err)

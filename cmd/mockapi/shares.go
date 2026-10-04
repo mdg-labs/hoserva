@@ -109,6 +109,9 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 		return nil, errMaintenanceMode()
 	}
 	name := string(req.Name)
+	if h.migration.imported.Load() {
+		return nil, errMigrationInProgress()
+	}
 	if _, ok := h.shares[name]; ok {
 		return nil, errShareExists(req.Name)
 	}
@@ -204,6 +207,9 @@ func (h *handler) DeleteShareData(ctx context.Context, req *apiv1.DeleteShareDat
 	}
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return errShareNotFound(params.Name)
+	}
+	if h.migration.imported.Load() {
+		return errMigrationInProgress()
 	}
 	return nil
 }

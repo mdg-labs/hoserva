@@ -141,3 +141,14 @@ implementation of this package loses a user's data.
   into per-disk lists and merged in walk order. A share's expected figures are the
   union of the disks' baselines, not the sum: a path two disks hold is shown once
   by the pool, from the first branch.
+- **Seeding the shares and accounts writes nothing to an adopted disk.** The last step
+  of the import (`seed.go`, run through `share.Service.SeedMigration`) creates rows,
+  generated files and nothing else: no `mkdir`, `chmod` or `chown` on a data disk,
+  whatever a share's cache mode, and no per-share mount (a share is a directory of the
+  read-only pool). The share service reads `array_settings.migration_pending` itself,
+  so every caller that regenerates the pool's files (a share create, update or delete,
+  the topology hook, a config import) stays read-only too. A share whose name
+  `pool.ValidateShareName` refuses is reported and never renamed. An account is created
+  without a working password and nothing from `config/shadow` or `config/smbpasswd` is
+  read. `import_lab_test.go` seeds in the lab and asserts the whole-device sha256 of
+  every source disk is unchanged and no top-level directory appeared on a data disk.

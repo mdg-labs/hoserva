@@ -1529,7 +1529,11 @@ paths:
         `smb.conf` (doc 02 §1, doc 03 §4). Refused with 409
         `maintenance_mode` while the array is stopped (Q70): create
         would mkdir under bare disk mountpoints on the root filesystem,
-        and the next array start would hide those writes.
+        and the next array start would hide those writes. Refused with 409
+        `migration_in_progress` while an Unraid import is pending its point of
+        no return: a new share would need a directory on every adopted disk,
+        and those are not written until then. The import creates its own
+        shares (`startMigrationImport`).
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -1574,7 +1578,11 @@ paths:
         regenerates the per-share mount and `smb.conf`. Does not relocate
         existing files (doc 09 §2). Refused with 409 `maintenance_mode`
         while the array is stopped (Q70): update would mkdir and remount
-        under bare disk mountpoints on the root filesystem.
+        under bare disk mountpoints on the root filesystem. While an Unraid
+        import is pending its point of no return it creates no directory on
+        any adopted disk, and a cache mode that needs a cache is refused
+        because none exists yet; choosing a cache mode here replaces the one
+        the import recorded as the share's target.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -1626,7 +1634,9 @@ paths:
         Deletes this share's files on the branches that hold it, and
         nothing else — not other shares, not the parity file, not disks
         that do not hold this share (doc 03 §4.2). The definition is
-        left in place. `confirmation` must equal the share name.
+        left in place. `confirmation` must equal the share name. Refused with
+        409 `migration_in_progress` while an Unraid import is pending its point
+        of no return: the adopted disks are not written until then.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -3461,6 +3471,26 @@ paths:
         pool; a retry of the same mapping applies a recorded import again.
         Nothing is read from the Unraid flash: the import uses the report the
         scan stored.
+
+
+        Once the disks are adopted the job seeds the scan's shares and
+        accounts (doc 05 §4 steps 3, 4 and 15), and writes nothing to an adopted
+        disk to do it. Each share the scan kept is created, its allocation
+        method mapped to a create policy (Q11), its Unraid cache setting
+        recorded as `migration.targetCacheMode` while the share is array-only
+        (no cache exists before the point of no return), its floor as
+        `minFreeSpace`, its export and security settings as SMB settings and
+        its read and write lists as per-user access for the imported
+        accounts; what Hoserva has no equivalent of, such as High-water
+        allocation or a split level, is in `migration.notes`. The shares are
+        exported read-only over SMB while the import is pending. A share whose
+        name Hoserva does not accept (spaces, for instance) is reported in the
+        job's log with the reason and never renamed, and the scan's report
+        flags it. Each account is created share-only without a password:
+        passwords are never read from the flash, and each one is set by the
+        user with `setUserPassword` (the job's log lists them). The job is
+        all-or-nothing: a share or account that cannot be created undoes the
+        adoption too. A share or account that already exists is left as it is.
       tags: [migrate]
       x-hoserva-role: admin
       requestBody:
@@ -10041,6 +10071,32 @@ components:
         updatedAt:
           type: string
           format: date-time
+        minFreeSpace:
+          type: string
+          description: >-
+            The share's own mergerfs `minfreespace`, such as `1000K`. Absent
+            when the share uses the array's. An Unraid import sets it from the
+            share's floor (doc 09 §1).
+        migration:
+          $ref: '#/components/schemas/ShareMigration'
+
+    ShareMigration:
+      type: object
+      description: >-
+        What the Unraid import recorded about a share it created (doc 05 §4
+        step 15). Absent on a share the import did not create.
+      required: [notes]
+      properties:
+        targetCacheMode:
+          $ref: '#/components/schemas/ShareCacheMode'
+        notes:
+          type: array
+          description: >-
+            What could not be mapped exactly, in plain language: High-water
+            allocation mapped to Balance across disks, a split level Hoserva
+            has no setting for, a security mode it has no equivalent of.
+          items:
+            type: string
 
     CreateShareRequest:
       type: object

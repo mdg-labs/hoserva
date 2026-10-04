@@ -307,7 +307,9 @@ func (UnimplementedHandler) CreateNotificationChannel(ctx context.Context, req *
 // per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
 // doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
 // mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
-// writes.
+// writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no
+// return: a new share would need a directory on every adopted disk, and those are not written until
+// then. The import creates its own shares (`startMigrationImport`).
 //
 // POST /shares
 func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareRequest) (r *Share, _ error) {
@@ -401,7 +403,8 @@ func (UnimplementedHandler) DeleteShare(ctx context.Context, req *ConfirmShareRe
 //
 // Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
 // the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
-// place. `confirmation` must equal the share name.
+// place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an
+// Unraid import is pending its point of no return: the adopted disks are not written until then.
 //
 // POST /shares/{name}/data/delete
 func (UnimplementedHandler) DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error {
@@ -2191,6 +2194,20 @@ func (UnimplementedHandler) StartMigrationDeviceScan(ctx context.Context, req *S
 // deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
 // Nothing is read from the Unraid flash: the import uses the report the scan stored.
 //
+// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
+// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its
+// allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as
+// `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no
+// return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read
+// and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of,
+// such as High-water allocation or a split level, is in `migration.notes`. The shares are exported
+// read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces,
+// for instance) is reported in the job's log with the reason and never renamed, and the scan's report
+// flags it. Each account is created share-only without a password: passwords are never read from the
+// flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is
+// all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or
+// account that already exists is left as it is.
+//
 // POST /migrate/import
 func (UnimplementedHandler) StartMigrationImport(ctx context.Context, req *MigrationImportRequest) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
@@ -2529,7 +2546,9 @@ func (UnimplementedHandler) UpdateScheduledJob(ctx context.Context, req *UpdateS
 // Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
 // `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
 // the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
-// filesystem.
+// filesystem. While an Unraid import is pending its point of no return it creates no directory on any
+// adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a
+// cache mode here replaces the one the import recorded as the share's target.
 //
 // PATCH /shares/{name}
 func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (r *Share, _ error) {

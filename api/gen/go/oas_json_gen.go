@@ -29121,6 +29121,39 @@ func (s *OptShareCacheMode) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ShareMigration as json.
+func (o OptShareMigration) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ShareMigration from json.
+func (o *OptShareMigration) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptShareMigration to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptShareMigration) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptShareMigration) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ShareNFS as json.
 func (o OptShareNFS) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -34740,18 +34773,32 @@ func (s *Share) encodeFields(e *jx.Encoder) {
 		e.FieldStart("updatedAt")
 		json.EncodeDateTime(e, s.UpdatedAt)
 	}
+	{
+		if s.MinFreeSpace.Set {
+			e.FieldStart("minFreeSpace")
+			s.MinFreeSpace.Encode(e)
+		}
+	}
+	{
+		if s.Migration.Set {
+			e.FieldStart("migration")
+			s.Migration.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfShare = [9]string{
-	0: "name",
-	1: "path",
-	2: "cacheMode",
-	3: "createPolicy",
-	4: "smb",
-	5: "nfs",
-	6: "usage",
-	7: "createdAt",
-	8: "updatedAt",
+var jsonFieldsNameOfShare = [11]string{
+	0:  "name",
+	1:  "path",
+	2:  "cacheMode",
+	3:  "createPolicy",
+	4:  "smb",
+	5:  "nfs",
+	6:  "usage",
+	7:  "createdAt",
+	8:  "updatedAt",
+	9:  "minFreeSpace",
+	10: "migration",
 }
 
 // Decode decodes Share from json.
@@ -34858,6 +34905,26 @@ func (s *Share) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"updatedAt\"")
+			}
+		case "minFreeSpace":
+			if err := func() error {
+				s.MinFreeSpace.Reset()
+				if err := s.MinFreeSpace.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"minFreeSpace\"")
+			}
+		case "migration":
+			if err := func() error {
+				s.Migration.Reset()
+				if err := s.Migration.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"migration\"")
 			}
 		default:
 			return d.Skip()
@@ -35417,6 +35484,131 @@ func (s *ShareDiskUsage) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ShareDiskUsage) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ShareMigration) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ShareMigration) encodeFields(e *jx.Encoder) {
+	{
+		if s.TargetCacheMode.Set {
+			e.FieldStart("targetCacheMode")
+			s.TargetCacheMode.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("notes")
+		e.ArrStart()
+		for _, elem := range s.Notes {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfShareMigration = [2]string{
+	0: "targetCacheMode",
+	1: "notes",
+}
+
+// Decode decodes ShareMigration from json.
+func (s *ShareMigration) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ShareMigration to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "targetCacheMode":
+			if err := func() error {
+				s.TargetCacheMode.Reset()
+				if err := s.TargetCacheMode.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"targetCacheMode\"")
+			}
+		case "notes":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Notes = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Notes = append(s.Notes, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"notes\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ShareMigration")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000010,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfShareMigration) {
+					name = jsonFieldsNameOfShareMigration[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ShareMigration) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ShareMigration) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

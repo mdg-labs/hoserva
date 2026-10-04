@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -98,8 +101,14 @@ type importHarness struct {
 	readyErr  error
 	ready     int
 	seq       *ArraySequence
-	dir       string
-	links     []string
+	// seeded counts the seed hook's calls; seedErr is its failure; mountedAtSeed
+	// is what was mounted when it ran.
+	seeded        int
+	seedErr       error
+	mountedAtSeed []string
+	noSeed        bool
+	dir           string
+	links         []string
 }
 
 // newImportHarness builds the import's dependencies over fakes: a plan of two
@@ -172,9 +181,29 @@ func (h *importHarness) register() {
 			return nil
 		},
 		Array:     func() *ArraySequence { return h.seq },
+		Seed:      h.seedHook(),
 		IsMounted: h.mounter.isMounted,
 		Now:       func() time.Time { return time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC) },
 	}))
+}
+
+func (h *importHarness) seedHook() func(context.Context, io.Writer) error {
+	if h.noSeed {
+		return nil
+	}
+	return func(_ context.Context, out io.Writer) error {
+		h.seeded++
+		h.mounter.mu.Lock()
+		h.mountedAtSeed = h.mountedAtSeed[:0]
+		for w, up := range h.mounter.mounted {
+			if up {
+				h.mountedAtSeed = append(h.mountedAtSeed, w)
+			}
+		}
+		h.mounter.mu.Unlock()
+		_, _ = fmt.Fprintln(out, "seeded")
+		return h.seedErr
+	}
 }
 
 func (h *importHarness) params() []byte {
@@ -678,4 +707,62 @@ func TestArrayMountUnits_AreReadOnlyOnlyWhileAMigrationIsPending(t *testing.T) {
 	if state := poolStateFromStore(store.ArraySettings{}, disks); state.ReadOnly {
 		t.Error("the pool state of an ordinary array is read-only")
 	}
+}
+
+// The shares and accounts are seeded once the disks and the pool are up, and a
+// seed that fails undoes the adoption it follows: nothing is left recorded,
+// mounted or generated.
+func TestMigrationImport_SeedsAfterTheAdoptionAndUndoesItWhenTheSeedFails(t *testing.T) {
+	t.Run("the seed runs with the disks and the pool mounted", func(t *testing.T) {
+		h := newImportHarness(t)
+		done := h.run()
+		if done.Status != StatusSucceeded {
+			t.Fatalf("job ended %s: %s", done.Status, done.ErrorMessage)
+		}
+		sort.Strings(h.mountedAtSeed)
+		if h.seeded != 1 || strings.Join(h.mountedAtSeed, " ") != "/mnt/disk1 /mnt/disk2 /mnt/user" {
+			t.Errorf("seed ran %d times with %v mounted, want once with the disks and the pool up", h.seeded, h.mountedAtSeed)
+		}
+	})
+	t.Run("a failed seed is undone with the adoption", func(t *testing.T) {
+		h := newImportHarness(t)
+		h.seedErr = errors.New("injected: the seed failed")
+		done := h.run()
+		if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "injected: the seed failed") {
+			t.Fatalf("job ended %s: %q, want it failed by the seed", done.Status, done.ErrorMessage)
+		}
+		h.assertNothingAdopted("after a failed seed")
+	})
+	t.Run("a retry of a recorded import seeds again, and a failing seed keeps the record", func(t *testing.T) {
+		ctx := context.Background()
+		for _, fail := range []bool{false, true} {
+			h := newImportHarness(t)
+			disks, recorded := pendingRows(h.plan)
+			if err := h.st.PutPendingArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Date(2026, 10, 4, 11, 0, 0, 0, time.UTC)}, disks, recorded); err != nil {
+				t.Fatal(err)
+			}
+			if fail {
+				h.seedErr = errors.New("injected: the seed failed")
+			}
+			done := h.run()
+			if h.seeded != 1 {
+				t.Errorf("fail=%v: seed ran %d times on a retry", fail, h.seeded)
+			}
+			if fail != (done.Status == StatusFailed) {
+				t.Errorf("fail=%v: job ended %s: %s", fail, done.Status, done.ErrorMessage)
+			}
+			if exists, err := h.st.Exists(ctx); err != nil || !exists {
+				t.Errorf("fail=%v: a retry deleted a record it did not make (%v, %v)", fail, exists, err)
+			}
+		}
+	})
+	t.Run("a daemon without the seed hook refuses before anything is written", func(t *testing.T) {
+		h := newImportHarness(t)
+		h.noSeed = true
+		done := h.run()
+		if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "missing its dependencies") {
+			t.Fatalf("job ended %s: %q", done.Status, done.ErrorMessage)
+		}
+		h.assertNothingAdopted("without a seed hook")
+	})
 }

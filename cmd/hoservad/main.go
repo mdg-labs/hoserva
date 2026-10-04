@@ -633,7 +633,7 @@ func run(cfg config) error {
 		// The migrator is optional: without it its operations answer 501
 		// rather than failing the daemon's start.
 		log.Printf("hoservad: the Unraid migrator is not available: %v", err)
-	} else if err := wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}), rebuildArraySequence); err != nil {
+	} else if err := wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}), rebuildArraySequence, shareService); err != nil {
 		log.Printf("hoservad: the Unraid import is not available: %v", err)
 	}
 

@@ -776,6 +776,7 @@ func RegenerateArrayMountsFromStore(ctx context.Context, arrays *store.ArrayStor
 			Name:         sh.Name,
 			CacheMode:    pool.CacheMode(sh.CacheMode),
 			CreatePolicy: pool.CreatePolicy(sh.CreatePolicy),
+			MinFreeSpace: sh.MinFreeSpace,
 		})
 	}
 	return g.WritePoolMounts(ctx, state, arrayCreateCommand, 1, now)

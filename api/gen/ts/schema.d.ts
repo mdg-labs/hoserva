@@ -896,7 +896,7 @@ export interface paths {
         put?: never;
         /**
          * Create a share
-         * @description Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1, doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those writes.
+         * @description Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1, doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return: a new share would need a directory on every adopted disk, and those are not written until then. The import creates its own shares (`startMigrationImport`).
          */
         post: operations["createShare"];
         delete?: never;
@@ -930,7 +930,7 @@ export interface paths {
         head?: never;
         /**
          * Update a share
-         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root filesystem.
+         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root filesystem. While an Unraid import is pending its point of no return it creates no directory on any adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a cache mode here replaces the one the import recorded as the share's target.
          */
         patch: operations["updateShare"];
         trace?: never;
@@ -948,7 +948,7 @@ export interface paths {
         put?: never;
         /**
          * Delete a share's files
-         * @description Deletes this share's files on the branches that hold it, and nothing else — not other shares, not the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in place. `confirmation` must equal the share name.
+         * @description Deletes this share's files on the branches that hold it, and nothing else — not other shares, not the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return: the adopted disks are not written until then.
          */
         post: operations["deleteShareData"];
         delete?: never;
@@ -1879,6 +1879,8 @@ export interface paths {
         /**
          * Adopt the Unraid data disks
          * @description Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class) that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay` (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact. The former parity and cache disks are recorded by identity and are neither formatted, mounted nor opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity engine exists and no sync can run. While the import is pending (`getMigration` `phase` is `imported`), parity, array-write and topology jobs other than this one's own retry are refused with 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code. `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk, keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity disk is never parity (Q21); the disk this machine boots from is never parity or data and is the cache only by a spare partition of it; parity is one or two disks, each at least as large as the largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only filesystem check immediately before mounting; a disk that changed since the request, or now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+         *
+         *     Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of, such as High-water allocation or a split level, is in `migration.notes`. The shares are exported read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces, for instance) is reported in the job's log with the reason and never renamed, and the scan's report flags it. Each account is created share-only without a password: passwords are never read from the flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or account that already exists is left as it is.
          */
         post: operations["startMigrationImport"];
         delete?: never;
@@ -5124,6 +5126,15 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** @description The share's own mergerfs `minfreespace`, such as `1000K`. Absent when the share uses the array's. An Unraid import sets it from the share's floor (doc 09 §1). */
+            minFreeSpace?: string;
+            migration?: components["schemas"]["ShareMigration"];
+        };
+        /** @description What the Unraid import recorded about a share it created (doc 05 §4 step 15). Absent on a share the import did not create. */
+        ShareMigration: {
+            targetCacheMode?: components["schemas"]["ShareCacheMode"];
+            /** @description What could not be mapped exactly, in plain language: High-water allocation mapped to Balance across disks, a split level Hoserva has no setting for, a security mode it has no equivalent of. */
+            notes: string[];
         };
         CreateShareRequest: {
             name: components["schemas"]["ShareName"];

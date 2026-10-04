@@ -491,6 +491,14 @@ CREATE TABLE host_config (
 -- generated samba/smb.conf (Q73 for Time Machine max size); NFS columns
 -- drive generated /etc/exports (doc 03 §4.2). Per-user ACLs belong to a
 -- later issue. Expand-only (D16).
+-- min_free_space is the share's own mergerfs minfreespace ('' keeps the array's,
+-- array_settings.min_free_space); an Unraid import sets it from the share's
+-- floor (doc 09 §1). target_cache_mode is the cache mode an Unraid import
+-- wants the share to have once the cache exists: while the migration is pending
+-- there is no cache, so cache_mode is array-only and this holds the mapped one
+-- ('' for a share with nothing to apply). migration_notes is a JSON array of
+-- what the import could not map exactly, in plain language. All three are
+-- declared last because SQLite's ALTER TABLE ADD COLUMN can only append (Q60).
 CREATE TABLE shares (
     name TEXT PRIMARY KEY,
     cache_mode TEXT NOT NULL CHECK (cache_mode IN ('cache-then-move', 'cache-only', 'array-only')),
@@ -506,7 +514,10 @@ CREATE TABLE shares (
     nfs_hosts TEXT NOT NULL DEFAULT '[]',
     nfs_squash TEXT NOT NULL DEFAULT 'root_squash' CHECK (nfs_squash IN ('root_squash', 'no_root_squash', 'all_squash')),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    min_free_space TEXT NOT NULL DEFAULT '',
+    target_cache_mode TEXT NOT NULL DEFAULT '' CHECK (target_cache_mode IN ('', 'cache-then-move', 'cache-only', 'array-only')),
+    migration_notes TEXT NOT NULL DEFAULT '[]'
 ) STRICT;
 
 -- Let's Encrypt DNS-01 (#211, Q9, Q28): one row, id=1, the same singleton

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"io"
 	"net"
 	"net/http"
@@ -41,6 +42,11 @@ type migrateDaemon struct {
 	review        []apiv1.MigrationDisk
 	importReq     string
 	importRefusal *apiv1.Error
+
+	// phase, when set, is the phase GET /migrate serves in place of scanned,
+	// and importLog is what the finished import job's log says.
+	phase     apiv1.MigrationPhase
+	importLog string
 
 	// verify is the result GET /migrate serves, and verifyRefusal answers
 	// POST /migrate/verify.
@@ -121,6 +127,9 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/migrate":
 		m := apiv1.Migration{Phase: apiv1.MigrationPhaseScanned, ZipOnly: d.zipOnly, FlashDevices: []apiv1.MigrationFlashDevice{}}
+		if d.phase != "" {
+			m.Phase = d.phase
+		}
 		if !d.zipOnly {
 			m.FlashDevices = append(m.FlashDevices, apiv1.MigrationFlashDevice{Device: "/dev/sdb", Size: 16 << 30, Model: apiv1.NewOptString("Flash Drive")})
 		}
@@ -160,6 +169,30 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationVerify, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
 		out, err := j.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs/"+d.id.String()+"/log":
+		w.Header().Set("Content-Type", "application/gzip")
+		zw := gzip.NewWriter(w)
+		_, _ = zw.Write([]byte(d.importLog))
+		_ = zw.Close()
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/shares":
+		nfs := apiv1.ShareNFS{Hosts: []string{}, Squash: apiv1.ShareNFSSquashRootSquash}
+		media := apiv1.Share{Name: "media", Path: "/mnt/user/media", CacheMode: apiv1.ShareCacheModeArrayOnly, CreatePolicy: apiv1.ArrayCreatePolicyMfs, Usage: apiv1.NilShareUsage{Null: true}, Nfs: apiv1.ShareNFS{Hosts: []string{}, Squash: apiv1.ShareNFSSquashRootSquash}}
+		media.Migration = apiv1.NewOptShareMigration(apiv1.ShareMigration{
+			TargetCacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeCacheOnly),
+			Notes:           []string{"Unraid's High-water allocation has no equivalent in Hoserva: the share is mapped to Balance across disks (mfs) (Q11)."},
+		})
+		own := apiv1.Share{Name: "mine", Path: "/mnt/user/mine", CacheMode: apiv1.ShareCacheModeArrayOnly, CreatePolicy: apiv1.ArrayCreatePolicyMfs, Usage: apiv1.NilShareUsage{Null: true}, Nfs: nfs}
+		list := apiv1.ListSharesOK{Shares: []apiv1.Share{media, own}}
+		out, err := list.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/users":
+		alice := apiv1.UserSummary{ID: uuid.New(), Username: "alice", Role: apiv1.UserRoleShareOnly, CreatedAt: time.Now().UTC()}
+		alice.LastLogin.SetToNull()
+		admin := apiv1.UserSummary{ID: uuid.New(), Username: "admin", Role: apiv1.UserRoleAdmin, CreatedAt: time.Now().UTC()}
+		admin.LastLogin.SetToNull()
+		list := apiv1.ListUsersOK{Users: []apiv1.UserSummary{admin, alice}}
+		out, err := list.MarshalJSON()
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/migrate/report":
 		w.Header().Set("Content-Type", "text/markdown")
@@ -472,8 +505,50 @@ func TestMigrateImportSendsTheScansProposalAfterTheUserConfirms(t *testing.T) {
 		t.Fatalf("request = %s (%v), want confirm and four roles", d.importRequest(), err)
 	}
 	got := d.seen()
-	if len(got) != 3 || got[0] != "GET /api/v1/migrate" || got[1] != "POST /api/v1/migrate/import" || got[2] != "GET /api/v1/jobs/"+d.id.String() {
+	if len(got) != 4 || got[0] != "GET /api/v1/migrate" || got[1] != "POST /api/v1/migrate/import" || got[2] != "GET /api/v1/jobs/"+d.id.String() || got[3] != "GET /api/v1/jobs/"+d.id.String()+"/log" {
 		t.Errorf("requests = %v", got)
+	}
+}
+
+// The import's output lists every account with the reminder to set its
+// password, which the job's log carries, and says what comes next.
+func TestMigrateImportPrintsTheJobsLogWithTheAccountsToSetPasswordsFor(t *testing.T) {
+	d := importDaemon(t)
+	d.importLog = "account alice created without a password: set one in the web UI (Users) before its SMB clients reconnect\nshare \"Family Photos\" was not created: the name is not valid for Hoserva\n"
+	printed, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Import log:", "account alice created without a password", `share "Family Photos" was not created`, "Set a password for each account"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+}
+
+// Once the import is pending, status lists the shares it seeded with their
+// target cache mode and notes, and the accounts that have no password yet.
+func TestMigrateStatusListsWhatTheImportSeeded(t *testing.T) {
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseImported
+	printed, err := runBackupCLI(t, d.sock, "migrate", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Migration: imported", "Share media: array-only, cache mode cache-only once the cache exists", "mapped to Balance across disks", "Account alice: no password set yet"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("status output lacks %q:\n%s", want, printed)
+		}
+	}
+	for _, never := range []string{"Share mine", "Account admin"} {
+		if strings.Contains(printed, never) {
+			t.Errorf("status lists %q, which the import did not create:\n%s", never, printed)
+		}
+	}
+	d.phase = ""
+	printed, err = runBackupCLI(t, d.sock, "migrate", "status")
+	if err != nil || strings.Contains(printed, "Share media") {
+		t.Errorf("status before an import lists shares: %q, %v", printed, err)
 	}
 }
 
