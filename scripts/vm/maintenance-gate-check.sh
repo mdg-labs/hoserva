@@ -63,7 +63,13 @@ array_login() {
 }
 
 # ensure_smb_account creates (or reuses) SMB_USERNAME, the same idempotent
-# lookup smb-stop-check.sh and storage-target-boot-check.sh already use.
+# lookup smb-stop-check.sh and storage-target-boot-check.sh already use,
+# sets its Samba password, and grants it read-write access to SMB_SHARE
+# through updateUserSharePermissions (a PUT replacing only this one
+# account's own grants, so repeating it is harmless). smb.conf enforces
+# per-user grants (internal/config/samba.go): without the grant the share
+# renders `available = no` and every smbclient connection below fails
+# with NT_STATUS_BAD_NETWORK_NAME.
 ensure_smb_account() {
   array_login || die "login as $ADMIN_USERNAME failed ahead of the SMB account setup"
   local users_result user_id
@@ -80,6 +86,9 @@ ensure_smb_account() {
   local status
   status="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$user_id/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
   [[ "$status" == "204" ]] || die "setUserPassword($SMB_USERNAME) returned HTTP $status"
+  local grant_status
+  grant_status="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$user_id/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
+  [[ "$grant_status" == "200" ]] || die "updateUserSharePermissions($SMB_USERNAME on $SMB_SHARE) returned HTTP $grant_status"
 }
 
 # assert_nothing_serves_pool checks that /mnt/user is not a live
