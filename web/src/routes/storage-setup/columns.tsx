@@ -136,7 +136,7 @@ export function buildRoleColumns(
         const fieldError = roleErrorMessage(disk.device);
         const fieldWarning = roleWarningMessage(disk.device);
         return (
-          <Field>
+          <Field invalid={fieldError !== undefined}>
             <Select value={role} onValueChange={(value) => value && onRoleChange(disk.device, value as DiskRole)}>
               <SelectTrigger aria-label={t("storageSetup.columns.role")}>
                 <SelectValue />
@@ -167,7 +167,7 @@ export function buildRoleColumns(
             {cacheRoleOnly(disk) ? (
               <p className="text-muted-foreground text-xs">{t("storageSetup.roles.bootPartitionHint")}</p>
             ) : null}
-            {fieldError ? <FieldError>{fieldError}</FieldError> : null}
+            <FieldError match={fieldError !== undefined}>{fieldError}</FieldError>
             {!fieldError && fieldWarning ? (
               <p className="text-warning-foreground text-xs">{fieldWarning}</p>
             ) : null}
