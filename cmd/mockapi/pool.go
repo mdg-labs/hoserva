@@ -356,7 +356,7 @@ func (h *handler) submitParityJob(jobType apiv1.JobType, cancellable bool) (*api
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
-	if h.migration.imported.Load() {
+	if h.migration.unfinished() {
 		return nil, errMigrationInProgress()
 	}
 	now := time.Now().UTC()
@@ -580,7 +580,7 @@ func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
-	if h.migration.imported.Load() {
+	if h.migration.unfinished() {
 		return nil, errMigrationInProgress()
 	}
 	now := time.Now().UTC()

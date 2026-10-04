@@ -54,12 +54,29 @@ type mockMigration struct {
 	// formatted the former parity and cache disks and finished.
 	roles       []disk.AdoptionAssignment
 	initialized bool
+	// stopParityInit makes the point of no return stop after the former parity and
+	// cache disks are recorded, as a run that failed there does in production; the
+	// session then reports initializing until the same call is made again with
+	// disk.ParityInitFinishConfirmation. finishing is that state; like imported it
+	// is read without mu, from handlers that hold the handler's own lock.
+	stopParityInit bool
+	finishing      atomic.Bool
 }
 
-func (m *mockMigration) initializedNow() bool {
+// unfinished is whether the migration is still pending in production's sense,
+// store.ArrayStore.MigrationUnfinished: an import is pending, or the parity
+// initialisation stopped after the disks were recorded. Parity, array-write and
+// topology jobs are refused while it holds.
+func (m *mockMigration) unfinished() bool {
+	return m.imported.Load() || m.finishing.Load()
+}
+
+// arrayRecorded is whether the point of no return has recorded the array's own
+// parity and cache disks, finished or not.
+func (m *mockMigration) arrayRecorded() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.initialized
+	return m.initialized || m.finishing.Load()
 }
 
 func errMigrationInProgress() error {
@@ -472,6 +489,10 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 			}
 		}
 	}
+	if h.migration.finishing.Load() {
+		out.Phase = apiv1.MigrationPhaseInitializing
+		out.ParityInit = apiv1.NewOptMigrationParityInit(mockParityFinish(h.migration.report))
+	}
 	if !out.ZipOnly {
 		out.FlashDevices = append(out.FlashDevices, apiv1.MigrationFlashDevice{
 			Device: mockFlashDevice, Size: 16 * disk.GB,
@@ -581,13 +602,36 @@ func mockParityInit(report *migrate.Report, roles []disk.AdoptionAssignment) api
 	return out
 }
 
+// mockParityFinish is what getMigration offers for finishing an initialisation
+// that stopped after the disks were formatted: production's migrate.Service.ParityInit
+// for that phase, which erases nothing and asks for the finishing confirmation.
+func mockParityFinish(report *migrate.Report) apiv1.MigrationParityInit {
+	var review *migrate.Review
+	if report != nil {
+		review = report.Review
+	}
+	return apiv1.MigrationParityInit{
+		Finishing: true, Confirmation: apiv1.NewOptString(disk.ParityInitFinishConfirmation), UnprotectedWindow: migrate.ParityInitWindow,
+		Rollback: append([]string{}, migrate.RollbackNotes(review)...), Erases: []apiv1.MigrationParityErase{},
+	}
+}
+
 // InitializeMigrationParity answers as production does, in production's order:
-// nothing is initialised unless an import is pending (no_import_pending) and its
-// latest verify passed (verify_required), whatever the request carries; then the
+// an initialisation that stopped after the disks were formatted is finished by
+// the finishing confirmation alone (confirmation_required otherwise); any other
+// is initialised only if an import is pending (no_import_pending) and its latest
+// verify passed (verify_required), whatever the request carries, and then the
 // typed confirmation must be the one the plan computes (confirmation_required).
 // The job it queues has finished at once, as the others do, and leaves the array
-// past its point of no return.
+// past its point of no return with the initial sync queued, or, when the mock was
+// told to stop there, failed with the session initializing.
 func (h *handler) InitializeMigrationParity(ctx context.Context, req *apiv1.MigrationInitializeParityRequest) (*apiv1.Job, error) {
+	h.migration.mu.Lock()
+	stop := h.migration.stopParityInit
+	h.migration.mu.Unlock()
+	if h.migration.finishing.Load() {
+		return h.finishMigrationParity(req)
+	}
 	if !h.migration.imported.Load() {
 		return nil, mockMigrateError(migrate.ErrParityNotPending)
 	}
@@ -608,18 +652,64 @@ func (h *handler) InitializeMigrationParity(ctx context.Context, req *apiv1.Migr
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC().Truncate(time.Second)
-	h.mu.Lock()
-	j.Status = apiv1.JobStatusSucceeded
-	j.StartedAt = apiv1.NewOptNilDateTime(now)
-	j.FinishedAt = apiv1.NewOptNilDateTime(now)
-	h.jobs[j.ID] = *j
-	h.mu.Unlock()
 	h.migration.mu.Lock()
-	h.migration.initialized, h.migration.verify = true, nil
+	h.migration.verify = nil
+	if stop {
+		h.migration.finishing.Store(true)
+	} else {
+		h.migration.initialized = true
+	}
 	h.migration.mu.Unlock()
 	h.migration.imported.Store(false)
+	if stop {
+		h.endMockParityJob(j.ID, errors.New("mounting the disks read-write and generating snapraid.conf: the mock was told to stop after the formatted disks were recorded"))
+		return j, nil
+	}
+	h.endMockParityJob(j.ID, nil)
 	return j, nil
+}
+
+// finishMigrationParity finishes an initialisation that stopped after the disks
+// were formatted, as production's job does when run again: it formats nothing,
+// and the session is past the point of no return with the initial sync queued.
+func (h *handler) finishMigrationParity(req *apiv1.MigrationInitializeParityRequest) (*apiv1.Job, error) {
+	if req == nil || req.Confirmation == "" || req.Confirmation != disk.ParityInitFinishConfirmation {
+		return nil, &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationParity, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	h.migration.initialized = true
+	h.migration.mu.Unlock()
+	h.migration.finishing.Store(false)
+	h.endMockParityJob(j.ID, nil)
+	return j, nil
+}
+
+// endMockParityJob finishes the migration_parity job id: with a failure it fails
+// at once; without one it succeeds and queues the initial sync through the same
+// path as any sync, after the migration stopped being pending, as production's
+// job does, and fails with production's message if that cannot be queued.
+func (h *handler) endMockParityJob(id uuid.UUID, failure error) {
+	now := time.Now().UTC().Truncate(time.Second)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	j := h.jobs[id]
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	j.Status = apiv1.JobStatusSucceeded
+	if failure == nil {
+		if _, err := h.submitParityJob(apiv1.JobTypeSync, false); err != nil {
+			failure = fmt.Errorf("the parity initialisation is finished, but the initial sync could not be queued: %w: start it yourself, the array has no parity until it has run", err)
+		}
+	}
+	if failure != nil {
+		j.Status = apiv1.JobStatusFailed
+		j.Error = apiv1.NewOptNilError(apiv1.Error{Code: "job_failed", Message: failure.Error()})
+	}
+	h.jobs[id] = j
 }
 
 func mockMigrationReportToAPI(r *migrate.Report) apiv1.MigrationReport {
@@ -743,7 +833,7 @@ func (h *handler) undoMigrationImport() (*apiv1.Job, error) {
 }
 
 func (h *handler) ForgetMigration(ctx context.Context) error {
-	if h.migration.imported.Load() {
+	if h.migration.unfinished() {
 		return errMigrationInProgress()
 	}
 	h.migration.mu.Lock()
@@ -948,7 +1038,7 @@ func mockMachineDisks(rv *migrate.Review) []disk.Disk {
 // serves no array until an import has recorded one; every other scenario serves
 // its own.
 func (h *handler) arrayScenario() string {
-	if h.scenario == "migration-pending" && !h.migration.imported.Load() && !h.migration.initializedNow() {
+	if h.scenario == "migration-pending" && !h.migration.imported.Load() && !h.migration.arrayRecorded() {
 		return "fresh-install"
 	}
 	return h.scenario

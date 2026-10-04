@@ -1082,6 +1082,7 @@ func TestMockMigration_InitializeParityNeedsAPassingVerifyAndTheTypedConfirmatio
 	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
 		t.Fatalf("the job = %+v, %v, want succeeded", done, err)
 	}
+	mockRequireInitialSync(t, h, j.CreatedAt)
 	m, _ = h.GetMigration(ctx)
 	if m.Phase != apiv1.MigrationPhaseScanned || m.ParityInit.IsSet() || m.Verify.IsSet() {
 		t.Errorf("after the point of no return: phase = %s, parityInit = %v, verify = %v", m.Phase, m.ParityInit.IsSet(), m.Verify.IsSet())
@@ -1126,5 +1127,166 @@ func TestMockMigration_AnImportThatRunsAgainForgetsTheVerifyResult(t *testing.T)
 	_, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: "ERASE /dev/sdb"})
 	if st, code := mockErrCode(t, err); st != 409 || code != "verify_required" {
 		t.Errorf("InitializeMigrationParity after a second import = %d %s, want 409 verify_required", st, code)
+	}
+}
+
+// mockRequireInitialSync fails unless exactly one parity-class sync job was
+// queued, no earlier than the migration_parity job created at parityAt: the one
+// the web wizard follows for the initial sync.
+func mockRequireInitialSync(t *testing.T, h *handler, parityAt time.Time) apiv1.Job {
+	t.Helper()
+	listed, err := h.ListJobs(context.Background(), apiv1.ListJobsParams{Class: apiv1.NewOptJobClass(apiv1.JobClassParity)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var syncs []apiv1.Job
+	for _, j := range listed.Jobs {
+		if j.Type == apiv1.JobTypeSync && !j.CreatedAt.Before(parityAt) {
+			syncs = append(syncs, j)
+		}
+	}
+	if len(syncs) != 1 {
+		t.Fatalf("parity-class sync jobs created since the point of no return = %+v, want exactly one", syncs)
+	}
+	if syncs[0].Status != apiv1.JobStatusQueued {
+		t.Errorf("initial sync = %+v, want queued", syncs[0])
+	}
+	return syncs[0]
+}
+
+func mockVerifiedMigration(t *testing.T, h *handler) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := h.StartMigrationVerify(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Until the point of no return has run, no initial sync is queued; a mock told to
+// stop it part-way leaves the session initializing, which only the finishing
+// confirmation completes, and the sync is queued only then, as production's retry
+// does.
+func TestMockMigration_StoppedParityInitReportsInitializingUntilFinished(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	h.migration.stopParityInit = true
+	mockVerifiedMigration(t, h)
+	m, _ := h.GetMigration(ctx)
+	pi, _ := m.ParityInit.Get()
+	stopped, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: pi.Confirmation.Value})
+	if err != nil {
+		t.Fatalf("InitializeMigrationParity: %v", err)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: stopped.ID}); err != nil || done.Status != apiv1.JobStatusFailed || !done.Error.IsSet() {
+		t.Fatalf("the stopped job = %+v, %v, want failed with an error", done, err)
+	}
+	m, _ = h.GetMigration(ctx)
+	pi, ok := m.ParityInit.Get()
+	if m.Phase != apiv1.MigrationPhaseInitializing || !ok || !pi.Finishing || pi.Confirmation.Value != "FINISH PARITY INITIALISATION" ||
+		pi.Problem.IsSet() || len(pi.Erases) != 0 || pi.UnprotectedWindow == "" || len(pi.Rollback) == 0 || m.Verify.IsSet() {
+		t.Fatalf("phase = %s, parityInit = %+v, verify = %v", m.Phase, pi, m.Verify.IsSet())
+	}
+	if err := m.Validate(); err != nil {
+		t.Errorf("the initializing migration fails the spec's validation: %v", err)
+	}
+	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(pool.Disks) == 0 {
+		t.Errorf("pool after the stopped run = %+v, want the recorded array", pool)
+	}
+	if listed, _ := h.ListJobs(ctx, apiv1.ListJobsParams{Class: apiv1.NewOptJobClass(apiv1.JobClassParity)}); len(listed.Jobs) != 0 {
+		t.Errorf("parity-class jobs before the finish = %+v, want none", listed.Jobs)
+	}
+
+	refused := func(req *apiv1.MigrationInitializeParityRequest) {
+		t.Helper()
+		_, err := h.InitializeMigrationParity(ctx, req)
+		if err == nil {
+			t.Fatalf("InitializeMigrationParity(%+v) finished the initialisation", req)
+		}
+		if st, code := mockErrCode(t, err); st != 409 || code != "confirmation_required" {
+			t.Errorf("InitializeMigrationParity(%+v) = %d %s, want 409 confirmation_required", req, st, code)
+		}
+	}
+	refused(nil)
+	for _, wrong := range []string{"", "ERASE /dev/sdb", "finish parity initialisation", "FINISH PARITY INITIALISATION "} {
+		refused(&apiv1.MigrationInitializeParityRequest{Confirmation: wrong})
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseInitializing {
+		t.Errorf("phase after the refusals = %s, want initializing", m.Phase)
+	}
+
+	inProgress := func(what string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("%s was accepted while the initialisation is unfinished", what)
+		} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_in_progress" {
+			t.Errorf("%s = %d %s, want 409 migration_in_progress", what, st, code)
+		}
+	}
+	_, err = h.StartSync(ctx, &apiv1.StartSyncRequest{})
+	inProgress("a sync", err)
+	_, err = h.StartScrub(ctx, &apiv1.StartScrubRequest{})
+	inProgress("a scrub", err)
+	_, err = h.StartFix(ctx, &apiv1.StartFixRequest{Confirm: true})
+	inProgress("a fix", err)
+	_, err = h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false))
+	inProgress("a scan", err)
+	inProgress("a forget", h.ForgetMigration(ctx))
+	if listed, _ := h.ListJobs(ctx, apiv1.ListJobsParams{Class: apiv1.NewOptJobClass(apiv1.JobClassParity)}); len(listed.Jobs) != 0 {
+		t.Errorf("parity-class jobs after the refusals = %+v, want none", listed.Jobs)
+	}
+
+	j, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: disk.ParityInitFinishConfirmation})
+	if err != nil {
+		t.Fatalf("finishing: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationParity || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %+v", j)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
+		t.Fatalf("the finishing job = %+v, %v, want succeeded", done, err)
+	}
+	mockRequireInitialSync(t, h, j.CreatedAt)
+	m, _ = h.GetMigration(ctx)
+	if m.Phase != apiv1.MigrationPhaseScanned || m.ParityInit.IsSet() {
+		t.Errorf("after finishing: phase = %s, parityInit = %v, want scanned with none", m.Phase, m.ParityInit.IsSet())
+	}
+	if _, err := h.StartScrub(ctx, &apiv1.StartScrubRequest{}); err != nil {
+		t.Errorf("a scrub after the finish: %v", err)
+	}
+	if err := h.ForgetMigration(ctx); err != nil {
+		t.Errorf("a forget after the finish: %v", err)
+	}
+	if _, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: disk.ParityInitFinishConfirmation}); err == nil {
+		t.Error("a second finish was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "no_import_pending" {
+		t.Errorf("second finish = %d %s, want 409 no_import_pending", st, code)
+	}
+}
+
+// Without the stop control the point of no return finishes in one call and never
+// reports initializing.
+func TestMockMigration_ParityInitQueuesTheInitialSyncAndNeverReportsInitializing(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	mockVerifiedMigration(t, h)
+	m, _ := h.GetMigration(ctx)
+	j, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: m.ParityInit.Value.Confirmation.Value})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sync := mockRequireInitialSync(t, h, j.CreatedAt)
+	if sync.Class != apiv1.JobClassParity {
+		t.Errorf("initial sync = %+v", sync)
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase == apiv1.MigrationPhaseInitializing {
+		t.Error("phase = initializing without the stop control")
 	}
 }
