@@ -250,8 +250,9 @@ var contractNoValidCase = map[string]string{
 	// canned scan names its EXAMPLE disks, so no mapping is valid in both. The
 	// refusals are compared; each side's own accepted mapping is tested in its
 	// own package (internal/migrate, internal/api, cmd/mockapi).
-	"StartMigrationImport": "an accepted mapping names disks the scan listed: the rig's production scan lists the rig's inventory and the mock's canned scan its own EXAMPLE disks, so none is valid on both",
-	"StartMigrationVerify": "a verify is accepted only while an adopted array is pending its point of no return: the rig's production side has no adoption (it would need mounted disks and a pool), and the mock's import is a canned one, so none is valid on both",
+	"StartMigrationImport":      "an accepted mapping names disks the scan listed: the rig's production scan lists the rig's inventory and the mock's canned scan its own EXAMPLE disks, so none is valid on both",
+	"InitializeMigrationParity": "the point of no return is accepted only for an adopted array whose latest verify passed and whose typed confirmation names the disks the plan erases: the rig's production side has no adoption, so no confirmation is valid on both; the refusals before an import are compared, and each side's own gate and confirmation are tested in its own package (internal/migrate, internal/api, cmd/mockapi)",
+	"StartMigrationVerify":      "a verify is accepted only while an adopted array is pending its point of no return: the rig's production side has no adoption (it would need mounted disks and a pool), and the mock's import is a canned one, so none is valid on both",
 
 	"FinishDiskRemoval": "needs an evacuation job to actually run to completion and mark the disk evacuated (job.RunEvacuation); this rig's job types run no-op (job-timing state, out of scope)",
 

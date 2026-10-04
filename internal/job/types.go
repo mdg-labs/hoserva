@@ -34,6 +34,7 @@ const (
 	TypeMigrationScan         Type = "migration_scan"
 	TypeMigrationImport       Type = "migration_import"
 	TypeMigrationVerify       Type = "migration_verify"
+	TypeMigrationParity       Type = "migration_parity"
 	TypeAppdataBackup         Type = "appdata_backup"
 	TypeAppdataRestore        Type = "appdata_restore"
 	TypeAppdataRestorePreview Type = "appdata_restore_preview"
@@ -118,6 +119,7 @@ var classOf = map[Type]Class{
 	TypeMigrationScan:     ClassTopology,
 	TypeMigrationImport:   ClassTopology,
 	TypeMigrationVerify:   ClassTopology,
+	TypeMigrationParity:   ClassTopology,
 
 	TypeAppdataBackup:         ClassService,
 	TypeAppdataRestore:        ClassService,

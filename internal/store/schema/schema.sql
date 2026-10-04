@@ -130,6 +130,14 @@ CREATE TABLE users (
 -- than one admin — only on how the very first one is created.
 CREATE UNIQUE INDEX users_one_admin_idx ON users (role) WHERE role = 'admin';
 
+-- Usernames are unique case-insensitively (#596): Samba matches users, and
+-- the Unix account each share user gets is named, without regard to case, so
+-- two names differing only in case would be one account to both. Every write
+-- path stores the lower-cased name; this index is what makes a path that
+-- forgets to fail instead of creating the pair. lower() folds ASCII only,
+-- which is every character a name Hoserva provisions may hold.
+CREATE UNIQUE INDEX users_username_lower_idx ON users (lower(username));
+
 -- token_hash is the SHA-256 of the random 256-bit token the session
 -- cookie carries (doc 01 §7): the raw token is never stored, so a leaked
 -- database file cannot be replayed as a live session, mirroring

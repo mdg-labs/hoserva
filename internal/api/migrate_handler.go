@@ -67,8 +67,12 @@ func migrateError(err error) error {
 		return &apiError{code: "no_import_pending", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrNoBaseline):
 		return &apiError{code: "no_migration_baseline", statusCode: 409, message: err.Error()}
-	case errors.Is(err, migrate.ErrVerifyNotConfigured):
+	case errors.Is(err, migrate.ErrVerifyNotConfigured), errors.Is(err, migrate.ErrParityNotConfigured):
 		return errMigrationNotConfigured()
+	case errors.Is(err, migrate.ErrVerifyRequired):
+		return &apiError{code: "verify_required", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrParityNotPending):
+		return &apiError{code: "no_import_pending", statusCode: 409, message: err.Error()}
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errUnraidStick(err)
 	case migrate.IsImportRoleError(err):
@@ -139,6 +143,34 @@ func (h *Handler) StartMigrationVerify(ctx context.Context) (*apiv1.Job, error) 
 		return nil, errMigrationNotConfigured()
 	}
 	j, err := h.Scheduler.Submit(ctx, job.TypeMigrationVerify, []string{migrate.JobResource}, nil)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
+}
+
+// InitializeMigrationParity is the point of no return (doc 05 §4 step 17): it
+// refuses unless the latest verify passed and the typed confirmation is the one
+// the plan computes from the disks as they are now, and queues the
+// migration_parity job, which formats the former parity disks and the cache and
+// nothing else. The gate is checked before the confirmation, so a request made
+// without a passing verify is refused as that whatever it carries.
+func (h *Handler) InitializeMigrationParity(ctx context.Context, req *apiv1.MigrationInitializeParityRequest) (*apiv1.Job, error) {
+	if h.Migration == nil || h.Scheduler == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	want, err := h.Migration.ExpectedParityConfirmation(ctx)
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	if req == nil || req.Confirmation == "" || req.Confirmation != want {
+		return nil, errConfirmRequired
+	}
+	body, err := json.Marshal(job.MigrationParityParams{Confirmation: req.Confirmation})
+	if err != nil {
+		return nil, fmt.Errorf("encoding migration_parity params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeMigrationParity, []string{migrate.JobResource}, body)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}
@@ -231,6 +263,13 @@ func (h *Handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	if st.Verify != nil {
 		out.Verify = apiv1.NewOptMigrationVerify(migrationVerifyToAPI(st.Verify))
 	}
+	pi, err := h.Migration.ParityInit(ctx)
+	if err != nil {
+		return nil, migrateError(err)
+	}
+	if pi != nil {
+		out.ParityInit = apiv1.NewOptMigrationParityInit(migrationParityInitToAPI(pi))
+	}
 	offer, err := h.Migration.FlashOffer(ctx)
 	if err != nil {
 		return nil, migrateError(err)
@@ -248,6 +287,22 @@ func (h *Handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 		out.FlashDevices = append(out.FlashDevices, item)
 	}
 	return out, nil
+}
+
+func migrationParityInitToAPI(pi *migrate.ParityInit) apiv1.MigrationParityInit {
+	out := apiv1.MigrationParityInit{
+		Finishing: pi.Finishing, Confirmation: optString(pi.Confirmation), Problem: optString(pi.Problem),
+		UnprotectedWindow: pi.Window, Rollback: append([]string{}, pi.Rollback...),
+		Erases: make([]apiv1.MigrationParityErase, 0, len(pi.Erases)),
+	}
+	for _, e := range pi.Erases {
+		item := apiv1.MigrationParityErase{Role: apiv1.MigrationParityEraseRole(e.Role), Device: e.Device, Partition: e.Partition, Serial: optString(e.Serial), Wwn: optString(e.WWN)}
+		if e.Size > 0 {
+			item.Size = apiv1.NewOptInt64(e.Size)
+		}
+		out.Erases = append(out.Erases, item)
+	}
+	return out
 }
 
 func migrationVerifyToAPI(v *migrate.VerifyResult) apiv1.MigrationVerify {

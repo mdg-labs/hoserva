@@ -52,6 +52,13 @@ type migrateDaemon struct {
 	// POST /migrate/verify.
 	verify        *apiv1.MigrationVerify
 	verifyRefusal *apiv1.Error
+
+	// parityInit is what GET /migrate offers for the point of no return;
+	// parityReq is the body of the last POST /migrate/initialize-parity and
+	// parityRefusal answers it.
+	parityInit    *apiv1.MigrationParityInit
+	parityReq     string
+	parityRefusal *apiv1.Error
 }
 
 func startMigrateDaemon(t *testing.T) *migrateDaemon {
@@ -143,6 +150,9 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		if d.verify != nil {
 			m.Verify = apiv1.NewOptMigrationVerify(*d.verify)
 		}
+		if d.parityInit != nil {
+			m.ParityInit = apiv1.NewOptMigrationParityInit(*d.parityInit)
+		}
 		if d.review != nil {
 			rep := m.Report.Value
 			rep.Review = apiv1.NewOptMigrationReview(apiv1.MigrationReview{Disks: d.review, Shares: []apiv1.MigrationSharePreview{}, Capture: apiv1.MigrationCapture{State: apiv1.MigrationCaptureStatePresent}})
@@ -168,6 +178,17 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationVerify, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
+		out, err := j.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/migrate/initialize-parity":
+		body, _ := io.ReadAll(r.Body)
+		d.parityReq = string(body)
+		if d.parityRefusal != nil {
+			out, err := d.parityRefusal.MarshalJSON()
+			reply(http.StatusConflict, out, err)
+			return
+		}
+		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationParity, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
 		out, err := j.MarshalJSON()
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs/"+d.id.String()+"/log":
@@ -777,4 +798,155 @@ func TestMigrateVerifyExitsNonZeroUnlessEverythingPassed(t *testing.T) {
 			t.Errorf("migrate verify = %v, want the daemon's refusal", err)
 		}
 	})
+}
+
+func offeredParityInit() *apiv1.MigrationParityInit {
+	return &apiv1.MigrationParityInit{
+		Confirmation:      apiv1.NewOptString("ERASE /dev/nvme0n1p4, /dev/sdb"),
+		UnprotectedWindow: "Between the moment Unraid's array stopped and the moment the initial sync completes, the array has no redundancy whatsoever.",
+		Rollback:          []string{"Once the former parity disk(s) are formatted, going back means restoring from backup."},
+		Erases: []apiv1.MigrationParityErase{
+			{Role: apiv1.MigrationParityEraseRoleParity, Device: "/dev/sdb", Serial: apiv1.NewOptString("PAR1"), Size: apiv1.NewOptInt64(8 << 40)},
+			{Role: apiv1.MigrationParityEraseRoleCache, Device: "/dev/nvme0n1p4", Partition: true},
+		},
+	}
+}
+
+// Without --confirm the command formats nothing: it prints the unprotected
+// window, what rollback means, every device erased and the string to type back,
+// and exits non-zero without calling the daemon's operation.
+func TestMigrateInitializeParityWithoutConfirmPrintsThePlanAndFormatsNothing(t *testing.T) {
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseVerified
+	d.parityInit = offeredParityInit()
+	printed, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity")
+	if err == nil || !strings.Contains(err.Error(), "--confirm") || !strings.Contains(err.Error(), "ERASE /dev/nvme0n1p4, /dev/sdb") {
+		t.Fatalf("migrate initialize-parity = %v, want it to refuse and say what --confirm needs", err)
+	}
+	for _, want := range []string{"no redundancy whatsoever", "Rollback: Once the former parity", "Erases the parity /dev/sdb (the whole disk), serial PAR1, 8192.0 GiB", "Erases the cache /dev/nvme0n1p4 (this partition only; the rest of its disk is left alone)", "Confirmation: ERASE /dev/nvme0n1p4, /dev/sdb"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+	for _, req := range d.seen() {
+		if strings.HasPrefix(req, "POST") {
+			t.Errorf("a command with no --confirm called %s", req)
+		}
+	}
+}
+
+func TestMigrateInitializeParityIsNotOfferedBeforeAPassingVerify(t *testing.T) {
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseVerifyFailed
+	_, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity", "--confirm", "ERASE /dev/sdb")
+	if err == nil || !strings.Contains(err.Error(), "not offered") {
+		t.Fatalf("migrate initialize-parity = %v, want it to say it is not offered", err)
+	}
+	for _, req := range d.seen() {
+		if strings.HasPrefix(req, "POST") {
+			t.Errorf("the command called %s although the daemon does not offer the point of no return", req)
+		}
+	}
+}
+
+// --confirm is sent exactly as typed, never filled in from the daemon's own
+// string: a command that confirmed for the user would be no confirmation.
+func TestMigrateInitializeParitySendsTheTypedConfirmationAndWaitsForTheJob(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseVerified
+	d.parityInit = offeredParityInit()
+	d.importLog = "the former parity disk(s) and the cache are formatted XFS\nthe initial sync is queued\n"
+
+	printed, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity", "--confirm", "ERASE /dev/nvme0n1p4, /dev/sdb")
+	if err != nil {
+		t.Fatalf("migrate initialize-parity: %v", err)
+	}
+	if d.parityReq != `{"confirmation":"ERASE /dev/nvme0n1p4, /dev/sdb"}` {
+		t.Errorf("request = %s, want exactly the typed confirmation", d.parityReq)
+	}
+	for _, want := range []string{"no redundancy whatsoever", "Parity initialisation log:", "the initial sync is queued", "until it completes the array has no redundancy"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+
+	d2 := startMigrateDaemon(t)
+	d2.phase = apiv1.MigrationPhaseVerified
+	d2.parityInit = offeredParityInit()
+	if _, err := runBackupCLI(t, d2.sock, "migrate", "initialize-parity", "--confirm", "erase everything"); err != nil {
+		t.Fatalf("migrate initialize-parity: %v", err)
+	}
+	if d2.parityReq != `{"confirmation":"erase everything"}` {
+		t.Errorf("request = %s: the command replaced what the user typed", d2.parityReq)
+	}
+}
+
+func TestMigrateInitializeParityReportsARefusalAndAFailedJob(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	t.Run("the daemon refuses the confirmation", func(t *testing.T) {
+		d := startMigrateDaemon(t)
+		d.phase = apiv1.MigrationPhaseVerified
+		d.parityInit = offeredParityInit()
+		d.parityRefusal = &apiv1.Error{Code: "confirmation_required", Message: "this operation requires an explicit confirmation"}
+		if _, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity", "--confirm", "wrong"); err == nil || !strings.Contains(err.Error(), "explicit confirmation") {
+			t.Errorf("migrate initialize-parity = %v, want the daemon's refusal", err)
+		}
+	})
+	t.Run("a job that failed", func(t *testing.T) {
+		d := startMigrateDaemon(t)
+		d.phase = apiv1.MigrationPhaseVerified
+		d.parityInit = offeredParityInit()
+		d.jobStatus = apiv1.JobStatusFailed
+		_, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity", "--confirm", "ERASE /dev/nvme0n1p4, /dev/sdb")
+		if err == nil || !strings.Contains(err.Error(), "failed") {
+			t.Errorf("migrate initialize-parity = %v, want it to fail with the job", err)
+		}
+	})
+}
+
+// An initialisation that stopped after the disks were formatted is finished with
+// the confirmation it prints, which names nothing to erase.
+func TestMigrateInitializeParityFinishesAnUnfinishedInitialisation(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseInitializing
+	d.parityInit = &apiv1.MigrationParityInit{
+		Finishing: true, Confirmation: apiv1.NewOptString("FINISH PARITY INITIALISATION"), Erases: []apiv1.MigrationParityErase{},
+		UnprotectedWindow: "no redundancy whatsoever", Rollback: []string{"restoring from backup"},
+	}
+	printed, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity")
+	if err == nil || !strings.Contains(err.Error(), "FINISH PARITY INITIALISATION") || !strings.Contains(printed, "it erases nothing") {
+		t.Fatalf("migrate initialize-parity = %v\n%s, want the finishing confirmation and a statement that nothing is erased", err, printed)
+	}
+	if _, err := runBackupCLI(t, d.sock, "migrate", "initialize-parity", "--confirm", "FINISH PARITY INITIALISATION"); err != nil {
+		t.Fatalf("migrate initialize-parity --confirm: %v", err)
+	}
+	if d.parityReq != `{"confirmation":"FINISH PARITY INITIALISATION"}` {
+		t.Errorf("request = %s", d.parityReq)
+	}
+}
+
+func TestMigrateStatusInInitializingPrintsWhatIsLeft(t *testing.T) {
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseInitializing
+	d.parityInit = &apiv1.MigrationParityInit{
+		Finishing: true, Confirmation: apiv1.NewOptString("FINISH PARITY INITIALISATION"), Erases: []apiv1.MigrationParityErase{},
+		UnprotectedWindow: "no redundancy whatsoever", Rollback: []string{},
+	}
+	printed, err := runBackupCLI(t, d.sock, "migrate", "status")
+	if err != nil {
+		t.Fatalf("migrate status: %v", err)
+	}
+	for _, want := range []string{"initializing", "Confirmation: FINISH PARITY INITIALISATION"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
 }

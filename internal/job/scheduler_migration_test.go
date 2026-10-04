@@ -384,3 +384,52 @@ func TestScheduler_AdmitsTheMigrationVerifyWhileAMigrationIsPending(t *testing.T
 		t.Error("a disk add no longer takes the pre-topology config backup")
 	}
 }
+
+// The point of no return is the one Topology job admitted while a migration is
+// unfinished (pending, or part-way through the point of no return) besides the
+// import and the verify, it is a Topology job that takes the pre-topology config
+// backup like every real change, and a sync queued behind it is admitted only once
+// the migration is finished.
+func TestScheduler_AdmitsTheParityInitialisationWhileAMigrationIsUnfinishedAndTheSyncOnlyAfter(t *testing.T) {
+	s := newTestScheduler(t)
+	var ran atomic.Int32
+	s.registry.Register(TypeMigrationParity, false, func(context.Context, *RunContext) error {
+		ran.Add(1)
+		return nil
+	})
+	s.registry.Register(TypeSync, false, func(context.Context, *RunContext) error { return nil })
+	var unfinished atomic.Bool
+	unfinished.Store(true)
+	s.SetMigrationPending(func(context.Context) (bool, error) { return unfinished.Load(), nil })
+
+	ctx := context.Background()
+	if _, err := s.Submit(ctx, TypeSync, nil, nil); !errors.Is(err, ErrMigrationInProgress) {
+		t.Fatalf("a sync while a migration is unfinished = %v, want the migration_in_progress refusal", err)
+	}
+	j, err := s.Submit(ctx, TypeMigrationParity, []string{"migration"}, []byte(`{"confirmation":"ERASE /dev/sdb"}`))
+	if err != nil {
+		t.Fatalf("the parity initialisation while a migration is unfinished = %v, want it admitted", err)
+	}
+	if done := awaitJob(t, s, j.ID); done.Status != StatusSucceeded || ran.Load() != 1 {
+		t.Errorf("the parity initialisation job = %s, ran %d times", done.Status, ran.Load())
+	}
+	if class, ok := ClassOf(TypeMigrationParity); !ok || class != ClassTopology {
+		t.Errorf("class = %s, want topology: no storage job may run beside it", class)
+	}
+	if !takesTopologyBackup(TypeMigrationParity, ClassTopology) {
+		t.Error("the parity initialisation does not take the pre-topology config backup: it is the largest change a migration makes")
+	}
+	if Resumable(TypeMigrationParity) {
+		t.Error("the parity initialisation is resumable: an interrupted run is finished by running it again with its own confirmation, never resumed")
+	}
+
+	unfinished.Store(false)
+	sj, err := s.Submit(ctx, TypeSync, nil, nil)
+	if err != nil {
+		t.Fatalf("a sync once the migration is finished = %v, want it admitted", err)
+	}
+	awaitJob(t, s, sj.ID)
+	if _, err := s.Submit(ctx, TypeMigrationParity, []string{"migration"}, nil); err == nil {
+		t.Error("a parity initialisation with no confirmation was queued")
+	}
+}

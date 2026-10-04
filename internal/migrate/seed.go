@@ -3,7 +3,6 @@ package migrate
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,8 +14,6 @@ import (
 // maxFloorKiB keeps a share's floor, in KiB, well inside what mergerfs parses
 // as a size in bytes.
 const maxFloorKiB = 1 << 40
-
-var seedUsernamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_.-]{0,63}$`)
 
 // SeedSkip is a share or user the import does not create, with the reason.
 type SeedSkip struct {
@@ -47,7 +44,7 @@ func (imp Import) SeedPlan() SeedPlan {
 	for _, name := range imp.Users {
 		user := strings.ToLower(name)
 		switch {
-		case !seedUsernamePattern.MatchString(user):
+		case share.ValidateAccountName(user) != nil:
 			plan.SkippedUsers = append(plan.SkippedUsers, SeedSkip{Name: name, Reason: "the account name is not one Hoserva creates (lower-case letters, digits, '_', '.' and '-', starting with a letter or '_', at most 64 characters), and it is not renamed"})
 		case known[user]:
 		default:

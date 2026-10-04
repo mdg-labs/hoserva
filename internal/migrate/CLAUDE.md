@@ -8,7 +8,9 @@ implementation of this package loses a user's data.
   Nothing in this package formats, repartitions, writes to, or deletes anything on
   a disk, or modifies the Flash Backup zip or a stick it came from. The first step
   that changes a disk is the parity initialisation, behind the user's explicit
-  confirmation, and it is not in this package's scan.
+  confirmation, and it is not in this package's scan: this package only gates it
+  and plans it (`parity.go`); the formatting is `disk.FormatParityInit`, run by the
+  `migration_parity` job in `internal/job`.
 - **Checksums, not counts.** A verification that two file sets match compares
   content hashes. A count or a total size can agree while a file is wrong or
   missing, so it may accompany a checksum comparison but never replace one.
@@ -152,3 +154,21 @@ implementation of this package loses a user's data.
   without a working password and nothing from `config/shadow` or `config/smbpasswd` is
   read. `import_lab_test.go` seeds in the lab and asserts the whole-device sha256 of
   every source disk is unchanged and no top-level directory appeared on a data disk.
+- **The point of no return is offered only after a verify of what is mounted now,
+  and erases only what its typed confirmation names.** `PlanParityInit` refuses
+  unless an import is pending and the latest verify passed (`ErrVerifyRequired`):
+  the import job forgets the result before it changes anything (`InvalidateVerify`),
+  so a pass is never older than the last import. It resolves the recorded data,
+  parity and cache disks again from a fresh inventory by identity, through the same
+  `PlanFromReview` the import used, and the job compares the result with the record
+  before it erases anything. The confirmation (`disk.AdoptionPlan.ParityInitConfirmation`)
+  names every device erased and never a data disk; the server computes it, the CLI
+  never fills it in. A cache that is a partition of an Unraid boot device is refused
+  unless the capture says the boot pool is not mirrored (`CheckBootCacheNotMirrored`),
+  and `disk.FormatParityInit` refuses it again whenever a second Unraid boot device is
+  attached: a partition of a mirrored pair's member is never formatted. The
+  rollback statement and the unprotected window the user sees before confirming are
+  `RollbackNotes` and `ParityInitWindow`, from the review's boot mode and layout.
+  `parity_lab_test.go` is the proof that matters: a refusal leaves every source
+  disk's whole-device sha256 unchanged, and the happy path formats only the
+  confirmed devices and leaves every data file matching the fixture's manifest.

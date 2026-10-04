@@ -12,6 +12,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -43,6 +44,8 @@ func newAuthTestHandler(t *testing.T) (*api.Handler, *api.AuthService) {
 		t.Fatalf("machine key: %v", err)
 	}
 	authSvc := api.NewAuthService(authStore, key)
+	// No test here may exec useradd or smbpasswd: the default is the real thing.
+	authSvc.SambaAccounts = share.NewFakeSambaAccounts()
 
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(t.TempDir())

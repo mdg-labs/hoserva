@@ -4250,6 +4250,28 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "InitializeMigrationParity",
+		name: "refused_before_an_import",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: "ERASE /dev/sdb"})
+			return err
+		},
+	},
+	{
+		op:   "InitializeMigrationParity",
+		name: "refused_after_a_scan_with_no_import",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: ""})
+			return err
+		},
+	},
+	{
 		op:   "GetMigration",
 		name: "valid_after_a_scan_of_the_stick",
 		run: func(ctx context.Context, h apiv1.Handler) error {

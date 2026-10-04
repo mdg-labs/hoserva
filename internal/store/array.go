@@ -39,6 +39,12 @@ var (
 	// succeeded — SQLite has no topology row, so generators must not
 	// write units or snapraid.conf.
 	ErrNoArray = errors.New("store: no array topology")
+	// ErrMigrationNotPending is RecordParityInit's refusal when the array is not
+	// a pending migration's.
+	ErrMigrationNotPending = errors.New("store: the array is not a pending Unraid migration")
+	// ErrMigrationNotFinishing is FinishMigration's refusal when no migration
+	// is part-way through its point of no return.
+	ErrMigrationNotFinishing = errors.New("store: no Unraid migration is part-way through its point of no return")
 	// ErrArrayExists is PutArray's refusal when topology is already
 	// persisted, and create-array's refusal of a retry whose plan does
 	// not match stored devices/roles. A matching retry re-applies from
@@ -315,6 +321,98 @@ func (s *ArrayStore) RecordedDisks(ctx context.Context) ([]RecordedDisk, error) 
 		return nil, fmt.Errorf("store: decoding the recorded migration disks: %w", err)
 	}
 	return out, nil
+}
+
+// MigrationFinishing reports whether the point of no return has recorded the
+// former parity and cache disks as the array's own but has not finished
+// (RecordParityInit has run and FinishMigration has not): the record of them is
+// kept until the last step so that a run that stopped in between is finished by
+// running it again, never by formatting anything a second time.
+func (s *ArrayStore) MigrationFinishing(ctx context.Context) (bool, error) {
+	row, err := s.q.GetArraySettings(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("store: reading whether a migration is finishing: %w", err)
+	}
+	return row.MigrationPending == 0 && row.MigrationRecorded != "", nil
+}
+
+// MigrationUnfinished reports whether an Unraid migration is anywhere between
+// its adoption and the end of its point of no return: waiting for it
+// (MigrationPending) or part-way through it (MigrationFinishing). Parity,
+// array-write and topology jobs are refused for as long as it is true.
+func (s *ArrayStore) MigrationUnfinished(ctx context.Context) (bool, error) {
+	row, err := s.q.GetArraySettings(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("store: reading whether a migration is unfinished: %w", err)
+	}
+	return row.MigrationPending != 0 || row.MigrationRecorded != "", nil
+}
+
+// RecordParityInit is the point of no return's one write to the array record:
+// in one transaction it adds the formatted former parity disks and the cache as
+// array disks and clears migration_pending, but only while the array is a
+// pending migration's (ErrMigrationNotPending otherwise, writing nothing). The
+// record of the former disks stays until FinishMigration.
+func (s *ArrayStore) RecordParityInit(ctx context.Context, disks []ArrayDisk) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: beginning the parity initialisation record: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE array_settings SET migration_pending = 0 WHERE migration_pending = 1`)
+	if err != nil {
+		return fmt.Errorf("store: clearing migration_pending: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("store: clearing migration_pending: %w", err)
+	} else if n == 0 {
+		return ErrMigrationNotPending
+	}
+	q := s.q.WithTx(tx)
+	for _, d := range disks {
+		if err := q.InsertArrayDisk(ctx, storedb.InsertArrayDiskParams{
+			Role:         d.Role,
+			RoleIndex:    int64(d.RoleIndex),
+			Device:       d.Device,
+			Filesystem:   d.Filesystem,
+			FsUuid:       d.FSUUID,
+			SizeBytes:    nullInt64(d.Size, d.SizeSet),
+			Wwn:          nullString(d.WWN),
+			Serial:       nullString(d.Serial),
+			ByIDName:     nullString(d.ByIDName),
+			WeakIdentity: boolToInt(d.WeakIdentity),
+			Mountpoint:   d.Mountpoint,
+			MountSource:  nullString(d.MountSource),
+		}); err != nil {
+			return fmt.Errorf("store: inserting array disk %s: %w", d.Device, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: committing the parity initialisation record: %w", err)
+	}
+	return nil
+}
+
+// FinishMigration drops the record of the former parity and cache disks, the
+// last step of the point of no return. It refuses (ErrMigrationNotFinishing)
+// unless RecordParityInit has run and this has not.
+func (s *ArrayStore) FinishMigration(ctx context.Context) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE array_settings SET migration_recorded = '' WHERE migration_pending = 0 AND migration_recorded != ''`)
+	if err != nil {
+		return fmt.Errorf("store: finishing the migration: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("store: finishing the migration: %w", err)
+	} else if n == 0 {
+		return ErrMigrationNotFinishing
+	}
+	return nil
 }
 
 // DeletePendingArray deletes the array and its disks (the recorded migration

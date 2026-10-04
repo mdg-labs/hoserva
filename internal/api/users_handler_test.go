@@ -259,3 +259,42 @@ func TestHandlerCreateApiTokenRefusesShareOnly(t *testing.T) {
 		t.Errorf("CreateApiToken for a share-only account error = %+v, want 403 share_only_no_api_token", status)
 	}
 }
+
+func TestHandlerCreateUserRefusesAnInvalidOrCaseOnlyDuplicateName(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newAuthTestHandler(t)
+	if _, err := h.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "kid"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	for username, want := range map[string]struct {
+		status int
+		code   string
+	}{
+		"KID":       {409, "user_exists"},
+		"kid smith": {400, "invalid_username"},
+		"-x":        {400, "invalid_username"},
+	} {
+		_, err := h.CreateUser(ctx, &apiv1.CreateUserRequest{Username: username})
+		status := apiError(t, h, err)
+		if status.StatusCode != want.status || status.Response.Code != want.code {
+			t.Errorf("CreateUser(%q) error = %+v, want %d %s", username, status, want.status, want.code)
+		}
+	}
+}
+
+func TestHandlerSetUserPasswordMapsAForeignAccountToAConflict(t *testing.T) {
+	ctx := context.Background()
+	h, authSvc := newAuthTestHandler(t)
+	fake := share.NewFakeSambaAccounts()
+	fake.FailSetPassword(share.ErrAccountNameTaken)
+	authSvc.SambaAccounts = fake
+	created, err := h.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "daemon"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = h.SetUserPassword(ctx, &apiv1.SetUserPasswordRequest{Password: "correct horse battery staple"}, apiv1.SetUserPasswordParams{UserId: created.ID})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "account_name_taken" {
+		t.Errorf("SetUserPassword error = %+v, want 409 account_name_taken", status)
+	}
+}

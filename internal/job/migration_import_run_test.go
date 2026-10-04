@@ -107,6 +107,10 @@ type importHarness struct {
 	seedErr       error
 	mountedAtSeed []string
 	noSeed        bool
+	// invalidated counts the calls that forget the verify result; invalidateErr
+	// is its failure.
+	invalidated   int
+	invalidateErr error
 	dir           string
 	links         []string
 }
@@ -180,8 +184,12 @@ func (h *importHarness) register() {
 			h.seq = &ArraySequence{CatchAll: importPool{m: h.mounter, failMount: h.poolFails}}
 			return nil
 		},
-		Array:     func() *ArraySequence { return h.seq },
-		Seed:      h.seedHook(),
+		Array: func() *ArraySequence { return h.seq },
+		Seed:  h.seedHook(),
+		InvalidateVerify: func(context.Context) error {
+			h.invalidated++
+			return h.invalidateErr
+		},
 		IsMounted: h.mounter.isMounted,
 		Now:       func() time.Time { return time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC) },
 	}))
@@ -764,5 +772,45 @@ func TestMigrationImport_SeedsAfterTheAdoptionAndUndoesItWhenTheSeedFails(t *tes
 			t.Fatalf("job ended %s: %q", done.Status, done.ErrorMessage)
 		}
 		h.assertNothingAdopted("without a seed hook")
+	})
+}
+
+// A pass recorded before an import runs says nothing about what is mounted after
+// it, so the job forgets the verify result before it changes anything, on a
+// retry of a recorded import as well, and a refused run leaves the result alone.
+func TestMigrationImport_ForgetsTheVerifyResultBeforeItChangesAnything(t *testing.T) {
+	ctx := context.Background()
+	t.Run("a fresh import", func(t *testing.T) {
+		h := newImportHarness(t)
+		if done := h.run(); done.Status != StatusSucceeded || h.invalidated != 1 {
+			t.Fatalf("job ended %s (%s), forgot the result %d times", done.Status, done.ErrorMessage, h.invalidated)
+		}
+	})
+	t.Run("a retry of a recorded import", func(t *testing.T) {
+		h := newImportHarness(t)
+		disks, recorded := pendingRows(h.plan)
+		if err := h.st.PutPendingArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+			t.Fatal(err)
+		}
+		if done := h.run(); done.Status != StatusSucceeded || h.invalidated != 1 {
+			t.Fatalf("job ended %s (%s), forgot the result %d times", done.Status, done.ErrorMessage, h.invalidated)
+		}
+	})
+	t.Run("a refused plan keeps the result", func(t *testing.T) {
+		h := newImportHarness(t)
+		h.freshPlan.Data = append([]disk.AdoptedDisk(nil), h.plan.Data...)
+		h.freshPlan.Data[1].FSUUID = "99999999-9999-4999-8999-999999999999"
+		if done := h.run(); done.Status != StatusFailed || h.invalidated != 0 {
+			t.Fatalf("job ended %s (%s), forgot the result %d times", done.Status, done.ErrorMessage, h.invalidated)
+		}
+	})
+	t.Run("a result that cannot be forgotten refuses the import", func(t *testing.T) {
+		h := newImportHarness(t)
+		h.invalidateErr = errors.New("injected: the session row is locked")
+		done := h.run()
+		if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "injected: the session row is locked") {
+			t.Fatalf("job ended %s: %q", done.Status, done.ErrorMessage)
+		}
+		h.assertNothingAdopted("after the refusal")
 	})
 }

@@ -93,3 +93,25 @@ func TestCreateApiTokenAllowsAdminAccountToNarrowRole(t *testing.T) {
 		t.Errorf("CreateApiToken with a viewer role for the admin account: %v", err)
 	}
 }
+
+// The mock answers CreateUser as internal/api does: a name is folded to lower
+// case, one a system account cannot carry is invalid_username, and one that
+// differs from an existing name only in case is user_exists.
+func TestCreateUserFoldsAndValidatesTheNameLikeProduction(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t, "healthy")
+
+	created, err := client.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "Mock-Kid"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if created.Username != "mock-kid" {
+		t.Errorf("username = %q, want the lower-cased form", created.Username)
+	}
+	if _, err := client.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "MOCK-KID"}); err == nil || errorCode(t, err) != "user_exists" {
+		t.Errorf("CreateUser(MOCK-KID) = %v, want user_exists", err)
+	}
+	if _, err := client.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "mock kid"}); err == nil || errorCode(t, err) != "invalid_username" {
+		t.Errorf("CreateUser(mock kid) = %v, want invalid_username", err)
+	}
+}

@@ -215,6 +215,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeMigrationImport {
 			return fmt.Errorf("job: migration_import params require the disk-role mapping")
 		}
+		if t == TypeMigrationParity {
+			return fmt.Errorf("job: migration_parity params require the typed confirmation")
+		}
 		return nil
 	}
 	switch t {
@@ -271,6 +274,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeMigrationImport:
 		_, err := decodeMigrationImportParams(params)
+		return err
+	case TypeMigrationParity:
+		_, err := decodeMigrationParityParams(params)
 		return err
 	case TypeAppdataBackup:
 		_, err := decodeAppdataBackupParams(params)
@@ -497,6 +503,27 @@ func decodeMigrationImportParams(params []byte) (MigrationImportParams, error) {
 	}
 	if err := p.Plan.Validate(); err != nil {
 		return MigrationImportParams{}, fmt.Errorf("job: migration_import params: %w", err)
+	}
+	return p, nil
+}
+
+// MigrationParityParams is initializeMigrationParity's persisted payload: the
+// typed confirmation the user gave. The job computes what it erases again from
+// a fresh inventory and refuses unless that is the plan this string names.
+type MigrationParityParams struct {
+	Confirmation string `json:"confirmation"`
+}
+
+func decodeMigrationParityParams(params []byte) (MigrationParityParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return MigrationParityParams{}, fmt.Errorf("job: migration_parity params require the typed confirmation")
+	}
+	var p MigrationParityParams
+	if err := decodeJSON(params, &p); err != nil {
+		return MigrationParityParams{}, err
+	}
+	if p.Confirmation == "" {
+		return MigrationParityParams{}, fmt.Errorf("job: migration_parity params require the typed confirmation")
 	}
 	return p, nil
 }

@@ -351,6 +351,8 @@ Actions: create share, edit, delete (with explicit warning about data), browse.
 
 **SMB** — enable, guest access, read-only, browseable, recycle bin, Time Machine support with a maximum size (Q73), per-user and per-group access (no access / read-only / read-write), export path preview.
 
+A share is **closed by default** (Q27): until a user or group is granted read-only or read-write access, no account can reach it over SMB, and the generated `smb.conf` renders it `available = no`. Access is always granted on purpose, never inherited by every account. A guest share is the one exception, since guest access is itself the explicit choice to open it.
+
 **NFS** — enable, allowed hosts and subnets, squash options, export line preview.
 
 **Browse** — a simple file browser: navigate, see file sizes, see which underlying disk holds each file (mergerfs `user.mergerfs.basepath` xattr), delete. Not a full file manager; enough to answer "where did that go". Browsing is an explicit action and may wake disks.
@@ -457,6 +459,7 @@ Full metadata, progress, complete captured stdout/stderr with search, downloadab
 - User list: name, role, TOTP enabled, last login, share access summary
 - **Roles** (Q27): *Admin* (full UI), *Viewer* (read-only UI), *Share-only* (SMB/NFS, no UI login — the default for new users, so a family member's share login never reaches a page that formats disks)
 - Create, edit, delete users; setting a password updates the UI credential and the Samba passdb entry together
+- A user's name is lower case (letters, digits, `_`, `.`, `-`, starting with a letter or `_`, at most 64 characters) and unique without regard to case: Samba logs in by that name, and setting the first password creates the system account behind it (a locked account with no home and no shell, group `users`, UID 30000–39999, Q26). A name that a system account Hoserva did not create already holds is refused. Deleting a user removes the Samba entry and then that account.
 - Group management; share data is group `users` (GID 100), identical to Unraid (Q26)
 - Per-user share permissions, editable from either side (here or on the share)
 - Session list with revoke

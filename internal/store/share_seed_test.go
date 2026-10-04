@@ -126,3 +126,28 @@ func TestShareStore_SeedMigrationLeavesExistingRowsAlone(t *testing.T) {
 		t.Errorf("grants left after the undo: %d", n)
 	}
 }
+
+// A seeded name that differs from an existing account only in case is that
+// account: usernames are unique without regard to case, so it is reported as
+// existing and no second row is written.
+func TestShareStore_SeedMigrationTreatsACaseVariantAsTheExistingUser(t *testing.T) {
+	ctx := context.Background()
+	st := migratedShareDB(t)
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	if _, err := st.db.Exec(`INSERT INTO users (id, username, password_hash, role, totp_last_step, created_at) VALUES ('u-old', 'Alice', 'h', 'viewer', 0, ?)`, now.Format(TimeFormat)); err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := st.SeedMigration(ctx, []SeedUser{{ID: "u-new", Username: "alice", PasswordHash: "x", CreatedAt: now}}, []SeedShare{seedShare("docs", SeedGrant{"alice", "read-only"})})
+	if err != nil {
+		t.Fatalf("SeedMigration: %v", err)
+	}
+	if len(seeded.Users) != 0 || !reflect.DeepEqual(seeded.ExistingUsers, []string{"alice"}) {
+		t.Fatalf("seeded = %+v, want the case variant reported as existing", seeded)
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM users`); n != 1 {
+		t.Errorf("users = %d, want the one that existed", n)
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM share_user_permissions WHERE user_id = 'u-old'`); n != 1 {
+		t.Errorf("grants for the existing account = %d, want 1", n)
+	}
+}

@@ -27,17 +27,19 @@
 # The SMB client itself connects as a separate, dedicated account this
 # script creates (SMB_USERNAME below), never the admin: setUserPassword
 # refuses to touch the sole admin account (`cannot_modify_admin`,
-# confirmed empirically against this exact harness), and smb.conf's own
-# `security = user` with no `valid users` line (RenderSambaConf,
-# internal/config/samba.go) gives any authenticated account the same
-# share access regardless of role, so a share-only account exercises the
-# real client path exactly as well as the admin would.
+# confirmed empirically against this exact harness). smb.conf enforces
+# per-user grants (RenderSambaConf, internal/config/samba.go): a
+# non-guest share nobody holds a grant on renders `available = no`, which
+# smbclient reports as NT_STATUS_BAD_NETWORK_NAME. So after setting the
+# password this script grants SMB_USERNAME read-write access to the share
+# through updateUserSharePermissions (a PUT that replaces only that one
+# account's own grants, so it never touches another account's access to
+# the share and is idempotent across the steps that share this account).
 #
-# setUserPassword's own Samba write (internal/share.SmbpasswdAccounts,
-# `smbpasswd -a -s`) requires the Unix account it names to already
-# exist — hoservad never provisions one itself, the same precondition
-# scripts/devenv/smb-check.sh already works around for the lab — so this
-# script creates a nologin system account for SMB_USERNAME first.
+# setUserPassword provisions the locked nologin Unix account that
+# `smbpasswd -a -s` needs (internal/share.CommandUnixAccounts), so this
+# script does not create one: an account it made itself would sit outside
+# the range hoservad owns and be refused as a foreign account (409).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,12 +84,13 @@ else
   fi
 fi
 
-echo "smb-stop-check[$HOSERVA_LAB_ID]: provisioning a Unix account for $SMB_USERNAME so smbpasswd -a (setUserPassword) has an account to attach to"
-vm_ssh "getent passwd '$SMB_USERNAME' >/dev/null 2>&1 || sudo useradd -M -N -s /usr/sbin/nologin '$SMB_USERNAME'"
-
 echo "smb-stop-check[$HOSERVA_LAB_ID]: setting a Samba password for $SMB_USERNAME through setUserPassword"
 SET_PW_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
 [[ "$SET_PW_STATUS" == "204" ]] || die "setUserPassword($SMB_USERNAME) returned HTTP $SET_PW_STATUS"
+
+echo "smb-stop-check[$HOSERVA_LAB_ID]: granting $SMB_USERNAME read-write access to '$SMB_SHARE' through updateUserSharePermissions"
+GRANT_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
+[[ "$GRANT_STATUS" == "200" ]] || die "updateUserSharePermissions($SMB_USERNAME on $SMB_SHARE) returned HTTP $GRANT_STATUS"
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: confirming the pool is mounted and '$SMB_SHARE' is listed before connecting"
 POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"

@@ -201,6 +201,11 @@ type labImport struct {
 	shareFS *labShareFS
 	shares  *share.Service
 
+	// syncRun, when set, is what a sync job runs: the point of no return's test
+	// gives it the real engine. Unset, a sync does nothing, which is all the
+	// import's own tests need of one (they show it refused while pending).
+	syncRun job.RunFunc
+
 	mu  sync.Mutex
 	seq *job.ArraySequence
 }
@@ -291,7 +296,12 @@ func newLabImport(t *testing.T, a *labArray, mounter func(disk.UnitMounter) disk
 		um = mounter(um)
 	}
 	registry := job.NewRegistry()
-	registry.Register(job.TypeSync, false, func(context.Context, *job.RunContext) error { return nil })
+	registry.Register(job.TypeSync, false, func(ctx context.Context, rc *job.RunContext) error {
+		if li.syncRun != nil {
+			return li.syncRun(ctx, rc)
+		}
+		return nil
+	})
 	registry.Register(job.TypeMigrationImport, false, job.RunMigrationImport(job.MigrationImportDeps{
 		Plan: func(ctx context.Context, assignments []disk.AdoptionAssignment) (disk.AdoptionPlan, error) {
 			p, err := li.svc.PlanImport(ctx, assignments)
@@ -300,12 +310,13 @@ func newLabImport(t *testing.T, a *labArray, mounter func(disk.UnitMounter) disk
 			}
 			return p.Plan, nil
 		},
-		Runner:     li.rr,
-		Store:      li.arrays,
-		Generator:  gen,
-		Mounter:    um,
-		ArrayReady: li.rebuild,
-		Array:      li.current,
+		Runner:           li.rr,
+		Store:            li.arrays,
+		Generator:        gen,
+		Mounter:          um,
+		ArrayReady:       li.rebuild,
+		Array:            li.current,
+		InvalidateVerify: li.svc.InvalidateVerify,
 		Seed: func(ctx context.Context, out io.Writer) error {
 			if li.seeder == nil {
 				return nil
@@ -345,9 +356,11 @@ func (li *labImport) rebuild(ctx context.Context) error {
 	}
 	var mounts []job.ArrayMount
 	var data []string
-	for _, u := range units {
+	for i, u := range units {
 		mounts = append(mounts, disk.DirectMountController{Unit: u, Runner: li.rr})
-		data = append(data, u.Where)
+		if disks[i].Role == store.ArrayRoleData {
+			data = append(data, u.Where)
+		}
 	}
 	opts := pool.Options{MinFreeSpace: "50M", Responsiveness: pool.Responsive}
 	var catchAll pool.Mount
@@ -372,10 +385,10 @@ func (li *labImport) rebuild(ctx context.Context) error {
 func (li *labImport) cleanup() {
 	ctx := context.Background()
 	_, _ = li.rr.inner.Run(ctx, "fusermount", "-u", "/mnt/user")
-	for _, d := range []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"} {
+	for _, d := range []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3", "/mnt/parity1", "/mnt/cache"} {
 		_, _ = li.rr.inner.Run(ctx, "umount", d)
 	}
-	for _, d := range []string{"/mnt/user", "/mnt/disk1", "/mnt/disk2", "/mnt/disk3"} {
+	for _, d := range []string{"/mnt/user", "/mnt/disk1", "/mnt/disk2", "/mnt/disk3", "/mnt/parity1", "/mnt/cache"} {
 		_ = os.Remove(d)
 	}
 }

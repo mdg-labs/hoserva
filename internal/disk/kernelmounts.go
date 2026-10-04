@@ -136,17 +136,34 @@ func ConfirmMountedSource(ctx context.Context, r Runner, where, what string) err
 // ConfirmMountedReadOnly returns nil only when the mount at where is
 // read-only, read from the mount table through findmnt.
 func ConfirmMountedReadOnly(ctx context.Context, r Runner, where string) error {
-	if err := ctx.Err(); err != nil {
+	ro, options, err := mountedReadOnly(ctx, r, where)
+	if err != nil {
 		return err
+	}
+	if !ro {
+		return fmt.Errorf("disk: %s is mounted read-write (%s)", where, options)
+	}
+	return nil
+}
+
+// MountedReadOnly reports whether the mount at where is read-only, read from
+// the mount table through findmnt. An error is "could not tell", never either
+// answer.
+func MountedReadOnly(ctx context.Context, r Runner, where string) (bool, error) {
+	ro, _, err := mountedReadOnly(ctx, r, where)
+	return ro, err
+}
+
+func mountedReadOnly(ctx context.Context, r Runner, where string) (ro bool, options string, err error) {
+	if err := ctx.Err(); err != nil {
+		return false, "", err
 	}
 	out, err := r.Run(ctx, "findmnt", "-n", "-o", "OPTIONS", where)
 	if err != nil {
-		return fmt.Errorf("disk: reading the mount options of %s: %w", where, err)
+		return false, "", fmt.Errorf("disk: reading the mount options of %s: %w", where, err)
 	}
-	if !hasOption(strings.TrimSpace(string(out)), "ro") {
-		return fmt.Errorf("disk: %s is mounted read-write (%s)", where, strings.TrimSpace(string(out)))
-	}
-	return nil
+	options = strings.TrimSpace(string(out))
+	return hasOption(options, "ro"), options, nil
 }
 
 // MountedSource implements the source check of job.ArrayDiskUUIDCheck.

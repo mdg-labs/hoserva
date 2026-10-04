@@ -202,6 +202,17 @@ func (f *FakeProvider) cachePartitionLocked(dev string) (CachePartition, bool) {
 	return CachePartition{}, false
 }
 
+// unraidDataPartitionLocked returns the data partition of an Unraid boot disk
+// dev names, by kernel device or by its by-id path. Callers must hold f.mu.
+func (f *FakeProvider) unraidDataPartitionLocked(dev string) (BootPartition, bool) {
+	for _, fd := range f.disks {
+		if p := fd.disk.UnraidDataPartition; p != nil && (dev == p.Device || dev == (Identity{ByIDName: p.ByIDName}).IdentityPath()) {
+			return *p, true
+		}
+	}
+	return BootPartition{}, false
+}
+
 func (f *FakeProvider) checkFailed(fd *fakeDisk, dev string) error {
 	if fd.failAt != nil && !f.Now().Before(*fd.failAt) {
 		fd.disk.Failed = true
@@ -344,6 +355,12 @@ func (f *FakeProvider) Format(ctx context.Context, dev string, fs FilesystemType
 		if !bootCacheTargetAllowed(ctx, dev) {
 			return fmt.Errorf("%s: %w", dev, ErrBootDevice)
 		}
+		f.partFormatted[part.Device] = fs
+		f.formatCalls = append(f.formatCalls, dev)
+		return nil
+	}
+	if part, isPart := f.unraidDataPartitionLocked(dev); isPart {
+		defer f.mu.Unlock()
 		f.partFormatted[part.Device] = fs
 		f.formatCalls = append(f.formatCalls, dev)
 		return nil

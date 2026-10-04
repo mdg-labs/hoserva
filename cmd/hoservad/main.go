@@ -367,10 +367,12 @@ func run(cfg config) error {
 		},
 	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
-	// Whether an Unraid import's adoption is pending is asked of the array's own
+	// Whether an Unraid migration is unfinished is asked of the array's own
 	// record, before any job can be submitted: a pending adoption is mounted
-	// read-only, and no parity, array-write or topology job may run beside it.
-	scheduler.SetMigrationPending(arrayStore.MigrationPending)
+	// read-only, and one whose point of no return stopped part-way is not yet
+	// an array that can be synced, so no parity, array-write or topology job may
+	// run beside either but the migration's own.
+	scheduler.SetMigrationPending(arrayStore.MigrationUnfinished)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
@@ -635,6 +637,8 @@ func run(cfg config) error {
 		log.Printf("hoservad: the Unraid migrator is not available: %v", err)
 	} else if err := wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}), rebuildArraySequence, shareService); err != nil {
 		log.Printf("hoservad: the Unraid import is not available: %v", err)
+	} else if err := wireMigrationParity(handler, registry, scheduler, disks, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}), parityReg.callArrayReady, shareService); err != nil {
+		log.Printf("hoservad: the Unraid parity initialisation is not available: %v", err)
 	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
@@ -923,6 +927,10 @@ type parityRegistrar struct {
 	generator *cfggen.Generator
 	diskUnits disk.UnitMounter
 	mounts    job.MountTable
+	// snapraidRunner runs the engine's snapraid invocations; nil is the real
+	// one. A test sets it so a sync the daemon queues never runs a real
+	// snapraid.
+	snapraidRunner parity.Runner
 }
 
 // shareNamesFromStore lists every share's name: TypeDiskRemove's
@@ -1020,7 +1028,7 @@ func (p *parityRegistrar) ensure(ctx context.Context) error {
 	if p.done {
 		return nil
 	}
-	engine, err := newSnapraidEngine(p.configRoot, p.stateDir, nil)
+	engine, err := newSnapraidEngine(p.configRoot, p.stateDir, p.snapraidRunner)
 	if err != nil {
 		return fmt.Errorf("opening snapraid.conf: %w", err)
 	}

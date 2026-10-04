@@ -336,9 +336,11 @@ func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 // SetMigrationPending sets the check made before a parity, array-write or
 // topology job is admitted, again before a queued one starts and before an
 // interrupted one resumes: while it reports true the array is an Unraid
-// import's adoption, mounted read-only with parity and cache not yet formatted
-// (doc 05 §4 steps 14-16), and only the migration import's own retry and the
-// migration verify, which only reads, are admitted. A check that fails refuses
+// migration that has not reached the end of its point of no return, either an
+// adoption mounted read-only with parity and cache not yet formatted (doc 05 §4
+// steps 14-16) or one whose parity initialisation stopped part-way (step 17),
+// and only the migration import's own retry, the migration verify, which only
+// reads, and the parity initialisation itself are admitted. A check that fails refuses
 // the job: an unknown state is not "nothing pending". Submit makes the check (admitLocked), and so do dispatch()
 // for a job that waited in the queue and Resume (resumableJobLocked) for an
 // interrupted one, because the import may have recorded its pending array while
@@ -351,13 +353,13 @@ func (s *Scheduler) SetMigrationPending(check func(ctx context.Context) (bool, e
 }
 
 // admitMigrationLocked refuses a job that could write parity or the array, or
-// change its topology, while a migration is pending. The migration import and
-// the migration verify are never refused. Both admitLocked, for a job being
+// change its topology, while a migration is pending. The migration import, the
+// migration verify and the parity initialisation are never refused. Both admitLocked, for a job being
 // submitted, dispatch(), for a queued job about to start, and
 // resumableJobLocked, for an interrupted job being resumed, call it. Callers
 // must hold s.mu.
 func (s *Scheduler) admitMigrationLocked(ctx context.Context, t Type) error {
-	if s.migrationPending == nil || t == TypeMigrationImport || t == TypeMigrationVerify {
+	if s.migrationPending == nil || t == TypeMigrationImport || t == TypeMigrationVerify || t == TypeMigrationParity {
 		return nil
 	}
 	switch class, _ := ClassOf(t); class {

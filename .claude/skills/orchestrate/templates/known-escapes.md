@@ -51,7 +51,7 @@ existing line by adding its PR number.
 - **atomicity** — a mutex held across slow I/O that only needs a value read under it (a client's request body streaming to disk, a whole-file read that validates a large baseline), so every other operation on that lock (status, delete, a running job's commit) stalls for as long as the I/O takes — PR 575, 589
 
 ## Fail-open and error handling
-- **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback) — PR 150, 159
+- **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback, a mirrored-boot-pool check that passes when the cache's disk cannot be identified) — PR 150, 159, 603
 - **fail-open** — `|| true` or a swallowed error inside a gate, so the gate reports PASS after a failure — PR 163, 210
 - **fail-open** — a skip meant for one step applied to every step (unregistered mover skip also skipping sync/scrub) — PR 201
 - **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337

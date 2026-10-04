@@ -48,6 +48,10 @@ func mapAuthError(err error) error {
 		return &apiError{code: "share_only_no_login", statusCode: 403, message: "this account has SMB/NFS access only — it has no UI login"}
 	case errors.Is(err, ErrUserExists):
 		return &apiError{code: "user_exists", statusCode: 409, message: err.Error()}
+	case errors.Is(err, ErrInvalidUsername):
+		return &apiError{code: "invalid_username", statusCode: 400, message: err.Error()}
+	case errors.Is(err, ErrAccountNameTaken):
+		return &apiError{code: "account_name_taken", statusCode: 409, message: err.Error()}
 	case errors.Is(err, ErrUserNotFound):
 		return &apiError{code: "user_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, ErrInvalidRole):
