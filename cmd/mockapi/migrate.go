@@ -16,6 +16,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/share"
@@ -97,13 +98,13 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("migration_no_go", 409, err)
 	case errors.Is(err, migrate.ErrImportNoReview):
 		return errMigrationRefusal("scan_outdated", 409, err)
-	case errors.Is(err, migrate.ErrVerifyNotPending), errors.Is(err, migrate.ErrParityNotPending):
+	case errors.Is(err, migrate.ErrVerifyNotPending), errors.Is(err, migrate.ErrParityNotPending), errors.Is(err, job.ErrMigrationUndoNotPending):
 		return errMigrationRefusal("no_import_pending", 409, err)
 	case errors.Is(err, migrate.ErrVerifyRequired):
 		return errMigrationRefusal("verify_required", 409, err)
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errMigrationRefusal("unraid_stick", 409, err)
-	case migrate.IsImportRoleError(err):
+	case errors.Is(err, job.ErrAdoptionLayout), migrate.IsImportRoleError(err):
 		return errMigrationRefusal("invalid_import_roles", 400, err)
 	}
 	return err
@@ -715,6 +716,32 @@ func (h *handler) GetMigrationReport(ctx context.Context) (apiv1.GetMigrationRep
 	return apiv1.GetMigrationReportOK{Data: strings.NewReader(h.migration.report.Markdown())}, nil
 }
 
+// undoMigrationImport answers as production does: nothing is undone unless an
+// import is pending (no_import_pending). The job it queues has finished at once,
+// as the others do, and leaves the session scanned again with the verify result
+// forgotten. The shares and accounts the import seeded stay, as in production.
+func (h *handler) undoMigrationImport() (*apiv1.Job, error) {
+	if !h.migration.imported.Load() {
+		return nil, mockMigrateError(job.ErrMigrationUndoNotPending)
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationImport, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	h.mu.Lock()
+	j.Status = apiv1.JobStatusSucceeded
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	h.jobs[j.ID] = *j
+	h.mu.Unlock()
+	h.migration.mu.Lock()
+	h.migration.roles, h.migration.verify = nil, nil
+	h.migration.mu.Unlock()
+	h.migration.imported.Store(false)
+	return j, nil
+}
+
 func (h *handler) ForgetMigration(ctx context.Context) error {
 	if h.migration.imported.Load() {
 		return errMigrationInProgress()
@@ -937,10 +964,19 @@ func errArrayExistsNotPending() error {
 // of an array that is not a pending import's (array_exists), which is every
 // scenario's array but migration-pending's once imported. The job it queues has
 // finished at once, as the scans do, and leaves the session in the imported
-// phase.
+// phase. With undo it takes a pending import back instead.
 func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.MigrationImportRequest) (*apiv1.Job, error) {
 	if req == nil || !req.Confirm {
 		return nil, &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+	}
+	if req.Undo.Or(false) {
+		if len(req.Roles) != 0 {
+			return nil, errMigrationRefusal("invalid_import_roles", 400, errors.New("an undo takes no disk-role mapping"))
+		}
+		return h.undoMigrationImport()
+	}
+	if len(req.Roles) == 0 {
+		return nil, errMigrationRefusal("invalid_import_roles", 400, errors.New("the import needs a disk-role mapping: at least one disk"))
 	}
 	assignments := make([]disk.AdoptionAssignment, 0, len(req.Roles))
 	for _, r := range req.Roles {
@@ -955,11 +991,15 @@ func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 	if err := migrate.CheckImportable(report, false); err != nil {
 		return nil, mockMigrateError(err)
 	}
-	if _, err := migrate.PlanFromReview(report.Review, mockMachineDisks(report.Review), assignments); err != nil {
+	ip, err := migrate.PlanFromReview(report.Review, mockMachineDisks(report.Review), assignments)
+	if err != nil {
 		return nil, mockMigrateError(err)
 	}
 	if mockArrayDisks(h.arrayScenario()) != nil && !h.migration.imported.Load() {
 		return nil, errArrayExistsNotPending()
+	}
+	if err := job.CheckAdoptionLayout(ip.Plan); err != nil {
+		return nil, mockMigrateError(err)
 	}
 	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationImport, apiv1.JobClassTopology)
 	if err != nil {

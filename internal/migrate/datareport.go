@@ -147,7 +147,7 @@ func (s *Scanner) checkContentSpace(r *Report, f *Flash, members []*member) {
 	}
 	switch {
 	case adopted < dataCopies:
-		r.add(CheckContentSpace, StatusFlag, "", "Q18 wants %d content-file copies (parity disks + 2) on %s, and only %d data disks will be adopted. Add or keep more data disks before the sync.", need, where, adopted)
+		r.add(CheckContentSpace, StatusFlag, "", "Q18 wants %d content-file copies (parity disks + 2) on %s, and only %d data disks will be adopted. The import refuses a layout that cannot place them: add or keep more data disks, or give the import a cache device of its own.", need, where, adopted)
 	case withRoom < dataCopies:
 		r.add(CheckContentSpace, StatusFlag, "", "Q18 wants %d content-file copies on %s, but only %d of the adopted data disks have room for %s.", need, where, withRoom, figure)
 	case s.Dir == "" || bootErr != nil:

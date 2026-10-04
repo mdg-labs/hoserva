@@ -43,6 +43,11 @@ type migrateDaemon struct {
 	importReq     string
 	importRefusal *apiv1.Error
 
+	// undoReq is the body of the last POST /migrate/import that asked for an
+	// undo and undoRefusal answers it.
+	undoReq     string
+	undoRefusal *apiv1.Error
+
 	// phase, when set, is the phase GET /migrate serves in place of scanned,
 	// and importLog is what the finished import job's log says.
 	phase     apiv1.MigrationPhase
@@ -162,10 +167,16 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		reply(200, out, err)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/migrate/import":
 		body, _ := io.ReadAll(r.Body)
-		d.importReq = string(body)
-		if d.importRefusal != nil {
-			out, err := d.importRefusal.MarshalJSON()
-			reply(http.StatusBadRequest, out, err)
+		refusal, status := d.importRefusal, http.StatusBadRequest
+		if strings.Contains(string(body), `"undo":true`) {
+			d.undoReq = string(body)
+			refusal, status = d.undoRefusal, http.StatusConflict
+		} else {
+			d.importReq = string(body)
+		}
+		if refusal != nil {
+			out, err := refusal.MarshalJSON()
+			reply(status, out, err)
 			return
 		}
 		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationImport, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
@@ -706,6 +717,51 @@ func TestMigrateImportRefusalAndFailedJobAreCommandFailures(t *testing.T) {
 	d.jobStatus = apiv1.JobStatusFailed
 	if _, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes"); err == nil || !strings.Contains(err.Error(), "migration import") {
 		t.Errorf("migrate import with a failed job = %v, want it named", err)
+	}
+}
+
+func TestMigrateUndoImportQueuesTheUndoWaitsForTheJobAndSaysNothingWasWritten(t *testing.T) {
+	d := importDaemon(t)
+	printed, err := runBackupCLI(t, d.sock, "migrate", "undo-import", "--yes")
+	if err != nil {
+		t.Fatalf("migrate undo-import: %v", err)
+	}
+	if !strings.Contains(printed, "nothing was written") {
+		t.Errorf("output = %q", printed)
+	}
+	got := d.seen()
+	if len(got) != 2 || got[0] != "POST /api/v1/migrate/import" || got[1] != "GET /api/v1/jobs/"+d.id.String() {
+		t.Errorf("requests = %v", got)
+	}
+	var req apiv1.MigrationImportRequest
+	if err := req.UnmarshalJSON([]byte(d.undoReq)); err != nil || !req.Confirm || !req.Undo.Or(false) || len(req.Roles) != 0 || d.importReq != "" {
+		t.Errorf("undo request = %s (%v), import request %q: want confirm and undo, no roles, and nothing adopted", d.undoReq, err, d.importReq)
+	}
+}
+
+// The command never confirms for the user: without --yes it says what the undo
+// does and sends nothing.
+func TestMigrateUndoImportWithoutYesSendsNothing(t *testing.T) {
+	d := importDaemon(t)
+	_, err := runBackupCLI(t, d.sock, "migrate", "undo-import")
+	if err == nil || !strings.Contains(err.Error(), "--yes") || !strings.Contains(err.Error(), "forgets the verify result") {
+		t.Errorf("migrate undo-import without --yes = %v, want it to say what the undo does and to ask for --yes", err)
+	}
+	if got := d.seen(); len(got) != 0 || d.undoReq != "" || d.importReq != "" {
+		t.Errorf("requests = %v, undo %q, import %q: a request was sent without --yes", got, d.undoReq, d.importReq)
+	}
+}
+
+func TestMigrateUndoImportRefusalAndFailedJobAreCommandFailures(t *testing.T) {
+	d := importDaemon(t)
+	d.undoRefusal = &apiv1.Error{Code: "no_import_pending", Message: "there is no pending Unraid import to undo"}
+	if _, err := runBackupCLI(t, d.sock, "migrate", "undo-import", "--yes"); err == nil || !strings.Contains(err.Error(), "there is no pending Unraid import to undo") {
+		t.Errorf("migrate undo-import = %v, want the refusal", err)
+	}
+	d.undoRefusal = nil
+	d.jobStatus = apiv1.JobStatusFailed
+	if _, err := runBackupCLI(t, d.sock, "migrate", "undo-import", "--yes"); err == nil || !strings.Contains(err.Error(), "undoing the import") {
+		t.Errorf("migrate undo-import with a failed job = %v, want it named", err)
 	}
 }
 

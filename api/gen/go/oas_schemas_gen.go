@@ -10359,9 +10359,12 @@ func (s *MigrationImportDisk) SetPartUuid(val OptString) {
 
 // Ref: #/components/schemas/MigrationImportRequest
 type MigrationImportRequest struct {
+	// The disk-role mapping, at least one disk. Required unless `undo` is true, and omitted then.
 	Roles []MigrationImportDisk `json:"roles"`
 	// Must be true: the user has checked the mapping against the serial table.
 	Confirm bool `json:"confirm"`
+	// Take a pending import back instead of adopting disks.
+	Undo OptBool `json:"undo"`
 }
 
 // GetRoles returns the value of Roles.
@@ -10374,6 +10377,11 @@ func (s *MigrationImportRequest) GetConfirm() bool {
 	return s.Confirm
 }
 
+// GetUndo returns the value of Undo.
+func (s *MigrationImportRequest) GetUndo() OptBool {
+	return s.Undo
+}
+
 // SetRoles sets the value of Roles.
 func (s *MigrationImportRequest) SetRoles(val []MigrationImportDisk) {
 	s.Roles = val
@@ -10382,6 +10390,11 @@ func (s *MigrationImportRequest) SetRoles(val []MigrationImportDisk) {
 // SetConfirm sets the value of Confirm.
 func (s *MigrationImportRequest) SetConfirm(val bool) {
 	s.Confirm = val
+}
+
+// SetUndo sets the value of Undo.
+func (s *MigrationImportRequest) SetUndo(val OptBool) {
+	s.Undo = val
 }
 
 // Ref: #/components/schemas/MigrationImportRole

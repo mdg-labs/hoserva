@@ -676,6 +676,57 @@ func TestMockMigration_TheMigrationPendingScenarioAdvancesToAnImportedState(t *t
 	}
 }
 
+// The undo is the way out of a pending import, as in production: it needs the
+// confirmation and no mapping, is refused unless an import is pending, and leaves
+// the session scanned, so the session can be forgotten.
+func TestMockMigration_UndoTakesAPendingImportBack(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	undo := &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true)}
+
+	if _, err := h.StartMigrationImport(ctx, undo); err == nil {
+		t.Fatal("an undo with no import pending was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "no_import_pending" {
+		t.Errorf("undo with nothing pending = %d %s, want 409 no_import_pending", st, code)
+	}
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatalf("StartMigrationImport: %v", err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Undo: apiv1.NewOptBool(true)}); err == nil {
+		t.Error("an undo without confirm was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "confirmation_required" {
+		t.Errorf("undo without confirm = %d %s", st, code)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true), Roles: mockImportAll()}); err == nil {
+		t.Error("an undo with a mapping was accepted")
+	} else if st, code := mockErrCode(t, err); st != 400 || code != "invalid_import_roles" {
+		t.Errorf("undo with roles = %d %s", st, code)
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseImported {
+		t.Fatalf("a refused undo changed the phase to %s", m.Phase)
+	}
+
+	j, err := h.StartMigrationImport(ctx, undo)
+	if err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationImport || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %+v", j)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
+		t.Errorf("the undo job = %+v, %v, want it finished", done, err)
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseScanned {
+		t.Errorf("phase = %s after the undo, want scanned", m.Phase)
+	}
+	if err := h.ForgetMigration(ctx); err != nil {
+		t.Errorf("forget after the undo = %v, want it accepted", err)
+	}
+}
+
 func TestMockMigration_ImportRefusesWhatProductionRefuses(t *testing.T) {
 	ctx := context.Background()
 	h, _ := newHandler("migration-pending")
@@ -702,6 +753,8 @@ func TestMockMigration_ImportRefusesWhatProductionRefuses(t *testing.T) {
 		{"a disk the scan did not list", base(mockImportRole(apiv1.MigrationImportRoleData, "NO-SUCH-SERIAL")), 400, "invalid_import_roles"},
 		{"no parity", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}, 400, "invalid_import_roles"},
 		{"no data", []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY")}, 400, "invalid_import_roles"},
+		{"one parity disk and one data disk with no cache, which Q18's content files cannot be placed on", base(), 400, "invalid_import_roles"},
+		{"no mapping at all", nil, 400, "invalid_import_roles"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: tc.roles})
@@ -771,6 +824,29 @@ func TestMockMigration_ImportRefusesAnOrdinaryArray(t *testing.T) {
 	}
 	if m, _ := h.GetMigration(ctx); m.Phase == apiv1.MigrationPhaseImported {
 		t.Error("a refused import left the session imported")
+	}
+}
+
+// Production refuses an array that is not a pending import's before it checks
+// the layout, so a layout that is too small over such an array is array_exists.
+func TestMockMigration_ImportOverAnOrdinaryArrayIsArrayExistsBeforeTheLayoutRefusal(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("healthy")
+	for i := 0; i < 2; i++ {
+		if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tooSmall := []apiv1.MigrationImportDisk{
+		mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY"),
+		mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1"),
+	}
+	_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: tooSmall})
+	if err == nil {
+		t.Fatal("an import over the healthy scenario's array was accepted")
+	}
+	if st, code := mockErrCode(t, err); st != 409 || code != "array_exists" {
+		t.Errorf("= %d %s (%v), want 409 array_exists", st, code, err)
 	}
 }
 

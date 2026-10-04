@@ -442,6 +442,7 @@ type Handler interface {
 	// from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
 	// runs, and with 409 `migration_in_progress` while an import is pending its point of no return
 	// (`startMigrationImport`): the scan's baseline is what the adopted disks are verified against.
+	// `startMigrationImport` with `undo` takes a pending import back, after which this succeeds.
 	//
 	// DELETE /migrate
 	ForgetMigration(ctx context.Context) error
@@ -1767,16 +1768,37 @@ type Handler interface {
 	// disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
 	// cache only by a spare partition of it; parity is one or two disks, each at least as large as the
 	// largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
-	// is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`.
-	// Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404
-	// `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one
-	// failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report
-	// made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and
-	// 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only
-	// filesystem check immediately before mounting; a disk that changed since the request, or now fails,
-	// is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted,
-	// deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
-	// Nothing is read from the Unraid flash: the import uses the report the scan stored.
+	// is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the
+	// point of no return, which is the same check that step makes: Q18's content-file copies (the parity
+	// disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache
+	// that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that
+	// falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data
+	// disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused
+	// with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm`
+	// is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the
+	// latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for
+	// a report made before the disk table existed, 409 `array_exists` when the array is not a pending
+	// import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its
+	// read-only filesystem check immediately before mounting; a disk that changed since the request, or
+	// now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what
+	// was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded
+	// import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+	//
+	// With `undo` true the request takes back an import that is pending its point of no return instead
+	// (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a
+	// `migration_import` job (topology class) that unmounts the read-only pool and the adopted data disks,
+	// forgets the verify result, deletes the recorded array and removes the generated mount units. `roles`
+	// is then omitted. Nothing is written to any adopted disk, and the former parity and cache disks,
+	// which the import never touched, are untouched. A mount that cannot be released keeps the record and
+	// fails the job, so the request can be made again. The shares and accounts the import created are kept
+	// (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's
+	// report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused,
+	// and the disks can be imported again with a mapping that works. It is the way out of an import whose
+	// layout the point of no return would refuse (Q18). Refused before anything is queued with 409
+	// `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given,
+	// and 409 `no_import_pending` unless an import is pending its point of no return: an array that has
+	// been through it is never touched. Without `undo`, `roles` is required and an empty one is refused
+	// with 400 `invalid_import_roles`.
 	//
 	// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
 	// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its

@@ -4228,6 +4228,38 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartMigrationImport",
+		name: "an_undo_with_nothing_pending",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "an_undo_without_confirmation",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Undo: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "an_undo_that_carries_a_mapping",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true), Roles: []apiv1.MigrationImportDisk{{Role: apiv1.MigrationImportRoleData, Serial: apiv1.NewOptString("X")}}})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "no_mapping",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true})
+			return err
+		},
+	},
+	{
 		op:   "StartMigrationVerify",
 		name: "refused_before_an_import",
 		run: func(ctx context.Context, h apiv1.Handler) error {

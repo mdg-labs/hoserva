@@ -75,6 +75,8 @@ func migrateError(err error) error {
 		return &apiError{code: "no_import_pending", statusCode: 409, message: err.Error()}
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errUnraidStick(err)
+	case errors.Is(err, job.ErrAdoptionLayout):
+		return &apiError{code: "invalid_import_roles", statusCode: 400, message: err.Error()}
 	case migrate.IsImportRoleError(err):
 		return &apiError{code: "invalid_import_roles", statusCode: 400, message: err.Error()}
 	}
@@ -87,13 +89,23 @@ func errArrayExistsNotPending() error {
 
 // StartMigrationImport checks the confirmed disk-role mapping against the
 // scan's report and this machine's disks and queues the migration_import job,
-// which adopts the Unraid data disks read-only (doc 05 §4 steps 14-16).
+// which adopts the Unraid data disks read-only (doc 05 §4 steps 14-16). With
+// undo it takes a pending import back instead.
 func (h *Handler) StartMigrationImport(ctx context.Context, req *apiv1.MigrationImportRequest) (*apiv1.Job, error) {
 	if h.Migration == nil || h.Scheduler == nil || h.ArrayStore == nil {
 		return nil, errMigrationNotConfigured()
 	}
 	if req == nil || !req.Confirm {
 		return nil, errConfirmRequired
+	}
+	if req.Undo.Or(false) {
+		if len(req.Roles) != 0 {
+			return nil, &apiError{code: "invalid_import_roles", statusCode: 400, message: "an undo takes no disk-role mapping"}
+		}
+		return h.undoMigrationImport(ctx)
+	}
+	if len(req.Roles) == 0 {
+		return nil, &apiError{code: "invalid_import_roles", statusCode: 400, message: "the import needs a disk-role mapping: at least one disk"}
 	}
 	assignments := make([]disk.AdoptionAssignment, 0, len(req.Roles))
 	for _, r := range req.Roles {
@@ -119,7 +131,33 @@ func (h *Handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 			return nil, errArrayExistsNotPending()
 		}
 	}
+	if err := job.CheckAdoptionLayout(plan.Plan); err != nil {
+		return nil, migrateError(err)
+	}
 	body, err := json.Marshal(job.MigrationImportParams{Assignments: plan.Assignments, Plan: plan.Plan})
+	if err != nil {
+		return nil, fmt.Errorf("encoding migration_import params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeMigrationImport, []string{migrate.JobResource}, body)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
+}
+
+// undoMigrationImport queues the migration_import job in its undo form, which
+// takes a pending adoption back without writing to any adopted disk. It is the
+// way out of a pending import that step 17 would refuse. An array that is not a
+// pending import's is refused before anything is queued.
+func (h *Handler) undoMigrationImport(ctx context.Context) (*apiv1.Job, error) {
+	pending, err := h.ArrayStore.MigrationPending(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !pending {
+		return nil, &apiError{code: "no_import_pending", statusCode: 409, message: job.ErrMigrationUndoNotPending.Error()}
+	}
+	body, err := json.Marshal(job.MigrationImportParams{Undo: true})
 	if err != nil {
 		return nil, fmt.Errorf("encoding migration_import params: %w", err)
 	}

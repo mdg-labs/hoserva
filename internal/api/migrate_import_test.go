@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ func newImportFix(t *testing.T, more func(*disk.FakeProvider)) *importFix {
 	disks := disk.NewFakeProvider()
 	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "PARITYSERIAL", Size: 2 << 40, Filesystem: "xfs", FSDevice: "/dev/sdb1", FSUUID: "10000000-0000-4000-8000-000000000001", ByIDName: "ata-X_PARITYSERIAL", FSByIDName: "ata-X_PARITYSERIAL-part1"})
 	disks.AddDisk("/dev/sdc", disk.Disk{Serial: "DATASERIAL", Size: 1 << 40, Filesystem: "xfs", FSDevice: "/dev/sdc1", FSUUID: "10000000-0000-4000-8000-000000000002", ByIDName: "ata-X_DATASERIAL", FSByIDName: "ata-X_DATASERIAL-part1"})
+	disks.AddDisk("/dev/sdd", disk.Disk{Serial: "DATA2SERIAL", Size: 1 << 40, Filesystem: "xfs", FSDevice: "/dev/sdd1", FSUUID: "10000000-0000-4000-8000-000000000003", ByIDName: "ata-X_DATA2SERIAL", FSByIDName: "ata-X_DATA2SERIAL-part1"})
 	if more != nil {
 		more(disks)
 	}
@@ -81,12 +83,21 @@ func importRole(role apiv1.MigrationImportRole, serial string) apiv1.MigrationIm
 	return apiv1.MigrationImportDisk{Role: role, Serial: apiv1.NewOptString(serial)}
 }
 
+// importFlashZip is flashZip with a second data disk: one parity disk and one
+// data disk would leave no layout Q18 can place content files on.
+func importFlashZip(t *testing.T) []byte {
+	t.Helper()
+	return flashZip(t, "7.3.2", func(files map[string]string) {
+		files["config/hoserva/disks.ini"] += "[\"disk2\"]\nidx=\"2\"\nid=\"M_DATA2SERIAL\"\nsize=\"900\"\nstatus=\"DISK_OK\"\ntype=\"Data\"\n"
+	})
+}
+
 // scanned runs the scan of flashZip on h and waits for it.
 func scanned(t *testing.T, f *importFix) {
 	t.Helper()
 	h, svc := f.h, f.svc
 	ctx := context.Background()
-	j, err := h.StartMigrationScan(ctx, scanRequest(flashZip(t, "7.3.2", nil), false))
+	j, err := h.StartMigrationScan(ctx, scanRequest(importFlashZip(t), false))
 	if err != nil {
 		t.Fatalf("StartMigrationScan: %v", err)
 	}
@@ -108,7 +119,7 @@ func TestHandler_StartMigrationImport_QueuesTheResolvedPlanAndNothingBeforeTheCh
 	ctx := context.Background()
 	f := newImportFix(t, nil)
 	h := f.h
-	good := importReq(true, importRole(apiv1.MigrationImportRoleParity, "PARITYSERIAL"), importRole(apiv1.MigrationImportRoleData, "DATASERIAL"))
+	good := importReq(true, importRole(apiv1.MigrationImportRoleParity, "PARITYSERIAL"), importRole(apiv1.MigrationImportRoleData, "DATASERIAL"), importRole(apiv1.MigrationImportRoleData, "DATA2SERIAL"))
 
 	// No report yet.
 	if _, err := h.StartMigrationImport(ctx, good); err == nil {
@@ -146,10 +157,10 @@ func TestHandler_StartMigrationImport_QueuesTheResolvedPlanAndNothingBeforeTheCh
 	if err := json.Unmarshal(f.params[0], &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Plan.Data) != 1 || got.Plan.Data[0].Serial != "DATASERIAL" || got.Plan.Data[0].MountSource != "/dev/disk/by-id/ata-X_DATASERIAL-part1" || len(got.Plan.Parity) != 1 {
+	if len(got.Plan.Data) != 2 || got.Plan.Data[0].Serial != "DATASERIAL" || got.Plan.Data[0].MountSource != "/dev/disk/by-id/ata-X_DATASERIAL-part1" || len(got.Plan.Parity) != 1 {
 		t.Errorf("params plan = %+v, want the resolved plan with the data disk bound to its own by-id link", got.Plan)
 	}
-	if len(got.Assignments) != 2 {
+	if len(got.Assignments) != 3 {
 		t.Errorf("params assignments = %+v", got.Assignments)
 	}
 }
@@ -202,9 +213,117 @@ func TestHandler_StartMigrationImport_RefusesAMappingThatBreaksARule(t *testing.
 	}
 }
 
+// A mapping the point of no return could never initialise (one parity disk, one
+// data disk and no cache device) is refused before anything is queued or
+// recorded, with the shortfall and what to add; it cannot leave a pending
+// migration behind.
+func TestHandler_StartMigrationImport_RefusesALayoutStepSeventeenWouldRefuse(t *testing.T) {
+	ctx := context.Background()
+	f := newImportFix(t, nil)
+	scanned(t, f)
+	_, err := f.h.StartMigrationImport(ctx, importReq(true, importRole(apiv1.MigrationImportRoleParity, "PARITYSERIAL"), importRole(apiv1.MigrationImportRoleData, "DATASERIAL")))
+	if err == nil {
+		t.Fatal("a layout snapraid.conf cannot be rendered for was accepted")
+	}
+	st, code := statusOf(f.h, err)
+	if st != 400 || code != "invalid_import_roles" {
+		t.Errorf("= %d %s (%v), want 400 invalid_import_roles", st, code, err)
+	}
+	for _, want := range []string{"only 2 of 3 required copies", "add a data disk or a cache device"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+	}
+	if jobs, _ := f.h.Store.List(ctx, job.ListFilter{}); countType(jobs, job.TypeMigrationImport) != 0 {
+		t.Error("a refused request queued an import job")
+	}
+	if exists, err := f.h.ArrayStore.Exists(ctx); err != nil || exists {
+		t.Errorf("array record exists = %v, %v after a refused import", exists, err)
+	}
+}
+
+func TestHandler_StartMigrationImport_Undo(t *testing.T) {
+	ctx := context.Background()
+	undo := &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true)}
+	t.Run("501 without the migrator or the array store", func(t *testing.T) {
+		h, _, _ := newTestHandler(t)
+		_, err := h.StartMigrationImport(ctx, undo)
+		if st, code := statusOf(h, err); st != 501 || code != "not_configured" {
+			t.Errorf("= %d %s, want 501 not_configured", st, code)
+		}
+	})
+	t.Run("an undo needs the confirmation and takes no mapping, and an import needs one", func(t *testing.T) {
+		f := newImportFix(t, nil)
+		scanned(t, f)
+		for name, tc := range map[string]struct {
+			req    *apiv1.MigrationImportRequest
+			status int
+			code   string
+		}{
+			"no confirm":              {&apiv1.MigrationImportRequest{Undo: apiv1.NewOptBool(true)}, 409, "confirmation_required"},
+			"an undo with roles":      {&apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true), Roles: []apiv1.MigrationImportDisk{importRole(apiv1.MigrationImportRoleData, "DATASERIAL")}}, 400, "invalid_import_roles"},
+			"an import with no roles": {&apiv1.MigrationImportRequest{Confirm: true}, 400, "invalid_import_roles"},
+		} {
+			_, err := f.h.StartMigrationImport(ctx, tc.req)
+			if st, code := statusOf(f.h, err); st != tc.status || code != tc.code {
+				t.Errorf("%s = %d %s (%v), want %d %s", name, st, code, err, tc.status, tc.code)
+			}
+		}
+		if len(f.params) != 0 {
+			t.Error("a refused request ran the job")
+		}
+	})
+	t.Run("an array that is not a pending import's is refused and nothing is queued", func(t *testing.T) {
+		f := newImportFix(t, nil)
+		scanned(t, f)
+		for name, setup := range map[string]func(){
+			"no array": func() {},
+			"an ordinary array": func() {
+				if err := f.h.ArrayStore.PutArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []store.ArrayDisk{
+					{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdz", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+		} {
+			setup()
+			_, err := f.h.StartMigrationImport(ctx, undo)
+			if st, code := statusOf(f.h, err); st != 409 || code != "no_import_pending" {
+				t.Errorf("%s: = %d %s (%v), want 409 no_import_pending", name, st, code, err)
+			}
+		}
+		if len(f.params) != 0 {
+			t.Error("a refused undo ran the job")
+		}
+	})
+	t.Run("a pending import queues the undo", func(t *testing.T) {
+		f := newImportFix(t, nil)
+		scanned(t, f)
+		if err := f.h.ArrayStore.PutPendingArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []store.ArrayDisk{
+			{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"},
+		}, []store.RecordedDisk{{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdb", Size: 1}}); err != nil {
+			t.Fatal(err)
+		}
+		j, err := f.h.StartMigrationImport(ctx, undo)
+		if err != nil {
+			t.Fatalf("UndoMigrationImport: %v", err)
+		}
+		if j.Type != apiv1.JobTypeMigrationImport || j.Class != apiv1.JobClassTopology {
+			t.Errorf("job = %+v, want a topology migration_import", j)
+		}
+		if done := awaitJob(t, f.h.Scheduler, j.ID.String()); done.Status != job.StatusSucceeded {
+			t.Fatalf("job ended %s", done.Status)
+		}
+		var got job.MigrationImportParams
+		if len(f.params) != 1 || json.Unmarshal(f.params[0], &got) != nil || !got.Undo || len(got.Assignments) != 0 {
+			t.Fatalf("the job ran with %q, want one undo with no mapping", f.params)
+		}
+	})
+}
+
 func TestHandler_StartMigrationImport_RefusesAnAbandonedScanAndAForeignArrayButNotItsOwnRetry(t *testing.T) {
 	ctx := context.Background()
-	good := importReq(true, importRole(apiv1.MigrationImportRoleParity, "PARITYSERIAL"), importRole(apiv1.MigrationImportRoleData, "DATASERIAL"))
+	good := importReq(true, importRole(apiv1.MigrationImportRoleParity, "PARITYSERIAL"), importRole(apiv1.MigrationImportRoleData, "DATASERIAL"), importRole(apiv1.MigrationImportRoleData, "DATA2SERIAL"))
 	arrays := func(f *importFix, pending bool) {
 		put := f.h.ArrayStore.PutArray
 		var err error

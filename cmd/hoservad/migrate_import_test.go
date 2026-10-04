@@ -116,6 +116,7 @@ func wireImport(t *testing.T) *importWiring {
 	disks := disk.NewFakeProvider()
 	disks.AddDisk("/dev/sdb", disk.Disk{Serial: "PARSERIAL", Size: 2 << 40, Filesystem: "xfs", FSDevice: "/dev/sdb1", FSUUID: "10000000-0000-4000-8000-000000000001"})
 	disks.AddDisk("/dev/sdc", disk.Disk{Serial: "DATASERIAL", Size: 1 << 40, Filesystem: "xfs", FSDevice: "/dev/sdc1", FSUUID: "10000000-0000-4000-8000-000000000002"})
+	disks.AddDisk("/dev/sde", disk.Disk{Serial: "CACSERIAL", Size: 500 << 30, Filesystem: "btrfs", FSDevice: "/dev/sde1", FSUUID: "10000000-0000-4000-8000-000000000005"})
 	runner := disk.NewFakeRunner()
 	runner.Script("findmnt", []string{"-n", "-o", "UUID", "/mnt/disk1"}, []byte("10000000-0000-4000-8000-000000000002\n"), nil)
 	runner.Script("findmnt", []string{"-n", "-o", "OPTIONS", "/mnt/disk1"}, []byte("ro,nosuid,nodev,noexec,noatime\n"), nil)
@@ -161,7 +162,7 @@ func wireImport(t *testing.T) *importWiring {
 
 func (im *importWiring) scan(t *testing.T) {
 	t.Helper()
-	ini := "[\"parity\"]\nidx=\"0\"\nid=\"M_PARSERIAL\"\nsize=\"1000\"\nstatus=\"DISK_OK\"\ntype=\"Parity\"\n[\"disk1\"]\nidx=\"1\"\nid=\"M_DATASERIAL\"\nsize=\"900\"\nstatus=\"DISK_OK\"\ntype=\"Data\"\nfsType=\"xfs\"\n"
+	ini := "[\"parity\"]\nidx=\"0\"\nid=\"M_PARSERIAL\"\nsize=\"1000\"\nstatus=\"DISK_OK\"\ntype=\"Parity\"\n[\"disk1\"]\nidx=\"1\"\nid=\"M_DATASERIAL\"\nsize=\"900\"\nstatus=\"DISK_OK\"\ntype=\"Data\"\nfsType=\"xfs\"\n" + cacheIni
 	data := flashBackupZipWith(t, "7.3.2", map[string]string{"config/hoserva/disks.ini": ini})
 	status, body := im.w.uploadScan(t, data, false)
 	if status != http.StatusOK {
@@ -178,7 +179,12 @@ func (im *importWiring) scan(t *testing.T) {
 	}
 }
 
-const importBody = `{"confirm":true,"roles":[{"role":"parity","serial":"PARSERIAL"},{"role":"data","serial":"DATASERIAL"}]}`
+// cacheIni is the cache slot of wireImport's machine: with one parity disk and
+// one data disk, a cache that is a device of its own is what leaves Q18 three
+// devices to place the content files on.
+const cacheIni = "[\"cache\"]\nidx=\"30\"\nid=\"M_CACSERIAL\"\nsize=\"500\"\nstatus=\"DISK_OK\"\ntype=\"Cache\"\nfsType=\"btrfs\"\n"
+
+const importBody = `{"confirm":true,"roles":[{"role":"parity","serial":"PARSERIAL"},{"role":"data","serial":"DATASERIAL"},{"role":"cache","serial":"CACSERIAL"}]}`
 
 // POST /migrate/import is reachable through the daemon's own server, job
 // registry and scheduler: the job adopts the data disk read-only, records the
@@ -222,7 +228,7 @@ func TestMigrationImportWiring_AdoptsOverHTTPAndRefusesWhatCouldWriteAfterwards(
 		t.Fatalf("array = %+v %+v, %v", settings, disks, err)
 	}
 	recorded, err := w.arrays.RecordedDisks(ctx)
-	if err != nil || len(recorded) != 1 || recorded[0].Role != store.ArrayRoleParity || recorded[0].Serial != "PARSERIAL" {
+	if err != nil || len(recorded) != 2 || recorded[0].Role != store.ArrayRoleParity || recorded[0].Serial != "PARSERIAL" || recorded[1].Role != store.ArrayRoleCache || recorded[1].Serial != "CACSERIAL" {
 		t.Fatalf("recorded = %+v, %v", recorded, err)
 	}
 	if len(im.mounter.Mounts) != 1 || !im.mounter.Mounts[0].ReadOnly || im.mounter.Mounts[0].Where != "/mnt/disk1" {
@@ -504,5 +510,128 @@ func TestMigrationVerifyWiring_IsReachableOverHTTPWhileTheImportIsPending(t *tes
 	}
 	if session.Phase != "verify_failed" || session.Verify.Status != "failed" || !strings.Contains(session.Verify.Error, "disk1") {
 		t.Errorf("GET /migrate = %s, want the verify_failed phase and a failed result naming the unreadable disk", body)
+	}
+}
+
+const undoBody = `{"confirm":true,"undo":true}`
+
+// POST /migrate/import refuses, through the daemon's own handler, a mapping the
+// point of no return could never initialise (one parity disk, one data disk, no
+// cache): nothing is queued and no pending migration is left behind.
+func TestMigrationImportWiring_RefusesALayoutStepSeventeenWouldRefuse(t *testing.T) {
+	im := wireImport(t)
+	im.scan(t)
+	body := `{"confirm":true,"roles":[{"role":"parity","serial":"PARSERIAL"},{"role":"data","serial":"DATASERIAL"}]}`
+	status, resp := im.w.doBody(t, http.MethodPost, "/migrate/import", body)
+	if status != http.StatusBadRequest || !bytes.Contains(resp, []byte("invalid_import_roles")) || !bytes.Contains(resp, []byte("add a data disk or a cache device")) {
+		t.Fatalf("POST /migrate/import = %d %s, want 400 invalid_import_roles naming what to add", status, resp)
+	}
+	if exists, err := im.w.arrays.Exists(context.Background()); err != nil || exists {
+		t.Errorf("array exists = %v, %v after a refused import", exists, err)
+	}
+	if len(im.mounter.Mounts) != 0 {
+		t.Errorf("a refused import mounted %v", im.mounter.Mounts)
+	}
+	if v := im.w.migration(t); v.Phase != "scanned" {
+		t.Errorf("phase = %q after a refused import, want scanned", v.Phase)
+	}
+}
+
+// POST /migrate/import with undo is the way out of a pending import, through the
+// daemon's own server, registry and scheduler: it takes back a layout an earlier
+// daemon recorded and step 17 would refuse (here written to the store directly),
+// writes no command that could change a disk, and lets the session be forgotten.
+func TestMigrationImportWiring_UndoFreesAStuckPendingMigration(t *testing.T) {
+	im := wireImport(t)
+	w := im.w
+	im.scan(t)
+	ctx := context.Background()
+
+	if status, body := w.doBody(t, http.MethodPost, "/migrate/import", undoBody); status != http.StatusConflict || !bytes.Contains(body, []byte("no_import_pending")) {
+		t.Fatalf("POST /migrate/import with undo with nothing imported = %d %s, want 409 no_import_pending", status, body)
+	}
+
+	if err := w.arrays.PutPendingArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "10000000-0000-4000-8000-000000000002", Serial: "DATASERIAL", Mountpoint: "/mnt/disk1"},
+	}, []store.RecordedDisk{{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdb", Size: 2 << 40, Serial: "PARSERIAL"}}); err != nil {
+		t.Fatal(err)
+	}
+	if v := w.migration(t); v.Phase != "imported" {
+		t.Fatalf("phase = %q, want the stuck pending migration", v.Phase)
+	}
+	if status, body := w.do(t, http.MethodDelete, "/migrate"); status != http.StatusConflict || !bytes.Contains(body, []byte("migration_in_progress")) {
+		t.Fatalf("DELETE /migrate while pending = %d %s, want 409 migration_in_progress", status, body)
+	}
+	calls := len(im.runner.Calls())
+
+	status, body := w.doBody(t, http.MethodPost, "/migrate/import", undoBody)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/import with undo = %d %s", status, body)
+	}
+	var queued struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Class string `json:"class"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil || queued.Type != "migration_import" || queued.Class != "topology" {
+		t.Fatalf("queued job = %s (%v)", body, err)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("undo job = %s %s", done.Status, done.ErrorMessage)
+	}
+	if exists, err := w.arrays.Exists(ctx); err != nil || exists {
+		t.Errorf("array exists = %v, %v after the undo", exists, err)
+	}
+	if recorded, err := w.arrays.RecordedDisks(ctx); err != nil || len(recorded) != 0 {
+		t.Errorf("recorded disks = %+v, %v after the undo", recorded, err)
+	}
+	for _, c := range im.runner.Calls()[calls:] {
+		t.Errorf("the undo ran %s %v: it unmounts and removes records, and runs no command", c.Name, c.Args)
+	}
+	if v := w.migration(t); v.Phase != "scanned" {
+		t.Errorf("phase = %q after the undo, want scanned", v.Phase)
+	}
+	if status, body := w.do(t, http.MethodDelete, "/migrate"); status != http.StatusNoContent {
+		t.Errorf("DELETE /migrate after the undo = %d %s, want 204", status, body)
+	}
+	if status, body := w.doBody(t, http.MethodPost, "/migrate/import", undoBody); status != http.StatusConflict || !bytes.Contains(body, []byte("no_import_pending")) {
+		t.Errorf("a second POST /migrate/import with undo = %d %s, want 409 no_import_pending", status, body)
+	}
+}
+
+// An import that worked (its layout is valid) can be undone too, and a new
+// import of the same disks then works again, with the seeded shares left as
+// they were.
+func TestMigrationImportWiring_UndoTakesBackAnImportAndANewOneWorks(t *testing.T) {
+	im := wireImport(t)
+	w := im.w
+	im.scan(t)
+	run := func(method, path, body string) {
+		t.Helper()
+		status, resp := w.doBody(t, method, path, body)
+		if status != http.StatusOK {
+			t.Fatalf("%s %s = %d %s", method, path, status, resp)
+		}
+		var q struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(resp, &q); err != nil {
+			t.Fatal(err)
+		}
+		if done := w.awaitJobByID(t, q.ID); done.Status != job.StatusSucceeded {
+			t.Fatalf("%s %s: job = %s %s", method, path, done.Status, done.ErrorMessage)
+		}
+	}
+	run(http.MethodPost, "/migrate/import", importBody)
+	if pending, err := w.arrays.MigrationPending(context.Background()); err != nil || !pending {
+		t.Fatalf("MigrationPending = %v, %v after the import", pending, err)
+	}
+	run(http.MethodPost, "/migrate/import", undoBody)
+	if exists, err := w.arrays.Exists(context.Background()); err != nil || exists {
+		t.Fatalf("array exists = %v, %v after the undo", exists, err)
+	}
+	run(http.MethodPost, "/migrate/import", importBody)
+	if v := w.migration(t); v.Phase != "imported" {
+		t.Errorf("phase = %q after importing again, want imported", v.Phase)
 	}
 }

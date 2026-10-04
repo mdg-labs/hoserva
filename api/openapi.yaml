@@ -3279,6 +3279,8 @@ paths:
         while a scan runs, and with 409 `migration_in_progress` while an
         import is pending its point of no return (`startMigrationImport`): the
         scan's baseline is what the adopted disks are verified against.
+        `startMigrationImport` with `undo` takes a pending import back, after
+        which this succeeds.
       tags: [migrate]
       x-hoserva-role: admin
       responses:
@@ -3456,7 +3458,15 @@ paths:
         and is the cache only by a spare partition of it; parity is one or two
         disks, each at least as large as the largest data disk (Q19, Q20); and
         every data disk has a filesystem Hoserva adopts (Q23) whose UUID is
-        not another data disk's. The Unraid USB stick in any role is refused
+        not another data disk's; and the layout must be one `snapraid.conf` can
+        be rendered for at the point of no return, which is the same check that
+        step makes: Q18's content-file copies (the parity disks + 2, on
+        distinct devices) need the boot device, a cache that is a device of its
+        own (a cache that is a partition of the boot disk is the boot device's
+        copy) and enough data disks. A layout that falls short is refused with
+        400 `invalid_import_roles`, naming the shortfall and what to add (a
+        data disk or a cache device), never left to fail at step 17. The Unraid
+        USB stick in any role is refused
         with 409 `unraid_stick`. Also refused before queueing: 409
         `confirmation_required` unless `confirm` is true, 404
         `no_migration_report` before a scan, 409 `scan_not_finished` while a
@@ -3471,6 +3481,29 @@ paths:
         pool; a retry of the same mapping applies a recorded import again.
         Nothing is read from the Unraid flash: the import uses the report the
         scan stored.
+
+
+        With `undo` true the request takes back an import that is pending its
+        point of no return instead (`getMigration` `phase` `imported`,
+        `verifying`, `verify_failed` or `verified`): it queues a
+        `migration_import` job (topology class) that unmounts the read-only
+        pool and the adopted data disks, forgets the verify result, deletes the
+        recorded array and removes the generated mount units. `roles` is then
+        omitted. Nothing is written to any adopted disk, and the former parity
+        and cache disks, which the import never touched, are untouched. A mount
+        that cannot be released keeps the record and fails the job, so the
+        request can be made again. The shares and accounts the import created
+        are kept (they hold no data); a new import finds them and leaves them as
+        they are. Afterwards the scan's report is still there (`getMigration`
+        `phase` `scanned`), `forgetMigration` is no longer refused, and the
+        disks can be imported again with a mapping that works. It is the way out
+        of an import whose layout the point of no return would refuse (Q18).
+        Refused before anything is queued with 409 `confirmation_required`
+        unless `confirm` is true, 400 `invalid_import_roles` when `roles` is
+        given, and 409 `no_import_pending` unless an import is pending its
+        point of no return: an array that has been through it is never touched.
+        Without `undo`, `roles` is required and an empty one is refused with 400
+        `invalid_import_roles`.
 
 
         Once the disks are adopted the job seeds the scan's shares and
@@ -10751,11 +10784,13 @@ components:
 
     MigrationImportRequest:
       type: object
-      required: [roles, confirm]
+      required: [confirm]
       properties:
         roles:
           type: array
-          minItems: 1
+          description: >-
+            The disk-role mapping, at least one disk. Required unless `undo`
+            is true, and omitted then.
           items:
             $ref: '#/components/schemas/MigrationImportDisk'
         confirm:
@@ -10763,6 +10798,10 @@ components:
           description: >-
             Must be true: the user has checked the mapping against the serial
             table.
+        undo:
+          type: boolean
+          description: >-
+            Take a pending import back instead of adopting disks.
 
     MigrationCheckStatus:
       type: string
