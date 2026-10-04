@@ -65,11 +65,14 @@ func errNoMigrationReport() error {
 	return &mockError{code: "no_migration_report", statusCode: 404, message: migrate.ErrNoReport.Error()}
 }
 
-// mockMigrationReport is a completed scan of a healthy single-parity array:
-// what the UI shows after a scan, with one SMART finding so a flagged row has
-// something to render, and one row group per part of the configuration
-// inventory, including the flagged containers and shares.
-func mockMigrationReport(version string, unverified bool, at time.Time) *migrate.Report {
+// mockMigrationReport is a completed scan of a single-parity array with one data
+// disk whose filesystem check failed: what the UI shows after a scan, with that
+// refused disk, one SMART finding so a flagged row has something to render, and
+// one row group per part of the configuration inventory, including the flagged
+// containers and shares. flash is the uploaded zip's capture, which production
+// reads the boot mode and the capture's state from; nil is the seeded session,
+// which booted from the stick with a capture that is there and fresh.
+func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, at time.Time) *migrate.Report {
 	r := &migrate.Report{GeneratedAt: at, UnraidVersion: version, UnverifiedLayout: unverified, BootMode: "usb"}
 	add := func(check string, st migrate.Status, subject, detail string) {
 		r.Rows = append(r.Rows, migrate.Row{Check: check, Status: st, Subject: subject, Detail: detail})
@@ -83,7 +86,23 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckMapping, migrate.StatusPass, "parity", "serial EXAMPLE_PARITY is Unraid parity slot 0; this machine has it as /dev/sdb, 8.0 TiB.")
 	add(migrate.CheckMapping, migrate.StatusPass, "disk1", "serial EXAMPLE_DISK1 is Unraid disk 1 (xfs); this machine has it as /dev/sdc, 4.0 TiB.")
 	add(migrate.CheckMapping, migrate.StatusFlag, "disk2", "Unraid had a disk with serial EXAMPLE_DISK2 here, and no disk on this machine has this serial or WWN. Attach it before the import.")
+	add(migrate.CheckMapping, migrate.StatusPass, "disk3", "serial EXAMPLE_DISK3 is Unraid disk 3 (xfs); this machine has it as /dev/sdd, 4.0 TiB.")
+	add(migrate.CheckMapping, migrate.StatusPass, "disk4", "serial EXAMPLE_DISK4 is Unraid disk 4 (xfs); this machine has it as /dev/sde, 2.0 TiB.")
+	add(migrate.CheckMapping, migrate.StatusPass, "pool cache", "serial EXAMPLE_CACHE is a pool device; this machine has it as /dev/nvme0n1, 500.0 GiB.")
 	add(migrate.CheckIdentity, migrate.StatusPass, "parity", "/dev/sdb has a WWN or serial.")
+	add(migrate.CheckIdentity, migrate.StatusFlag, "disk4", "/dev/sde has only a weak identity (a USB enclosure hides its serial): it can be a data disk, matched by filesystem UUID and size (Q21).")
+	add(migrate.CheckDataDisks, migrate.StatusInfo, "parity", "A parity slot: /dev/sdb is never mounted or checked, and its role comes from its slot, never from its filesystem. Its device reports xfs: a parity disk's bytes are an XOR of the data disks', which can leave a valid-looking superblock.")
+	add(migrate.CheckDataDisks, migrate.StatusPass, "disk1", "xfs on /dev/sdc, a single filesystem; the flash and the device agree on it.")
+	add(migrate.CheckDataDisks, migrate.StatusPass, "disk3", "xfs on /dev/sdd, a single filesystem; the flash and the device agree on it.")
+	add(migrate.CheckDataDisks, migrate.StatusPass, "disk4", "xfs on /dev/sde, a single filesystem; the flash and the device agree on it.")
+	add(migrate.CheckIntegrity, migrate.StatusPass, "disk1", "The read-only xfs check of /dev/sdc is clean.")
+	const disk3Refusal = "disk3 is not adopted: its read-only xfs check failed (xfs_repair -n exit status 1: a bad free-space B-tree block in allocation group 0). Computing parity over a damaged filesystem would keep the damage. An XFS disk that was not unmounted cleanly has a log that needs replaying: start Unraid, stop the array cleanly, and scan again. Hoserva never replays a log on a disk it does not own yet."
+	add(migrate.CheckIntegrity, migrate.StatusRefuse, "disk3", disk3Refusal)
+	add(migrate.CheckIntegrity, migrate.StatusPass, "disk4", "The read-only xfs check of /dev/sde is clean.")
+	add(migrate.CheckBaseline, migrate.StatusInfo, "", "Recorded for the verify phase, with the session. Content hashes: every file of 1.0 MiB or less is hashed, plus a deterministic 1 in 100 (at least 200) of the larger files on each disk, chosen by a stable hash of the path. Every file's size, every symlink with its target and every special file by type is recorded as well.")
+	add(migrate.CheckBaseline, migrate.StatusInfo, "disk1", "48210 files (3.6 TiB), 12 symlinks and 0 special files; 31044 files (96.2 GiB) hashed.")
+	add(migrate.CheckBaseline, migrate.StatusInfo, "media", "41007 files (3.4 TiB), 0 symlinks and 0 special files, on disk1.")
+	add(migrate.CheckContentSpace, migrate.StatusPass, "", "3 content-file copies can be placed (Q18): the boot device, 2 data disks, with room for about 9.4 MiB for the content file (48210 files, a planning figure of 200 bytes per file and 24 per 256 KiB block).")
 	add(migrate.CheckParity, migrate.StatusInfo, "", "1 parity disk(s). Parity is rewritten from scratch either way.")
 	add(migrate.CheckParitySize, migrate.StatusPass, "", "The smallest parity disk (8.0 TiB) is at least as large as the largest data disk (4.0 TiB).")
 	add(migrate.CheckSMART, migrate.StatusPass, "parity", "/dev/sdb has no reallocated or pending sectors.")
@@ -91,7 +110,7 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckParityHistory, migrate.StatusPass, "", "The last parity check, on 2026-09-25 (from the capture's var.ini), completed clean with 0 errors.")
 	add(migrate.CheckShares, migrate.StatusInfo, "", "3 shares configured. Each share's allocation method and cache setting are mapped below (Q11).")
 	add(migrate.CheckShares, migrate.StatusFlag, "media", "allocation High-water: no exact equivalent, mapped to Balance across disks (mfs) (Q11); cache setting no maps to array-only; exported over SMB (e); directory on disk1.")
-	add(migrate.CheckShares, migrate.StatusInfo, "backup", "allocation Fill-up maps to Fill disks in order (ff); cache setting no maps to array-only; not exported over SMB; directory on disk1.")
+	add(migrate.CheckShares, migrate.StatusInfo, "backup", "allocation Fill-up maps to Fill disks in order (ff); cache setting no maps to array-only; not exported over SMB; never on disk3; directory on disk1.")
 	add(migrate.CheckShares, migrate.StatusInfo, "documents", "allocation Most-free maps to Balance across disks (mfs); cache setting yes maps to cache-then-move; exported over SMB (e); directory on disk1.")
 	add(migrate.CheckCache, migrate.StatusWarn, "appdata", "Docker keeps container data under /mnt/user/appdata/; cache setting prefer; its directory is on disk1, pool cache. Phase A step 5 must move it to the array before the cache is re-created.")
 	add(migrate.CheckCache, migrate.StatusInfo, "Docker storage", "Docker's directory (/mnt/user/system/docker/dockerdir) is on the cache. It is not moved: images are pulled again when containers are recreated. What does not come back is each container's writable layer (doc 04 §5). No container's writable layer holds data.")
@@ -110,15 +129,87 @@ func mockMigrationReport(version string, unverified bool, at time.Time) *migrate
 	add(migrate.CheckSettings, migrate.StatusInfo, "mover schedule", "40 3 * * *. It can be offered as Hoserva's mover schedule.")
 	add(migrate.CheckUID99, migrate.StatusPass, "", "UID 99 is free for the hoserva-apps user.")
 	add(migrate.CheckSyncEstimate, migrate.StatusInfo, "", "About 2.8 hours for 4.0 TiB of data disks, if they are full, at an assumed 400 MB/s. It is a planning figure, not a measurement: the first sync is a long job, and it runs only when you start it.")
-	r.Verdict = migrate.VerdictGoWithWarnings
+	r.Verdict = migrate.VerdictNoGo
+	r.Review = mockReview(flash, at, disk3Refusal)
 	return r
+}
+
+// mockReview is the structured data of the rows above, for the disks and shares
+// they name. The boot mode and the capture's state are production's own
+// decision over the uploaded zip's capture, so a zip that says Unraid booted
+// internally, or whose capture is missing, unreadable or older than a template,
+// gives the state it gives there.
+func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrate.Review {
+	const (
+		tib = int64(1) << 40
+		gib = int64(1) << 30
+	)
+	f := &migrate.Flash{Capture: &migrate.Capture{Boot: migrate.Boot{Mode: "usb"}, CapturedAt: at.Add(-3 * time.Hour).Format(time.RFC3339)}}
+	if flash != nil {
+		f = flash
+	}
+	weak := true
+	strong := false
+	rv := &migrate.Review{Boot: f.ReviewBoot(), Capture: f.ReviewCapture()}
+	rv.Disks = []migrate.ReviewDisk{
+		{Slot: "parity", UnraidID: "EXAMPLE_PARITY", UnraidRole: migrate.UnraidParity, ProposedRole: migrate.ProposeParity, Device: "/dev/sdb", Serial: "EXAMPLE_PARITY", WWN: "0x5000c500a1b2c3d4", ByID: "ata-EXAMPLE_PARITY", Model: "EXAMPLE 8TB", Size: 8 * tib, Filesystem: "xfs", WeakIdentity: &strong},
+		{Slot: "disk1", DiskNumber: 1, UnraidID: "EXAMPLE_DISK1", UnraidRole: migrate.UnraidData, ProposedRole: migrate.ProposeData, Device: "/dev/sdc", Serial: "EXAMPLE_DISK1", ByID: "ata-EXAMPLE_DISK1", Model: "EXAMPLE 4TB", Size: 4 * tib, Filesystem: "xfs", WeakIdentity: &strong},
+		{Slot: "disk2", DiskNumber: 2, UnraidID: "EXAMPLE_DISK2", UnraidRole: migrate.UnraidData, Size: 4 * tib, Problem: "no disk on this machine has this serial or WWN"},
+		{Slot: "disk3", DiskNumber: 3, UnraidID: "EXAMPLE_DISK3", UnraidRole: migrate.UnraidData, Device: "/dev/sdd", Serial: "EXAMPLE_DISK3", ByID: "ata-EXAMPLE_DISK3", Model: "EXAMPLE 4TB", Size: 4 * tib, Filesystem: "xfs", WeakIdentity: &strong, Refused: true, RefusalCode: migrate.RefuseIntegrity, Refusal: disk3Refusal},
+		{Slot: "disk4", DiskNumber: 4, UnraidID: "EXAMPLE_DISK4", UnraidRole: migrate.UnraidData, ProposedRole: migrate.ProposeData, Device: "/dev/sde", Serial: "EXAMPLE_DISK4", Model: "EXAMPLE USB 2TB", Size: 2 * tib, Filesystem: "xfs", WeakIdentity: &weak},
+		{Slot: "pool cache", UnraidID: "EXAMPLE_CACHE", UnraidRole: migrate.UnraidCache, ProposedRole: migrate.ProposeCache, Device: "/dev/nvme0n1", Serial: "EXAMPLE_CACHE", ByID: "nvme-EXAMPLE_CACHE", Model: "EXAMPLE NVMe 500GB", Size: 500 * gib, Filesystem: "btrfs", WeakIdentity: &strong},
+	}
+	// This machine's disks that make a boot row. The stick is attached whatever
+	// the boot mode, as production lists any Unraid stick it finds; the disks of
+	// an internal boot are the ones the capture names by serial, which the mock
+	// attaches as NVMe devices. An internal boot that shares its disk with the
+	// cache is that disk as the cache pool's row, as production builds it.
+	machine := []disk.Disk{{Device: mockFlashDevice, Size: 16 * disk.GB, Model: "SanDisk Cruzer Fit", Serial: "4C530001240603119335", Filesystem: disk.UnraidStickFilesystem, Label: disk.UnraidStickLabel}}
+	if rv.Boot.Mode == "internal" {
+		shared := rv.Boot.SharedWithCache != nil && *rv.Boot.SharedWithCache
+		for i, bd := range f.Capture.Boot.Devices {
+			if bd.Serial == "" {
+				continue
+			}
+			machine = append(machine, disk.Disk{Device: fmt.Sprintf("/dev/nvme%dn1", i+1), Serial: bd.Serial, Model: bd.Model, Size: 500 * gib, Filesystem: "zfs_member", UnraidBoot: true})
+		}
+		// Debian is installed on the shared disk: the shared NVMe of doc 01 §6.
+		if shared && len(machine) > 1 {
+			machine[1].Boot = true
+			b := machine[1]
+			for i := range rv.Disks {
+				if rv.Disks[i].Slot == "pool cache" {
+					hostBoot := b.Boot
+					rv.Disks[i].HostBoot = &hostBoot
+					rv.Disks[i].UnraidID, rv.Disks[i].Device, rv.Disks[i].Serial, rv.Disks[i].ByID = b.Serial, b.Device, b.Serial, "nvme-"+b.Serial
+					rv.Disks[i].WWN, rv.Disks[i].Model, rv.Disks[i].Size = "", b.Model, b.Size
+				}
+			}
+		}
+	}
+	rv.Disks = migrate.AddBootDisks(rv.Disks, f, machine)
+	rv.Disks = append(rv.Disks, migrate.ReviewDisk{UnraidRole: migrate.UnraidUnassigned, Device: "/dev/sdf", Serial: "EXAMPLE_SPARE", Model: "EXAMPLE 1TB", Size: tib, Filesystem: "ext4", WeakIdentity: &strong})
+	// Every row with a disk of this machine says whether it is the one the mock
+	// boots from, which only the shared NVMe above is.
+	for i := range rv.Disks {
+		if rv.Disks[i].Device != "" && rv.Disks[i].HostBoot == nil {
+			notBoot := false
+			rv.Disks[i].HostBoot = &notBoot
+		}
+	}
+	rv.Shares = []migrate.SharePreview{
+		{Name: "media", AllocationMethod: "highwater", HighWater: true, Include: []string{}, Exclude: []string{}, WarningCount: 1},
+		{Name: "backup", AllocationMethod: "fillup", Include: []string{}, Exclude: []string{"disk3"}},
+		{Name: "documents", AllocationMethod: "mostfree", Include: []string{}, Exclude: []string{}},
+	}
+	return rv
 }
 
 func seededMigration(scenario string) *mockMigration {
 	m := &mockMigration{}
 	if scenario == "migration-pending" {
 		at := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
-		m.report, m.size, m.receivedAt = mockMigrationReport("7.3.2", false, at), 612<<20, at
+		m.report, m.size, m.receivedAt = mockMigrationReport(nil, "7.3.2", false, at), 612<<20, at
 	}
 	return m
 }
@@ -147,7 +238,7 @@ func (h *handler) StartMigrationScan(ctx context.Context, req *apiv1.StartMigrat
 	h.jobs[j.ID] = *j
 	h.mu.Unlock()
 
-	report := mockMigrationReport(flash.Version, flash.LayoutProblem() != "", now)
+	report := mockMigrationReport(flash, flash.Version, flash.LayoutProblem() != "", now)
 	if flash.Capture != nil {
 		report.BootMode = flash.Capture.Boot.Mode
 	}
@@ -187,7 +278,7 @@ func (h *handler) StartMigrationDeviceScan(ctx context.Context, req *apiv1.Start
 	h.mu.Unlock()
 
 	h.migration.mu.Lock()
-	h.migration.report = mockMigrationReport("7.3.2", req.UnverifiedLayout.Or(false), now)
+	h.migration.report = mockMigrationReport(nil, "7.3.2", req.UnverifiedLayout.Or(false), now)
 	h.migration.size, h.migration.device, h.migration.receivedAt = 0, req.Device, now
 	h.migration.mu.Unlock()
 	return j, nil
@@ -241,6 +332,73 @@ func mockMigrationReportToAPI(r *migrate.Report) apiv1.MigrationReport {
 			item.Subject = apiv1.NewOptString(row.Subject)
 		}
 		out.Rows = append(out.Rows, item)
+	}
+	if r.Review != nil {
+		out.Review = apiv1.NewOptMigrationReview(mockMigrationReviewToAPI(r.Review))
+	}
+	return out
+}
+
+func mockMigrationReviewToAPI(rv *migrate.Review) apiv1.MigrationReview {
+	out := apiv1.MigrationReview{
+		Disks: make([]apiv1.MigrationDisk, 0, len(rv.Disks)), Shares: make([]apiv1.MigrationSharePreview, 0, len(rv.Shares)),
+		Capture: apiv1.MigrationCapture{State: apiv1.MigrationCaptureState(rv.Capture.State)},
+	}
+	opt := func(s string) apiv1.OptString {
+		if s == "" {
+			return apiv1.OptString{}
+		}
+		return apiv1.NewOptString(s)
+	}
+	for _, d := range rv.Disks {
+		item := apiv1.MigrationDisk{
+			Slot: opt(d.Slot), UnraidId: opt(d.UnraidID), Device: opt(d.Device), Serial: opt(d.Serial), Wwn: opt(d.WWN),
+			ById: opt(d.ByID), Model: opt(d.Model), Filesystem: opt(d.Filesystem), Problem: opt(d.Problem), Refusal: opt(d.Refusal),
+			Refused: d.Refused,
+		}
+		if d.DiskNumber > 0 {
+			item.DiskNumber = apiv1.NewOptInt(d.DiskNumber)
+		}
+		if d.Size > 0 {
+			item.Size = apiv1.NewOptInt64(d.Size)
+		}
+		if d.UnraidRole != "" {
+			item.UnraidRole = apiv1.NewOptMigrationUnraidRole(apiv1.MigrationUnraidRole(d.UnraidRole))
+		}
+		if d.ProposedRole != "" {
+			item.ProposedRole = apiv1.NewOptMigrationProposedRole(apiv1.MigrationProposedRole(d.ProposedRole))
+		}
+		if d.RefusalCode != "" {
+			item.RefusalCode = apiv1.NewOptMigrationRefusalCode(apiv1.MigrationRefusalCode(d.RefusalCode))
+		}
+		if d.WeakIdentity != nil {
+			item.WeakIdentity = apiv1.NewOptBool(*d.WeakIdentity)
+		}
+		if d.UnraidBoot {
+			item.UnraidBoot = apiv1.NewOptBool(true)
+		}
+		if d.HostBoot != nil {
+			item.HostBoot = apiv1.NewOptBool(*d.HostBoot)
+		}
+		out.Disks = append(out.Disks, item)
+	}
+	for _, sh := range rv.Shares {
+		out.Shares = append(out.Shares, apiv1.MigrationSharePreview{
+			Name: sh.Name, AllocationMethod: opt(sh.AllocationMethod), HighWater: sh.HighWater,
+			Include: sh.Include, Exclude: sh.Exclude, WarningCount: sh.WarningCount,
+		})
+	}
+	if rv.Boot.Mode != "" {
+		out.Boot.Mode = apiv1.NewOptMigrationBootMode(apiv1.MigrationBootMode(rv.Boot.Mode))
+	}
+	if rv.Boot.Mirrored != nil {
+		out.Boot.Mirrored = apiv1.NewOptBool(*rv.Boot.Mirrored)
+	}
+	if rv.Boot.SharedWithCache != nil {
+		out.Boot.SharedWithCache = apiv1.NewOptBool(*rv.Boot.SharedWithCache)
+	}
+	if rv.Capture.CapturedAt != nil {
+		out.Capture.CapturedAt = apiv1.NewOptDateTime(*rv.Capture.CapturedAt)
 	}
 	return out
 }

@@ -6317,8 +6317,10 @@ type DiskInventoryEntry struct {
 	SmartStatus OptString `json:"smartStatus"`
 	// True when udev reports an existing filesystem on the disk.
 	ContainsData OptBool `json:"containsData"`
-	// True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a
-	// conservative heuristic that never mounts the disk to look for `super.dat`.
+	// True when the disk is laid out the way Unraid lays out an array or pool disk (doc 05 §3): an MBR or
+	// GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real
+	// Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's
+	// cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role.
 	LooksLikeUnraid OptBool `json:"looksLikeUnraid"`
 	// Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc
 	// 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no
@@ -9675,6 +9677,176 @@ func (s *Migration) SetReport(val OptMigrationReport) {
 	s.Report = val
 }
 
+// Where Unraid boots from, for the planned layout and rollback wording of doc 05 §5. Every field is
+// absent when the capture does not say.
+// Ref: #/components/schemas/MigrationBoot
+type MigrationBoot struct {
+	Mode OptMigrationBootMode `json:"mode"`
+	// Whether an internal boot pool is a mirrored pair. Only for `internal`.
+	Mirrored OptBool `json:"mirrored"`
+	// Whether an internal boot device also holds Unraid's cache, which is re-created, not adopted. Only
+	// for `internal`.
+	SharedWithCache OptBool `json:"sharedWithCache"`
+}
+
+// GetMode returns the value of Mode.
+func (s *MigrationBoot) GetMode() OptMigrationBootMode {
+	return s.Mode
+}
+
+// GetMirrored returns the value of Mirrored.
+func (s *MigrationBoot) GetMirrored() OptBool {
+	return s.Mirrored
+}
+
+// GetSharedWithCache returns the value of SharedWithCache.
+func (s *MigrationBoot) GetSharedWithCache() OptBool {
+	return s.SharedWithCache
+}
+
+// SetMode sets the value of Mode.
+func (s *MigrationBoot) SetMode(val OptMigrationBootMode) {
+	s.Mode = val
+}
+
+// SetMirrored sets the value of Mirrored.
+func (s *MigrationBoot) SetMirrored(val OptBool) {
+	s.Mirrored = val
+}
+
+// SetSharedWithCache sets the value of SharedWithCache.
+func (s *MigrationBoot) SetSharedWithCache(val OptBool) {
+	s.SharedWithCache = val
+}
+
+// Ref: #/components/schemas/MigrationBootMode
+type MigrationBootMode string
+
+const (
+	MigrationBootModeUsb      MigrationBootMode = "usb"
+	MigrationBootModeInternal MigrationBootMode = "internal"
+)
+
+// AllValues returns all MigrationBootMode values.
+func (MigrationBootMode) AllValues() []MigrationBootMode {
+	return []MigrationBootMode{
+		MigrationBootModeUsb,
+		MigrationBootModeInternal,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationBootMode) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationBootModeUsb:
+		return []byte(s), nil
+	case MigrationBootModeInternal:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationBootMode) UnmarshalText(data []byte) error {
+	switch MigrationBootMode(data) {
+	case MigrationBootModeUsb:
+		*s = MigrationBootModeUsb
+		return nil
+	case MigrationBootModeInternal:
+		*s = MigrationBootModeInternal
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationCapture
+type MigrationCapture struct {
+	State MigrationCaptureState `json:"state"`
+	// When the capture was taken. Absent when it states no time or one that is not a timestamp; a
+	// `present` capture with no `capturedAt` was not checked for staleness.
+	CapturedAt OptDateTime `json:"capturedAt"`
+}
+
+// GetState returns the value of State.
+func (s *MigrationCapture) GetState() MigrationCaptureState {
+	return s.State
+}
+
+// GetCapturedAt returns the value of CapturedAt.
+func (s *MigrationCapture) GetCapturedAt() OptDateTime {
+	return s.CapturedAt
+}
+
+// SetState sets the value of State.
+func (s *MigrationCapture) SetState(val MigrationCaptureState) {
+	s.State = val
+}
+
+// SetCapturedAt sets the value of CapturedAt.
+func (s *MigrationCapture) SetCapturedAt(val OptDateTime) {
+	s.CapturedAt = val
+}
+
+// `missing` when the source has no capture, `unreadable` when it is there and does not parse, `stale`
+// when a template on the flash was saved after it was taken (Q89), `present` otherwise.
+// Ref: #/components/schemas/MigrationCaptureState
+type MigrationCaptureState string
+
+const (
+	MigrationCaptureStatePresent    MigrationCaptureState = "present"
+	MigrationCaptureStateMissing    MigrationCaptureState = "missing"
+	MigrationCaptureStateUnreadable MigrationCaptureState = "unreadable"
+	MigrationCaptureStateStale      MigrationCaptureState = "stale"
+)
+
+// AllValues returns all MigrationCaptureState values.
+func (MigrationCaptureState) AllValues() []MigrationCaptureState {
+	return []MigrationCaptureState{
+		MigrationCaptureStatePresent,
+		MigrationCaptureStateMissing,
+		MigrationCaptureStateUnreadable,
+		MigrationCaptureStateStale,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationCaptureState) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationCaptureStatePresent:
+		return []byte(s), nil
+	case MigrationCaptureStateMissing:
+		return []byte(s), nil
+	case MigrationCaptureStateUnreadable:
+		return []byte(s), nil
+	case MigrationCaptureStateStale:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationCaptureState) UnmarshalText(data []byte) error {
+	switch MigrationCaptureState(data) {
+	case MigrationCaptureStatePresent:
+		*s = MigrationCaptureStatePresent
+		return nil
+	case MigrationCaptureStateMissing:
+		*s = MigrationCaptureStateMissing
+		return nil
+	case MigrationCaptureStateUnreadable:
+		*s = MigrationCaptureStateUnreadable
+		return nil
+	case MigrationCaptureStateStale:
+		*s = MigrationCaptureStateStale
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // `refuse` blocks the migration; `flag` and `warn` need attention before it goes ahead; `info` and
 // `pass` do not.
 // Ref: #/components/schemas/MigrationCheckStatus
@@ -9791,6 +9963,244 @@ func (s *MigrationComposeProjectSummary) SetError(val OptString) {
 	s.Error = val
 }
 
+// One row of the disk mapping table: a disk the capture names, an Unraid boot device, or a disk of
+// this machine the capture does not name. A field that is absent is unknown, never zero, none or
+// strong.
+// Ref: #/components/schemas/MigrationDisk
+type MigrationDisk struct {
+	// The capture's slot or pool (`disk1`, `parity`, `pool cache`), or `boot` for a boot device. Absent
+	// for a disk the capture does not name.
+	Slot OptString `json:"slot"`
+	// The Unraid disk number of a data slot.
+	DiskNumber OptInt `json:"diskNumber"`
+	// The identity Unraid recorded for the slot.
+	UnraidId     OptString                `json:"unraidId"`
+	UnraidRole   OptMigrationUnraidRole   `json:"unraidRole"`
+	ProposedRole OptMigrationProposedRole `json:"proposedRole"`
+	// True when this row's disk is also an Unraid boot device, whatever the row's slot: the cache pool of
+	// an internal boot that shares its disk with the cache (proposed `cache`), or a parity or data slot
+	// that names a boot device (refused as `boot_device` and proposed `ignore`). The disk is this one row,
+	// never a second `boot` row beside it. Absent otherwise.
+	UnraidBoot OptBool `json:"unraidBoot"`
+	// True when this row's disk is the disk this machine boots from, which is the scan's own boot-disk
+	// detection, not a second one: Debian is installed on it. False when a disk of this machine matched
+	// the row and is not that disk. Absent when no disk of this machine matched, and in a report made
+	// before the field existed; absent means unknown, never false. On the cache pool's row, true is the
+	// shared NVMe of doc 01 §6.
+	HostBoot OptBool `json:"hostBoot"`
+	// This machine's device for the disk. Absent when none matched.
+	Device OptString `json:"device"`
+	Serial OptString `json:"serial"`
+	Wwn    OptString `json:"wwn"`
+	// The disk's `/dev/disk/by-id` name.
+	ById  OptString `json:"byId"`
+	Model OptString `json:"model"`
+	// Bytes: this machine's disk, or the size Unraid recorded when none matched.
+	Size OptInt64 `json:"size"`
+	// The filesystem this machine's disk reports.
+	Filesystem OptString `json:"filesystem"`
+	// True when only a weak identity identifies the disk (Q21). Absent when no disk of this machine
+	// matched.
+	WeakIdentity OptBool `json:"weakIdentity"`
+	// Why no disk of this machine matched the slot.
+	Problem OptString `json:"problem"`
+	// Whether the scan refused the disk, as its report rows say.
+	Refused     bool                    `json:"refused"`
+	RefusalCode OptMigrationRefusalCode `json:"refusalCode"`
+	// The refusal in words, as the report's row says it.
+	Refusal OptString `json:"refusal"`
+}
+
+// GetSlot returns the value of Slot.
+func (s *MigrationDisk) GetSlot() OptString {
+	return s.Slot
+}
+
+// GetDiskNumber returns the value of DiskNumber.
+func (s *MigrationDisk) GetDiskNumber() OptInt {
+	return s.DiskNumber
+}
+
+// GetUnraidId returns the value of UnraidId.
+func (s *MigrationDisk) GetUnraidId() OptString {
+	return s.UnraidId
+}
+
+// GetUnraidRole returns the value of UnraidRole.
+func (s *MigrationDisk) GetUnraidRole() OptMigrationUnraidRole {
+	return s.UnraidRole
+}
+
+// GetProposedRole returns the value of ProposedRole.
+func (s *MigrationDisk) GetProposedRole() OptMigrationProposedRole {
+	return s.ProposedRole
+}
+
+// GetUnraidBoot returns the value of UnraidBoot.
+func (s *MigrationDisk) GetUnraidBoot() OptBool {
+	return s.UnraidBoot
+}
+
+// GetHostBoot returns the value of HostBoot.
+func (s *MigrationDisk) GetHostBoot() OptBool {
+	return s.HostBoot
+}
+
+// GetDevice returns the value of Device.
+func (s *MigrationDisk) GetDevice() OptString {
+	return s.Device
+}
+
+// GetSerial returns the value of Serial.
+func (s *MigrationDisk) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetWwn returns the value of Wwn.
+func (s *MigrationDisk) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetById returns the value of ById.
+func (s *MigrationDisk) GetById() OptString {
+	return s.ById
+}
+
+// GetModel returns the value of Model.
+func (s *MigrationDisk) GetModel() OptString {
+	return s.Model
+}
+
+// GetSize returns the value of Size.
+func (s *MigrationDisk) GetSize() OptInt64 {
+	return s.Size
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *MigrationDisk) GetFilesystem() OptString {
+	return s.Filesystem
+}
+
+// GetWeakIdentity returns the value of WeakIdentity.
+func (s *MigrationDisk) GetWeakIdentity() OptBool {
+	return s.WeakIdentity
+}
+
+// GetProblem returns the value of Problem.
+func (s *MigrationDisk) GetProblem() OptString {
+	return s.Problem
+}
+
+// GetRefused returns the value of Refused.
+func (s *MigrationDisk) GetRefused() bool {
+	return s.Refused
+}
+
+// GetRefusalCode returns the value of RefusalCode.
+func (s *MigrationDisk) GetRefusalCode() OptMigrationRefusalCode {
+	return s.RefusalCode
+}
+
+// GetRefusal returns the value of Refusal.
+func (s *MigrationDisk) GetRefusal() OptString {
+	return s.Refusal
+}
+
+// SetSlot sets the value of Slot.
+func (s *MigrationDisk) SetSlot(val OptString) {
+	s.Slot = val
+}
+
+// SetDiskNumber sets the value of DiskNumber.
+func (s *MigrationDisk) SetDiskNumber(val OptInt) {
+	s.DiskNumber = val
+}
+
+// SetUnraidId sets the value of UnraidId.
+func (s *MigrationDisk) SetUnraidId(val OptString) {
+	s.UnraidId = val
+}
+
+// SetUnraidRole sets the value of UnraidRole.
+func (s *MigrationDisk) SetUnraidRole(val OptMigrationUnraidRole) {
+	s.UnraidRole = val
+}
+
+// SetProposedRole sets the value of ProposedRole.
+func (s *MigrationDisk) SetProposedRole(val OptMigrationProposedRole) {
+	s.ProposedRole = val
+}
+
+// SetUnraidBoot sets the value of UnraidBoot.
+func (s *MigrationDisk) SetUnraidBoot(val OptBool) {
+	s.UnraidBoot = val
+}
+
+// SetHostBoot sets the value of HostBoot.
+func (s *MigrationDisk) SetHostBoot(val OptBool) {
+	s.HostBoot = val
+}
+
+// SetDevice sets the value of Device.
+func (s *MigrationDisk) SetDevice(val OptString) {
+	s.Device = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *MigrationDisk) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *MigrationDisk) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetById sets the value of ById.
+func (s *MigrationDisk) SetById(val OptString) {
+	s.ById = val
+}
+
+// SetModel sets the value of Model.
+func (s *MigrationDisk) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetSize sets the value of Size.
+func (s *MigrationDisk) SetSize(val OptInt64) {
+	s.Size = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *MigrationDisk) SetFilesystem(val OptString) {
+	s.Filesystem = val
+}
+
+// SetWeakIdentity sets the value of WeakIdentity.
+func (s *MigrationDisk) SetWeakIdentity(val OptBool) {
+	s.WeakIdentity = val
+}
+
+// SetProblem sets the value of Problem.
+func (s *MigrationDisk) SetProblem(val OptString) {
+	s.Problem = val
+}
+
+// SetRefused sets the value of Refused.
+func (s *MigrationDisk) SetRefused(val bool) {
+	s.Refused = val
+}
+
+// SetRefusalCode sets the value of RefusalCode.
+func (s *MigrationDisk) SetRefusalCode(val OptMigrationRefusalCode) {
+	s.RefusalCode = val
+}
+
+// SetRefusal sets the value of Refusal.
+func (s *MigrationDisk) SetRefusal(val OptString) {
+	s.Refusal = val
+}
+
 // Ref: #/components/schemas/MigrationFlashDevice
 type MigrationFlashDevice struct {
 	// The disk's device path, which `startMigrationDeviceScan` takes.
@@ -9897,6 +10307,218 @@ func (s *MigrationPhase) UnmarshalText(data []byte) error {
 	}
 }
 
+// The Hoserva role the import pre-fills (doc 05 §4 Phase C). Absent when nothing is proposed: no disk
+// of this machine matched the slot, the disk is refused, or the capture has no `disks.ini`. A disk
+// that is an Unraid boot device, or a parity or data slot's disk that is one, is only ever `ignore`,
+// except that the cache pool's row of an internal boot that shares its disk with the cache
+// (`unraidBoot`) is `cache`. The disk this machine boots from is never proposed a role as a parity or
+// data slot's disk; as the cache pool's disk (the shared NVMe of doc 01 §6) it is `cache`.
+// Ref: #/components/schemas/MigrationProposedRole
+type MigrationProposedRole string
+
+const (
+	MigrationProposedRoleParity MigrationProposedRole = "parity"
+	MigrationProposedRoleData   MigrationProposedRole = "data"
+	MigrationProposedRoleCache  MigrationProposedRole = "cache"
+	MigrationProposedRoleIgnore MigrationProposedRole = "ignore"
+)
+
+// AllValues returns all MigrationProposedRole values.
+func (MigrationProposedRole) AllValues() []MigrationProposedRole {
+	return []MigrationProposedRole{
+		MigrationProposedRoleParity,
+		MigrationProposedRoleData,
+		MigrationProposedRoleCache,
+		MigrationProposedRoleIgnore,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationProposedRole) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationProposedRoleParity:
+		return []byte(s), nil
+	case MigrationProposedRoleData:
+		return []byte(s), nil
+	case MigrationProposedRoleCache:
+		return []byte(s), nil
+	case MigrationProposedRoleIgnore:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationProposedRole) UnmarshalText(data []byte) error {
+	switch MigrationProposedRole(data) {
+	case MigrationProposedRoleParity:
+		*s = MigrationProposedRoleParity
+		return nil
+	case MigrationProposedRoleData:
+		*s = MigrationProposedRoleData
+		return nil
+	case MigrationProposedRoleCache:
+		*s = MigrationProposedRoleCache
+		return nil
+	case MigrationProposedRoleIgnore:
+		*s = MigrationProposedRoleIgnore
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Why the scan refused a disk, as a code beside the row's prose. `boot_device` is an Unraid boot
+// device given a data or parity slot; `host_boot` the disk this machine boots from, given a parity or
+// data slot (the cache pool may share it); `failed` a disk reported failed; `encrypted`, `zfs`,
+// `unsupported_filesystem`, `filesystem_mismatch` and `no_filesystem` the disk's filesystem (Q22,
+// Q23); `no_filesystem_node` and `duplicate_uuid` a disk Hoserva cannot mount by filesystem UUID;
+// `multi_device_btrfs` a btrfs filesystem spanning several devices; `filesystem_unverified` a btrfs or
+// ext4 disk whose superblock could not be read; `pending_log` a log that was never replayed;
+// `integrity_check` a failed read-only filesystem check; `unreadable` a disk that passed its checks
+// but could not be read completely; `weak_identity_parity` a parity disk with only a weak identity
+// (Q21).
+// Ref: #/components/schemas/MigrationRefusalCode
+type MigrationRefusalCode string
+
+const (
+	MigrationRefusalCodeBootDevice            MigrationRefusalCode = "boot_device"
+	MigrationRefusalCodeHostBoot              MigrationRefusalCode = "host_boot"
+	MigrationRefusalCodeFailed                MigrationRefusalCode = "failed"
+	MigrationRefusalCodeEncrypted             MigrationRefusalCode = "encrypted"
+	MigrationRefusalCodeZfs                   MigrationRefusalCode = "zfs"
+	MigrationRefusalCodeUnsupportedFilesystem MigrationRefusalCode = "unsupported_filesystem"
+	MigrationRefusalCodeFilesystemMismatch    MigrationRefusalCode = "filesystem_mismatch"
+	MigrationRefusalCodeNoFilesystem          MigrationRefusalCode = "no_filesystem"
+	MigrationRefusalCodeNoFilesystemNode      MigrationRefusalCode = "no_filesystem_node"
+	MigrationRefusalCodeDuplicateUUID         MigrationRefusalCode = "duplicate_uuid"
+	MigrationRefusalCodeMultiDeviceBtrfs      MigrationRefusalCode = "multi_device_btrfs"
+	MigrationRefusalCodeFilesystemUnverified  MigrationRefusalCode = "filesystem_unverified"
+	MigrationRefusalCodePendingLog            MigrationRefusalCode = "pending_log"
+	MigrationRefusalCodeIntegrityCheck        MigrationRefusalCode = "integrity_check"
+	MigrationRefusalCodeUnreadable            MigrationRefusalCode = "unreadable"
+	MigrationRefusalCodeWeakIdentityParity    MigrationRefusalCode = "weak_identity_parity"
+)
+
+// AllValues returns all MigrationRefusalCode values.
+func (MigrationRefusalCode) AllValues() []MigrationRefusalCode {
+	return []MigrationRefusalCode{
+		MigrationRefusalCodeBootDevice,
+		MigrationRefusalCodeHostBoot,
+		MigrationRefusalCodeFailed,
+		MigrationRefusalCodeEncrypted,
+		MigrationRefusalCodeZfs,
+		MigrationRefusalCodeUnsupportedFilesystem,
+		MigrationRefusalCodeFilesystemMismatch,
+		MigrationRefusalCodeNoFilesystem,
+		MigrationRefusalCodeNoFilesystemNode,
+		MigrationRefusalCodeDuplicateUUID,
+		MigrationRefusalCodeMultiDeviceBtrfs,
+		MigrationRefusalCodeFilesystemUnverified,
+		MigrationRefusalCodePendingLog,
+		MigrationRefusalCodeIntegrityCheck,
+		MigrationRefusalCodeUnreadable,
+		MigrationRefusalCodeWeakIdentityParity,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationRefusalCode) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationRefusalCodeBootDevice:
+		return []byte(s), nil
+	case MigrationRefusalCodeHostBoot:
+		return []byte(s), nil
+	case MigrationRefusalCodeFailed:
+		return []byte(s), nil
+	case MigrationRefusalCodeEncrypted:
+		return []byte(s), nil
+	case MigrationRefusalCodeZfs:
+		return []byte(s), nil
+	case MigrationRefusalCodeUnsupportedFilesystem:
+		return []byte(s), nil
+	case MigrationRefusalCodeFilesystemMismatch:
+		return []byte(s), nil
+	case MigrationRefusalCodeNoFilesystem:
+		return []byte(s), nil
+	case MigrationRefusalCodeNoFilesystemNode:
+		return []byte(s), nil
+	case MigrationRefusalCodeDuplicateUUID:
+		return []byte(s), nil
+	case MigrationRefusalCodeMultiDeviceBtrfs:
+		return []byte(s), nil
+	case MigrationRefusalCodeFilesystemUnverified:
+		return []byte(s), nil
+	case MigrationRefusalCodePendingLog:
+		return []byte(s), nil
+	case MigrationRefusalCodeIntegrityCheck:
+		return []byte(s), nil
+	case MigrationRefusalCodeUnreadable:
+		return []byte(s), nil
+	case MigrationRefusalCodeWeakIdentityParity:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationRefusalCode) UnmarshalText(data []byte) error {
+	switch MigrationRefusalCode(data) {
+	case MigrationRefusalCodeBootDevice:
+		*s = MigrationRefusalCodeBootDevice
+		return nil
+	case MigrationRefusalCodeHostBoot:
+		*s = MigrationRefusalCodeHostBoot
+		return nil
+	case MigrationRefusalCodeFailed:
+		*s = MigrationRefusalCodeFailed
+		return nil
+	case MigrationRefusalCodeEncrypted:
+		*s = MigrationRefusalCodeEncrypted
+		return nil
+	case MigrationRefusalCodeZfs:
+		*s = MigrationRefusalCodeZfs
+		return nil
+	case MigrationRefusalCodeUnsupportedFilesystem:
+		*s = MigrationRefusalCodeUnsupportedFilesystem
+		return nil
+	case MigrationRefusalCodeFilesystemMismatch:
+		*s = MigrationRefusalCodeFilesystemMismatch
+		return nil
+	case MigrationRefusalCodeNoFilesystem:
+		*s = MigrationRefusalCodeNoFilesystem
+		return nil
+	case MigrationRefusalCodeNoFilesystemNode:
+		*s = MigrationRefusalCodeNoFilesystemNode
+		return nil
+	case MigrationRefusalCodeDuplicateUUID:
+		*s = MigrationRefusalCodeDuplicateUUID
+		return nil
+	case MigrationRefusalCodeMultiDeviceBtrfs:
+		*s = MigrationRefusalCodeMultiDeviceBtrfs
+		return nil
+	case MigrationRefusalCodeFilesystemUnverified:
+		*s = MigrationRefusalCodeFilesystemUnverified
+		return nil
+	case MigrationRefusalCodePendingLog:
+		*s = MigrationRefusalCodePendingLog
+		return nil
+	case MigrationRefusalCodeIntegrityCheck:
+		*s = MigrationRefusalCodeIntegrityCheck
+		return nil
+	case MigrationRefusalCodeUnreadable:
+		*s = MigrationRefusalCodeUnreadable
+		return nil
+	case MigrationRefusalCodeWeakIdentityParity:
+		*s = MigrationRefusalCodeWeakIdentityParity
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/MigrationReport
 type MigrationReport struct {
 	GeneratedAt time.Time `json:"generatedAt"`
@@ -9907,6 +10529,7 @@ type MigrationReport struct {
 	UnverifiedLayout bool                 `json:"unverifiedLayout"`
 	Verdict          MigrationVerdict     `json:"verdict"`
 	Rows             []MigrationReportRow `json:"rows"`
+	Review           OptMigrationReview   `json:"review"`
 }
 
 // GetGeneratedAt returns the value of GeneratedAt.
@@ -9934,6 +10557,11 @@ func (s *MigrationReport) GetRows() []MigrationReportRow {
 	return s.Rows
 }
 
+// GetReview returns the value of Review.
+func (s *MigrationReport) GetReview() OptMigrationReview {
+	return s.Review
+}
+
 // SetGeneratedAt sets the value of GeneratedAt.
 func (s *MigrationReport) SetGeneratedAt(val time.Time) {
 	s.GeneratedAt = val
@@ -9959,13 +10587,18 @@ func (s *MigrationReport) SetRows(val []MigrationReportRow) {
 	s.Rows = val
 }
 
+// SetReview sets the value of Review.
+func (s *MigrationReport) SetReview(val OptMigrationReview) {
+	s.Review = val
+}
+
 // Ref: #/components/schemas/MigrationReportRow
 type MigrationReportRow struct {
 	// Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`,
-	// `disk_identity`, `parity_config`, `parity_size`, `smart`, `parity_history`, `shares`,
-	// `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`,
-	// `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without
-	// changing this shape.
+	// `disk_identity`, `parity_config`, `parity_size`, `data_disks`, `disk_integrity`, `baseline`,
+	// `content_space`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`,
+	// `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`.
+	// Later parts of the scan add checks without changing this shape.
 	Check  string               `json:"check"`
 	Status MigrationCheckStatus `json:"status"`
 	// A slot, pool or device the row is about. Absent for the whole system.
@@ -10011,6 +10644,131 @@ func (s *MigrationReportRow) SetSubject(val OptString) {
 // SetDetail sets the value of Detail.
 func (s *MigrationReportRow) SetDetail(val string) {
 	s.Detail = val
+}
+
+// Ref: #/components/schemas/MigrationReview
+type MigrationReview struct {
+	Disks []MigrationDisk `json:"disks"`
+	// The shares the import would create.
+	Shares  []MigrationSharePreview `json:"shares"`
+	Boot    MigrationBoot           `json:"boot"`
+	Capture MigrationCapture        `json:"capture"`
+}
+
+// GetDisks returns the value of Disks.
+func (s *MigrationReview) GetDisks() []MigrationDisk {
+	return s.Disks
+}
+
+// GetShares returns the value of Shares.
+func (s *MigrationReview) GetShares() []MigrationSharePreview {
+	return s.Shares
+}
+
+// GetBoot returns the value of Boot.
+func (s *MigrationReview) GetBoot() MigrationBoot {
+	return s.Boot
+}
+
+// GetCapture returns the value of Capture.
+func (s *MigrationReview) GetCapture() MigrationCapture {
+	return s.Capture
+}
+
+// SetDisks sets the value of Disks.
+func (s *MigrationReview) SetDisks(val []MigrationDisk) {
+	s.Disks = val
+}
+
+// SetShares sets the value of Shares.
+func (s *MigrationReview) SetShares(val []MigrationSharePreview) {
+	s.Shares = val
+}
+
+// SetBoot sets the value of Boot.
+func (s *MigrationReview) SetBoot(val MigrationBoot) {
+	s.Boot = val
+}
+
+// SetCapture sets the value of Capture.
+func (s *MigrationReview) SetCapture(val MigrationCapture) {
+	s.Capture = val
+}
+
+// Ref: #/components/schemas/MigrationSharePreview
+type MigrationSharePreview struct {
+	Name string `json:"name"`
+	// Unraid's allocation method as the share's config gives it (`fillup`, `mostfree`, `highwater`).
+	// Absent when it sets none.
+	AllocationMethod OptString `json:"allocationMethod"`
+	// True for High-water, which has no exact equivalent (Q11).
+	HighWater bool `json:"highWater"`
+	// The disks the share is limited to. Empty means any.
+	Include []string `json:"include"`
+	// The disks the share is kept off.
+	Exclude []string `json:"exclude"`
+	// How many things the share's report row flags or warns about.
+	WarningCount int `json:"warningCount"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationSharePreview) GetName() string {
+	return s.Name
+}
+
+// GetAllocationMethod returns the value of AllocationMethod.
+func (s *MigrationSharePreview) GetAllocationMethod() OptString {
+	return s.AllocationMethod
+}
+
+// GetHighWater returns the value of HighWater.
+func (s *MigrationSharePreview) GetHighWater() bool {
+	return s.HighWater
+}
+
+// GetInclude returns the value of Include.
+func (s *MigrationSharePreview) GetInclude() []string {
+	return s.Include
+}
+
+// GetExclude returns the value of Exclude.
+func (s *MigrationSharePreview) GetExclude() []string {
+	return s.Exclude
+}
+
+// GetWarningCount returns the value of WarningCount.
+func (s *MigrationSharePreview) GetWarningCount() int {
+	return s.WarningCount
+}
+
+// SetName sets the value of Name.
+func (s *MigrationSharePreview) SetName(val string) {
+	s.Name = val
+}
+
+// SetAllocationMethod sets the value of AllocationMethod.
+func (s *MigrationSharePreview) SetAllocationMethod(val OptString) {
+	s.AllocationMethod = val
+}
+
+// SetHighWater sets the value of HighWater.
+func (s *MigrationSharePreview) SetHighWater(val bool) {
+	s.HighWater = val
+}
+
+// SetInclude sets the value of Include.
+func (s *MigrationSharePreview) SetInclude(val []string) {
+	s.Include = val
+}
+
+// SetExclude sets the value of Exclude.
+func (s *MigrationSharePreview) SetExclude(val []string) {
+	s.Exclude = val
+}
+
+// SetWarningCount sets the value of WarningCount.
+func (s *MigrationSharePreview) SetWarningCount(val int) {
+	s.WarningCount = val
 }
 
 // What a dockerMan template stands for in the Phase A capture: `autostart` (on Unraid's autostart
@@ -10536,6 +11294,71 @@ func (s *MigrationTemplates) SetTemplates(val []MigrationTemplateSummary) {
 // SetComposeProjects sets the value of ComposeProjects.
 func (s *MigrationTemplates) SetComposeProjects(val []MigrationComposeProjectSummary) {
 	s.ComposeProjects = val
+}
+
+// The role the capture records for a disk. `unassigned` is a disk of this machine the capture does not
+// name, and is given only when the capture's `disks.ini` could be read.
+// Ref: #/components/schemas/MigrationUnraidRole
+type MigrationUnraidRole string
+
+const (
+	MigrationUnraidRoleParity     MigrationUnraidRole = "parity"
+	MigrationUnraidRoleData       MigrationUnraidRole = "data"
+	MigrationUnraidRoleCache      MigrationUnraidRole = "cache"
+	MigrationUnraidRoleBoot       MigrationUnraidRole = "boot"
+	MigrationUnraidRoleUnassigned MigrationUnraidRole = "unassigned"
+)
+
+// AllValues returns all MigrationUnraidRole values.
+func (MigrationUnraidRole) AllValues() []MigrationUnraidRole {
+	return []MigrationUnraidRole{
+		MigrationUnraidRoleParity,
+		MigrationUnraidRoleData,
+		MigrationUnraidRoleCache,
+		MigrationUnraidRoleBoot,
+		MigrationUnraidRoleUnassigned,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationUnraidRole) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationUnraidRoleParity:
+		return []byte(s), nil
+	case MigrationUnraidRoleData:
+		return []byte(s), nil
+	case MigrationUnraidRoleCache:
+		return []byte(s), nil
+	case MigrationUnraidRoleBoot:
+		return []byte(s), nil
+	case MigrationUnraidRoleUnassigned:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationUnraidRole) UnmarshalText(data []byte) error {
+	switch MigrationUnraidRole(data) {
+	case MigrationUnraidRoleParity:
+		*s = MigrationUnraidRoleParity
+		return nil
+	case MigrationUnraidRoleData:
+		*s = MigrationUnraidRoleData
+		return nil
+	case MigrationUnraidRoleCache:
+		*s = MigrationUnraidRoleCache
+		return nil
+	case MigrationUnraidRoleBoot:
+		*s = MigrationUnraidRoleBoot
+		return nil
+	case MigrationUnraidRoleUnassigned:
+		*s = MigrationUnraidRoleUnassigned
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/MigrationVerdict
@@ -13508,6 +14331,144 @@ func (o OptJobStatus) Or(d JobStatus) JobStatus {
 	return d
 }
 
+// NewOptMigrationBootMode returns new OptMigrationBootMode with value set to v.
+func NewOptMigrationBootMode(v MigrationBootMode) OptMigrationBootMode {
+	return OptMigrationBootMode{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationBootMode is optional MigrationBootMode.
+type OptMigrationBootMode struct {
+	Value MigrationBootMode
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationBootMode was set.
+func (o OptMigrationBootMode) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationBootMode) Reset() {
+	var v MigrationBootMode
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationBootMode) SetTo(v MigrationBootMode) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationBootMode) Get() (v MigrationBootMode, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationBootMode) Or(d MigrationBootMode) MigrationBootMode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationProposedRole returns new OptMigrationProposedRole with value set to v.
+func NewOptMigrationProposedRole(v MigrationProposedRole) OptMigrationProposedRole {
+	return OptMigrationProposedRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationProposedRole is optional MigrationProposedRole.
+type OptMigrationProposedRole struct {
+	Value MigrationProposedRole
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationProposedRole was set.
+func (o OptMigrationProposedRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationProposedRole) Reset() {
+	var v MigrationProposedRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationProposedRole) SetTo(v MigrationProposedRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationProposedRole) Get() (v MigrationProposedRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationProposedRole) Or(d MigrationProposedRole) MigrationProposedRole {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationRefusalCode returns new OptMigrationRefusalCode with value set to v.
+func NewOptMigrationRefusalCode(v MigrationRefusalCode) OptMigrationRefusalCode {
+	return OptMigrationRefusalCode{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationRefusalCode is optional MigrationRefusalCode.
+type OptMigrationRefusalCode struct {
+	Value MigrationRefusalCode
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationRefusalCode was set.
+func (o OptMigrationRefusalCode) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationRefusalCode) Reset() {
+	var v MigrationRefusalCode
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationRefusalCode) SetTo(v MigrationRefusalCode) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationRefusalCode) Get() (v MigrationRefusalCode, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationRefusalCode) Or(d MigrationRefusalCode) MigrationRefusalCode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptMigrationReport returns new OptMigrationReport with value set to v.
 func NewOptMigrationReport(v MigrationReport) OptMigrationReport {
 	return OptMigrationReport{
@@ -13554,6 +14515,52 @@ func (o OptMigrationReport) Or(d MigrationReport) MigrationReport {
 	return d
 }
 
+// NewOptMigrationReview returns new OptMigrationReview with value set to v.
+func NewOptMigrationReview(v MigrationReview) OptMigrationReview {
+	return OptMigrationReview{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationReview is optional MigrationReview.
+type OptMigrationReview struct {
+	Value MigrationReview
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationReview was set.
+func (o OptMigrationReview) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationReview) Reset() {
+	var v MigrationReview
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationReview) SetTo(v MigrationReview) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationReview) Get() (v MigrationReview, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationReview) Or(d MigrationReview) MigrationReview {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptMigrationTemplateClass returns new OptMigrationTemplateClass with value set to v.
 func NewOptMigrationTemplateClass(v MigrationTemplateClass) OptMigrationTemplateClass {
 	return OptMigrationTemplateClass{
@@ -13594,6 +14601,52 @@ func (o OptMigrationTemplateClass) Get() (v MigrationTemplateClass, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptMigrationTemplateClass) Or(d MigrationTemplateClass) MigrationTemplateClass {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationUnraidRole returns new OptMigrationUnraidRole with value set to v.
+func NewOptMigrationUnraidRole(v MigrationUnraidRole) OptMigrationUnraidRole {
+	return OptMigrationUnraidRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationUnraidRole is optional MigrationUnraidRole.
+type OptMigrationUnraidRole struct {
+	Value MigrationUnraidRole
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationUnraidRole was set.
+func (o OptMigrationUnraidRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationUnraidRole) Reset() {
+	var v MigrationUnraidRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationUnraidRole) SetTo(v MigrationUnraidRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationUnraidRole) Get() (v MigrationUnraidRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationUnraidRole) Or(d MigrationUnraidRole) MigrationUnraidRole {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -18382,6 +19435,8 @@ type StartMigrationDeviceScanReq struct {
 	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
 	// (Q24).
 	UnverifiedLayout OptBool `json:"unverifiedLayout"`
+	// Hash every file of every data disk for the baseline, as for the zip scan (`startMigrationScan`).
+	FullChecksums OptBool `json:"fullChecksums"`
 }
 
 // GetDevice returns the value of Device.
@@ -18394,6 +19449,11 @@ func (s *StartMigrationDeviceScanReq) GetUnverifiedLayout() OptBool {
 	return s.UnverifiedLayout
 }
 
+// GetFullChecksums returns the value of FullChecksums.
+func (s *StartMigrationDeviceScanReq) GetFullChecksums() OptBool {
+	return s.FullChecksums
+}
+
 // SetDevice sets the value of Device.
 func (s *StartMigrationDeviceScanReq) SetDevice(val string) {
 	s.Device = val
@@ -18404,12 +19464,20 @@ func (s *StartMigrationDeviceScanReq) SetUnverifiedLayout(val OptBool) {
 	s.UnverifiedLayout = val
 }
 
+// SetFullChecksums sets the value of FullChecksums.
+func (s *StartMigrationDeviceScanReq) SetFullChecksums(val OptBool) {
+	s.FullChecksums = val
+}
+
 type StartMigrationScanReq struct {
 	// The Flash Backup zip, its root being `/boot`.
 	File ht.MultipartFile `json:"file"`
 	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
 	// (Q24).
 	UnverifiedLayout OptBool `json:"unverifiedLayout"`
+	// Hash every file of every data disk for the baseline, instead of every file of 1 MiB or less plus a
+	// deterministic sample of the larger ones. It takes much longer.
+	FullChecksums OptBool `json:"fullChecksums"`
 }
 
 // GetFile returns the value of File.
@@ -18422,6 +19490,11 @@ func (s *StartMigrationScanReq) GetUnverifiedLayout() OptBool {
 	return s.UnverifiedLayout
 }
 
+// GetFullChecksums returns the value of FullChecksums.
+func (s *StartMigrationScanReq) GetFullChecksums() OptBool {
+	return s.FullChecksums
+}
+
 // SetFile sets the value of File.
 func (s *StartMigrationScanReq) SetFile(val ht.MultipartFile) {
 	s.File = val
@@ -18430,6 +19503,11 @@ func (s *StartMigrationScanReq) SetFile(val ht.MultipartFile) {
 // SetUnverifiedLayout sets the value of UnverifiedLayout.
 func (s *StartMigrationScanReq) SetUnverifiedLayout(val OptBool) {
 	s.UnverifiedLayout = val
+}
+
+// SetFullChecksums sets the value of FullChecksums.
+func (s *StartMigrationScanReq) SetFullChecksums(val OptBool) {
+	s.FullChecksums = val
 }
 
 // Ref: #/components/schemas/StartRebalanceRequest

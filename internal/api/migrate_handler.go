@@ -64,7 +64,7 @@ func (h *Handler) StartMigrationScan(ctx context.Context, req *apiv1.StartMigrat
 	if req == nil || req.File.File == nil {
 		return nil, &apiError{code: "file_required", statusCode: 400, message: "the Flash Backup zip is required as the file part"}
 	}
-	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false)}
+	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false), FullChecksums: req.FullChecksums.Or(false)}
 	var queued *job.Job
 	err := h.Migration.StartScan(ctx, req.File.File, opts, func(ctx context.Context, upload string) (string, error) {
 		params, err := json.Marshal(job.MigrationScanParams{Upload: upload})
@@ -94,7 +94,7 @@ func (h *Handler) StartMigrationDeviceScan(ctx context.Context, req *apiv1.Start
 	if req == nil || req.Device == "" {
 		return nil, &apiError{code: "invalid_flash_device", statusCode: 400, message: "the device is required"}
 	}
-	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false)}
+	opts := migrate.ScanOptions{UnverifiedLayout: req.UnverifiedLayout.Or(false), FullChecksums: req.FullChecksums.Or(false)}
 	var queued *job.Job
 	err := h.Migration.StartDeviceScan(ctx, req.Device, opts, func(ctx context.Context, scan string) (string, error) {
 		params, err := json.Marshal(job.MigrationScanParams{Upload: scan})
@@ -173,6 +173,70 @@ func migrationReportToAPI(r *migrate.Report) apiv1.MigrationReport {
 			item.Subject = apiv1.NewOptString(row.Subject)
 		}
 		out.Rows = append(out.Rows, item)
+	}
+	if r.Review != nil {
+		out.Review = apiv1.NewOptMigrationReview(migrationReviewToAPI(r.Review))
+	}
+	return out
+}
+
+func migrationReviewToAPI(rv *migrate.Review) apiv1.MigrationReview {
+	out := apiv1.MigrationReview{
+		Disks:   make([]apiv1.MigrationDisk, 0, len(rv.Disks)),
+		Shares:  make([]apiv1.MigrationSharePreview, 0, len(rv.Shares)),
+		Capture: apiv1.MigrationCapture{State: apiv1.MigrationCaptureState(rv.Capture.State)},
+	}
+	for _, d := range rv.Disks {
+		item := apiv1.MigrationDisk{
+			Slot: optString(d.Slot), UnraidId: optString(d.UnraidID), Device: optString(d.Device),
+			Serial: optString(d.Serial), Wwn: optString(d.WWN), ById: optString(d.ByID), Model: optString(d.Model),
+			Filesystem: optString(d.Filesystem), Problem: optString(d.Problem), Refusal: optString(d.Refusal),
+			Refused: d.Refused,
+		}
+		if d.DiskNumber > 0 {
+			item.DiskNumber = apiv1.NewOptInt(d.DiskNumber)
+		}
+		if d.Size > 0 {
+			item.Size = apiv1.NewOptInt64(d.Size)
+		}
+		if d.UnraidRole != "" {
+			item.UnraidRole = apiv1.NewOptMigrationUnraidRole(apiv1.MigrationUnraidRole(d.UnraidRole))
+		}
+		if d.ProposedRole != "" {
+			item.ProposedRole = apiv1.NewOptMigrationProposedRole(apiv1.MigrationProposedRole(d.ProposedRole))
+		}
+		if d.RefusalCode != "" {
+			item.RefusalCode = apiv1.NewOptMigrationRefusalCode(apiv1.MigrationRefusalCode(d.RefusalCode))
+		}
+		if d.WeakIdentity != nil {
+			item.WeakIdentity = apiv1.NewOptBool(*d.WeakIdentity)
+		}
+		if d.UnraidBoot {
+			item.UnraidBoot = apiv1.NewOptBool(true)
+		}
+		if d.HostBoot != nil {
+			item.HostBoot = apiv1.NewOptBool(*d.HostBoot)
+		}
+		out.Disks = append(out.Disks, item)
+	}
+	for _, sh := range rv.Shares {
+		out.Shares = append(out.Shares, apiv1.MigrationSharePreview{
+			Name: sh.Name, AllocationMethod: optString(sh.AllocationMethod), HighWater: sh.HighWater,
+			Include: sh.Include, Exclude: sh.Exclude, WarningCount: sh.WarningCount,
+		})
+	}
+	switch rv.Boot.Mode {
+	case "usb", "internal":
+		out.Boot.Mode = apiv1.NewOptMigrationBootMode(apiv1.MigrationBootMode(rv.Boot.Mode))
+	}
+	if rv.Boot.Mirrored != nil {
+		out.Boot.Mirrored = apiv1.NewOptBool(*rv.Boot.Mirrored)
+	}
+	if rv.Boot.SharedWithCache != nil {
+		out.Boot.SharedWithCache = apiv1.NewOptBool(*rv.Boot.SharedWithCache)
+	}
+	if rv.Capture.CapturedAt != nil {
+		out.Capture.CapturedAt = apiv1.NewOptDateTime(*rv.Capture.CapturedAt)
 	}
 	return out
 }

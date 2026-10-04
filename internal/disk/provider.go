@@ -92,9 +92,11 @@ const (
 // Filesystem, Label and FSUUID are udev-cached (ID_FS_TYPE / ID_FS_LABEL /
 // ID_FS_UUID), never probed with blkid, so List never opens a device and
 // never wakes a standby disk (doc 02 §1, §4). ContainsData is true when a
-// filesystem type is cached. LooksLikeUnraid is the conservative label
-// heuristic LooksLikeUnraidLabel documents (doc 05) — List never mounts a
-// disk to look for super.dat.
+// filesystem type is cached. LooksLikeUnraid is the layout heuristic
+// LooksLikeUnraidLayout documents (doc 05 §3) — List never mounts a disk to
+// look for super.dat. UnraidBoot is true for an Unraid 7.3 internal boot
+// device, recognised by its GPT partition names and types
+// (IsUnraidInternalBoot); like the rest it is read from udev's cache.
 //
 // CachePartitions is set only on a Boot disk: the spare partitions on it
 // that qualify to hold the cache (CachePartition). It comes from the same
@@ -122,6 +124,7 @@ type Disk struct {
 	FSUUID          string
 	ContainsData    bool
 	LooksLikeUnraid bool
+	UnraidBoot      bool
 	CachePartitions []CachePartition
 	Partitions      []BootPartition
 }

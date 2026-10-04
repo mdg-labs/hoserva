@@ -78,21 +78,78 @@ unmount_if_mounted() {
   fi
 }
 
+# Reads a loop device's backing file into LOOP_BACKING. Returns 0 when it is
+# attached, 1 when it is gone, 2 when it is attached but unreadable. A distinct
+# status, not a die: a die inside a command substitution would only end the
+# subshell and read as "gone".
+_lab_loop_backing() {  # device
+  local f="/sys/block/${1#/dev/}/loop/backing_file"
+  LOOP_BACKING=
+  [[ -e "$f" ]] || return 1
+  LOOP_BACKING=$(cat -- "$f" 2>/dev/null) && return 0
+  [[ -e "$f" ]] || return 1
+  return 2
+}
+
 # Frees one loop device whose backing file is on a lab mount: unmounts what is
 # mounted from it (deepest first), detaches it, and dies unless the kernel no
 # longer lists it. A detach that only marks a still-busy device autoclear
 # would otherwise pass for done and leave it holding its backing file's mount.
+#
+# Loop device numbers are host-global and re-used at once, and an unmount can
+# itself free a device that was already marked autoclear. So the device is
+# held open from before its backing file is compared with $path until after
+# `losetup -d`: while that descriptor is open the kernel cannot free the number,
+# so no other lab can take it and the device the check attributed to this lab is
+# the one detached (issues #578, #585). With the descriptor open, `losetup -d`
+# only marks the device autoclear; the kernel frees it a moment after the
+# descriptor closes, so the final check waits (bounded) for that. The device is
+# judged still attached only while its backing file is still $path.
+#
+# The descriptor is closed on every return and before every die; a die ends the
+# shell, which closes it as well.
 _lab_free_nested_loop() {  # device backing-path
-  local dev=$1 path=$2 t
+  local dev=$1 path=$2 t rc=0 fd i
   while IFS= read -r t; do
     [[ -n "$t" ]] || continue
     unmount_if_mounted "$t"
   done < <(findmnt --raw --noheadings --output TARGET --source "$dev" 2>/dev/null \
             | awk '{ print length($0), $0 }' | sort -rn | cut -d' ' -f2- || true)
-  losetup -d "$dev" 2>/dev/null || die "failed to detach $dev (backed by $path)"
-  if [[ -e "/sys/block/${dev#/dev/}/loop/backing_file" ]]; then
-    die "$dev (backed by $path) is still attached after losetup -d — refusing to continue (the container must stay up so the device stays reachable; free what holds it and retry)"
+  if ! { exec {fd}<"$dev"; } 2>/dev/null; then
+    _lab_loop_backing "$dev" || rc=$?
+    case $rc in
+      1) return 0 ;;
+      *) die "cannot open $dev (expected $path) — refusing to detach a device that cannot be held" ;;
+    esac
   fi
+  _lab_loop_backing "$dev" || rc=$?
+  case $rc in
+    1) exec {fd}<&-; return 0 ;;
+    2) exec {fd}<&-; die "cannot read the backing file of $dev (expected $path) — refusing to detach a device that cannot be attributed" ;;
+  esac
+  if [[ "$LOOP_BACKING" != "$path" ]]; then
+    exec {fd}<&-
+    echo "lab: $dev is now backed by $LOOP_BACKING, not $path — it is not this lab's device, not detaching it" >&2
+    return 0
+  fi
+  if ! losetup -d "$dev" 2>/dev/null; then
+    exec {fd}<&-
+    die "failed to detach $dev (backed by $path)"
+  fi
+  exec {fd}<&-
+  for ((i = 0; i < 50; i++)); do
+    rc=0
+    _lab_loop_backing "$dev" || rc=$?
+    [[ $rc -eq 1 ]] && return 0
+    if [[ $rc -eq 0 ]]; then
+      [[ "$LOOP_BACKING" == "$path" ]] || return 0
+    fi
+    sleep 0.1
+  done
+  if [[ $rc -eq 2 ]]; then
+    die "cannot read the backing file of $dev after losetup -d (expected $path) — refusing to continue"
+  fi
+  die "$dev (backed by $path) is still attached after losetup -d — refusing to continue (the container must stay up so the device stays reachable; free what holds it and retry)"
 }
 
 # Detaches every loop device whose backing file lies on one of this lab's own

@@ -153,7 +153,7 @@ func TestPrivateTempDir_ALargeMultipartUploadSpillsOnlyIntoThePrivateDirectory(t
 	system := t.TempDir()
 	t.Setenv("TMPDIR", system)
 	w := newContainersWiringHarness(t)
-	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
+	if err := wireMigration(context.Background(), w.handler, w.registry, disk.NewFakeProvider(), disk.NewFakeReadOnlyMounter(), disk.NewFakeRunner(), store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
 	}
 	if err := usePrivateTempDir(w.root); err != nil {

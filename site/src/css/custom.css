@@ -1,0 +1,24 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/geist-mono';
+
+:root {
+  --ifm-font-family-base: 'Inter Variable', system-ui, sans-serif;
+  --ifm-font-family-monospace: 'Geist Mono Variable', ui-monospace, monospace;
+}
+
+.trademark-notice {
+  font-size: 0.875rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.sidebar-coming-soon {
+  display: block;
+  padding: var(--ifm-menu-link-padding-vertical) var(--ifm-menu-link-padding-horizontal);
+  color: var(--ifm-color-emphasis-600);
+  cursor: default;
+}
+
+.sidebar-coming-soon small {
+  margin-left: 0.25rem;
+  font-style: italic;
+}

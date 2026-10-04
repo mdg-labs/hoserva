@@ -28,6 +28,7 @@ type migrateDaemon struct {
 	requests  []string
 	uploaded  string
 	unverif   string
+	fullSums  string
 	deviceReq string
 	jobStatus apiv1.JobStatus
 	refuse    *apiv1.Error
@@ -80,6 +81,7 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(f)
 		d.uploaded = string(data)
 		d.unverif = r.FormValue("unverifiedLayout")
+		d.fullSums = r.FormValue("fullChecksums")
 		if d.refuse != nil {
 			out, err := d.refuse.MarshalJSON()
 			reply(http.StatusBadRequest, out, err)
@@ -142,6 +144,12 @@ func (d *migrateDaemon) upload() (zip, unverified string) {
 	return d.uploaded, d.unverif
 }
 
+func (d *migrateDaemon) fullChecksums() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.fullSums
+}
+
 func (d *migrateDaemon) deviceRequest() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -190,6 +198,31 @@ func TestMigrateScanSendsTheUnverifiedLayoutOverride(t *testing.T) {
 	}
 	if _, override := d.upload(); override != "true" {
 		t.Errorf("unverifiedLayout sent as %q, want true", override)
+	}
+}
+
+func TestMigrateScanSendsTheFullChecksumsOption(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	d := startMigrateDaemon(t)
+	if _, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-backup", writeZip(t, "z")); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.fullChecksums(); got != "" {
+		t.Errorf("fullChecksums sent as %q without --full-checksums, want it absent", got)
+	}
+	if _, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-backup", writeZip(t, "z"), "--full-checksums"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.fullChecksums(); got != "true" {
+		t.Errorf("fullChecksums sent as %q, want true", got)
+	}
+	if _, err := runBackupCLI(t, d.sock, "migrate", "scan", "--flash-device", "/dev/sdb", "--full-checksums"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.deviceRequest(); got != `{"device":"/dev/sdb","fullChecksums":true}` {
+		t.Errorf("device request = %s, want the device and fullChecksums", got)
 	}
 }
 

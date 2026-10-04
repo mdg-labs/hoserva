@@ -26,6 +26,7 @@ import { ParityPage } from "@/routes/storage/parity";
 import { PoolOverviewPage } from "@/routes/storage/pool";
 import { WakeEventsPage } from "@/routes/storage/wake-events";
 import { StorageSetupPage } from "@/routes/storage-setup";
+import { ToolsMigratePage } from "@/routes/tools-migrate";
 import { BackupSettingsPage } from "@/routes/settings/backup";
 import { GeneralSettingsPage } from "@/routes/settings/general";
 import { NotificationsSettingsPage } from "@/routes/settings/notifications";
@@ -126,7 +127,7 @@ function AuthenticatedRoutes(): React.ReactElement {
         <Route element={<SectionLayout items={TOOLS_NAV(t)} />}>
           <Route path="tools/logs" element={<PlaceholderPage titleKey="toolsNav.logs" />} />
           <Route path="tools/terminal" element={<PlaceholderPage titleKey="toolsNav.terminal" />} />
-          <Route path="tools/migrate" element={<PlaceholderPage titleKey="toolsNav.migrate" />} />
+          <Route path="tools/migrate" element={<ToolsMigratePage />} />
           <Route path="tools/diagnostics" element={<PlaceholderPage titleKey="toolsNav.diagnostics" />} />
         </Route>
       </Routes>

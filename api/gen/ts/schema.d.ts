@@ -1812,7 +1812,7 @@ export interface paths {
         };
         /**
          * The migration session and its report
-         * @description The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows. `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if there was one, is still returned). The rows name and count; they never quote a file's content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the session's report was made from a capture that says Unraid booted from an internal device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when no such disk is attached or this daemon cannot read one.
+         * @description The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows. `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if there was one, is still returned). The rows name and count; they never quote a file's content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the session's report was made from a capture that says Unraid booted from an internal device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review step shows as data: the disk mapping table, the share preview, the boot mode and the capture's state. It comes from the same scan as the rows, which stay as they are, and is absent from a report made before it existed.
          */
         get: operations["getMigration"];
         put?: never;
@@ -1838,7 +1838,7 @@ export interface paths {
         put?: never;
         /**
          * Scan a Flash Backup zip
-         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories, SMART without waking a disk in standby, and nothing else.
+         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every data disk the capture records, through a read-only mount at a private mountpoint under the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
          */
         post: operations["startMigrationScan"];
         delete?: never;
@@ -4603,7 +4603,7 @@ export interface components {
             smartStatus?: string;
             /** @description True when udev reports an existing filesystem on the disk. */
             containsData?: boolean;
-            /** @description True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a conservative heuristic that never mounts the disk to look for `super.dat`. */
+            /** @description True when the disk is laid out the way Unraid lays out an array or pool disk (doc 05 §3): an MBR or GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role. */
             looksLikeUnraid?: boolean;
             /** @description Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when the partition is picked. */
             cachePartitions?: components["schemas"]["CachePartition"][];
@@ -5352,7 +5352,7 @@ export interface components {
         /** @enum {string} */
         MigrationVerdict: "go" | "go_with_warnings" | "no_go";
         MigrationReportRow: {
-            /** @description Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`, `parity_size`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without changing this shape. */
+            /** @description Which check the row belongs to, such as `unraid_version`, `capture`, `boot_device`, `disk_mapping`, `disk_identity`, `parity_config`, `parity_size`, `data_disks`, `disk_integrity`, `baseline`, `content_space`, `smart`, `parity_history`, `shares`, `cache_contents`, `users`, `docker_templates`, `containers`, `user_scripts`, `plugins`, `custom_config`, `settings`, `uid_99` or `sync_estimate`. Later parts of the scan add checks without changing this shape. */
             check: string;
             status: components["schemas"]["MigrationCheckStatus"];
             /** @description A slot, pool or device the row is about. Absent for the whole system. */
@@ -5368,6 +5368,103 @@ export interface components {
             unverifiedLayout: boolean;
             verdict: components["schemas"]["MigrationVerdict"];
             rows: components["schemas"]["MigrationReportRow"][];
+            review?: components["schemas"]["MigrationReview"];
+        };
+        /**
+         * @description The role the capture records for a disk. `unassigned` is a disk of this machine the capture does not name, and is given only when the capture's `disks.ini` could be read.
+         * @enum {string}
+         */
+        MigrationUnraidRole: "parity" | "data" | "cache" | "boot" | "unassigned";
+        /**
+         * @description The Hoserva role the import pre-fills (doc 05 §4 Phase C). Absent when nothing is proposed: no disk of this machine matched the slot, the disk is refused, or the capture has no `disks.ini`. A disk that is an Unraid boot device, or a parity or data slot's disk that is one, is only ever `ignore`, except that the cache pool's row of an internal boot that shares its disk with the cache (`unraidBoot`) is `cache`. The disk this machine boots from is never proposed a role as a parity or data slot's disk; as the cache pool's disk (the shared NVMe of doc 01 §6) it is `cache`.
+         * @enum {string}
+         */
+        MigrationProposedRole: "parity" | "data" | "cache" | "ignore";
+        /**
+         * @description Why the scan refused a disk, as a code beside the row's prose. `boot_device` is an Unraid boot device given a data or parity slot; `host_boot` the disk this machine boots from, given a parity or data slot (the cache pool may share it); `failed` a disk reported failed; `encrypted`, `zfs`, `unsupported_filesystem`, `filesystem_mismatch` and `no_filesystem` the disk's filesystem (Q22, Q23); `no_filesystem_node` and `duplicate_uuid` a disk Hoserva cannot mount by filesystem UUID; `multi_device_btrfs` a btrfs filesystem spanning several devices; `filesystem_unverified` a btrfs or ext4 disk whose superblock could not be read; `pending_log` a log that was never replayed; `integrity_check` a failed read-only filesystem check; `unreadable` a disk that passed its checks but could not be read completely; `weak_identity_parity` a parity disk with only a weak identity (Q21).
+         * @enum {string}
+         */
+        MigrationRefusalCode: "boot_device" | "host_boot" | "failed" | "encrypted" | "zfs" | "unsupported_filesystem" | "filesystem_mismatch" | "no_filesystem" | "no_filesystem_node" | "duplicate_uuid" | "multi_device_btrfs" | "filesystem_unverified" | "pending_log" | "integrity_check" | "unreadable" | "weak_identity_parity";
+        /** @description One row of the disk mapping table: a disk the capture names, an Unraid boot device, or a disk of this machine the capture does not name. A field that is absent is unknown, never zero, none or strong. */
+        MigrationDisk: {
+            /** @description The capture's slot or pool (`disk1`, `parity`, `pool cache`), or `boot` for a boot device. Absent for a disk the capture does not name. */
+            slot?: string;
+            /** @description The Unraid disk number of a data slot. */
+            diskNumber?: number;
+            /** @description The identity Unraid recorded for the slot. */
+            unraidId?: string;
+            unraidRole?: components["schemas"]["MigrationUnraidRole"];
+            proposedRole?: components["schemas"]["MigrationProposedRole"];
+            /** @description True when this row's disk is also an Unraid boot device, whatever the row's slot: the cache pool of an internal boot that shares its disk with the cache (proposed `cache`), or a parity or data slot that names a boot device (refused as `boot_device` and proposed `ignore`). The disk is this one row, never a second `boot` row beside it. Absent otherwise. */
+            unraidBoot?: boolean;
+            /** @description True when this row's disk is the disk this machine boots from, which is the scan's own boot-disk detection, not a second one: Debian is installed on it. False when a disk of this machine matched the row and is not that disk. Absent when no disk of this machine matched, and in a report made before the field existed; absent means unknown, never false. On the cache pool's row, true is the shared NVMe of doc 01 §6. */
+            hostBoot?: boolean;
+            /** @description This machine's device for the disk. Absent when none matched. */
+            device?: string;
+            serial?: string;
+            wwn?: string;
+            /** @description The disk's `/dev/disk/by-id` name. */
+            byId?: string;
+            model?: string;
+            /**
+             * Format: int64
+             * @description Bytes: this machine's disk, or the size Unraid recorded when none matched.
+             */
+            size?: number;
+            /** @description The filesystem this machine's disk reports. */
+            filesystem?: string;
+            /** @description True when only a weak identity identifies the disk (Q21). Absent when no disk of this machine matched. */
+            weakIdentity?: boolean;
+            /** @description Why no disk of this machine matched the slot. */
+            problem?: string;
+            /** @description Whether the scan refused the disk, as its report rows say. */
+            refused: boolean;
+            refusalCode?: components["schemas"]["MigrationRefusalCode"];
+            /** @description The refusal in words, as the report's row says it. */
+            refusal?: string;
+        };
+        MigrationSharePreview: {
+            name: string;
+            /** @description Unraid's allocation method as the share's config gives it (`fillup`, `mostfree`, `highwater`). Absent when it sets none. */
+            allocationMethod?: string;
+            /** @description True for High-water, which has no exact equivalent (Q11). */
+            highWater: boolean;
+            /** @description The disks the share is limited to. Empty means any. */
+            include: string[];
+            /** @description The disks the share is kept off. */
+            exclude: string[];
+            /** @description How many things the share's report row flags or warns about. */
+            warningCount: number;
+        };
+        /** @enum {string} */
+        MigrationBootMode: "usb" | "internal";
+        /** @description Where Unraid boots from, for the planned layout and rollback wording of doc 05 §5. Every field is absent when the capture does not say. */
+        MigrationBoot: {
+            mode?: components["schemas"]["MigrationBootMode"];
+            /** @description Whether an internal boot pool is a mirrored pair. Only for `internal`. */
+            mirrored?: boolean;
+            /** @description Whether an internal boot device also holds Unraid's cache, which is re-created, not adopted. Only for `internal`. */
+            sharedWithCache?: boolean;
+        };
+        /**
+         * @description `missing` when the source has no capture, `unreadable` when it is there and does not parse, `stale` when a template on the flash was saved after it was taken (Q89), `present` otherwise.
+         * @enum {string}
+         */
+        MigrationCaptureState: "present" | "missing" | "unreadable" | "stale";
+        MigrationCapture: {
+            state: components["schemas"]["MigrationCaptureState"];
+            /**
+             * Format: date-time
+             * @description When the capture was taken. Absent when it states no time or one that is not a timestamp; a `present` capture with no `capturedAt` was not checked for staleness.
+             */
+            capturedAt?: string;
+        };
+        MigrationReview: {
+            disks: components["schemas"]["MigrationDisk"][];
+            /** @description The shares the import would create. */
+            shares: components["schemas"]["MigrationSharePreview"][];
+            boot: components["schemas"]["MigrationBoot"];
+            capture: components["schemas"]["MigrationCapture"];
         };
         MigrationFlashDevice: {
             /** @description The disk's device path, which `startMigrationDeviceScan` takes. */
@@ -8270,6 +8367,8 @@ export interface operations {
                     file: string;
                     /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
                     unverifiedLayout?: boolean;
+                    /** @description Hash every file of every data disk for the baseline, instead of every file of 1 MiB or less plus a deterministic sample of the larger ones. It takes much longer. */
+                    fullChecksums?: boolean;
                 };
             };
         };
@@ -8300,6 +8399,8 @@ export interface operations {
                     device: string;
                     /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
                     unverifiedLayout?: boolean;
+                    /** @description Hash every file of every data disk for the baseline, as for the zip scan (`startMigrationScan`). */
+                    fullChecksums?: boolean;
                 };
             };
         };

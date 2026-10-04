@@ -4,22 +4,81 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-// unraidLabel matches Unraid's own filesystem labels for array and cache
-// members (doc 05): diskN, parity / parity2, cache / cache2. The heuristic
-// is label-only — List never mounts a disk to look for super.dat.
-var unraidLabel = regexp.MustCompile(`^(?i)(disk[0-9]+|parity[0-9]*|cache[0-9]*)$`)
+// unraidPartitionStart is the sector, in 512-byte units, at which Unraid puts
+// partition 1 of an array or pool disk, on an MBR and on a GPT disk alike (doc
+// 05 §1.1, calibrated on a real 7.3.2 server in doc 08 §2).
+const unraidPartitionStart = 64
 
-// LooksLikeUnraidLabel reports whether label is one Unraid applies to an
-// array or cache member. Empty labels and unrelated names (media, data)
-// are false.
-func LooksLikeUnraidLabel(label string) bool {
-	return unraidLabel.MatchString(strings.TrimSpace(label))
+// LooksLikeUnraidLayout reports whether a disk is laid out the way Unraid lays
+// out an array or pool disk: an MBR or GPT partition table whose partition 1
+// starts at sector 64 and holds XFS, btrfs or ext4. Unraid sets no filesystem
+// label, so the layout is the only sign there is. It is a hint for a warning,
+// never a role: a parity disk carries the same layout, and the migration takes
+// every role from the capture's disks.ini.
+func LooksLikeUnraidLayout(tableType string, part1Start int64, part1FS string) bool {
+	switch tableType {
+	case "dos", "gpt":
+	default:
+		return false
+	}
+	if part1Start != unraidPartitionStart {
+		return false
+	}
+	switch part1FS {
+	case "xfs", "btrfs", "ext4":
+		return true
+	}
+	return false
+}
+
+// Unraid 7.3's internal boot device (doc 08 §2, from mkbootable in
+// unraid/webgui): GPT partitions 1 to 4 carry these names and types. Partition
+// 4 may have any name.
+const (
+	gptTypeBIOSBoot  = "21686148-6449-6e6f-744e-656564454649"
+	gptTypeEFI       = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+	gptTypeLinuxData = "0fc63daf-8483-4772-8e79-3d69d8477de4"
+)
+
+// PartitionEntry is one GPT partition as udev's cached database reports it:
+// its number, its name (ID_PART_ENTRY_NAME, already decoded) and its type GUID
+// (ID_PART_ENTRY_TYPE).
+type PartitionEntry struct {
+	Number int
+	Name   string
+	Type   string
+}
+
+// IsUnraidInternalBoot reports whether parts are the partitions of an Unraid
+// 7.3 internal boot device: partition 1 a BIOS Boot Partition, 2 an EFI System
+// Partition, 3 an Unraid Boot Partition (the ZFS pool the flash lives on) and 4
+// a Linux data partition, with the names and type GUIDs mkbootable writes. It
+// is Unraid's own detector. A device matching only part of the layout is not
+// one, so a ZFS partition on it stays an ordinary ZFS disk.
+func IsUnraidInternalBoot(parts []PartitionEntry) bool {
+	want := map[int]struct{ name, typ string }{
+		1: {"BIOS Boot Partition", gptTypeBIOSBoot},
+		2: {"EFI System Partition", gptTypeEFI},
+		3: {"Unraid Boot Partition", gptTypeLinuxData},
+		4: {"", gptTypeLinuxData},
+	}
+	found := 0
+	for _, p := range parts {
+		w, ok := want[p.Number]
+		if !ok {
+			continue
+		}
+		if !strings.EqualFold(p.Type, w.typ) || (w.name != "" && p.Name != w.name) {
+			return false
+		}
+		found++
+	}
+	return found == len(want)
 }
 
 func (l *Lister) udevDataDir() string {
@@ -142,4 +201,31 @@ func (l *Lister) udevProps(name string) (map[string]string, bool) {
 		props[key] = val
 	}
 	return props, true
+}
+
+// layoutFacts reads what the Unraid layout heuristic and the internal-boot
+// detector need from sysfs and udev's cached database: the partition table
+// type, partition 1's start sector and filesystem, and every partition's GPT
+// name and type. Nothing is opened, so a standby disk stays asleep.
+func (l *Lister) layoutFacts(name string) (looksLikeUnraid, internalBoot bool) {
+	props, _ := l.udevProps(name)
+	tableType := props["ID_PART_TABLE_TYPE"]
+	var entries []PartitionEntry
+	var part1Start int64
+	part1FS := ""
+	for _, part := range l.partitions(name) {
+		num, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "partition"))
+		if err != nil {
+			continue
+		}
+		pp, _ := l.udevProps(part)
+		entries = append(entries, PartitionEntry{Number: int(num), Name: unescape(pp["ID_PART_ENTRY_NAME"], false, true), Type: pp["ID_PART_ENTRY_TYPE"]})
+		if num == 1 {
+			if start, err := readSysInt64(filepath.Join(l.SysBlockDir, part, "start")); err == nil {
+				part1Start = start
+			}
+			part1FS = pp["ID_FS_TYPE"]
+		}
+	}
+	return LooksLikeUnraidLayout(tableType, part1Start, part1FS), tableType == "gpt" && IsUnraidInternalBoot(entries)
 }

@@ -11,8 +11,12 @@
 #
 # usage: assemble-pages-site.sh <out-dir> <entries-dir> [docs-dir]
 #
-# If docs-dir is omitted, site/dist is used when present, otherwise the
-# placeholder page that points at the GitHub repository.
+# If docs-dir is omitted and the repository has a site/ project, `make
+# site-build` builds it and site/dist is used; the build output is never
+# taken from an earlier run. A failed build, or a build with no
+# site/dist/index.html, stops the assembly rather than publishing a
+# placeholder over the docs. Without a site/ project the placeholder page
+# that points at the GitHub repository is used.
 #
 # HOSERVA_PAGES_MAX_BYTES (default 900 MiB) is the fail-before-deploy
 # canary: 90% of GitHub Pages' 1 GB published-site cap, measured on this
@@ -39,7 +43,15 @@ if [ "$out" = / ]; then
   exit 1
 fi
 
-if [ -z "$docs_dir" ] && [ -d "$repo_root/site/dist" ]; then
+if [ -z "$docs_dir" ] && [ -f "$repo_root/site/package.json" ]; then
+  if ! make -C "$repo_root" site-build >&2; then
+    echo "assemble-pages-site.sh: 'make site-build' failed — refusing to publish without the docs" >&2
+    exit 1
+  fi
+  if [ ! -f "$repo_root/site/dist/index.html" ]; then
+    echo "assemble-pages-site.sh: 'make site-build' left no site/dist/index.html — refusing to publish without the docs" >&2
+    exit 1
+  fi
   docs_dir="$repo_root/site/dist"
 fi
 
@@ -54,7 +66,7 @@ else
 fi
 
 # /releases/ is generated here, and /catalog/ lives at catalog.hoserva.dev.
-# Wipe anything the docs root (or a future Starlight build) may have
+# Wipe anything the docs root (or a docs build) may have
 # emitted under those names, and under /apt/ (#118).
 rm -rf "$out/catalog" "$out/releases" "$out/apt"
 

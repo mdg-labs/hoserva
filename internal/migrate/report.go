@@ -41,6 +41,11 @@ const (
 	CheckUID99        = "uid_99"
 	CheckSyncEstimate = "sync_estimate"
 
+	CheckDataDisks    = "data_disks"
+	CheckIntegrity    = "disk_integrity"
+	CheckBaseline     = "baseline"
+	CheckContentSpace = "content_space"
+
 	CheckShares        = "shares"
 	CheckCache         = "cache_contents"
 	CheckUsers         = "users"
@@ -63,6 +68,10 @@ var checkTitles = []struct{ check, title string }{
 	{CheckIdentity, "Disk identity"},
 	{CheckParity, "Parity configuration"},
 	{CheckParitySize, "Parity disk size"},
+	{CheckDataDisks, "Data disk filesystems"},
+	{CheckIntegrity, "Filesystem integrity, every data disk"},
+	{CheckBaseline, "File counts, sizes and sample checksums per disk and share"},
+	{CheckContentSpace, "Free space for content files"},
 	{CheckSMART, "SMART status"},
 	{CheckParityHistory, "Last Unraid parity check"},
 	{CheckShares, "Share configuration"},
@@ -102,6 +111,13 @@ type Report struct {
 	BootMode string  `json:"bootMode,omitempty"`
 	Verdict  Verdict `json:"verdict"`
 	Rows     []Row   `json:"rows"`
+	// Baseline is what the data disks held, for the verify phase: the totals per
+	// disk and share and the file the entries are in. It is nil when no disk was
+	// read.
+	Baseline *BaselineSummary `json:"baseline,omitempty"`
+	// Review is the structured data of the Review step, from the same scan as
+	// Rows. It is nil in a report made before it existed.
+	Review *Review `json:"review,omitempty"`
 	// Import is the parsed configuration the later steps seed from. It is kept
 	// with the report in the session and is not part of the API's report.
 	Import Import `json:"import"`

@@ -48,6 +48,7 @@ web/playwright-report/
 web/node_modules/
 api/node_modules/
 web/*.tsbuildinfo
+site/node_modules/
 
 # web/dist/ (the Vite build, embedded via web/embed.go, Q8) is derived
 # output, but its .gitkeep placeholder is committed so `go:embed all:dist`
@@ -56,6 +57,11 @@ web/*.tsbuildinfo
 # writes there stays ignored.
 web/dist/*
 !web/dist/.gitkeep
+
+# site/'s Docusaurus build output (--out-dir dist, read by
+# scripts/release/assemble-pages-site.sh) and its generated working state.
+site/dist/
+site/.docusaurus/
 
 # internal/template/snapshot/ (the pinned catalog archive embedded via
 # internal/template/snapshot.go, Q65) is fetched by `make catalog-snapshot`

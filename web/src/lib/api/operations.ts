@@ -893,3 +893,43 @@ export function getCatalogSettings(signal?: AbortSignal) {
 export function putCatalogSettings(body: CatalogSettingsUpdate) {
   return hoservaClient.PUT("/settings/catalog", { body });
 }
+
+// Unraid migration (doc 05 §6).
+
+export function getMigration(signal?: AbortSignal) {
+  return hoservaClient.GET("/migrate", { signal });
+}
+
+export function forgetMigration() {
+  return hoservaClient.DELETE("/migrate");
+}
+
+// The generated body type calls the binary `file` part a string; the request
+// itself is the FormData built here, which the client passes through
+// untouched.
+export function startMigrationScan(zip: File) {
+  const form = new FormData();
+  form.append("file", zip);
+  return hoservaClient.POST("/migrate/scan", {
+    body: { file: zip.name },
+    bodySerializer: () => form,
+  });
+}
+
+export function startMigrationDeviceScan(device: string) {
+  return hoservaClient.POST("/migrate/scan/device", { body: { device } });
+}
+
+// The report is a Markdown document, not JSON: it is read as text, and an
+// error answer is still parsed as the API's JSON error.
+export function getMigrationReport(signal?: AbortSignal) {
+  return hoservaClient.GET("/migrate/report", { parseAs: "text", signal });
+}
+
+export function listMigrationTemplates(signal?: AbortSignal) {
+  return hoservaClient.GET("/migrate/templates", { signal });
+}
+
+export function getMigrationTemplate(name: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/migrate/templates/{name}", { params: { path: { name } }, signal });
+}

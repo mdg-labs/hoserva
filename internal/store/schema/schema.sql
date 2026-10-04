@@ -883,8 +883,9 @@ CREATE TABLE registry_credentials (
 -- Flash Backup zip the latest finished scan read, as a file name inside
 -- <state dir>/migrate (never a path a client chose), its size and when it was
 -- uploaded; report is that scan's report as JSON. scan_* is a scan that has not
--- finished: scan_file is its staged upload, scan_error is empty while it runs
--- and says why it stopped otherwise. Every column is empty ('' or 0) when it
+-- finished: scan_file is its staged upload, scan_unverified_layout and
+-- scan_full_checksums are the options it was started with, scan_error is empty
+-- while it runs and says why it stopped otherwise. Every column is empty ('' or 0) when it
 -- does not apply. The zip itself is never in the database or in a config
 -- archive: it holds secrets.
 CREATE TABLE migration_session (
@@ -897,5 +898,6 @@ CREATE TABLE migration_session (
     scan_size INTEGER NOT NULL DEFAULT 0,
     scan_received_at TEXT NOT NULL DEFAULT '',
     scan_unverified_layout INTEGER NOT NULL DEFAULT 0 CHECK (scan_unverified_layout IN (0, 1)),
-    scan_error TEXT NOT NULL DEFAULT ''
+    scan_error TEXT NOT NULL DEFAULT '',
+    scan_full_checksums INTEGER NOT NULL DEFAULT 0 CHECK (scan_full_checksums IN (0, 1))
 ) STRICT;

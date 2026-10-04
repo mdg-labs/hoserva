@@ -29,7 +29,7 @@ assert_no_path() {
   fi
 }
 assert_contains() {
-  if ! grep -Fq "$2" "$1"; then
+  if ! grep -Fq -- "$2" "$1"; then
     note "FAIL: $1 does not contain '$2' ($3)"
     fail=1
   fi
@@ -44,6 +44,15 @@ done
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+# assemble-pages-site.sh locates the repository from its own path, so the
+# cases below run a copy inside a scratch repository: whether the real
+# checkout has a site/ project, or a site/dist from an earlier build, must not
+# decide which root a case sees.
+fake_repo="$work/repo"
+mkdir -p "$fake_repo/scripts/release"
+cp "$script_dir/assemble-pages-site.sh" "$script_dir/assemble-release-index.sh" "$script_dir/pages-placeholder.html" "$fake_repo/scripts/release/"
+assemble="$fake_repo/scripts/release/assemble-pages-site.sh"
 
 write_entry() {
   local dest="$1" tag="$2" version="$3" channel="$4"
@@ -65,7 +74,7 @@ empty_entries="$work/empty-entries"
 mkdir -p "$empty_entries"
 out0="$work/out0"
 mkdir -p "$out0"
-"$script_dir/assemble-pages-site.sh" "$out0" "$empty_entries"
+"$assemble" "$out0" "$empty_entries"
 assert_file "$out0/index.html" "placeholder"
 assert_contains "$out0/index.html" "https://github.com/mdg-labs/hoserva" "placeholder points at the repository"
 assert_contains "$out0/index.html" "https://hoserva.dev/releases/index.json" "permanent release-index URL"
@@ -102,7 +111,7 @@ echo 'pool' >"$docs/apt/pool/x.deb"
 
 out1="$work/out1"
 mkdir -p "$out1"
-"$script_dir/assemble-pages-site.sh" "$out1" "$entries" "$docs"
+"$assemble" "$out1" "$entries" "$docs"
 assert_contains "$out1/index.html" "DOCS-ROOT" "docs root kept"
 assert_contains "$out1/getting-started/index.html" "getting-started" "docs subtree kept"
 assert_no_path "$out1/catalog" "a docs catalog/ tree must not be published at /catalog/"
@@ -112,8 +121,60 @@ assert_eq "$(python3 -c 'import json,sys; c=json.load(sys.stdin)["channels"]; pr
   "v0.10.0 v0.9.0 v0.10.0-beta.12 v0.10.0-beta.2" \
   "channels grouped and version-sorted newest first"
 
+# With a site/ project and no docs-dir argument, the site is built (never
+# taken from an earlier site/dist) and its output is the docs root.
+site_bin="$work/site-bin"
+mkdir -p "$site_bin" "$fake_repo/site/dist"
+echo '{}' >"$fake_repo/site/package.json"
+echo 'STALE-DIST' >"$fake_repo/site/dist/index.html"
+cat >"$site_bin/make" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+# Fixture make: only `make -C <repo> site-build`, which writes the build
+# output the way `npm run build` does.
+printf '%s\n' "$*" >>"${HOSERVA_TEST_MAKE_LOG:?}"
+[ "${1:-}" = "-C" ] && [ "${3:-}" = "site-build" ] || { echo "make mock: unexpected invocation $*" >&2; exit 1; }
+case "${HOSERVA_TEST_MAKE_MODE:-ok}" in
+  ok) rm -rf "$2/site/dist"; mkdir -p "$2/site/dist"; echo 'BUILT-DOCS' >"$2/site/dist/index.html" ;;
+  fail) exit 1 ;;
+  empty) rm -rf "$2/site/dist"; mkdir -p "$2/site/dist" ;;
+esac
+MOCK
+chmod +x "$site_bin/make"
+
+out3="$work/out3"
+mkdir -p "$out3"
+HOSERVA_TEST_MAKE_LOG="$work/make.log" PATH="$site_bin:$PATH" "$assemble" "$out3" "$empty_entries"
+assert_contains "$out3/index.html" "BUILT-DOCS" "a site/ project is built and used as the docs root"
+assert_contains "$work/make.log" "-C $fake_repo site-build" "the site is built through make site-build"
+assert_file "$out3/releases/index.json" "release index next to built docs"
+
+out4="$work/out4"
+mkdir -p "$out4"
+if HOSERVA_TEST_MAKE_LOG="$work/make.log" HOSERVA_TEST_MAKE_MODE=fail PATH="$site_bin:$PATH" "$assemble" "$out4" "$empty_entries" >/dev/null 2>"$work/build.err"; then
+  note "FAIL: assemble-pages-site.sh should fail when the site build fails"
+  fail=1
+elif ! grep -q "site-build' failed" "$work/build.err"; then
+  note "FAIL: a failed site build should say so"
+  fail=1
+fi
+assert_no_path "$out4/index.html" "no placeholder over docs when the build fails"
+
+out5="$work/out5"
+mkdir -p "$out5"
+if HOSERVA_TEST_MAKE_LOG="$work/make.log" HOSERVA_TEST_MAKE_MODE=empty PATH="$site_bin:$PATH" "$assemble" "$out5" "$empty_entries" >/dev/null 2>"$work/empty.err"; then
+  note "FAIL: assemble-pages-site.sh should fail when the build leaves no index.html"
+  fail=1
+elif ! grep -q "left no site/dist/index.html" "$work/empty.err"; then
+  note "FAIL: a build with no index.html should say so"
+  fail=1
+fi
+assert_no_path "$out5/index.html" "no placeholder over docs when the build output is empty"
+
+rm -rf "$fake_repo/site"
+
 # A fourth argument is the removed catalog-dir position and is refused.
-if "$script_dir/assemble-pages-site.sh" "$work/out-extra" "$empty_entries" "$docs" "$work/extra" >/dev/null 2>&1; then
+if "$assemble" "$work/out-extra" "$empty_entries" "$docs" "$work/extra" >/dev/null 2>&1; then
   note "FAIL: assemble-pages-site.sh should refuse more than three arguments"
   fail=1
 fi
@@ -121,7 +182,7 @@ fi
 # 900 MiB canary: a tiny limit must fail before anything would deploy.
 out2="$work/out2"
 mkdir -p "$out2"
-if HOSERVA_PAGES_MAX_BYTES=1 "$script_dir/assemble-pages-site.sh" "$out2" "$empty_entries" >/dev/null 2>"$work/size.err"; then
+if HOSERVA_PAGES_MAX_BYTES=1 "$assemble" "$out2" "$empty_entries" >/dev/null 2>"$work/size.err"; then
   note "FAIL: assemble-pages-site.sh should refuse an artifact over HOSERVA_PAGES_MAX_BYTES"
   fail=1
 else

@@ -96,8 +96,17 @@ func TestMockMigration_StartsEmptyExceptInTheMigrationPendingScenario(t *testing
 	h, _ := newHandler("migration-pending")
 	m, _ := h.GetMigration(ctx)
 	report, ok := m.Report.Get()
-	if !ok || len(report.Rows) == 0 || report.Verdict != apiv1.MigrationVerdictGoWithWarnings {
-		t.Fatalf("the migration-pending session has no completed report: %+v", m)
+	if !ok || len(report.Rows) == 0 || report.Verdict != apiv1.MigrationVerdictNoGo {
+		t.Fatalf("the migration-pending session has no completed report that refuses a disk: %+v", m)
+	}
+	refused := ""
+	for _, row := range report.Rows {
+		if row.Status == apiv1.MigrationCheckStatusRefuse && row.Check == "disk_integrity" {
+			refused = row.Subject.Or("")
+		}
+	}
+	if refused != "disk3" {
+		t.Errorf("the migration-pending report refuses %q, want its disk3 with a failed filesystem check", refused)
 	}
 	doc, err := h.GetMigrationReport(ctx)
 	if err != nil {
@@ -124,7 +133,7 @@ func TestMockMigration_TheReportIncludesTheConfigurationInventory(t *testing.T) 
 			flagged[row.Subject.Or("")] = true
 		}
 	}
-	for _, check := range []string{"parity_history", "shares", "cache_contents", "users", "docker_templates", "containers", "user_scripts", "plugins", "custom_config", "settings"} {
+	for _, check := range []string{"data_disks", "disk_integrity", "baseline", "content_space", "parity_history", "shares", "cache_contents", "users", "docker_templates", "containers", "user_scripts", "plugins", "custom_config", "settings"} {
 		if _, ok := checks[check]; !ok {
 			t.Errorf("the report has no %s row", check)
 		}
@@ -331,5 +340,251 @@ func TestMockMigration_TemplatePreviews(t *testing.T) {
 	empty, _ := newHandler("healthy")
 	if _, err := empty.ListMigrationTemplates(ctx); err == nil {
 		t.Error("ListMigrationTemplates answered with no report")
+	}
+}
+
+func servedReview(t *testing.T, h apiv1.Handler) apiv1.MigrationReview {
+	t.Helper()
+	m, err := h.GetMigration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, ok := m.Report.Get()
+	review, hasReview := report.Review.Get()
+	if !ok || !hasReview {
+		t.Fatalf("GetMigration has no report with a review: %+v", m)
+	}
+	return review
+}
+
+// The migration-pending session carries the states the Review step's tests
+// need: a refused disk, a weak-identity disk, a slot with no disk, a boot
+// device, a disk the capture does not name, a High-water share and a fresh
+// capture of a USB-booted server.
+func TestMockMigration_TheSeededReviewHasTheStatesTheReviewStepNeeds(t *testing.T) {
+	h, _ := newHandler("migration-pending")
+	review := servedReview(t, h)
+
+	bySlot := map[string]apiv1.MigrationDisk{}
+	var unnamed []apiv1.MigrationDisk
+	for _, d := range review.Disks {
+		if slot, ok := d.Slot.Get(); ok && slot != "boot" {
+			bySlot[slot] = d
+		} else if !ok {
+			unnamed = append(unnamed, d)
+		}
+	}
+	refused := bySlot["disk3"]
+	if !refused.Refused || refused.RefusalCode.Or("") != apiv1.MigrationRefusalCodeIntegrityCheck || !strings.Contains(refused.Refusal.Or(""), "disk3 is not adopted") || refused.ProposedRole.Set {
+		t.Errorf("disk3 = %+v, want refused as integrity_check and proposed no role", refused)
+	}
+	if weak := bySlot["disk4"]; !weak.WeakIdentity.Value || !weak.WeakIdentity.Set || weak.Refused || weak.ProposedRole.Or("") != apiv1.MigrationProposedRoleData {
+		t.Errorf("disk4 = %+v, want a weak identity that is not refused and is proposed data", weak)
+	}
+	if missing := bySlot["disk2"]; missing.Device.Set || missing.WeakIdentity.Set || missing.Problem.Or("") == "" || missing.Refused || missing.ProposedRole.Set {
+		t.Errorf("disk2 = %+v, want a slot with no disk here and no proposed role", missing)
+	}
+	if p := bySlot["parity"]; p.UnraidRole.Or("") != apiv1.MigrationUnraidRoleParity || p.ProposedRole.Or("") != apiv1.MigrationProposedRoleParity || p.Filesystem.Or("") != "xfs" {
+		t.Errorf("parity = %+v", p)
+	}
+	var stick *apiv1.MigrationDisk
+	for i, d := range review.Disks {
+		if d.Slot.Or("") == "boot" {
+			stick = &review.Disks[i]
+		}
+	}
+	if stick == nil || stick.Device.Or("") != mockFlashDevice || stick.ProposedRole.Or("") != apiv1.MigrationProposedRoleIgnore {
+		t.Errorf("the stick = %+v, want a boot row that can only be ignored", stick)
+	}
+	if len(unnamed) != 1 || unnamed[0].UnraidRole.Or("") != apiv1.MigrationUnraidRoleUnassigned {
+		t.Errorf("unnamed disks = %+v, want one unassigned", unnamed)
+	}
+	for _, d := range review.Disks {
+		if d.HostBoot.Set != d.Device.Set || d.HostBoot.Value {
+			t.Errorf("%+v: hostBoot is known and false exactly where a disk of this machine matched, since the seeded machine boots from none of them", d)
+		}
+	}
+
+	var highWater, plain int
+	for _, sh := range review.Shares {
+		if sh.HighWater {
+			highWater++
+			if sh.Name != "media" || sh.AllocationMethod.Or("") != "highwater" || sh.WarningCount != 1 {
+				t.Errorf("High-water share = %+v", sh)
+			}
+		} else {
+			plain++
+		}
+	}
+	if highWater != 1 || plain != 2 {
+		t.Errorf("shares = %+v, want one High-water and two others", review.Shares)
+	}
+	if review.Boot.Mode.Or("") != apiv1.MigrationBootModeUsb || review.Boot.Mirrored.Set || review.Boot.SharedWithCache.Set {
+		t.Errorf("boot = %+v, want usb with no layout flags", review.Boot)
+	}
+	if review.Capture.State != apiv1.MigrationCaptureStatePresent || !review.Capture.CapturedAt.Set {
+		t.Errorf("capture = %+v, want present at a time", review.Capture)
+	}
+
+	// The prose rows say the same: the refused disk's refusal is the row's text.
+	m, _ := h.GetMigration(context.Background())
+	report, _ := m.Report.Get()
+	for _, row := range report.Rows {
+		if row.Check == "disk_integrity" && row.Subject.Or("") == "disk3" && row.Detail != refused.Refusal.Or("") {
+			t.Errorf("disk3's refusal %q is not the row's %q", refused.Refusal.Or(""), row.Detail)
+		}
+	}
+}
+
+func contractFlashZipWithTimes(version string, files map[string]string, times map[string]time.Time) []byte {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range contractFlashFiles(version, func(f map[string]string) {
+		for n, c := range files {
+			f[n] = c
+		}
+	}) {
+		hdr := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: times[name]}
+		w, err := zw.CreateHeader(hdr)
+		if err != nil {
+			panic(err)
+		}
+		_, _ = w.Write([]byte(content))
+	}
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+// A scanned zip gives the boot mode and the capture's state production gives it:
+// internal boot with its layout (shared with the cache or on a device of its
+// own, mirrored or not), and a capture that is missing, unreadable, stale or
+// present, with no stick on offer once Unraid booted internally.
+func TestMockMigration_AScannedZipGivesTheBootModeAndCaptureStateProductionGives(t *testing.T) {
+	const tmpl = "config/plugins/dockerMan/templates-user/my-notes.xml"
+	captured := time.Date(2026, 10, 3, 7, 2, 18, 0, time.UTC)
+	capture := func(boot string) map[string]string {
+		return map[string]string{"config/hoserva/capture.json": `{"captured_at":"` + captured.Format(time.RFC3339) + `","boot":` + boot + `}`}
+	}
+	internal := func(mirrored, shared bool) string {
+		return fmt.Sprintf(`{"mode":"internal","filesystem":"zfs","devices":[{"name":"nvme0n1","serial":"BOOT1","model":"Boot SSD","size":"500G"}],"mirrored":%v,"shared_with_data_pool":%v}`, mirrored, shared)
+	}
+	yes, no := true, false
+	for _, tc := range []struct {
+		name     string
+		files    map[string]string
+		times    map[string]time.Time
+		mode     apiv1.MigrationBootMode
+		mirrored *bool
+		shared   *bool
+		state    apiv1.MigrationCaptureState
+	}{
+		{"usb", capture(`{"mode":"usb","devices":[]}`), nil, apiv1.MigrationBootModeUsb, nil, nil, apiv1.MigrationCaptureStatePresent},
+		{"internal on its own device", capture(internal(false, false)), nil, apiv1.MigrationBootModeInternal, &no, &no, apiv1.MigrationCaptureStatePresent},
+		{"internal sharing its disk with the cache", capture(internal(false, true)), nil, apiv1.MigrationBootModeInternal, &no, &yes, apiv1.MigrationCaptureStatePresent},
+		{"internal mirrored pair", capture(internal(true, false)), nil, apiv1.MigrationBootModeInternal, &yes, &no, apiv1.MigrationCaptureStatePresent},
+		{"stale capture", func() map[string]string {
+			f := capture(`{"mode":"usb"}`)
+			f[tmpl] = "<Container><Name>notes</Name></Container>"
+			return f
+		}(), map[string]time.Time{tmpl: captured.Add(time.Hour)}, apiv1.MigrationBootModeUsb, nil, nil, apiv1.MigrationCaptureStateStale},
+		{"missing capture", nil, nil, "", nil, nil, apiv1.MigrationCaptureStateMissing},
+		{"unreadable capture", map[string]string{"config/hoserva/capture.json": "{not json"}, nil, "", nil, nil, apiv1.MigrationCaptureStateUnreadable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newHandler("healthy")
+			if _, err := h.StartMigrationScan(context.Background(), contractScanRequest(contractFlashZipWithTimes("7.3.2", tc.files, tc.times), false)); err != nil {
+				t.Fatal(err)
+			}
+			review := servedReview(t, h)
+			if review.Boot.Mode.Or("") != tc.mode || review.Boot.Mirrored.Set != (tc.mirrored != nil) || review.Boot.SharedWithCache.Set != (tc.shared != nil) {
+				t.Errorf("boot = %+v, want mode %q mirrored %v shared %v", review.Boot, tc.mode, tc.mirrored, tc.shared)
+			}
+			if tc.mirrored != nil && review.Boot.Mirrored.Value != *tc.mirrored || tc.shared != nil && review.Boot.SharedWithCache.Value != *tc.shared {
+				t.Errorf("boot = %+v, want mirrored %v shared %v", review.Boot, *tc.mirrored, *tc.shared)
+			}
+			if review.Capture.State != tc.state {
+				t.Errorf("capture = %+v, want %s", review.Capture, tc.state)
+			}
+			if review.Capture.CapturedAt.Set != (tc.state == apiv1.MigrationCaptureStatePresent || tc.state == apiv1.MigrationCaptureStateStale) {
+				t.Errorf("capture = %+v: the time is given when the capture was read, and only then", review.Capture)
+			}
+
+			// The stick is attached whatever the boot mode, as production lists any
+			// stick it finds. An internal boot's device is a boot row of its own,
+			// unless it is shared with the cache, when it is the pool's row marked
+			// as the boot device instead; no device is in the table twice.
+			var sticks, boots int
+			seen := map[string]int{}
+			var pool apiv1.MigrationDisk
+			for _, d := range review.Disks {
+				if dev := d.Device.Or(""); dev != "" {
+					seen[dev]++
+				}
+				if d.Slot.Or("") == "pool cache" {
+					pool = d
+				}
+				if d.UnraidRole.Or("") == apiv1.MigrationUnraidRoleBoot {
+					boots++
+					if d.Device.Or("") == mockFlashDevice {
+						sticks++
+					}
+				}
+			}
+			for dev, n := range seen {
+				if n != 1 {
+					t.Errorf("%s is in the table %d times: %+v", dev, n, review.Disks)
+				}
+			}
+			internal := tc.mode == apiv1.MigrationBootModeInternal
+			shared := tc.shared != nil && *tc.shared
+			wantBoots := 1
+			if internal && !shared {
+				wantBoots = 2
+			}
+			if sticks != 1 || boots != wantBoots {
+				t.Errorf("boot rows = %d (%d the stick), want %d with the stick always there: %+v", boots, sticks, wantBoots, review.Disks)
+			}
+			for _, d := range review.Disks {
+				wantBoot := internal && shared && d.Slot.Or("") == "pool cache"
+				if d.HostBoot.Set != d.Device.Set || d.HostBoot.Value != wantBoot {
+					t.Errorf("%+v: hostBoot is true only on the shared NVMe's row, and known wherever a disk matched", d)
+				}
+			}
+			if internal && shared {
+				if pool.Serial.Or("") != "BOOT1" || !pool.UnraidBoot.Value || pool.ProposedRole.Or("") != apiv1.MigrationProposedRoleCache || !pool.Device.Set {
+					t.Errorf("pool cache = %+v, want the attached boot disk, proposed cache and marked as the Unraid boot device", pool)
+				}
+			} else if pool.UnraidBoot.Set {
+				t.Errorf("pool cache = %+v, marked as the boot device without sharing its disk", pool)
+			}
+			if internal && !shared {
+				for _, d := range review.Disks {
+					if d.Serial.Or("") == "BOOT1" && (!d.Device.Set || d.ProposedRole.Or("") != apiv1.MigrationProposedRoleIgnore) {
+						t.Errorf("the boot device = %+v, want it attached and only ignored", d)
+					}
+				}
+			}
+		})
+	}
+}
+
+// A device scan answers as the seeded session does, and forgetting the session
+// leaves no review behind.
+func TestMockMigration_ADeviceScanAndAForgetKeepTheReviewConsistent(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("healthy")
+	if _, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice}); err != nil {
+		t.Fatal(err)
+	}
+	if review := servedReview(t, h); review.Boot.Mode.Or("") != apiv1.MigrationBootModeUsb || review.Capture.State != apiv1.MigrationCaptureStatePresent {
+		t.Errorf("review after a stick scan = %+v", review)
+	}
+	if err := h.ForgetMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := h.GetMigration(ctx); m.Report.Set {
+		t.Errorf("a forgotten session still has a report: %+v", m)
 	}
 }

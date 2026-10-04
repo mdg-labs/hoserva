@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88, Q89 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88, Q89, Q90 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -49,10 +49,23 @@ A CLA signals an intent to relicense, which undercuts AGPL's trust signal exactl
 Enforced, not just documented: `make hooks-install` (a repo-tracked `prepare-commit-msg` hook) signs off every commit automatically for a human clone or an `orchestrate` scratch clone, and CI's `dco` job rejects a push or pull request carrying a commit without one. Every pre-existing commit on `main` and `beta` was retroactively signed off the same way (a one-time history rewrite, done directly rather than through the issue tracker).
 
 ### Q3 — Where the public docs site lives
-**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 05 §7, doc 06 §9, doc 12 §2, §7
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 05 §7, doc 06 §9, doc 12 §2, §7, Q90
 
-**Default: `site/` at the repo root (Astro Starlight); design docs stay in `docs/internal/`.**
-Doc 12 put the Starlight site at `docs/`, but `docs/` already holds these internal design docs. A Node project mixed into the design-doc folder makes both harder to split out later (doc 12 §7).
+**Default: `site/` at the repo root (Docusaurus); design docs stay in `docs/internal/`.**
+`docs/` already holds these internal design docs, so the site cannot live there: a Node project mixed into the design-doc folder makes both harder to split out later (doc 12 §7). Docusaurus is chosen over Astro Starlight because versioned docs are a requirement (Q90) and Docusaurus has them natively, and its React matches `web/`'s stack.
+
+### Q90 — Versioned documentation
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §7, doc 12 §2, Q3, Q63, Q66
+
+**Default: every stable minor release gets one docs snapshot, kept in the repo, and the current docs are published beside them.**
+- **One snapshot per stable minor.** `npx docusaurus docs:version X.Y`, run in the release-prep commit on `dev` for the first stable `vX.Y.0`, writes `site/versioned_docs/version-X.Y/`, `site/versioned_sidebars/version-X.Y-sidebars.json` and `site/versions.json`, and reaches `main` through the normal `dev` to `main` pull request before the tag. A stable patch release (`vX.Y.Z`, Z > 0) gets no new snapshot; it updates `version-X.Y` in place if something user-facing changed. Beta pre-release tags are never snapshotted: their users read the current docs.
+- **Before the first stable release** there are no versions. The current docs are the whole site, at the root, with the "unreleased" banner.
+- **Once a version exists** the root serves the latest stable version. The current docs (`site/docs/`, that is `main`) are served at `/next/` with the "unreleased" banner and `noindex`. Older versions carry the "unmaintained" banner, and the navbar has a version dropdown.
+- **Docs fixes** land in `site/docs/`, and also in the latest stable snapshot when they correct something wrong there. Older snapshots are not maintained.
+- **All versions stay published** until build time or the 900 MiB Pages canary (`scripts/release/assemble-pages-site.sh`) forces the oldest to be dropped: it is removed from `site/versions.json` and its `versioned_docs/` and `versioned_sidebars/` files are deleted (git history keeps them). Not with `onlyIncludeVersions`, which keeps the version in `versions.json` unbuilt and so fails the layout check `make site-build` runs.
+- **Pages needs no versioning logic.** One build of `main` contains every version, and `pages.yml` always assembles from `main`'s tree (`assemble-pages-site.sh` runs `make site-build` and publishes `site/dist`), so an edit to an old snapshot goes live on the next push to `main`.
+
+Fix old versions with a commit, not a release: snapshots kept in the repo can be corrected by an ordinary commit, where building each version's docs from its release tag would need a new Hoserva release to change them. `make site-build` proves the layout above, including the "a version exists" layout on a throwaway snapshot made in a temporary copy of `site/`. The check that refuses a stable tag without its snapshot belongs to the release workflow and is tracked as its own issue.
 
 ---
 
@@ -120,7 +133,7 @@ D3 promises a single static binary. `mattn/go-sqlite3` needs CGO, which breaks s
 | TypeScript client for the web UI | openapi-typescript `7.13.0` (types) with openapi-fetch `0.17.0` (runtime wrapper), pinned in `api/package.json` |
 | Spec lint, including "every operation has an `operationId` and an `x-hoserva-role`" | Spectral `6.16.3` (Apache-2.0) with a Hoserva ruleset (`api/.spectral.yaml`) |
 | Breaking-change check against the last release | oasdiff (Apache-2.0) `v1.32.1`, pinned via a `go.mod` `tool` directive; skipped cleanly until a `v*` release tag exists |
-| API reference on the docs site | starlight-openapi (MIT) |
+| API reference on the docs site | docusaurus-openapi-docs (MIT) |
 
 **Confirmed, not assumed (issue #17):** generating from the real spec (jobs, cancel, resume, the job log download and the shared `Error` schema) with ogen v1.24.0 produces a `Handler` interface and Go client that compile clean, with a handler missing a method — or one whose signature no longer matches the spec — failing `go build`, not a test (demonstrated in `internal/api`, doc 01 §5). ogen's own docs say only SSE *client* generation is supported; generating a spec with a `text/event-stream` response confirmed this the hard way — generation for the *entire* spec fails outright ("sse server response encoding not implemented") unless that one operation is named in `ogen.yml`'s `generator.ignore_not_implemented`, and doing so drops the operation, and every schema only it reaches, from **both** the generated server and the generated client, not just the server half (confirmed: `api/gen/go/oas_schemas_gen.go` has no `Event` type when `streamEvents` is the only reference to it, even though `generateResponses` runs, and registers the schema, before the operation is discarded — a scratch spec with a schema unused by any surviving operation confirmed the same pruning independently of SSE). There is no ogen option to generate a client for one operation independently of its server, and no option to force an otherwise-unreferenced component schema into the output.
 
@@ -339,6 +352,8 @@ Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse ma
 
 **Default: adopt any single-device XFS, btrfs or ext4 data disk, each after its own read-only check (`xfs_repair -n`, `btrfs check --readonly` on the unmounted device, `e2fsck -n`). A disk that fails its check is refused. ZFS-formatted array disks and multi-device btrfs members are refused.**
 mergerfs and SnapRAID are filesystem-agnostic, so a single-device btrfs or ext4 disk costs one fixture each. ZFS needs OpenZFS as a dependency, which is out of scope (doc 00 §4). Doc 08's "refuse a filesystem that reports errors" extends to every filesystem, not just XFS.
+
+**Reading the disks (doc 05 §3).** A disk that passes its check is mounted read-only to record the verify baseline: XFS with `ro,norecovery`, ext4 with `ro,noload`, btrfs with `ro,rescue=nologreplay`, never a plain `-o ro` mount, which rewrites the XFS superblock and log (S2) and replays a btrfs tree log. A dirty XFS log fails `xfs_repair -n` and is refused, as is a btrfs disk with a pending tree log (`log_root` not zero) and an ext4 disk with `needs_recovery`; replaying it with explicit consent stays a product decision nobody has asked for. The baseline's content hashes cover **every file of 1 MiB or less plus a deterministic 1 in 100 (at least 200) of the larger files per disk**, chosen by a stable hash of the path and stored with the baseline, and `--full-checksums` hashes everything. Sizes and counts are recorded for every file whatever is hashed.
 
 **Unraid 7.3 internal boot devices are not data disks (doc 08 §2, "Unraid 7.3 internal boot").** The ZFS refusal above is for array and pool data disks. A device whose GPT partitions 1 to 4 carry Unraid's internal-boot names and types (`BIOS Boot Partition`, `EFI System Partition`, `Unraid Boot Partition`, and a Linux data partition) is classed as Unraid's boot device before any filesystem check, read from the partition table in the udev database without opening a partition. Its partition 3 is a `zfs_member` by design, so such a device is **never refused as a ZFS data disk and never adopted**, whether it is a dedicated device, one half of a mirrored pair, or a boot + data device; partition 4 of a boot + data device is Unraid's cache, re-created like every cache. A device that matches only part of the layout is not classed this way, and its ZFS partition is refused here like any other. After migration the device is offered like an unassigned disk, labelled as holding Unraid's boot pool: a dedicated or mirrored boot device needs the usual whole-device wipe confirmation, and for a boot + data device step 17 formats partition 4 only, leaving partitions 1 to 3 until the user asks to erase them. Hoserva never installs or writes its own boot device (doc 01 §6), so the recommended default's third clause, "offered as a target for Hoserva's boot device", does not apply; the rest is confirmed. The rule is Unraid's own detector (`unraid/api`, `disks.service.ts`), checked in the lab against synthetic images including two negative controls; no real internal-boot server was available (D20).
 

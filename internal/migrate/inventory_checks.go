@@ -45,7 +45,11 @@ func addUnique(m map[string][]string, key, v string) {
 
 func buildDirIndex(ctx context.Context, dirs DiskDirs, members []*member) (*dirIndex, error) {
 	d := &dirIndex{data: map[string][]string{}, pools: map[string][]string{}}
-	if dirs == nil {
+	anyRead := false
+	for _, m := range members {
+		anyRead = anyRead || m.dirsRead
+	}
+	if dirs == nil && !anyRead {
 		return d, nil
 	}
 	d.read = true
@@ -59,13 +63,26 @@ func buildDirIndex(ctx context.Context, dirs DiskDirs, members []*member) (*dirI
 			d.problems = append(d.problems, fmt.Sprintf("%s: %s", m.subject, m.problem))
 			continue
 		}
-		names, err := dirs.TopLevelDirs(ctx, *m.disk)
-		if cerr := ctx.Err(); cerr != nil {
-			return nil, cerr
-		}
-		if err != nil {
-			d.problems = append(d.problems, fmt.Sprintf("%s: %v", m.subject, err))
+		var names []string
+		switch {
+		case m.dirsRead:
+			names = m.dirs
+		case m.refusal != "":
+			d.problems = append(d.problems, fmt.Sprintf("%s: it is not adopted, so its directories were not read", m.subject))
 			continue
+		case dirs == nil:
+			d.problems = append(d.problems, fmt.Sprintf("%s: its directories were not read", m.subject))
+			continue
+		default:
+			var err error
+			names, err = dirs.TopLevelDirs(ctx, *m.disk)
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, cerr
+			}
+			if err != nil {
+				d.problems = append(d.problems, fmt.Sprintf("%s: %v", m.subject, err))
+				continue
+			}
 		}
 		listed++
 		target := d.data
@@ -167,14 +184,35 @@ func checkShares(r *Report, src FlashSource, imp *Import, dirs *dirIndex) error 
 		r.add(CheckShares, StatusInfo, o, "The config has no share behind it: no top-level directory of this name is on any matched disk. It is an orphan, and is not carried over.")
 	}
 	for _, sh := range shares {
-		addShareRow(r, sh, dirs)
+		warnings := addShareRow(r, sh, dirs)
+		r.Review.Shares = append(r.Review.Shares, sh.preview(warnings))
 	}
 	return nil
 }
 
-func addShareRow(r *Report, sh Share, dirs *dirIndex) {
+// preview is the share as the review's table shows it; warnings is what its
+// report row flagged.
+func (sh Share) preview(warnings int) SharePreview {
+	return SharePreview{
+		Name: sh.Name, AllocationMethod: sh.Allocator, HighWater: sh.Allocator == "highwater",
+		Include: nonNil(sh.Include), Exclude: nonNil(sh.Exclude), WarningCount: warnings,
+	}
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// addShareRow reports the share and returns how many things it flagged or
+// warned about.
+func addShareRow(r *Report, sh Share, dirs *dirIndex) int {
 	st := StatusInfo
+	warnings := 0
 	worse := func(s Status) {
+		warnings++
 		if s == StatusFlag || (s == StatusWarn && st == StatusInfo) {
 			st = s
 		}
@@ -234,11 +272,12 @@ func addShareRow(r *Report, sh Share, dirs *dirIndex) {
 		}
 	}
 	r.add(CheckShares, st, sh.Name, "%s.", strings.Join(parts, "; "))
+	return warnings
 }
 
 // checkCache reports what a re-created cache would lose, from the share configs,
 // the capture and the Docker and VM Manager settings.
-func checkCache(r *Report, src FlashSource, f *Flash, imp *Import, dirs *dirIndex) error {
+func checkCache(r *Report, src FlashSource, f *Flash, imp *Import, dirs *dirIndex, size func(share string) string) error {
 	dockerCfg, err := readCfg(r, CheckCache, src, "config/docker.cfg")
 	if err != nil {
 		return err
@@ -258,7 +297,7 @@ func checkCache(r *Report, src FlashSource, f *Flash, imp *Import, dirs *dirInde
 	if p := strings.Split(strings.Trim(appdataPath, "/"), "/"); len(p) >= 3 && p[0] == "mnt" {
 		appdata = p[2]
 	}
-	addAppdataRow(r, byName[appdata], appdata, appdataPath, byName, dirs)
+	addAppdataRow(r, byName[appdata], appdata, appdataPath, byName, dirs, size(appdata))
 
 	var names []string
 	for n := range byName {
@@ -306,7 +345,7 @@ func (c *cfgFile) flat() map[string]string {
 	return c.section("")
 }
 
-func addAppdataRow(r *Report, sh Share, name, appdataPath string, byName map[string]Share, dirs *dirIndex) {
+func addAppdataRow(r *Report, sh Share, name, appdataPath string, byName map[string]Share, dirs *dirIndex, size string) {
 	_, hasCfg := byName[name]
 	var parts []string
 	st := StatusInfo
@@ -336,6 +375,9 @@ func addAppdataRow(r *Report, sh Share, name, appdataPath string, byName map[str
 		if len(dirs.pools[name]) > 0 {
 			st = StatusWarn
 		}
+	}
+	if size != "" {
+		parts = append(parts, size)
 	}
 	detail := strings.Join(parts, "; ") + "."
 	if st == StatusWarn {
@@ -463,13 +505,9 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 		data       []byte
 	}
 	var parsed []tmpl
-	var newest time.Time
 	for _, n := range directChildren(src, templatesDir) {
 		if !strings.HasSuffix(n, ".xml") {
 			continue
-		}
-		if mt, ok := src.ModTime(n); ok && mt.After(newest) {
-			newest = mt
 		}
 		data, err := src.Read(n)
 		if err != nil {
@@ -494,7 +532,7 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 	if err := readNetworks(r, src, imp); err != nil {
 		return err
 	}
-	checkStale(r, f, newest)
+	checkStale(r, f)
 
 	dockerMan := map[string]captureContainer{}
 	for _, c := range containers {
@@ -559,17 +597,16 @@ func checkDocker(r *Report, src FlashSource, f *Flash, imp *Import) error {
 	return nil
 }
 
-func checkStale(r *Report, f *Flash, newest time.Time) {
-	if f.Capture == nil || f.Capture.CapturedAt == "" || newest.IsZero() {
+func checkStale(r *Report, f *Flash) {
+	if f.Capture == nil || f.Capture.CapturedAt == "" || f.TemplatesSavedAt.IsZero() {
 		return
 	}
-	at, err := time.Parse(time.RFC3339, f.Capture.CapturedAt)
-	if err != nil {
+	at, ok := f.capturedAt()
+	switch {
+	case !ok:
 		r.add(CheckCapture, StatusWarn, "", "The capture's time (%q) is not a timestamp, so it is not known whether the capture is older than the templates.", f.Capture.CapturedAt)
-		return
-	}
-	if at.Before(newest) {
-		r.add(CheckCapture, StatusWarn, "", "The capture was taken %s, but a template on the flash was saved later (%s), so the capture may be stale. Run the prepare script again and take a new Flash Backup. (A flash carries no time zone, so a gap of hours can be that.)", at.UTC().Format(time.RFC3339), newest.UTC().Format(time.RFC3339))
+	case f.ReviewCapture().State == CaptureStale:
+		r.add(CheckCapture, StatusWarn, "", "The capture was taken %s, but a template on the flash was saved later (%s), so the capture may be stale. Run the prepare script again and take a new Flash Backup. (A flash carries no time zone, so a gap of hours can be that.)", at.Format(time.RFC3339), f.TemplatesSavedAt.UTC().Format(time.RFC3339))
 	}
 }
 
@@ -993,9 +1030,15 @@ func (s *Scanner) inventory(ctx context.Context, r *Report, src FlashSource, f *
 	if err != nil {
 		return err
 	}
+	size, sizeErr := s.shareSizer(ctx, r, members, dirs)
 	for _, step := range []func() error{
 		func() error { return checkShares(r, src, &r.Import, dirs) },
-		func() error { return checkCache(r, src, f, &r.Import, dirs) },
+		func() error {
+			if err := checkCache(r, src, f, &r.Import, dirs, size); err != nil {
+				return err
+			}
+			return sizeErr()
+		},
 		func() error { return checkUsers(r, src, &r.Import) },
 		func() error { return checkDocker(r, src, f, &r.Import) },
 		func() error { return checkUserScripts(r, src) },
@@ -1009,4 +1052,61 @@ func (s *Scanner) inventory(ctx context.Context, r *Report, src FlashSource, f *
 		}
 	}
 	return nil
+}
+
+// shareSizer returns a function that says in words how large a share's directory
+// is: on the data disks from the baseline, and on a pool device by a metadata
+// walk through the DiskReader's mount. The error function reports a cancelled
+// scan that interrupted a measurement; every other failure is said in the text.
+func (s *Scanner) shareSizer(ctx context.Context, r *Report, members []*member, dirs *dirIndex) (size func(share string) string, err func() error) {
+	var failed error
+	size = func(share string) string {
+		var parts []string
+		if onData := dirs.data[share]; len(onData) > 0 {
+			if r.Baseline == nil {
+				parts = append(parts, "its size on the array was not measured")
+			} else {
+				total, per := r.Baseline.ShareBytes(share)
+				var each []string
+				for _, d := range onData {
+					each = append(each, fmt.Sprintf("%s: %s", d, formatBytes(per[slotOf(members, d)])))
+				}
+				parts = append(parts, fmt.Sprintf("it holds %s on the array (%s)", formatBytes(total), strings.Join(each, ", ")))
+			}
+		}
+		sizer, _ := s.Dirs.(DirSizer)
+		for _, subject := range dirs.pools[share] {
+			var m *member
+			for _, c := range members {
+				if c.subject == subject && c.disk != nil {
+					m = c
+				}
+			}
+			if sizer == nil || m == nil {
+				parts = append(parts, fmt.Sprintf("its size on %s was not measured", subject))
+				continue
+			}
+			n, err := sizer.DirBytes(ctx, *m.disk, share)
+			switch {
+			case ctx.Err() != nil:
+				failed = ctx.Err()
+			case err != nil:
+				parts = append(parts, fmt.Sprintf("its size on %s could not be measured (%v)", subject, err))
+			default:
+				parts = append(parts, fmt.Sprintf("it holds %s on %s", formatBytes(n), subject))
+			}
+		}
+		return strings.Join(parts, "; ")
+	}
+	return size, func() error { return failed }
+}
+
+// slotOf returns the baseline's name for the slot the report calls subject.
+func slotOf(members []*member, subject string) string {
+	for _, m := range members {
+		if m.subject == subject && m.role == RoleData {
+			return slotName(m)
+		}
+	}
+	return ""
 }

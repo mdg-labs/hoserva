@@ -1,3 +1,6 @@
+// @vitest-environment node
+// jsdom's FormData and File are not the ones Node's Request accepts as a body, so the
+// multipart upload could not be sent through the client in a jsdom environment.
 import { gzipSync } from "node:zlib";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -25,9 +28,11 @@ vi.hoisted(() => {
 });
 
 let getJobLog: typeof import("@/lib/api/operations").getJobLog;
+let ops: typeof import("@/lib/api/operations");
 
 beforeAll(async () => {
-  ({ getJobLog } = await import("@/lib/api/operations"));
+  ops = await import("@/lib/api/operations");
+  ({ getJobLog } = ops);
 });
 
 afterEach(() => {
@@ -133,5 +138,133 @@ describe("getJobLog", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.data).toBeUndefined();
+  });
+});
+
+describe("migration operations", () => {
+  const JOB = { id: JOB_ID, type: "migration_scan", status: "queued" };
+
+  it("reads the session from /migrate", async () => {
+    let seen = "";
+    respond.current = (request) => {
+      seen = `${request.method} ${new URL(request.url).pathname}`;
+      return Response.json({ phase: "none", flashDevices: [], zipOnly: false });
+    };
+
+    const result = await ops.getMigration();
+
+    expect(seen).toBe("GET /api/v1/migrate");
+    expect(result.data?.phase).toBe("none");
+  });
+
+  it("passes the API error of a failed session read through", async () => {
+    respond.current = () => Response.json({ code: "internal", message: "database is locked" }, { status: 500 });
+
+    const result = await ops.getMigration();
+
+    expect(result.data).toBeUndefined();
+    expect(result.error?.message).toBe("database is locked");
+  });
+
+  it("deletes the session with DELETE /migrate", async () => {
+    let seen = "";
+    respond.current = (request) => {
+      seen = `${request.method} ${new URL(request.url).pathname}`;
+      return new Response(null, { status: 204 });
+    };
+
+    const result = await ops.forgetMigration();
+
+    expect(seen).toBe("DELETE /api/v1/migrate");
+    expect(result.error).toBeUndefined();
+  });
+
+  it("uploads the Flash Backup zip as the multipart `file` part", async () => {
+    let seen = "";
+    let part: FormDataEntryValue | null = null;
+    respond.current = async (request) => {
+      seen = `${request.method} ${new URL(request.url).pathname}`;
+      part = (await request.formData()).get("file");
+      return Response.json(JOB);
+    };
+
+    const result = await ops.startMigrationScan(new File(["zip bytes"], "flash.zip", { type: "application/zip" }));
+
+    expect(seen).toBe("POST /api/v1/migrate/scan");
+    expect(part).toBeInstanceOf(File);
+    expect((part as unknown as File).name).toBe("flash.zip");
+    expect(await (part as unknown as File).text()).toBe("zip bytes");
+    expect(result.data?.id).toBe(JOB_ID);
+  });
+
+  it("passes the refusal of an upload through with its message", async () => {
+    respond.current = () =>
+      Response.json({ code: "invalid_zip", message: "the file is not a zip archive" }, { status: 400 });
+
+    const result = await ops.startMigrationScan(new File(["nope"], "flash.zip"));
+
+    expect(result.data).toBeUndefined();
+    expect(result.error?.code).toBe("invalid_zip");
+    expect(result.error?.message).toBe("the file is not a zip archive");
+  });
+
+  it("scans the stick by the device path as JSON", async () => {
+    let seen = "";
+    let body: unknown;
+    respond.current = async (request) => {
+      seen = `${request.method} ${new URL(request.url).pathname}`;
+      body = await request.json();
+      return Response.json(JOB);
+    };
+
+    await ops.startMigrationDeviceScan("/dev/sdu");
+
+    expect(seen).toBe("POST /api/v1/migrate/scan/device");
+    expect(body).toEqual({ device: "/dev/sdu" });
+  });
+
+  it("reads the report as the Markdown text it is", async () => {
+    respond.current = () =>
+      new Response("# Report\n\nverdict: no_go\n", { status: 200, headers: { "Content-Type": "text/markdown" } });
+
+    const result = await ops.getMigrationReport();
+
+    expect(result.error).toBeUndefined();
+    expect(result.data).toBe("# Report\n\nverdict: no_go\n");
+  });
+
+  it("parses the JSON error of a report that does not exist yet", async () => {
+    respond.current = () =>
+      Response.json({ code: "no_migration_report", message: "no scan has finished" }, { status: 404 });
+
+    const result = await ops.getMigrationReport();
+
+    expect(result.data).toBeUndefined();
+    expect(result.error?.code).toBe("no_migration_report");
+  });
+
+  it("lists the template preview from /migrate/templates", async () => {
+    let seen = "";
+    respond.current = (request) => {
+      seen = new URL(request.url).pathname;
+      return Response.json({ counts: {}, templates: [], composeProjects: [] });
+    };
+
+    const result = await ops.listMigrationTemplates();
+
+    expect(seen).toBe("/api/v1/migrate/templates");
+    expect(result.data?.templates).toEqual([]);
+  });
+
+  it("asks for one template by its file name, escaped in the path", async () => {
+    let seen = "";
+    respond.current = (request) => {
+      seen = new URL(request.url).pathname;
+      return Response.json({ kind: "template", name: "my notes.xml" });
+    };
+
+    await ops.getMigrationTemplate("my notes.xml");
+
+    expect(seen).toBe("/api/v1/migrate/templates/my%20notes.xml");
   });
 });

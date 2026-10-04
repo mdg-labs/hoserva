@@ -840,6 +840,22 @@ func encodeStartMigrationScanRequest(
 			return errors.Wrap(err, "encode query")
 		}
 	}
+	{
+		// Encode "fullChecksums" form field.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "fullChecksums",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := request.FullChecksums.Get(); ok {
+				return e.EncodeValue(conv.BoolToString(val))
+			}
+			return nil
+		}); err != nil {
+			return errors.Wrap(err, "encode query")
+		}
+	}
 	body, boundary := ht.CreateMultipartBody(func(w *multipart.Writer) error {
 		if err := request.File.WriteMultipart("file", w); err != nil {
 			return errors.Wrap(err, "write \"file\"")

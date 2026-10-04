@@ -20,6 +20,7 @@ existing line by adding its PR number.
 - **wiring** — a second, independent path bypasses the one Hoserva owns (NUT `SHUTDOWNCMD` skipping the clean array stop) — PR 254
 - **wiring** — test or check script that no `make` target or CI job runs — #42, PR 221
 - **wiring** — a CI step calls a `make` target whose prerequisites redo the job's own earlier install and build, doubling the job's cost — PR 474
+- **wiring** — a build a deploy workflow now runs gets its toolchain setup (`setup-node` from `.nvmrc`, cache) only in the CI job that tests it, so the deploy builds on the runner's default version — PR 590
 - **scope** — API/CLI option accepted and silently ignored (`--follow`, `--json`, `dryRun`/`confirm`/`percent` payload) — PR 174
 - **scope** — stub or sample data presented as real (sample diff rows, hard-coded "Confirmed", `Mounted` from disk count) — PR 174, 187, 210
 - **scope** — feature covers only the first or common case (first NIC only, common timezones only, cache disks missing from a step) — PR 182, 213
@@ -46,7 +47,7 @@ existing line by adding its PR number.
 - **atomicity** — a cancel or stop flag read in one lock hold and the start done in a later one, so a request that lands in the gap is accepted and then ignored — PR 412
 - **ordering** — a side effect that takes a bounded resource (a pre-change archive's retention slot) runs before the admission check that can refuse the operation, so refused retries use up what real changes rely on — PR 412
 - **atomicity** — two paths that each rebuild and publish the same live object (degraded acknowledge vs. array-sequence rebuild) under no shared lock, so one publishes state computed before the other's change landed and silently undoes it — PR 394
-- **atomicity** — a mutex held while a client's request body streams to disk, so one slow upload stalls every other operation on that lock (status, delete, a running job's commit) for as long as the transport's timeouts allow — PR 575
+- **atomicity** — a mutex held across slow I/O that only needs a value read under it (a client's request body streaming to disk, a whole-file read that validates a large baseline), so every other operation on that lock (status, delete, a running job's commit) stalls for as long as the I/O takes — PR 575, 589
 
 ## Fail-open and error handling
 - **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback) — PR 150, 159
@@ -78,6 +79,7 @@ existing line by adding its PR number.
 - **ui-states** — a dialog derives its options from state its own first step already changed, so a failure in the second step removes the retry (save mode, then relocate) — PR 357
 - **ui-states** — a "touched" flag sends a cleared field as an empty value the schema rejects, instead of omitting it to keep the stored secret — PR 357
 - **drift** — a domain rule (which mode change relocates where, which removal states leave the pool) copied between pages or packages instead of shared from one definition — PR 357, 370
+- **drift** — a check enforces an invariant that a documented maintenance procedure breaks (layout check requires every `versions.json` entry built; docs drop old versions with `onlyIncludeVersions`), so following the docs fails the build — PR 590
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228, 382
 - **ui-states** — a dialog, overlay or panel dismissable (Escape, backdrop, Cancel) while its request runs, so the later failure lands on a closed surface — PR 382
@@ -85,6 +87,7 @@ existing line by adding its PR number.
 - **drift** — a hand-kept web list of an API enum (notification event types) not extended when the spec gains a value, so the new value gets no settings row or label — PR 531
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
+- **ui-states** — a download's object URL revoked in the same task as `anchor.click()`, so a browser that resolves the download asynchronously finds the blob gone and saves nothing, with no error shown — PR 589
 - **ui-states** — a reload that settles an unanswered save replaces the editor's unsent text with the server's copy and keeps nothing to restore it from, including edits made between a failed reload and its retry — PR 555
 - **ui-states** — a second load path (a reload after a save) calls the raw operation instead of the loader that maps terminal answers (not found, no template), so a permanent state renders as a failure whose retry fails forever — PR 555
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
@@ -129,7 +132,7 @@ existing line by adding its PR number.
 - **security** — a file the CLI saves for the user that names accounts, shares or containers is left world-readable (0644) where the daemon keeps the same data 0600 — PR 575
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic) — PR 159, 163, 231, 337, 403, 421, 430, 567
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589
 - **tests** — a short real deadline also bounds setup I/O ahead of the code under test (the SQLite write entering maintenance), so on a loaded runner the error comes from the setup step and an `errors.Is` check still passes; trip the deadline once the step under test is reached and assert its own error text — PR 433
 - **tests** — an end-to-end failure detector defined as "any banner but this list of informational ones", not extended when the change adds a new informational note, so the expected note fails the journey — PR 474
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246

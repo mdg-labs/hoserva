@@ -4212,6 +4212,38 @@ func (s *Server) decodeStartMigrationScanRequest(r *http.Request) (
 			}
 		}
 		{
+			cfg := uri.QueryParameterDecodingConfig{
+				Name:    "fullChecksums",
+				Style:   uri.QueryStyleForm,
+				Explode: true,
+			}
+			if err := q.HasParam(cfg); err == nil {
+				if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+					var requestDotFullChecksumsVal bool
+					if err := func() error {
+						val, err := d.DecodeValue()
+						if err != nil {
+							return err
+						}
+
+						c, err := conv.ToBool(val)
+						if err != nil {
+							return err
+						}
+
+						requestDotFullChecksumsVal = c
+						return nil
+					}(); err != nil {
+						return err
+					}
+					request.FullChecksums.SetTo(requestDotFullChecksumsVal)
+					return nil
+				}); err != nil {
+					return req, rawBody, close, errors.Wrap(err, "decode \"fullChecksums\"")
+				}
+			}
+		}
+		{
 			if err := func() error {
 				files, ok := r.MultipartForm.File["file"]
 				if !ok || len(files) < 1 {

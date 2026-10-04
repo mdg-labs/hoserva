@@ -109,6 +109,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		if fsNode != "" {
 			fsDevice = "/dev/" + fsNode
 		}
+		looksLikeUnraid, internalBoot := l.layoutFacts(name)
 		var cachePartitions []CachePartition
 		var partitions []BootPartition
 		if bootSet[dev] {
@@ -129,7 +130,8 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			Label:           fsLabel,
 			FSUUID:          fsUUID,
 			ContainsData:    fsType != "",
-			LooksLikeUnraid: LooksLikeUnraidLabel(fsLabel),
+			LooksLikeUnraid: looksLikeUnraid,
+			UnraidBoot:      internalBoot,
 			CachePartitions: cachePartitions,
 			Partitions:      partitions,
 		})

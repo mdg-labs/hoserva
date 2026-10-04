@@ -656,6 +656,346 @@
     "migrate": "Migration",
     "diagnostics": "Diagnostics"
   },
+  "toolsMigrate": {
+    "loadFailed": "Could not load the migration.",
+    "retry": "Try again",
+    "trademark": "Unraid is a trademark of Lime Technology, Inc. Hoserva is not affiliated with it.",
+    "wholeSystem": "Whole system",
+    "steps": {
+      "ariaLabel": "Migration steps",
+      "scan": "Scan",
+      "review": "Review",
+      "import": "Import",
+      "verify": "Verify",
+      "current": "Current",
+      "later": "Not available yet",
+      "scanDescription": "Read the Unraid configuration and check this machine against it. Nothing is written to any disk or to the stick.",
+      "reviewDescription": "Check what the scan found and choose the role of each disk. Nothing is written to any disk yet."
+    },
+    "actions": {
+      "startScan": "Start scan",
+      "review": "Review",
+      "import": "Import",
+      "scanAgain": "Scan again"
+    },
+    "status": {
+      "pass": "Pass",
+      "info": "Note",
+      "warn": "Warning",
+      "flag": "Flagged",
+      "refuse": "Blocked"
+    },
+    "columns": {
+      "subject": "Item",
+      "check": "Check",
+      "status": "Result",
+      "detail": "Details"
+    },
+    "checks": {
+      "unraid_version": "Unraid version",
+      "capture": "Container capture",
+      "boot_device": "Boot device",
+      "disk_mapping": "Disk match",
+      "disk_identity": "Disk identity",
+      "data_disks": "Data disk filesystem",
+      "disk_integrity": "Filesystem check",
+      "parity_config": "Parity setup",
+      "parity_size": "Parity size",
+      "baseline": "File baseline",
+      "content_space": "Room for parity index files",
+      "smart": "Disk health (SMART)",
+      "parity_history": "Last parity check",
+      "shares": "Shares",
+      "cache_contents": "Cache contents",
+      "users": "User accounts",
+      "docker_templates": "Docker templates",
+      "containers": "Containers",
+      "user_scripts": "User scripts",
+      "plugins": "Plugins",
+      "custom_config": "Custom configuration",
+      "settings": "Settings",
+      "uid_99": "App user ID",
+      "sync_estimate": "First sync estimate"
+    },
+    "unprotectedWindow": {
+      "title": "The unprotected window",
+      "window": "From the moment the Unraid array stops until the first Hoserva parity sync has finished, your array has no redundancy at all. Unraid's parity protects nothing once its array stops and the disks are repurposed, and SnapRAID's parity does not exist until its first sync completes. If a disk fails in that window, its data is gone.",
+      "backup": "Keep a backup of anything irreplaceable somewhere other than this array. Do not migrate while a disk has a SMART warning, finish the first sync before you write significant new data, and start when you have the hours to see it through.",
+      "rollback": "Going back is clean, as far as the data disks go, until parity is first written. After that the old parity disk's contents are destroyed, and going back means restoring from backup.",
+      "docs": "Read before you start"
+    },
+    "unverifiedLayout": {
+      "title": "This Unraid version or flash layout has not been verified",
+      "description": "The scan went ahead only because the unverified-layout override was given. Hoserva has not been tested against this version or layout, so check every row of the report before you rely on it."
+    },
+    "captureWarning": {
+      "title": "The container capture needs a look",
+      "description": "Before the Flash Backup, Hoserva's prepare script, which you run on the Unraid server, records which containers exist and how each one runs. This review can continue as it is. To refresh the capture, run the prepare script on the Unraid server again, take a new Flash Backup and scan again.",
+      "allUnknown": "Every template is listed as unknown, because the capture does not say which containers were in use.",
+      "docs": "Read the capture steps",
+      "staleTitle": "The container capture may be out of date",
+      "state": {
+        "missing": "The Flash Backup has no container capture.",
+        "unreadable": "The container capture is in the Flash Backup, but it could not be read.",
+        "stale": "A template on the flash was saved after the capture was taken, so the capture may be out of date.",
+        "staleDated": "The capture was taken {{date}}, but a template on the flash was saved after that, so the capture may be out of date."
+      }
+    },
+    "scan": {
+      "zip": {
+        "title": "Flash Backup zip",
+        "description": "Upload the Flash Backup zip you made from the Unraid server. It works for every server and is the only source for one that boots from an internal device.",
+        "label": "Flash Backup zip",
+        "hint": "The zip is kept on this server, readable by root only, until you delete the scan. It holds secrets, so keep it as private as the Unraid flash drive itself."
+      },
+      "stick": {
+        "title": "Unraid USB stick",
+        "description": "Read the configuration straight from the stick attached to this machine. The stick is mounted read-only and nothing is written to it or copied from it.",
+        "device": "USB stick",
+        "deviceOption": "{{model}} ({{device}}, {{size}})",
+        "unknownModel": "Unknown model"
+      },
+      "zipOnly": {
+        "title": "Only the Flash Backup zip can be used",
+        "description": "This scan's container capture says Unraid boots from an internal device. Its boot storage is not something Hoserva can read, and a USB stick that is still attached is no longer kept up to date, so the configuration comes from the zip only."
+      },
+      "noStick": "No Unraid USB stick is attached to this machine, so the Flash Backup zip is the only source on offer.",
+      "running": "The scan is running. It reads every data disk without writing to it, so it can take a while. You can leave this page and come back; it continues in the background.",
+      "jobLoadFailed": "Could not load the scan's progress.",
+      "cancelFailed": "Could not cancel the scan.",
+      "startFailed": "Could not start the scan.",
+      "failedTitle": "The scan did not finish",
+      "failedUnknown": "No reason was recorded.",
+      "report": {
+        "groups": {
+          "refuse": "Blocks the migration",
+          "attention": "Warnings and flagged items",
+          "pass": "Passed or for information"
+        },
+        "verdict": {
+          "go": "Go",
+          "go_with_warnings": "Go, with warnings",
+          "no_go": "No-go"
+        },
+        "verdictHelp": {
+          "go": "Nothing in the report blocks the migration.",
+          "go_with_warnings": "Nothing blocks the migration, but some findings need your attention first.",
+          "no_go": "At least one finding blocks the migration. Fix the blocked items before going on."
+        },
+        "generated": "Report from {{date}}, {{source}}.",
+        "fromStick": "read from the USB stick {{device}}",
+        "fromZipSize": "made from the uploaded zip ({{size}})",
+        "fromZip": "made from the uploaded zip",
+        "download": "Download the report",
+        "downloadFailed": "Could not download the report."
+      }
+    },
+    "review": {
+      "noRows": "The report has no rows for this.",
+      "noMatchedDisks": {
+        "title": "No disks matched",
+        "description": "None of the disks in the Unraid configuration was found on this machine by its serial number or WWN. Attach the array disks, then scan again."
+      },
+      "disks": {
+        "title": "Disks",
+        "description": "How each disk of the Unraid array matched a disk on this machine, and whether it can be adopted. Read-only."
+      },
+      "boot": {
+        "title": "Boot device",
+        "description": "Where Unraid boots from, and what that means for going back. Read-only.",
+        "layoutTitle": "Boot mode and layout",
+      "layoutDescription": "Where Unraid boots from, which cache device your disk roles give Hoserva, and what going back to Unraid means.",
+        "unraidBoots": "Unraid boots from",
+        "plannedCache": "Hoserva's cache",
+        "cacheOn": "On {{disks}}, from the roles above",
+        "noCache": "No disk has the cache role",
+        "kinds": {
+          "usb": "A USB stick",
+          "internal_dedicated": "An internal device of its own",
+          "internal_mirrored": "A mirrored pair of internal devices",
+          "internal_shared": "An internal device that also holds the Unraid cache",
+          "internal_both": "A mirrored pair of internal devices that also holds the Unraid cache",
+          "internal_unstated": "An internal device",
+          "unknown": "Unknown"
+        },
+        "rollbackIntro": "Going back to Unraid after the point where Debian is installed depends on where Debian goes. Find your row:",
+        "rollbackIntroOne": "Going back to Unraid after the point where Debian is installed, for the layout your disk roles give:",
+        "plannedLayout": "Where Debian goes",
+        "layouts": {
+          "separate": "A separate boot device",
+          "shared": "A shared NVMe: the cache is on the disk this machine boots from"
+        },
+        "columns": {
+          "debian": "Debian goes on",
+          "rollback": "Going back to Unraid"
+        },
+        "sharedNvmeNote": "If Debian is installed on the same device as the cache, the Unraid cache is destroyed by the installation. What was on it is on the array, because the cache is emptied first.",
+        "noRollback": {
+          "internal_both": "The Unraid capture says the internal boot devices are mirrored and also hold the cache. The rollback table has no row for that combination, so Hoserva cannot say what going back means for your server.",
+          "internal_unstated": "The Unraid capture does not say whether the internal boot device is mirrored or also holds the cache, so Hoserva cannot show your row. Going back depends on it.",
+          "unknown": "The Unraid capture does not say where Unraid boots from, so Hoserva cannot show what going back means for your server. It depends on where Unraid boots from and where Debian is installed."
+        },
+        "rollbackRows": {
+          "usb": {
+            "separate": {
+              "debian": "A separate device",
+              "rollback": "Put the stick back in and boot from it."
+            },
+            "sharedNvme": {
+              "debian": "The NVMe that holds the cache",
+              "rollback": "Put the stick back in, re-create the Unraid cache and move the appdata back."
+            }
+          },
+          "internal_dedicated": {
+            "another": {
+              "debian": "Another device",
+              "rollback": "Switch the firmware boot order back."
+            },
+            "thatDevice": {
+              "debian": "That same device",
+              "rollback": "Restore the Flash Backup zip to a USB stick with the Unraid USB Flash Creator and boot from it."
+            }
+          },
+          "internal_mirrored": {
+            "another": {
+              "debian": "Another device",
+              "rollback": "Switch the firmware boot order back."
+            },
+            "onePairDevice": {
+              "debian": "One device of the pair",
+              "rollback": "Switch the firmware boot order to the other device. Unraid runs with a degraded boot pool, and the wiped device is replaced through its normal drive assignment."
+            },
+            "bothPairDevices": {
+              "debian": "Both devices",
+              "rollback": "Restore the Flash Backup zip to a USB stick and boot from it."
+            }
+          },
+          "internal_shared": {
+            "another": {
+              "debian": "Another device",
+              "rollback": "Switch the firmware boot order back. The cache, partition 4, is untouched until parity is first written."
+            },
+            "sameNvme": {
+              "debian": "The same NVMe",
+              "rollback": "Restore the Flash Backup zip to a USB stick and boot from it, then re-create the cache."
+            }
+          }
+        }
+      },
+      "shares": {
+        "title": "Shares",
+        "description": "Each Unraid share and how it maps onto Hoserva. Read-only.",
+        "previewDescription": "The shares the import would create, with Unraid's allocation method for each.",
+        "columns": {
+          "name": "Share",
+          "allocation": "Allocation method",
+          "disks": "Disks",
+          "warnings": "Warnings"
+        },
+        "allocation": {
+          "fillup": "Fill-up",
+          "mostfree": "Most-free",
+          "highwater": "High-water",
+          "unset": "Not set"
+        },
+        "anyDisk": "Any disk",
+        "only": "Only {{disks}}",
+        "except": "Not {{disks}}",
+        "warningCount_one": "{{count}} warning",
+        "warningCount_other": "{{count}} warnings",
+        "noWarnings": "No warnings",
+        "none": "The Unraid configuration has no shares.",
+        "highWaterNote": "High-water has no exact equivalent in Hoserva. A share that uses it is created with the most-free policy (mfs), which writes to the disk with the most free space."
+      },
+      "noReview": {
+        "title": "This scan has no disk mapping data",
+        "description": "It was made before the scan kept the disks, shares and boot mode as data, so the roles cannot be chosen here. The report rows below still apply. Scan again to choose the disk roles."
+      },
+      "mapping": {
+        "title": "Disk roles",
+        "description": "Each disk starts with the role Hoserva proposes. Change a role if you want something else; a role that the import would refuse is marked on its row.",
+        "columns": {
+          "serial": "Disk (serial number)",
+          "diskNumber": "Unraid disk number",
+          "size": "Size",
+          "filesystem": "Filesystem",
+          "role": "Role in Hoserva"
+        },
+        "roleFor": "Role for {{disk}}",
+        "roles": {
+          "unset": "Not chosen",
+          "parity": "Parity",
+          "data": "Data",
+          "cache": "Cache",
+          "ignore": "Ignore"
+        },
+        "unknown": "Unknown",
+        "noNumber": "None",
+        "refused": "Not adopted",
+        "weakIdentity": "Weak identity",
+        "unraidBoot": "Unraid boot device",
+        "notInCapture": "Not in the Unraid configuration",
+        "notFound": "Not found on this machine: {{problem}}",
+        "violations": {
+          "refused_data": "The scan did not adopt this disk, so it cannot be a data disk.",
+          "weak_parity": "This disk has no WWN or serial number to tell it apart, so it cannot be a parity disk.",
+          "boot_device": "An Unraid boot device can only be ignored.",
+          "parity_data": "Unraid used this disk for parity, so it cannot become a data disk.",
+          "host_boot_parity": "This is the disk this machine boots from, so it can never be a parity disk."
+        },
+        "parity": {
+          "none": {
+            "title": "No parity disk is chosen",
+            "description": "The array needs one or two parity disks."
+          },
+          "tooMany": {
+            "title": "Too many parity disks are chosen",
+            "description": "The array can use at most two parity disks."
+          }
+        }
+      }
+    },
+    "templates": {
+      "title": "Docker templates",
+      "loadFailed": "Could not load the template preview.",
+      "warningCount_one": "{{count}} warning",
+      "warningCount_other": "{{count}} warnings",
+      "status": {
+        "clean": "No warnings",
+        "warnings": "Warnings",
+        "failed": "Could not be read",
+        "previewed": "Compose file found",
+        "missing": "Compose file missing"
+      },
+      "columns": {
+        "name": "Template",
+        "class": "On the Unraid server",
+        "conversion": "Conversion",
+        "project": "Project",
+        "containers": "Containers"
+      },
+      "class": {
+        "autostart": "Autostart",
+        "running": "Running",
+        "stopped": "Stopped",
+        "template_only": "Template only",
+        "unknown": "Unknown"
+      },
+      "counts": "Convert cleanly: {{clean}}. With warnings: {{withWarnings}}. Could not be read: {{failed}}. Templates with no container, which are not counted: {{templateOnly}}.",
+      "countsAll": "The capture has no container list, so these counts cover every template. Convert cleanly: {{clean}}. With warnings: {{withWarnings}}. Could not be read: {{failed}}.",
+      "filter": {
+        "label": "Filter by what the template stands for",
+        "default": "All but template only",
+        "all": "All templates"
+      },
+      "none": "No Docker templates were found on the flash.",
+      "noneMatching": "No template matches this filter.",
+      "projectsTitle": "Compose Manager projects",
+      "projectsDescription": "Each project keeps its own compose.yaml, which is shown as it is and not converted.",
+      "flaggedTitle": "Containers that need attention",
+      "flaggedDescription": "Containers with no template to convert, and containers created by hand, are recreated from their settings or run command."
+    }
+  },
   "shell": {
     "title": "Hoserva",
     "toggleSidebar": "Toggle sidebar",

@@ -116,6 +116,37 @@ func TestKernelReadOnlyMounter_MountsReadOnlyAsAnArgv(t *testing.T) {
 	}
 }
 
+// A source data disk's journal is never replayed by the mount that reads it: a
+// plain ro XFS mount still writes the superblock and the log (doc 08 §2), and a
+// plain ro btrfs mount replays a pending tree log, so each filesystem is
+// mounted with the option that stops it.
+func TestKernelReadOnlyMounter_SourceDiskOptionsNeverReplayAJournal(t *testing.T) {
+	for fsType, want := range map[string]string{
+		"xfs":   "ro,norecovery,noatime,nodiratime,nosuid,nodev,noexec",
+		"ext4":  "ro,noload,noatime,nodiratime,nosuid,nodev,noexec",
+		"btrfs": "ro,rescue=nologreplay,noatime,nodiratime,nosuid,nodev,noexec",
+	} {
+		t.Run(fsType, func(t *testing.T) {
+			r, m, where := newROFixture(t)
+			r.uuid = "11111111-2222-3333-4444-555555555555"
+			r.mountLine = mountLineFor(where, "ro,nosuid", fsType, "ro")
+			if err := m.MountReadOnly(context.Background(), fsType, roDevice, r.uuid, where); err != nil {
+				t.Fatalf("MountReadOnly: %v", err)
+			}
+			var mount []string
+			for _, c := range r.calls {
+				if c[0] == "mount" {
+					mount = c
+				}
+			}
+			wantArgv := []string{"mount", "-t", fsType, "-o", want, roDevice, where}
+			if strings.Join(mount, "\x00") != strings.Join(wantArgv, "\x00") {
+				t.Fatalf("mount argv = %q, want %q", mount, wantArgv)
+			}
+		})
+	}
+}
+
 // A mount that came up read-write is the one outcome that costs the user their
 // rollback, so each way the table can fail to show read-only is refused and the
 // mount is undone.
@@ -184,7 +215,7 @@ func TestKernelReadOnlyMounter_RefusesBeforeRunningMount(t *testing.T) {
 		fsType, device, uuid string
 		mountedAlready       bool
 	}{
-		"a filesystem type with no known read-only options": {"ext4", roDevice, "ABCD-1234", false},
+		"a filesystem type with no known read-only options": {"ntfs", roDevice, "ABCD-1234", false},
 		"a UUID that is an option":                          {"vfat", roDevice, "-oremount,rw", false},
 		"an empty UUID":                                     {"vfat", roDevice, "", false},
 		"a path that is already a mountpoint":               {"vfat", roDevice, "ABCD-1234", true},
