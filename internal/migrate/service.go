@@ -335,20 +335,32 @@ func (s *Service) removeStaging() error {
 // its file is not on this machine, as after a config import of another
 // installation's archive.
 func (s *Service) OpenBaseline(ctx context.Context) (*BaselineReader, error) {
+	name, err := s.baselineName(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Reading the whole file to check it is slow on a large array, so s.mu is
+	// not held for it. A baseline's name is random and never reused, and the row
+	// stops naming a file before prune removes it: a prune or a new scan that
+	// lands now leaves this file or removes it, which reads as ErrNoBaseline.
+	return OpenBaseline(s.path(name))
+}
+
+func (s *Service) baselineName(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, err := s.load(ctx)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if sess.Report == nil || sess.Report.Baseline == nil {
-		return nil, ErrNoBaseline
+		return "", ErrNoBaseline
 	}
 	name := sess.Report.Baseline.File
 	if name == "" || filepath.Base(name) != name || !strings.HasPrefix(name, baselinePrefix) {
-		return nil, fmt.Errorf("%w: the session names %q", ErrNoBaseline, name)
+		return "", fmt.Errorf("%w: the session names %q", ErrNoBaseline, name)
 	}
-	return OpenBaseline(s.path(name))
+	return name, nil
 }
 
 // StartScan stages the upload, refuses it unless it is a usable Flash Backup,

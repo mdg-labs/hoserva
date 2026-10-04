@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
@@ -319,4 +321,88 @@ func TestScan_TheAppdataRowSizesTheCachePool(t *testing.T) {
 		t.Errorf("appdata row = %+v", row)
 	}
 	e.assertNothingLeft()
+}
+
+// OpenBaseline reads the whole baseline to refuse one that is not whole; while
+// it does, the session's other operations must not wait for it.
+func TestService_OpenBaselineDoesNotHoldTheLockWhileItReadsTheFile(t *testing.T) {
+	s, e := newDiskService(t, primary)
+	if err := startAndRun(t, s, e, ScanOptions{}, ctx0, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.State(ctx0)
+	if err != nil || st.Report == nil || st.Report.Baseline == nil {
+		t.Fatalf("State = %+v, %v", st, err)
+	}
+	path := filepath.Join(s.Dir, st.Report.Baseline.File)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	type opened struct {
+		br  *BaselineReader
+		err error
+	}
+	result := make(chan opened, 1)
+	go func() {
+		br, err := s.OpenBaseline(ctx0)
+		result <- opened{br, err}
+	}()
+
+	// A writer opens only once the reader has the fifo open, which is after
+	// OpenBaseline took its place in the session and began reading the file.
+	var w *os.File
+	deadline := time.Now().Add(10 * time.Second)
+	for w == nil {
+		w, err = os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err == nil {
+			break
+		}
+		w = nil
+		if !errors.Is(err, syscall.ENXIO) || time.Now().After(deadline) {
+			t.Fatalf("waiting for OpenBaseline to open the file: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	defer func() { _ = w.Close() }()
+
+	stateDone := make(chan error, 1)
+	go func() {
+		_, err := s.State(ctx0)
+		stateDone <- err
+	}()
+	select {
+	case err := <-stateDone:
+		if err != nil {
+			t.Errorf("State while the baseline is being read: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = w.Close()
+		t.Fatal("State waited for OpenBaseline's read of the baseline file")
+	}
+
+	if _, err := w.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("OpenBaseline: %v", got.err)
+		}
+		if got.br == nil {
+			t.Fatal("OpenBaseline returned no reader")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("OpenBaseline did not finish once the whole file was there")
+	}
 }
