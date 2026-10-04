@@ -185,3 +185,85 @@ func TestShareAccessWiring_AFailedRegenerationIsReturnedAndTheGrantIsKept(t *tes
 	a.call(t, http.MethodPut, "/shares/media/permissions", body, http.StatusOK)
 	a.wantLines(t, "media", []string{"valid users = alice", "write list = alice"}, nil)
 }
+
+// Deleting a share takes its grants with it (#595): a share created later
+// under the same name starts closed, rather than letting in the accounts the
+// deleted one had granted.
+func TestShareAccessWiring_ARecreatedShareInheritsNoGrants(t *testing.T) {
+	a := wireShareAccess(t)
+	if _, err := a.w.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	a.w.db.SetMaxOpenConns(1)
+	a.call(t, http.MethodPost, "/shares", map[string]any{"name": "media", "cacheMode": "array-only"}, http.StatusOK)
+	alice := a.id(t, a.call(t, http.MethodPost, "/users", map[string]any{"username": "alice"}, http.StatusCreated))
+	bob := a.id(t, a.call(t, http.MethodPost, "/users", map[string]any{"username": "bob"}, http.StatusCreated))
+	family := a.id(t, a.call(t, http.MethodPost, "/user-groups", map[string]any{"name": "family"}, http.StatusCreated))
+	a.call(t, http.MethodPut, "/user-groups/"+family+"/members", map[string]any{"userIds": []string{bob}}, http.StatusOK)
+	a.call(t, http.MethodPut, "/shares/media/permissions", map[string]any{
+		"users":  []map[string]string{{"userId": alice, "access": "read-write"}},
+		"groups": []map[string]string{{"groupId": family, "access": "read-only"}},
+	}, http.StatusOK)
+	a.wantLines(t, "media", []string{"valid users = alice bob", "write list = alice"}, nil)
+
+	a.call(t, http.MethodDelete, "/shares/media", map[string]any{"confirm": true}, http.StatusNoContent)
+	a.call(t, http.MethodPost, "/shares", map[string]any{"name": "media", "cacheMode": "array-only"}, http.StatusOK)
+
+	a.wantLines(t, "media", []string{"available = no"}, []string{"valid users", "write list", "alice", "bob"})
+	got := a.call(t, http.MethodGet, "/shares/media/permissions", nil, http.StatusOK)
+	if strings.Contains(string(got), alice) || strings.Contains(string(got), family) {
+		t.Errorf("the recreated share lists the deleted share's grants: %s", got)
+	}
+}
+
+// failNthAccess fails its nth read of the grants and passes every other one
+// through, so a delete's regeneration can be made to fail after the share
+// and its grants were already removed.
+type failNthAccess struct {
+	inner share.AccessReader
+	n     int
+	calls int
+}
+
+func (f *failNthAccess) ShareGrants(ctx context.Context) (map[string]share.ShareGrants, error) {
+	f.calls++
+	if f.calls == f.n {
+		return nil, fmt.Errorf("the grants could not be read")
+	}
+	return f.inner.ShareGrants(ctx)
+}
+
+// A delete whose regeneration fails puts the share back with the same grants,
+// not as a closed share the operator has to grant again (#595).
+func TestShareAccessWiring_AFailedDeleteRestoresTheShareAndItsGrants(t *testing.T) {
+	a := wireShareAccess(t)
+	a.call(t, http.MethodPost, "/shares", map[string]any{"name": "media", "cacheMode": "array-only"}, http.StatusOK)
+	// A second SMB share keeps the regeneration reading the grants once
+	// media is gone.
+	a.call(t, http.MethodPost, "/shares", map[string]any{"name": "other", "cacheMode": "array-only"}, http.StatusOK)
+	alice := a.id(t, a.call(t, http.MethodPost, "/users", map[string]any{"username": "alice"}, http.StatusCreated))
+	bob := a.id(t, a.call(t, http.MethodPost, "/users", map[string]any{"username": "bob"}, http.StatusCreated))
+	family := a.id(t, a.call(t, http.MethodPost, "/user-groups", map[string]any{"name": "family"}, http.StatusCreated))
+	a.call(t, http.MethodPut, "/user-groups/"+family+"/members", map[string]any{"userIds": []string{bob}}, http.StatusOK)
+	a.call(t, http.MethodPut, "/shares/media/permissions", map[string]any{
+		"users":  []map[string]string{{"userId": alice, "access": "read-write"}},
+		"groups": []map[string]string{{"groupId": family, "access": "read-only"}},
+	}, http.StatusOK)
+	before := a.call(t, http.MethodGet, "/shares/media/permissions", nil, http.StatusOK)
+
+	// Delete reads the grants once to check the files can be written and
+	// once to regenerate them after the removal: the second read fails.
+	a.shares.Access = &failNthAccess{inner: a.shares.Access, n: 2}
+	if err := a.shares.Delete(context.Background(), "media", true); err == nil {
+		t.Fatal("Delete succeeded although its regeneration failed")
+	}
+
+	a.call(t, http.MethodGet, "/shares/media", nil, http.StatusOK)
+	if after := a.call(t, http.MethodGet, "/shares/media/permissions", nil, http.StatusOK); string(after) != string(before) {
+		t.Errorf("the grants after the failed delete differ:\nbefore %s\nafter  %s", before, after)
+	}
+	if err := a.shares.RefreshAccess(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.wantLines(t, "media", []string{"valid users = alice bob", "write list = alice"}, []string{"available"})
+}

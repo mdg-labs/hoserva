@@ -501,14 +501,15 @@ func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
 	if err := s.unmountShare(ctx, existing); err != nil {
 		return err
 	}
-	if err := s.Shares.Delete(ctx, name); err != nil {
+	grants, err := s.Shares.Remove(ctx, name)
+	if err != nil {
 		if rbErr := s.restoreLiveMounts(ctx, existing); rbErr != nil {
 			return fmt.Errorf("%w (remounting share: %v)", err, rbErr)
 		}
 		return err
 	}
 	if err := s.apply(ctx, Share{}, false, ""); err != nil {
-		if insErr := s.Shares.Insert(ctx, toStore(existing)); insErr != nil {
+		if insErr := s.Shares.Restore(context.WithoutCancel(ctx), toStore(existing), grants); insErr != nil {
 			return fmt.Errorf("%w (restoring deleted share: %v)", applyCause(err), insErr)
 		}
 		if rbErr := s.rollbackFiles(ctx, err); rbErr != nil {
