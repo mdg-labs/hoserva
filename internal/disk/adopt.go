@@ -51,6 +51,9 @@ var (
 	// disk by serial or WWN nor a spare boot-disk partition by its by-id name
 	// and PARTUUID.
 	ErrAdoptNoCacheBinding = errors.New("disk: the cache is named by a disk's serial or WWN, or a spare boot-disk partition's by-id name and PARTUUID")
+	// ErrTooManyCacheDisks refuses a second cache assignment: the first one
+	// the user confirmed is never replaced.
+	ErrTooManyCacheDisks = errors.New("disk: at most one cache disk can be assigned")
 )
 
 // AdoptionAssignment is one disk of an adoption request: the role the user
@@ -172,7 +175,7 @@ func ResolveAdoption(listed []Disk, assignments []AdoptionAssignment) (AdoptionP
 					return AdoptionPlan{}, err
 				}
 				if plan.Cache != nil {
-					return AdoptionPlan{}, errors.New("disk: at most one cache disk can be assigned")
+					return AdoptionPlan{}, ErrTooManyCacheDisks
 				}
 				if err := take(rec.Device); err != nil {
 					return AdoptionPlan{}, err
@@ -197,7 +200,7 @@ func ResolveAdoption(listed []Disk, assignments []AdoptionAssignment) (AdoptionP
 		if a.Role == AdoptCache && d.UnraidBoot {
 			rec := unraidCachePartition(d)
 			if plan.Cache != nil {
-				return AdoptionPlan{}, errors.New("disk: at most one cache disk can be assigned")
+				return AdoptionPlan{}, ErrTooManyCacheDisks
 			}
 			plan.Cache = &rec
 			continue
@@ -217,6 +220,9 @@ func ResolveAdoption(listed []Disk, assignments []AdoptionAssignment) (AdoptionP
 			assigned.Filesystem = XFS
 			plan.Parity = append(plan.Parity, RecordedDisk{AssignedDisk: assigned, Size: d.Size})
 		case AdoptCache:
+			if plan.Cache != nil {
+				return AdoptionPlan{}, ErrTooManyCacheDisks
+			}
 			assigned.Filesystem = XFS
 			plan.Cache = &RecordedDisk{AssignedDisk: assigned, Size: d.Size}
 		}

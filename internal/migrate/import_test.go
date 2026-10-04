@@ -46,6 +46,13 @@ func roles(pairs ...string) []disk.AdoptionAssignment {
 	return out
 }
 
+func TestIsImportRoleError_ASecondCacheIsARefusalOfTheMapping(t *testing.T) {
+	err := fmt.Errorf("resolve: %w", disk.ErrTooManyCacheDisks)
+	if !IsImportRoleError(err) {
+		t.Errorf("%v is not a refusal of the mapping: the API would answer 500, not 400 invalid_import_roles", err)
+	}
+}
+
 func TestPlanFromReview_OrdersDataDisksByUnraidDiskNumber(t *testing.T) {
 	// Given out of order, as a user's --role flags may be.
 	p, err := PlanFromReview(importReview(), importDisks(), roles("CAC1=cache", "DAT2=data", "PAR1=parity", "DAT1=data"))

@@ -271,13 +271,47 @@ func TestResolveAdoption_TheCacheOfAnUnraidBootAndDataDeviceIsItsDataPartitionOn
 		{"a data partition with no size", shared(&noSize), assign},
 		{"as data", shared(part4), append(assignAll()[:2], AdoptionAssignment{Role: AdoptData, WWN: "eui.0002"})},
 		{"as parity", shared(part4), append(assignAll()[1:3], AdoptionAssignment{Role: AdoptParity, WWN: "eui.0002"})},
-		{"beside another cache", shared(part4), append(assign, AdoptionAssignment{Role: AdoptCache, Serial: "CAC1"})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := ResolveAdoption(tc.disks, tc.a); err == nil {
-				t.Fatal("ResolveAdoption accepted it")
-			} else if tc.name != "beside another cache" && !errors.Is(err, ErrAdoptUnraidBoot) {
+			if _, err := ResolveAdoption(tc.disks, tc.a); !errors.Is(err, ErrAdoptUnraidBoot) {
 				t.Fatalf("ResolveAdoption = %v, want ErrAdoptUnraidBoot", err)
+			}
+		})
+	}
+
+	withCache := append(shared(part4), unraidDisks()[3])
+	if _, err := ResolveAdoption(withCache, append(assign, AdoptionAssignment{Role: AdoptCache, Serial: "CAC1"})); !errors.Is(err, ErrTooManyCacheDisks) {
+		t.Errorf("a whole-disk cache beside the shared disk's: %v, want ErrTooManyCacheDisks", err)
+	}
+	if _, err := ResolveAdoption(withCache, append(assignAll(), AdoptionAssignment{Role: AdoptCache, WWN: "eui.0002"})); !errors.Is(err, ErrTooManyCacheDisks) {
+		t.Errorf("the shared disk's cache beside a whole-disk one: %v, want ErrTooManyCacheDisks", err)
+	}
+}
+
+func TestResolveAdoption_RefusesASecondCache(t *testing.T) {
+	second := Disk{Device: "/dev/nvme2n1", Serial: "CAC2", Size: 500 * GB, Filesystem: "xfs", FSDevice: "/dev/nvme2n1p1", FSUUID: "55555555-5555-4555-8555-555555555555", ByIDName: "ata-EX_CAC2", FSByIDName: "ata-EX_CAC2-part1"}
+	boot := Disk{
+		Device: "/dev/nvme1n1", Serial: "NVME-BOOT", WWN: "eui.0001", Size: 1 * TB, Boot: true, ByIDName: "nvme-eui.0001",
+		CachePartitions: []CachePartition{{Device: "/dev/nvme1n1p3", Size: 400 * GB, ByIDName: "nvme-eui.0001-part3", PartUUID: "aaaa-bbbb", Reason: ReasonSpareBootPartition}},
+	}
+	disks := append(unraidDisks(), second, boot)
+	part := AdoptionAssignment{Role: AdoptCache, ByIDName: "nvme-eui.0001-part3", PartUUID: "aaaa-bbbb"}
+	for _, tc := range []struct {
+		name string
+		a    []AdoptionAssignment
+	}{
+		{"two disks by serial", append(assignAll(), AdoptionAssignment{Role: AdoptCache, Serial: "CAC2"})},
+		{"two disks, the second first", append(assignAll()[:3], AdoptionAssignment{Role: AdoptCache, Serial: "CAC2"}, AdoptionAssignment{Role: AdoptCache, Serial: "CAC1"})},
+		{"a partition then a disk", append(assignAll()[:3], part, AdoptionAssignment{Role: AdoptCache, Serial: "CAC1"})},
+		{"a disk then a partition", append(assignAll(), part)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := ResolveAdoption(disks, tc.a)
+			if !errors.Is(err, ErrTooManyCacheDisks) {
+				t.Fatalf("ResolveAdoption = %v, want ErrTooManyCacheDisks", err)
+			}
+			if plan.Cache != nil {
+				t.Errorf("a refused plan carries cache %+v", plan.Cache)
 			}
 		})
 	}

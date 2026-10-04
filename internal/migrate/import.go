@@ -41,7 +41,7 @@ var importRoleErrors = []error{
 	ErrImportDiskRefused, ErrImportUnknownDisk, ErrImportRole,
 	disk.ErrAdoptDiskMissing, disk.ErrAdoptDiskAmbiguous, disk.ErrAdoptBootDisk, disk.ErrAdoptUnraidBoot,
 	disk.ErrAdoptDiskFailed, disk.ErrAdoptNoFilesystem, disk.ErrAdoptUUIDShared, disk.ErrAdoptDiskChanged,
-	disk.ErrAdoptNoCacheBinding, disk.ErrNoParityDisks, disk.ErrTooManyParityDisks, disk.ErrNoDataDisks,
+	disk.ErrAdoptNoCacheBinding, disk.ErrTooManyCacheDisks, disk.ErrNoParityDisks, disk.ErrTooManyParityDisks, disk.ErrNoDataDisks,
 	disk.ErrParityTooSmall, disk.ErrWeakIdentityParity, disk.ErrDeviceAssignedTwice, disk.ErrMissingSize,
 	disk.ErrUnsupportedFilesystem, disk.ErrBootPartitionNotCache, disk.ErrBootPartitionNotSpare,
 	disk.ErrBootPartitionAdopt, disk.ErrBootDevice,
