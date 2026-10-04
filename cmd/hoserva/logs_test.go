@@ -183,24 +183,82 @@ func TestLogsJobFollowAndJSONAreRefused(t *testing.T) {
 	}
 }
 
-// Without --follow the command still copies the server's body as it is and
-// does not ask the server to follow.
-func TestLogsJobWithoutFollowCopiesTheBodyUnchanged(t *testing.T) {
+// Without --follow the command prints the log's decompressed text, in plain
+// and --json output, and does not ask the server to follow.
+func TestLogsJobWithoutFollowPrintsTheDecompressedText(t *testing.T) {
 	body := gzipped(t, "finished log\n")
-	var gotQuery string
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"plain", []string{"logs", "--job"}, "finished log\n"},
+		{"json", []string{"--json", "logs", "--job"}, "\"finished log\\n\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotQuery string
+			sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.RawQuery
+				w.Header().Set("Content-Type", "application/gzip")
+				_, _ = w.Write(body)
+			})
+			printed, err := runAppCLI(t, sock, append(tc.args, uuid.NewString())...)
+			if err != nil {
+				t.Fatalf("logs --job: %v", err)
+			}
+			if printed != tc.want {
+				t.Fatalf("printed %q, want %q", printed, tc.want)
+			}
+			if gotQuery != "" {
+				t.Fatalf("query = %q, want none", gotQuery)
+			}
+		})
+	}
+}
+
+// A log without its gzip trailer (a job still running) prints what it
+// carried, across the members it is made of.
+func TestLogsJobWithoutFollowPrintsALogWithoutATrailer(t *testing.T) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	_, _ = io.WriteString(gw, "first\n")
+	if err := gw.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.WriteString(gw, "second\n")
+	if err := gw.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	body := buf.Bytes()
 	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/gzip")
 		_, _ = w.Write(body)
 	})
 	printed, err := runAppCLI(t, sock, "logs", "--job", uuid.NewString())
 	if err != nil {
-		t.Fatalf("logs --job: %v", err)
+		t.Fatalf("logs --job on a log without a trailer: %v", err)
 	}
-	if printed != string(body) {
-		t.Fatalf("printed %q, want the gzip body as sent", printed)
+	if printed != "first\nsecond\n" {
+		t.Fatalf("printed %q, want the text the log carried", printed)
 	}
-	if gotQuery != "" {
-		t.Fatalf("query = %q, want none", gotQuery)
+}
+
+// A body that is not gzip is an error and never reaches stdout as raw bytes,
+// including one shorter than a gzip header.
+func TestLogsJobWithoutFollowRefusesABodyThatIsNotGzip(t *testing.T) {
+	for _, body := range []string{"this is plain text, not a gzip stream\n", "oops\n"} {
+		for _, args := range [][]string{{"logs", "--job"}, {"--json", "logs", "--job"}} {
+			sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/gzip")
+				_, _ = io.WriteString(w, body)
+			})
+			printed, err := runAppCLI(t, sock, append(args, uuid.NewString())...)
+			if err == nil {
+				t.Fatalf("%v on the body %q ended with nil, want a command failure", args, body)
+			}
+			if printed != "" {
+				t.Fatalf("%v on the body %q printed %q, want nothing", args, body, printed)
+			}
+		}
 	}
 }
