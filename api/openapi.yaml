@@ -3549,6 +3549,69 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /migrate/initialize-parity:
+    post:
+      operationId: initializeMigrationParity
+      summary: Cross the point of no return and initialise parity
+      description: >-
+        Step 17 of the migration (doc 05 §4), the point of no return and the
+        first step that writes to a disk of the old array: queues a
+        `migration_parity` job (topology class) that formats the former Unraid
+        parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition
+        of the boot disk, or partition 4 of an Unraid boot + data device and
+        never the rest of that disk), records them as the array's own, mounts
+        the data disks read-write, generates `snapraid.conf` with its content
+        files placed per doc 02 §2, applies what the import deferred (each
+        share's cache mode and its top-level directory's setgid mode and group,
+        Q26), wires the parity engine so sync, scrub and fix are available
+        without a restart, and queues the initial `sync` as an ordinary sync
+        job, which runs through the threshold guard like every other. The data
+        disks are never formatted. Until the sync completes the array has no
+        redundancy at all: `getMigration` `parityInit` states that window and
+        what rollback means for this session's boot mode and layout, and the
+        user is shown them before this is called.
+
+
+        `confirmation` must be the exact string `getMigration`
+        `parityInit.confirmation` gives: it names every device that will be
+        erased, in the style of the array setup's own typed confirmation. A
+        wrong or missing string is refused with 409 `confirmation_required`
+        and nothing is formatted. Refused before anything is queued with 409
+        `verify_required` unless the latest verify of the adopted array
+        passed (`startMigrationVerify`) and no import has run since, with 409
+        `no_import_pending` unless an import is pending its point of no return
+        (or an initialisation is unfinished), and with 400
+        `invalid_import_roles` when a disk the import recorded is gone, was
+        swapped or may not be erased (a cache that is a partition of an Unraid
+        boot device is refused unless the capture says the boot pool is not a
+        mirrored pair, and whenever a second Unraid boot device is attached).
+        The job resolves every disk again from a fresh inventory by identity
+        immediately before the first format and refuses, erasing nothing, when
+        one is not the disk that was confirmed. A failure before the first
+        format leaves the migration pending, with the adopted disks mounted
+        read-only again. A failure after the formatted disks are recorded
+        leaves the migration in `initializing`: running this again with the
+        `parityInit.confirmation` of that phase finishes it and formats
+        nothing. Parity, array-write and topology jobs other than this one are
+        refused with 409 `migration_in_progress` until it finishes.
+      tags: [migrate]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationInitializeParityRequest'
+      responses:
+        "200":
+          description: The queued `migration_parity` job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
   /migrate/report:
     get:
       operationId: getMigrationReport
@@ -6242,6 +6305,7 @@ components:
         - migration_scan
         - migration_import
         - migration_verify
+        - migration_parity
         # Service
         - appdata_backup
         - appdata_restore
@@ -10654,8 +10718,11 @@ components:
         (`startMigrationVerify`) moves it to `verifying` while it runs, to
         `verify_failed` when it found a mismatch or did not finish, and to
         `verified` when every comparison passed; only `verified` leads to the
-        point of no return.
-      enum: [none, scanning, scan_failed, scanned, imported, verifying, verify_failed, verified]
+        point of no return (`initializeMigrationParity`). `initializing` is a
+        point of no return that stopped after the former parity and cache
+        disks were formatted and recorded: running it again finishes it and
+        erases nothing.
+      enum: [none, scanning, scan_failed, scanned, imported, verifying, verify_failed, verified, initializing]
 
     MigrationImportRole:
       type: string
@@ -11040,6 +11107,88 @@ components:
           $ref: '#/components/schemas/MigrationReport'
         verify:
           $ref: '#/components/schemas/MigrationVerify'
+        parityInit:
+          $ref: '#/components/schemas/MigrationParityInit'
+
+    MigrationInitializeParityRequest:
+      type: object
+      required: [confirmation]
+      properties:
+        confirmation:
+          type: string
+          description: >-
+            The exact typed confirmation `getMigration` `parityInit.confirmation`
+            gives, naming every device that will be erased.
+
+    MigrationParityErase:
+      type: object
+      description: One device the point of no return erases.
+      required: [role, device, partition]
+      properties:
+        role:
+          type: string
+          enum: [parity, cache]
+        device:
+          type: string
+          description: The device node, as it is named in `confirmation`.
+        serial:
+          type: string
+        wwn:
+          type: string
+        size:
+          type: integer
+          format: int64
+        partition:
+          type: boolean
+          description: >-
+            True when only a partition of the device's disk is erased (the cache
+            of an Unraid boot + data device, or a spare partition of the boot
+            disk); the rest of that disk is left alone.
+
+    MigrationParityInit:
+      type: object
+      description: >-
+        What the point of no return (`initializeMigrationParity`) would do now,
+        present in the `verified` phase (only a passing verify offers it) and in
+        `initializing`. The screen and the command show `unprotectedWindow` and
+        `rollback` before asking for `confirmation`.
+      required: [finishing, erases, unprotectedWindow, rollback]
+      properties:
+        finishing:
+          type: boolean
+          description: >-
+            True in `initializing`: the former parity and cache disks are already
+            formatted and recorded, and running `initializeMigrationParity` with
+            this `confirmation` finishes the rest and erases nothing.
+        confirmation:
+          type: string
+          description: >-
+            The exact string `initializeMigrationParity` requires. Absent when
+            `problem` is set.
+        erases:
+          type: array
+          description: Every device the point of no return erases; empty when `finishing`.
+          items:
+            $ref: '#/components/schemas/MigrationParityErase'
+        problem:
+          type: string
+          description: >-
+            Why it cannot be offered now (a disk missing, swapped or not
+            allowed); no `confirmation` is given.
+        unprotectedWindow:
+          type: string
+          description: >-
+            The unprotected window in doc 05 §5's terms: the array has no
+            redundancy from the moment Unraid's array stopped until the initial
+            sync completes.
+        rollback:
+          type: array
+          description: >-
+            What rollback means once this is confirmed, for this session's boot
+            mode and layout (doc 05 §5): the general statement first, then the
+            row of the table that applies.
+          items:
+            type: string
 
     MigrationVerifyCounts:
       type: object

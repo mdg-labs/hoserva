@@ -17305,6 +17305,252 @@ func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w h
 	}
 }
 
+// handleInitializeMigrationParityRequest handles initializeMigrationParity operation.
+//
+// Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a
+// disk of the old array: queues a `migration_parity` job (topology class) that formats the former
+// Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or
+// partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the
+// array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files
+// placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level
+// directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are
+// available without a restart, and queues the initial `sync` as an ordinary sync job, which runs
+// through the threshold guard like every other. The data disks are never formatted. Until the sync
+// completes the array has no redundancy at all: `getMigration` `parityInit` states that window and
+// what rollback means for this session's boot mode and layout, and the user is shown them before this
+// is called.
+//
+// `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names
+// every device that will be erased, in the style of the array setup's own typed confirmation. A wrong
+// or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused
+// before anything is queued with 409 `verify_required` unless the latest verify of the adopted array
+// passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an
+// import is pending its point of no return (or an initialisation is unfinished), and with 400
+// `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
+// cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
+// is not a mirrored pair, and whenever a second Unraid boot device is attached). The job resolves
+// every disk again from a fresh inventory by identity immediately before the first format and refuses,
+// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
+// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
+// formatted disks are recorded leaves the migration in `initializing`: running this again with the
+// `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and
+// topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
+//
+// POST /migrate/initialize-parity
+func (s *Server) handleInitializeMigrationParityRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("initializeMigrationParity"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/migrate/initialize-parity"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), InitializeMigrationParityOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: InitializeMigrationParityOperation,
+			ID:   "initializeMigrationParity",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, InitializeMigrationParityOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, InitializeMigrationParityOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeInitializeMigrationParityRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    InitializeMigrationParityOperation,
+			OperationSummary: "Cross the point of no return and initialise parity",
+			OperationID:      "initializeMigrationParity",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *MigrationInitializeParityRequest
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.InitializeMigrationParity(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.InitializeMigrationParity(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeInitializeMigrationParityResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleInstallTemplateRequest handles installTemplate operation.
 //
 // Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no

@@ -30,8 +30,8 @@ var (
 	// ErrScanInProgress is returned for a new scan, or a forget, while a scan runs.
 	ErrScanInProgress = errors.New("a migration scan is already running")
 	// ErrImportPending is returned for a forget while an import's adoption is
-	// waiting for its point of no return: the session's baseline is what the
-	// verify step compares the adopted disks against.
+	// waiting for its point of no return, or part-way through it: the session's
+	// baseline is what the verify step compares the adopted disks against.
 	ErrImportPending = errors.New("an Unraid import is pending its point of no return: its scan baseline is kept until then")
 	// ErrNoReport is returned when no scan has produced a report.
 	ErrNoReport = errors.New("there is no migration report")
@@ -55,6 +55,10 @@ const (
 	PhaseVerifying    Phase = "verifying"
 	PhaseVerifyFailed Phase = "verify_failed"
 	PhaseVerified     Phase = "verified"
+	// PhaseInitializing is the point of no return that stopped after the former
+	// parity and cache disks were formatted and recorded: the rest of it is
+	// finished by running it again, which erases nothing.
+	PhaseInitializing Phase = "initializing"
 )
 
 // SourceInfo describes what a report was made from: an uploaded zip, or a flash
@@ -139,6 +143,14 @@ type Service struct {
 	// mount table. Verify refuses to run while either is nil.
 	Adopted         func(ctx context.Context) (Adoption, error)
 	ConfirmReadOnly func(ctx context.Context, where string) error
+	// Record returns what the adoption recorded: its data disks, and the former
+	// parity and cache disks it left unformatted. The point of no return resolves
+	// them again from a fresh inventory (PlanParityInit).
+	Record func(ctx context.Context) ([]store.ArrayDisk, []store.RecordedDisk, error)
+	// Finishing reports whether a parity initialisation stopped after the former
+	// parity and cache disks were formatted and recorded, with the rest of it left
+	// (store.ArrayStore.MigrationFinishing). Nil means it never is.
+	Finishing func(ctx context.Context) (bool, error)
 
 	// stickMu serialises the one private mountpoint a flash device is read at.
 	// It is taken after mu, never before.
@@ -694,6 +706,13 @@ func (s *Service) State(ctx context.Context) (*State, error) {
 	case sess.Report != nil:
 		st.Phase = PhaseScanned
 	}
+	finishing, err := s.finishing(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if finishing {
+		st.Phase = PhaseInitializing
+	}
 	if s.Pending != nil {
 		pending, err := s.Pending(ctx)
 		if err != nil {
@@ -748,6 +767,11 @@ func (s *Service) Forget(ctx context.Context) error {
 		if pending {
 			return ErrImportPending
 		}
+	}
+	if finishing, err := s.finishing(ctx); err != nil {
+		return err
+	} else if finishing {
+		return ErrImportPending
 	}
 	sess, err := s.load(ctx)
 	if err != nil {

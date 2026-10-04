@@ -103,6 +103,18 @@ func wireMigrationImport(handler *api.Handler, registry *job.Registry, arrays *s
 		return errors.New("the handler's array store is not the one the import records the array in")
 	}
 	handler.Migration.Pending = arrays.MigrationPending
+	handler.Migration.Finishing = arrays.MigrationFinishing
+	handler.Migration.Record = func(ctx context.Context) ([]store.ArrayDisk, []store.RecordedDisk, error) {
+		_, disks, err := arrays.GetArray(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		recorded, err := arrays.RecordedDisks(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return disks, recorded, nil
+	}
 	handler.Migration.Adopted = func(ctx context.Context) (migrate.Adoption, error) {
 		_, disks, err := arrays.GetArray(ctx)
 		if err != nil {
@@ -144,7 +156,64 @@ func wireMigrationImport(handler *api.Handler, registry *job.Registry, arrays *s
 		Seed: func(ctx context.Context, out io.Writer) error {
 			return seedMigration(ctx, out, svc.SeedPlan, shares)
 		},
+		// A pass recorded before an import runs again says nothing about what is
+		// mounted after it: the import forgets it before it changes anything.
+		InvalidateVerify: svc.InvalidateVerify,
 	}))
+	return nil
+}
+
+// wireMigrationParity is what main.go calls, after wireMigrationImport, to make
+// the point of no return reachable (doc 05 §4 step 17): it registers the
+// migration_parity job, which formats the former parity disks and the cache
+// through disks (the real provider, whose format guard re-resolves each target
+// by identity) and nothing else, mounts the data disks read-write and generates
+// snapraid.conf. arrayReady is the disk-topology jobs' strict hook
+// (parityReg.callArrayReady in main.go): it regenerates the pool's mounts and
+// smb.conf from the share rows, rebuilds the array sequence and wires the parity
+// engine for the snapraid.conf just written, so sync, scrub and fix are
+// registered without a restart (#265), which the initial sync the job queues
+// through scheduler needs. shares applies what the import deferred. It fails
+// when wireMigration has not run, as wireMigrationImport does.
+func wireMigrationParity(handler *api.Handler, registry *job.Registry, scheduler *job.Scheduler, disks disk.Provider, arrays *store.ArrayStore, generator *cfggen.Generator, runner disk.Runner, mounter disk.UnitMounter, arrayReady func(ctx context.Context) error, shares *share.Service) error {
+	if handler.Migration == nil {
+		return errors.New("the migration session is not wired")
+	}
+	if handler.ArrayStore != arrays {
+		return errors.New("the handler's array store is not the one the point of no return records the array in")
+	}
+	svc := handler.Migration
+	registry.Register(job.TypeMigrationParity, false, job.RunMigrationParity(job.MigrationParityDeps{
+		Plan:       svc.PlanParityInit,
+		Provider:   disks,
+		Runner:     runner,
+		Store:      arrays,
+		Generator:  generator,
+		Mounter:    mounter,
+		ArrayReady: arrayReady,
+		Array:      handler.CurrentArray,
+		Shares: func(ctx context.Context, out io.Writer) error {
+			return completeMigrationShares(ctx, out, shares)
+		},
+		QueueSync: job.QueueInitialSync(scheduler),
+	}))
+	return nil
+}
+
+// completeMigrationShares applies what the import deferred through the share
+// service and tells the job's log what it did.
+func completeMigrationShares(ctx context.Context, out io.Writer, shares *share.Service) error {
+	res, err := shares.CompleteMigration(ctx)
+	for _, line := range res.Applied {
+		_, _ = fmt.Fprintf(out, "share %s\n", line)
+	}
+	for _, line := range res.Kept {
+		_, _ = fmt.Fprintf(out, "share %s: it stays array-only with its Unraid cache mode recorded; change it when the array has a cache\n", line)
+	}
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "%d share directories brought to the shared group and setgid mode (top level only)\n", res.Prepared)
 	return nil
 }
 

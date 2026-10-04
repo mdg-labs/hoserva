@@ -887,6 +887,39 @@ type Invoker interface {
 	//
 	// POST /config/import
 	ImportConfig(ctx context.Context, request *ImportConfigReq) (*ConfigImportReport, error)
+	// InitializeMigrationParity invokes initializeMigrationParity operation.
+	//
+	// Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a
+	// disk of the old array: queues a `migration_parity` job (topology class) that formats the former
+	// Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or
+	// partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the
+	// array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files
+	// placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level
+	// directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are
+	// available without a restart, and queues the initial `sync` as an ordinary sync job, which runs
+	// through the threshold guard like every other. The data disks are never formatted. Until the sync
+	// completes the array has no redundancy at all: `getMigration` `parityInit` states that window and
+	// what rollback means for this session's boot mode and layout, and the user is shown them before this
+	// is called.
+	//
+	// `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names
+	// every device that will be erased, in the style of the array setup's own typed confirmation. A wrong
+	// or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused
+	// before anything is queued with 409 `verify_required` unless the latest verify of the adopted array
+	// passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an
+	// import is pending its point of no return (or an initialisation is unfinished), and with 400
+	// `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
+	// cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
+	// is not a mirrored pair, and whenever a second Unraid boot device is attached). The job resolves
+	// every disk again from a fresh inventory by identity immediately before the first format and refuses,
+	// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
+	// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
+	// formatted disks are recorded leaves the migration in `initializing`: running this again with the
+	// `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and
+	// topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
+	//
+	// POST /migrate/initialize-parity
+	InitializeMigrationParity(ctx context.Context, request *MigrationInitializeParityRequest) (*Job, error)
 	// InstallTemplate invokes installTemplate operation.
 	//
 	// Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no
@@ -13209,6 +13242,161 @@ func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq)
 
 	stage = "DecodeResponse"
 	result, err := decodeImportConfigResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// InitializeMigrationParity invokes initializeMigrationParity operation.
+//
+// Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a
+// disk of the old array: queues a `migration_parity` job (topology class) that formats the former
+// Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or
+// partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the
+// array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files
+// placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level
+// directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are
+// available without a restart, and queues the initial `sync` as an ordinary sync job, which runs
+// through the threshold guard like every other. The data disks are never formatted. Until the sync
+// completes the array has no redundancy at all: `getMigration` `parityInit` states that window and
+// what rollback means for this session's boot mode and layout, and the user is shown them before this
+// is called.
+//
+// `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names
+// every device that will be erased, in the style of the array setup's own typed confirmation. A wrong
+// or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused
+// before anything is queued with 409 `verify_required` unless the latest verify of the adopted array
+// passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an
+// import is pending its point of no return (or an initialisation is unfinished), and with 400
+// `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
+// cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
+// is not a mirrored pair, and whenever a second Unraid boot device is attached). The job resolves
+// every disk again from a fresh inventory by identity immediately before the first format and refuses,
+// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
+// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
+// formatted disks are recorded leaves the migration in `initializing`: running this again with the
+// `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and
+// topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
+//
+// POST /migrate/initialize-parity
+func (c *Client) InitializeMigrationParity(ctx context.Context, request *MigrationInitializeParityRequest) (*Job, error) {
+	res, err := c.sendInitializeMigrationParity(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendInitializeMigrationParity(ctx context.Context, request *MigrationInitializeParityRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("initializeMigrationParity"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/initialize-parity"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, InitializeMigrationParityOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/initialize-parity"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeInitializeMigrationParityRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, InitializeMigrationParityOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, InitializeMigrationParityOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeInitializeMigrationParityResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

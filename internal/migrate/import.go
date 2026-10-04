@@ -45,6 +45,7 @@ var importRoleErrors = []error{
 	disk.ErrParityTooSmall, disk.ErrWeakIdentityParity, disk.ErrDeviceAssignedTwice, disk.ErrMissingSize,
 	disk.ErrUnsupportedFilesystem, disk.ErrBootPartitionNotCache, disk.ErrBootPartitionNotSpare,
 	disk.ErrBootPartitionAdopt, disk.ErrBootDevice,
+	ErrMirroredBootPool, disk.ErrMirroredBootCache, disk.ErrUnraidCacheNotPartition,
 }
 
 // IsImportRoleError reports whether err is a refusal of the disk-role mapping

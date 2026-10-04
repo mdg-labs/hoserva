@@ -28,6 +28,7 @@ const JOB_TYPE_MEMBERS: Record<JobType, true> = {
   migration_scan: true,
   migration_import: true,
   migration_verify: true,
+  migration_parity: true,
   appdata_backup: true,
   appdata_restore: true,
   appdata_restore_preview: true,

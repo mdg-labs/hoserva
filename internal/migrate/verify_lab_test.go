@@ -91,10 +91,32 @@ var dataSlots3 = []string{"disk1", "disk2", "disk3"}
 // (nil for none), imports it read-only and wires the verify job.
 func newLabVerify(t *testing.T, change func(a *labArray, manifest map[string]map[string]manifestFile)) *labVerify {
 	t.Helper()
+	return newLabVerifyWith(t, labVerifyOptions{change: change})
+}
+
+// labVerifyOptions varies how the primary fixture is built, imported and
+// verified: prepare changes the copy of the fixture's images before they are
+// attached, change changes the attached disks before the import, and seed makes
+// the import create the scan's shares and accounts.
+type labVerifyOptions struct {
+	prepare func(dir string)
+	change  func(a *labArray, manifest map[string]map[string]manifestFile)
+	seed    bool
+}
+
+func newLabVerifyWith(t *testing.T, opts labVerifyOptions) *labVerify {
+	t.Helper()
+	change := opts.change
 	dir := copiedFixture(t, primary)
+	if opts.prepare != nil {
+		opts.prepare(dir)
+	}
 	a := attachFixtureAt(t, primary, dir)
 	a.disks = labInventory(t, a, true, "parity", "disk1", "disk2", "disk3", "cache")
 	li := newLabImport(t, a, nil)
+	if opts.seed {
+		li.enableSeed()
+	}
 	// The session's directory is the scanner's, as hoservad's is: the baseline
 	// the scan writes is the file the verify reads.
 	li.svc.Dir = li.svc.Scanner.Dir

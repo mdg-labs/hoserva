@@ -353,7 +353,7 @@ func TestMain_WiresTheImportAndTheScheduler(t *testing.T) {
 		case *ast.SelectorExpr:
 			if fn.Sel.Name == "SetMigrationPending" && len(call.Args) == 1 {
 				if recv, ok := fn.X.(*ast.Ident); ok && recv.Name == "scheduler" {
-					if arg, ok := call.Args[0].(*ast.SelectorExpr); ok && arg.Sel.Name == "MigrationPending" {
+					if arg, ok := call.Args[0].(*ast.SelectorExpr); ok && arg.Sel.Name == "MigrationUnfinished" {
 						if x, ok := arg.X.(*ast.Ident); ok && x.Name == "arrayStore" {
 							gated = true
 						}
@@ -367,7 +367,7 @@ func TestMain_WiresTheImportAndTheScheduler(t *testing.T) {
 		t.Error("main.go does not call wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{...}), rebuildArraySequence, shareService)")
 	}
 	if !gated {
-		t.Error("main.go does not call scheduler.SetMigrationPending(arrayStore.MigrationPending)")
+		t.Error("main.go does not call scheduler.SetMigrationPending(arrayStore.MigrationUnfinished)")
 	}
 }
 

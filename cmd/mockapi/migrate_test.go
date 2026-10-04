@@ -936,3 +936,119 @@ func TestMockMigration_TheImportSeedsSharesAndUsers(t *testing.T) {
 		t.Errorf("deleteShareData = %d %s, want 409 migration_in_progress", st, code)
 	}
 }
+
+// The point of no return answers as production does, in production's order:
+// refused before an import, refused until the latest verify passed whatever the
+// request carries, then the typed confirmation must be the one the plan computes;
+// and only then does it finish, leaving the array past it.
+func TestMockMigration_InitializeParityNeedsAPassingVerifyAndTheTypedConfirmation(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	refused := func(req *apiv1.MigrationInitializeParityRequest, wantStatus int, wantCode string) {
+		t.Helper()
+		_, err := h.InitializeMigrationParity(ctx, req)
+		if err == nil {
+			t.Fatalf("InitializeMigrationParity(%+v) was accepted, want %d %s", req, wantStatus, wantCode)
+		}
+		if st, code := mockErrCode(t, err); st != wantStatus || code != wantCode {
+			t.Errorf("InitializeMigrationParity(%+v) = %d %s, want %d %s", req, st, code, wantStatus, wantCode)
+		}
+	}
+	refused(&apiv1.MigrationInitializeParityRequest{Confirmation: "x"}, 409, "no_import_pending")
+
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+	// No verify has run, and the first one fails: no confirmation is looked at.
+	refused(&apiv1.MigrationInitializeParityRequest{Confirmation: ""}, 409, "verify_required")
+	if m, _ := h.GetMigration(ctx); m.ParityInit.IsSet() {
+		t.Error("getMigration offers the point of no return before a verify")
+	}
+	if _, err := h.StartMigrationVerify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	refused(&apiv1.MigrationInitializeParityRequest{Confirmation: "ERASE /dev/sdb"}, 409, "verify_required")
+	if _, err := h.StartMigrationVerify(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ := h.GetMigration(ctx)
+	pi, ok := m.ParityInit.Get()
+	if m.Phase != apiv1.MigrationPhaseVerified || !ok || pi.Finishing || pi.Problem.IsSet() || !pi.Confirmation.IsSet() {
+		t.Fatalf("phase = %s, parityInit = %+v", m.Phase, pi)
+	}
+	want := pi.Confirmation.Value
+	if !strings.HasPrefix(want, "ERASE ") || pi.UnprotectedWindow == "" || len(pi.Rollback) == 0 || len(pi.Erases) == 0 {
+		t.Errorf("parityInit = %+v", pi)
+	}
+	for _, e := range pi.Erases {
+		if !strings.Contains(want, e.Device) {
+			t.Errorf("%s is erased but the confirmation %q does not name it", e.Device, want)
+		}
+	}
+	for _, wrong := range []string{"", want + " ", strings.ToLower(want), "ERASE /dev/sdc"} {
+		refused(&apiv1.MigrationInitializeParityRequest{Confirmation: wrong}, 409, "confirmation_required")
+	}
+	if _, err := h.InitializeMigrationParity(ctx, nil); err == nil {
+		t.Error("a request with no body was accepted")
+	}
+
+	j, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: want})
+	if err != nil {
+		t.Fatalf("InitializeMigrationParity: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationParity || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %+v", j)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
+		t.Fatalf("the job = %+v, %v, want succeeded", done, err)
+	}
+	m, _ = h.GetMigration(ctx)
+	if m.Phase != apiv1.MigrationPhaseScanned || m.ParityInit.IsSet() || m.Verify.IsSet() {
+		t.Errorf("after the point of no return: phase = %s, parityInit = %v, verify = %v", m.Phase, m.ParityInit.IsSet(), m.Verify.IsSet())
+	}
+	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(pool.Disks) == 0 {
+		t.Errorf("pool after the point of no return = %+v, want the array", pool)
+	}
+	// Past it nothing is pending: a second run is refused, and a job that
+	// pending migrations refuse is accepted again.
+	refused(&apiv1.MigrationInitializeParityRequest{Confirmation: want}, 409, "no_import_pending")
+	if _, err := h.StartSync(ctx, &apiv1.StartSyncRequest{}); err != nil {
+		t.Errorf("a sync after the point of no return: %v", err)
+	}
+}
+
+// An import that runs again forgets the verify result, as production's job does:
+// the point of no return is not offered until the array is verified again.
+func TestMockMigration_AnImportThatRunsAgainForgetsTheVerifyResult(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := h.StartMigrationVerify(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m, _ := h.GetMigration(ctx); m.Phase != apiv1.MigrationPhaseVerified {
+		t.Fatalf("phase = %s, want verified", m.Phase)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := h.GetMigration(ctx)
+	if m.Phase != apiv1.MigrationPhaseImported || m.Verify.IsSet() || m.ParityInit.IsSet() {
+		t.Errorf("after a second import: phase = %s, verify = %v, parityInit = %v, want imported with neither", m.Phase, m.Verify.IsSet(), m.ParityInit.IsSet())
+	}
+	_, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: "ERASE /dev/sdb"})
+	if st, code := mockErrCode(t, err); st != 409 || code != "verify_required" {
+		t.Errorf("InitializeMigrationParity after a second import = %d %s, want 409 verify_required", st, code)
+	}
+}

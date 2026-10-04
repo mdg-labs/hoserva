@@ -8447,6 +8447,7 @@ const (
 	JobTypeMigrationScan         JobType = "migration_scan"
 	JobTypeMigrationImport       JobType = "migration_import"
 	JobTypeMigrationVerify       JobType = "migration_verify"
+	JobTypeMigrationParity       JobType = "migration_parity"
 	JobTypeAppdataBackup         JobType = "appdata_backup"
 	JobTypeAppdataRestore        JobType = "appdata_restore"
 	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
@@ -8487,6 +8488,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeMigrationScan,
 		JobTypeMigrationImport,
 		JobTypeMigrationVerify,
+		JobTypeMigrationParity,
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
 		JobTypeAppdataRestorePreview,
@@ -8546,6 +8548,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeMigrationImport:
 		return []byte(s), nil
 	case JobTypeMigrationVerify:
+		return []byte(s), nil
+	case JobTypeMigrationParity:
 		return []byte(s), nil
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
@@ -8643,6 +8647,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeMigrationVerify:
 		*s = JobTypeMigrationVerify
+		return nil
+	case JobTypeMigrationParity:
+		*s = JobTypeMigrationParity
 		return nil
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
@@ -9607,9 +9614,10 @@ type Migration struct {
 	FlashDevices []MigrationFlashDevice `json:"flashDevices"`
 	// True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is
 	// the only source and no stick is offered (Q25).
-	ZipOnly bool               `json:"zipOnly"`
-	Report  OptMigrationReport `json:"report"`
-	Verify  OptMigrationVerify `json:"verify"`
+	ZipOnly    bool                   `json:"zipOnly"`
+	Report     OptMigrationReport     `json:"report"`
+	Verify     OptMigrationVerify     `json:"verify"`
+	ParityInit OptMigrationParityInit `json:"parityInit"`
 }
 
 // GetPhase returns the value of Phase.
@@ -9657,6 +9665,11 @@ func (s *Migration) GetVerify() OptMigrationVerify {
 	return s.Verify
 }
 
+// GetParityInit returns the value of ParityInit.
+func (s *Migration) GetParityInit() OptMigrationParityInit {
+	return s.ParityInit
+}
+
 // SetPhase sets the value of Phase.
 func (s *Migration) SetPhase(val MigrationPhase) {
 	s.Phase = val
@@ -9700,6 +9713,11 @@ func (s *Migration) SetReport(val OptMigrationReport) {
 // SetVerify sets the value of Verify.
 func (s *Migration) SetVerify(val OptMigrationVerify) {
 	s.Verify = val
+}
+
+// SetParityInit sets the value of ParityInit.
+func (s *Migration) SetParityInit(val OptMigrationParityInit) {
+	s.ParityInit = val
 }
 
 // Where Unraid boots from, for the planned layout and rollback wording of doc 05 §5. Every field is
@@ -10422,11 +10440,227 @@ func (s *MigrationImportRole) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/MigrationInitializeParityRequest
+type MigrationInitializeParityRequest struct {
+	// The exact typed confirmation `getMigration` `parityInit.confirmation` gives, naming every device
+	// that will be erased.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *MigrationInitializeParityRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *MigrationInitializeParityRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// One device the point of no return erases.
+// Ref: #/components/schemas/MigrationParityErase
+type MigrationParityErase struct {
+	Role MigrationParityEraseRole `json:"role"`
+	// The device node, as it is named in `confirmation`.
+	Device string    `json:"device"`
+	Serial OptString `json:"serial"`
+	Wwn    OptString `json:"wwn"`
+	Size   OptInt64  `json:"size"`
+	// True when only a partition of the device's disk is erased (the cache of an Unraid boot + data
+	// device, or a spare partition of the boot disk); the rest of that disk is left alone.
+	Partition bool `json:"partition"`
+}
+
+// GetRole returns the value of Role.
+func (s *MigrationParityErase) GetRole() MigrationParityEraseRole {
+	return s.Role
+}
+
+// GetDevice returns the value of Device.
+func (s *MigrationParityErase) GetDevice() string {
+	return s.Device
+}
+
+// GetSerial returns the value of Serial.
+func (s *MigrationParityErase) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetWwn returns the value of Wwn.
+func (s *MigrationParityErase) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetSize returns the value of Size.
+func (s *MigrationParityErase) GetSize() OptInt64 {
+	return s.Size
+}
+
+// GetPartition returns the value of Partition.
+func (s *MigrationParityErase) GetPartition() bool {
+	return s.Partition
+}
+
+// SetRole sets the value of Role.
+func (s *MigrationParityErase) SetRole(val MigrationParityEraseRole) {
+	s.Role = val
+}
+
+// SetDevice sets the value of Device.
+func (s *MigrationParityErase) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *MigrationParityErase) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *MigrationParityErase) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetSize sets the value of Size.
+func (s *MigrationParityErase) SetSize(val OptInt64) {
+	s.Size = val
+}
+
+// SetPartition sets the value of Partition.
+func (s *MigrationParityErase) SetPartition(val bool) {
+	s.Partition = val
+}
+
+type MigrationParityEraseRole string
+
+const (
+	MigrationParityEraseRoleParity MigrationParityEraseRole = "parity"
+	MigrationParityEraseRoleCache  MigrationParityEraseRole = "cache"
+)
+
+// AllValues returns all MigrationParityEraseRole values.
+func (MigrationParityEraseRole) AllValues() []MigrationParityEraseRole {
+	return []MigrationParityEraseRole{
+		MigrationParityEraseRoleParity,
+		MigrationParityEraseRoleCache,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationParityEraseRole) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationParityEraseRoleParity:
+		return []byte(s), nil
+	case MigrationParityEraseRoleCache:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationParityEraseRole) UnmarshalText(data []byte) error {
+	switch MigrationParityEraseRole(data) {
+	case MigrationParityEraseRoleParity:
+		*s = MigrationParityEraseRoleParity
+		return nil
+	case MigrationParityEraseRoleCache:
+		*s = MigrationParityEraseRoleCache
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// What the point of no return (`initializeMigrationParity`) would do now, present in the `verified`
+// phase (only a passing verify offers it) and in `initializing`. The screen and the command show
+// `unprotectedWindow` and `rollback` before asking for `confirmation`.
+// Ref: #/components/schemas/MigrationParityInit
+type MigrationParityInit struct {
+	// True in `initializing`: the former parity and cache disks are already formatted and recorded, and
+	// running `initializeMigrationParity` with this `confirmation` finishes the rest and erases nothing.
+	Finishing bool `json:"finishing"`
+	// The exact string `initializeMigrationParity` requires. Absent when `problem` is set.
+	Confirmation OptString `json:"confirmation"`
+	// Every device the point of no return erases; empty when `finishing`.
+	Erases []MigrationParityErase `json:"erases"`
+	// Why it cannot be offered now (a disk missing, swapped or not allowed); no `confirmation` is given.
+	Problem OptString `json:"problem"`
+	// The unprotected window in doc 05 §5's terms: the array has no redundancy from the moment Unraid's
+	// array stopped until the initial sync completes.
+	UnprotectedWindow string `json:"unprotectedWindow"`
+	// What rollback means once this is confirmed, for this session's boot mode and layout (doc 05 §5):
+	// the general statement first, then the row of the table that applies.
+	Rollback []string `json:"rollback"`
+}
+
+// GetFinishing returns the value of Finishing.
+func (s *MigrationParityInit) GetFinishing() bool {
+	return s.Finishing
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *MigrationParityInit) GetConfirmation() OptString {
+	return s.Confirmation
+}
+
+// GetErases returns the value of Erases.
+func (s *MigrationParityInit) GetErases() []MigrationParityErase {
+	return s.Erases
+}
+
+// GetProblem returns the value of Problem.
+func (s *MigrationParityInit) GetProblem() OptString {
+	return s.Problem
+}
+
+// GetUnprotectedWindow returns the value of UnprotectedWindow.
+func (s *MigrationParityInit) GetUnprotectedWindow() string {
+	return s.UnprotectedWindow
+}
+
+// GetRollback returns the value of Rollback.
+func (s *MigrationParityInit) GetRollback() []string {
+	return s.Rollback
+}
+
+// SetFinishing sets the value of Finishing.
+func (s *MigrationParityInit) SetFinishing(val bool) {
+	s.Finishing = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *MigrationParityInit) SetConfirmation(val OptString) {
+	s.Confirmation = val
+}
+
+// SetErases sets the value of Erases.
+func (s *MigrationParityInit) SetErases(val []MigrationParityErase) {
+	s.Erases = val
+}
+
+// SetProblem sets the value of Problem.
+func (s *MigrationParityInit) SetProblem(val OptString) {
+	s.Problem = val
+}
+
+// SetUnprotectedWindow sets the value of UnprotectedWindow.
+func (s *MigrationParityInit) SetUnprotectedWindow(val string) {
+	s.UnprotectedWindow = val
+}
+
+// SetRollback sets the value of Rollback.
+func (s *MigrationParityInit) SetRollback(val []string) {
+	s.Rollback = val
+}
+
 // `imported` is an adopted array waiting for its point of no return: the data disks are mounted
 // read-only and parity and cache are untouched (`startMigrationImport`). The verify phase
 // (`startMigrationVerify`) moves it to `verifying` while it runs, to `verify_failed` when it found a
 // mismatch or did not finish, and to `verified` when every comparison passed; only `verified` leads to
-// the point of no return.
+// the point of no return (`initializeMigrationParity`). `initializing` is a point of no return that
+// stopped after the former parity and cache disks were formatted and recorded: running it again
+// finishes it and erases nothing.
 // Ref: #/components/schemas/MigrationPhase
 type MigrationPhase string
 
@@ -10439,6 +10673,7 @@ const (
 	MigrationPhaseVerifying    MigrationPhase = "verifying"
 	MigrationPhaseVerifyFailed MigrationPhase = "verify_failed"
 	MigrationPhaseVerified     MigrationPhase = "verified"
+	MigrationPhaseInitializing MigrationPhase = "initializing"
 )
 
 // AllValues returns all MigrationPhase values.
@@ -10452,6 +10687,7 @@ func (MigrationPhase) AllValues() []MigrationPhase {
 		MigrationPhaseVerifying,
 		MigrationPhaseVerifyFailed,
 		MigrationPhaseVerified,
+		MigrationPhaseInitializing,
 	}
 }
 
@@ -10473,6 +10709,8 @@ func (s MigrationPhase) MarshalText() ([]byte, error) {
 	case MigrationPhaseVerifyFailed:
 		return []byte(s), nil
 	case MigrationPhaseVerified:
+		return []byte(s), nil
+	case MigrationPhaseInitializing:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -10505,6 +10743,9 @@ func (s *MigrationPhase) UnmarshalText(data []byte) error {
 		return nil
 	case MigrationPhaseVerified:
 		*s = MigrationPhaseVerified
+		return nil
+	case MigrationPhaseInitializing:
+		*s = MigrationPhaseInitializing
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -14959,6 +15200,52 @@ func (o OptMigrationBootMode) Get() (v MigrationBootMode, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptMigrationBootMode) Or(d MigrationBootMode) MigrationBootMode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationParityInit returns new OptMigrationParityInit with value set to v.
+func NewOptMigrationParityInit(v MigrationParityInit) OptMigrationParityInit {
+	return OptMigrationParityInit{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationParityInit is optional MigrationParityInit.
+type OptMigrationParityInit struct {
+	Value MigrationParityInit
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationParityInit was set.
+func (o OptMigrationParityInit) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationParityInit) Reset() {
+	var v MigrationParityInit
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationParityInit) SetTo(v MigrationParityInit) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationParityInit) Get() (v MigrationParityInit, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationParityInit) Or(d MigrationParityInit) MigrationParityInit {
 	if v, ok := o.Get(); ok {
 		return v
 	}

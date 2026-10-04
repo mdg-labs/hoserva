@@ -4306,6 +4306,8 @@ func (s JobType) Validate() error {
 		return nil
 	case "migration_verify":
 		return nil
+	case "migration_parity":
+		return nil
 	case "appdata_backup":
 		return nil
 	case "appdata_restore":
@@ -5426,6 +5428,24 @@ func (s *Migration) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if value, ok := s.ParityInit.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "parityInit",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -5714,6 +5734,91 @@ func (s MigrationImportRole) Validate() error {
 	}
 }
 
+func (s *MigrationParityErase) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Role.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "role",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s MigrationParityEraseRole) Validate() error {
+	switch s {
+	case "parity":
+		return nil
+	case "cache":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *MigrationParityInit) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.Erases == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.Erases {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "erases",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if s.Rollback == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "rollback",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s MigrationPhase) Validate() error {
 	switch s {
 	case "none":
@@ -5731,6 +5836,8 @@ func (s MigrationPhase) Validate() error {
 	case "verify_failed":
 		return nil
 	case "verified":
+		return nil
+	case "initializing":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

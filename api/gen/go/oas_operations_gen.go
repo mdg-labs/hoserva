@@ -85,6 +85,7 @@ const (
 	GetUpdateStatusOperation                OperationName = "GetUpdateStatus"
 	GetUserSharePermissionsOperation        OperationName = "GetUserSharePermissions"
 	ImportConfigOperation                   OperationName = "ImportConfig"
+	InitializeMigrationParityOperation      OperationName = "InitializeMigrationParity"
 	InstallTemplateOperation                OperationName = "InstallTemplate"
 	ListApiTokensOperation                  OperationName = "ListApiTokens"
 	ListAppImagesOperation                  OperationName = "ListAppImages"

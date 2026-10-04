@@ -47,6 +47,11 @@ type MigrationImportDeps struct {
 	// writing to no adopted disk, and reports what it created to out. It is
 	// all-or-nothing: an error means it left nothing of itself behind.
 	Seed func(ctx context.Context, out io.Writer) error
+	// InvalidateVerify forgets the migration's verify result
+	// (migrate.Service.InvalidateVerify). The job calls it before it changes
+	// anything, so a pass recorded before this run, which says nothing about what
+	// is mounted after it, never opens the point of no return.
+	InvalidateVerify func(ctx context.Context) error
 	// Now, when set, stamps generated-file headers; nil uses time.Now.
 	Now func() time.Time
 	// IsMounted, when set, answers whether where is a mountpoint for the undo
@@ -69,7 +74,7 @@ func (d MigrationImportDeps) mounted(where string) (bool, error) {
 }
 
 func (d MigrationImportDeps) complete() bool {
-	return d.Plan != nil && d.Runner != nil && d.Store != nil && d.Generator != nil && d.Mounter != nil && d.ArrayReady != nil && d.Array != nil && d.Seed != nil
+	return d.Plan != nil && d.Runner != nil && d.Store != nil && d.Generator != nil && d.Mounter != nil && d.ArrayReady != nil && d.Array != nil && d.Seed != nil && d.InvalidateVerify != nil
 }
 
 // RunMigrationImport is the RunFunc hoservad registers for TypeMigrationImport.
@@ -104,6 +109,9 @@ func RunMigrationImport(d MigrationImportDeps) RunFunc {
 		}
 		if err := p.Plan.Matches(fresh); err != nil {
 			return err
+		}
+		if err := d.InvalidateVerify(ctx); err != nil {
+			return fmt.Errorf("forgetting the verify result before the import changes the pool: %w", err)
 		}
 
 		exists, err := d.Store.Exists(ctx)

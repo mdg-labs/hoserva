@@ -691,3 +691,119 @@ func TestArrayStore_ReplaceDataDisk_ClearsTheMountSource(t *testing.T) {
 		t.Errorf("replaced disk = %+v, %v, want no mount source", got, err)
 	}
 }
+
+func parityInitRows() []ArrayDisk {
+	return []ArrayDisk{
+		{Role: ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-new-parity", Serial: "PAR1", Mountpoint: "/mnt/parity1", Size: 8 << 40, SizeSet: true},
+		{Role: ArrayRoleCache, RoleIndex: 1, Device: "/dev/nvme0n1p3", Filesystem: "xfs", FSUUID: "uuid-new-cache", Serial: "CAC1", Mountpoint: "/mnt/cache", Size: 500 << 30, SizeSet: true},
+	}
+}
+
+// The point of no return is one write: the formatted parity and cache disks
+// become array disks and the migration stops being pending together, and the
+// record of the former disks stays until the migration is finished, so a run
+// that stopped in between is finished and never starts over.
+func TestArrayStore_RecordParityInit_IsOneStepThatLeavesTheMigrationFinishing(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	disks, recorded := pendingArrayRows()
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	if finishing, err := st.MigrationFinishing(ctx); err != nil || finishing {
+		t.Fatalf("MigrationFinishing while pending = %v, %v", finishing, err)
+	}
+	if unfinished, err := st.MigrationUnfinished(ctx); err != nil || !unfinished {
+		t.Fatalf("MigrationUnfinished while pending = %v, %v", unfinished, err)
+	}
+
+	if err := st.RecordParityInit(ctx, parityInitRows()); err != nil {
+		t.Fatalf("RecordParityInit: %v", err)
+	}
+	settings, got, err := st.GetArray(ctx)
+	if err != nil || settings.MigrationPending || len(got) != 4 {
+		t.Fatalf("array = %+v %+v, %v, want the two data disks and the parity and cache, not pending", settings, got, err)
+	}
+	if pending, _ := st.MigrationPending(ctx); pending {
+		t.Error("the migration is still pending")
+	}
+	if finishing, err := st.MigrationFinishing(ctx); err != nil || !finishing {
+		t.Errorf("MigrationFinishing = %v, %v, want true until FinishMigration", finishing, err)
+	}
+	if unfinished, err := st.MigrationUnfinished(ctx); err != nil || !unfinished {
+		t.Errorf("MigrationUnfinished = %v, %v, want true until FinishMigration", unfinished, err)
+	}
+	if rec, err := st.RecordedDisks(ctx); err != nil || len(rec) != 2 {
+		t.Errorf("recorded = %+v, %v, want the record kept until the migration is finished", rec, err)
+	}
+	if err := st.RecordParityInit(ctx, parityInitRows()); !errors.Is(err, ErrMigrationNotPending) {
+		t.Errorf("a second RecordParityInit = %v, want ErrMigrationNotPending", err)
+	}
+	if deleted, err := st.DeletePendingArray(ctx); err != nil || deleted {
+		t.Errorf("DeletePendingArray after the point of no return = %v, %v, want nothing deleted", deleted, err)
+	}
+
+	if err := st.FinishMigration(ctx); err != nil {
+		t.Fatalf("FinishMigration: %v", err)
+	}
+	if finishing, err := st.MigrationFinishing(ctx); err != nil || finishing {
+		t.Errorf("MigrationFinishing after FinishMigration = %v, %v", finishing, err)
+	}
+	if unfinished, err := st.MigrationUnfinished(ctx); err != nil || unfinished {
+		t.Errorf("MigrationUnfinished after FinishMigration = %v, %v", unfinished, err)
+	}
+	if err := st.FinishMigration(ctx); !errors.Is(err, ErrMigrationNotFinishing) {
+		t.Errorf("a second FinishMigration = %v, want ErrMigrationNotFinishing", err)
+	}
+	if _, got, err := st.GetArray(ctx); err != nil || len(got) != 4 {
+		t.Errorf("disks after FinishMigration = %+v, %v", got, err)
+	}
+}
+
+// A row that cannot be written leaves the migration pending and no parity or
+// cache row behind.
+func TestArrayStore_RecordParityInit_AFailedRowLeavesTheMigrationPending(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	disks, recorded := pendingArrayRows()
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	rows := parityInitRows()
+	rows[1].FSUUID = rows[0].FSUUID
+	if err := st.RecordParityInit(ctx, rows); err == nil {
+		t.Fatal("RecordParityInit accepted two rows with one filesystem UUID")
+	}
+	settings, got, err := st.GetArray(ctx)
+	if err != nil || !settings.MigrationPending || len(got) != 2 {
+		t.Fatalf("array = %+v %+v, %v, want it still pending with its two data disks", settings, got, err)
+	}
+	if finishing, _ := st.MigrationFinishing(ctx); finishing {
+		t.Error("a failed record left the migration finishing")
+	}
+}
+
+func TestArrayStore_RecordParityInit_NeverTouchesAnArrayThatIsNotAPendingMigration(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	if err := st.RecordParityInit(ctx, parityInitRows()); !errors.Is(err, ErrMigrationNotPending) {
+		t.Fatalf("RecordParityInit with no array = %v, want ErrMigrationNotPending", err)
+	}
+	if err := st.PutArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []ArrayDisk{
+		{Role: ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordParityInit(ctx, parityInitRows()); !errors.Is(err, ErrMigrationNotPending) {
+		t.Fatalf("RecordParityInit on an ordinary array = %v, want ErrMigrationNotPending", err)
+	}
+	if _, got, _ := st.GetArray(ctx); len(got) != 1 {
+		t.Errorf("disks = %+v, want the ordinary array unchanged", got)
+	}
+	if err := st.FinishMigration(ctx); !errors.Is(err, ErrMigrationNotFinishing) {
+		t.Errorf("FinishMigration on an ordinary array = %v, want ErrMigrationNotFinishing", err)
+	}
+	if unfinished, err := st.MigrationUnfinished(ctx); err != nil || unfinished {
+		t.Errorf("MigrationUnfinished of an ordinary array = %v, %v", unfinished, err)
+	}
+}

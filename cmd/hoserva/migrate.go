@@ -20,7 +20,7 @@ import (
 
 func migrateCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "migrate", Short: "Migrate from Unraid (doc 05)"}
-	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateVerifyCmd(), migrateForgetCmd())
+	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateVerifyCmd(), migrateInitializeParityCmd(), migrateForgetCmd())
 	return cmd
 }
 
@@ -152,6 +152,8 @@ var migrationPhaseLabels = map[apiv1.MigrationPhase]string{
 	apiv1.MigrationPhaseVerifying:    "verifying the adopted disks against the scan's baseline",
 	apiv1.MigrationPhaseVerifyFailed: "verify failed: the adopted disks differ from the scan's baseline, or the verify did not finish",
 	apiv1.MigrationPhaseVerified:     "verified: the adopted disks match the scan's baseline",
+
+	apiv1.MigrationPhaseInitializing: "initializing: the former parity and cache disks are formatted, and the rest of the point of no return is unfinished",
 }
 
 func migrateStatusCmd() *cobra.Command {
@@ -205,6 +207,10 @@ func migrateStatusCmd() *cobra.Command {
 			switch m.Phase {
 			case apiv1.MigrationPhaseImported, apiv1.MigrationPhaseVerifying, apiv1.MigrationPhaseVerifyFailed, apiv1.MigrationPhaseVerified:
 				return printSeeded(c)
+			case apiv1.MigrationPhaseInitializing:
+				if pi, ok := m.ParityInit.Get(); ok {
+					printParityInit(os.Stdout, pi)
+				}
 			}
 			return nil
 		},
@@ -597,22 +603,139 @@ func migrateImportCmd() *cobra.Command {
 // and each share that was not created with the reason. The import has already
 // succeeded, so a log that cannot be read is said, not a failure.
 func printImportLog(c *apiv1.Client, id uuid.UUID) {
+	printJobLog(c, id, "import")
+}
+
+// printJobLog prints the log of a finished migration job under a heading that
+// names it; a log that cannot be read is said on stderr.
+func printJobLog(c *apiv1.Client, id uuid.UUID, what string) {
 	log, err := c.GetJobLog(apiCtx(), apiv1.GetJobLogParams{JobId: id})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "The import's log could not be read (%v); `hoserva logs --job %s` shows it.\n", err, id)
+		fmt.Fprintf(os.Stderr, "The %s's log could not be read (%v); `hoserva logs --job %s` shows it.\n", what, err, id)
 		return
 	}
 	zr, err := gzip.NewReader(log.Data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "The import's log could not be read (%v); `hoserva logs --job %s` shows it.\n", err, id)
+		fmt.Fprintf(os.Stderr, "The %s's log could not be read (%v); `hoserva logs --job %s` shows it.\n", what, err, id)
 		return
 	}
 	defer func() { _ = zr.Close() }()
-	fmt.Println("Import log:")
+	fmt.Printf("%s log:\n", strings.ToUpper(what[:1])+what[1:])
 	if _, err := io.Copy(os.Stdout, zr); err != nil {
-		fmt.Fprintf(os.Stderr, "The import's log could not be read to its end: %v\n", err)
+		fmt.Fprintf(os.Stderr, "The %s's log could not be read to its end: %v\n", what, err)
 	}
 	fmt.Println()
+}
+
+func migrateInitializeParityCmd() *cobra.Command {
+	var confirm string
+	cmd := &cobra.Command{
+		Use:   "initialize-parity [--confirm '<string>']",
+		Short: "Cross the point of no return: format the former parity disks and the cache and start the initial sync",
+		Long: "Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a disk of the old array. " +
+			"It is offered only after a verify that passed (`hoserva migrate verify`). It formats the former Unraid parity disk(s) XFS and the " +
+			"cache (a whole disk, a spare partition of the boot disk, or partition 4 of an Unraid boot + data device and never the rest of that " +
+			"disk), records them as the array's own, mounts the data disks read-write, generates snapraid.conf, applies the shares' cache modes " +
+			"and directory modes the import deferred, and queues the initial sync, which runs through the threshold guard. The data disks are " +
+			"never formatted. Run without --confirm it prints what it would erase, the unprotected window and what rollback means for your " +
+			"layout, and the exact string --confirm needs; it formats nothing. --confirm takes that string, typed back: it names every device " +
+			"that will be erased, and the command never fills it in for you. A run that stopped after the disks were formatted is finished by " +
+			"running it again with the confirmation it prints, which erases nothing.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			m, err := c.GetMigration(apiCtx())
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			pi, ok := m.ParityInit.Get()
+			if !ok {
+				return fmt.Errorf("the point of no return is not offered now: the migration is %s; it is offered after `hoserva migrate verify` has passed", migrationPhaseLabels[m.Phase])
+			}
+			if jsonOutput && confirm == "" {
+				emit(pi)
+				return fmt.Errorf("nothing was done: give --confirm with the exact confirmation string")
+			}
+			if !jsonOutput {
+				printParityInit(os.Stdout, pi)
+			}
+			if confirm == "" {
+				if c, ok := pi.Confirmation.Get(); ok {
+					return fmt.Errorf("nothing was formatted: this is the point of no return, so read the above, then run it again with --confirm %q", c)
+				}
+				return fmt.Errorf("nothing was formatted: it cannot be offered now")
+			}
+			j, err := c.InitializeMigrationParity(apiCtx(), &apiv1.MigrationInitializeParityRequest{Confirmation: confirm})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			done, err := waitForJob(ctx, c, j.ID)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				emit(done)
+			} else {
+				printJobLog(c, j.ID, "parity initialisation")
+			}
+			switch done.Status {
+			case apiv1.JobStatusSucceeded:
+			case apiv1.JobStatusFailed:
+				if e, ok := done.Error.Get(); ok && e.Message != "" {
+					return fmt.Errorf("parity initialisation %s failed: %s", done.ID, e.Message)
+				}
+				return fmt.Errorf("parity initialisation %s failed", done.ID)
+			default:
+				return fmt.Errorf("parity initialisation %s ended %s", done.ID, done.Status)
+			}
+			if !jsonOutput {
+				fmt.Println("The parity and cache disks are formatted and the array is read-write. The initial sync is queued: until it completes the array has no redundancy, so follow it with `hoserva parity status`, and run a full scrub once it is done.")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&confirm, "confirm", "", "The exact confirmation string printed without it, naming every device that will be erased (required to act)")
+	return cmd
+}
+
+// printParityInit prints what the point of no return does and what it needs: the
+// unprotected window, what rollback means for this layout, every device erased
+// and the string to type back.
+func printParityInit(w io.Writer, pi apiv1.MigrationParityInit) {
+	_, _ = fmt.Fprintf(w, "THE POINT OF NO RETURN\n\n%s\n\n", pi.UnprotectedWindow)
+	for _, line := range pi.Rollback {
+		_, _ = fmt.Fprintf(w, "Rollback: %s\n", line)
+	}
+	_, _ = fmt.Fprintln(w)
+	if p, ok := pi.Problem.Get(); ok {
+		_, _ = fmt.Fprintf(w, "It cannot be offered now: %s\n", p)
+		return
+	}
+	if pi.Finishing {
+		_, _ = fmt.Fprintln(w, "The former parity and cache disks are already formatted and recorded. Finishing mounts the data disks read-write, generates snapraid.conf, applies the shares' deferred settings and queues the initial sync; it erases nothing.")
+	}
+	for _, e := range pi.Erases {
+		what := "the whole disk"
+		if e.Partition {
+			what = "this partition only; the rest of its disk is left alone"
+		}
+		line := fmt.Sprintf("Erases the %s %s (%s)", e.Role, e.Device, what)
+		if sn, ok := e.Serial.Get(); ok {
+			line += ", serial " + sn
+		}
+		if sz, ok := e.Size.Get(); ok {
+			line += fmt.Sprintf(", %.1f GiB", float64(sz)/(1<<30))
+		}
+		_, _ = fmt.Fprintln(w, line)
+	}
+	if c, ok := pi.Confirmation.Get(); ok {
+		_, _ = fmt.Fprintf(w, "Confirmation: %s\n", c)
+	}
 }
 
 // printSeeded lists what the import created: each share it seeded with the cache

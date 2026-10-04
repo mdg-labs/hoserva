@@ -48,6 +48,17 @@ type mockMigration struct {
 	// re-run that clears it.
 	verify     *apiv1.MigrationVerify
 	verifyRuns int
+	// roles is the disk-role mapping the import confirmed, which the point of no
+	// return resolves again; initialized is set once the point of no return has
+	// formatted the former parity and cache disks and finished.
+	roles       []disk.AdoptionAssignment
+	initialized bool
+}
+
+func (m *mockMigration) initializedNow() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.initialized
 }
 
 func errMigrationInProgress() error {
@@ -86,8 +97,10 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("migration_no_go", 409, err)
 	case errors.Is(err, migrate.ErrImportNoReview):
 		return errMigrationRefusal("scan_outdated", 409, err)
-	case errors.Is(err, migrate.ErrVerifyNotPending):
+	case errors.Is(err, migrate.ErrVerifyNotPending), errors.Is(err, migrate.ErrParityNotPending):
 		return errMigrationRefusal("no_import_pending", 409, err)
+	case errors.Is(err, migrate.ErrVerifyRequired):
+		return errMigrationRefusal("verify_required", 409, err)
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errMigrationRefusal("unraid_stick", 409, err)
 	case migrate.IsImportRoleError(err):
@@ -454,6 +467,7 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 			out.Phase = apiv1.MigrationPhaseVerifyFailed
 			if v.Status == apiv1.MigrationVerifyStatusPassed {
 				out.Phase = apiv1.MigrationPhaseVerified
+				out.ParityInit = apiv1.NewOptMigrationParityInit(mockParityInit(h.migration.report, h.migration.roles))
 			}
 		}
 	}
@@ -511,6 +525,99 @@ func (h *handler) StartMigrationVerify(ctx context.Context) (*apiv1.Job, error) 
 	h.migration.mu.Lock()
 	h.migration.verify = &result
 	h.migration.mu.Unlock()
+	return j, nil
+}
+
+// mockParityPlan resolves the confirmed mapping again over this mock's disks,
+// with the checks production's migrate.Service.PlanParityInit makes of the
+// recorded disks: every rule of the import, and no cache that is a partition of
+// a possibly mirrored Unraid boot pool.
+func mockParityPlan(report *migrate.Report, roles []disk.AdoptionAssignment) (disk.AdoptionPlan, error) {
+	if report == nil || report.Review == nil {
+		return disk.AdoptionPlan{}, migrate.ErrImportNoReview
+	}
+	listed := mockMachineDisks(report.Review)
+	plan, err := migrate.PlanFromReview(report.Review, listed, roles)
+	if err != nil {
+		return disk.AdoptionPlan{}, err
+	}
+	if err := migrate.CheckBootCacheNotMirrored(report.Review, listed, plan.Plan); err != nil {
+		return disk.AdoptionPlan{}, err
+	}
+	return plan.Plan, nil
+}
+
+// mockParityInit is what getMigration offers for the point of no return once a
+// verify passed: production's migrate.ParityInitOf over the mock's plan, or why
+// there is none.
+func mockParityInit(report *migrate.Report, roles []disk.AdoptionAssignment) apiv1.MigrationParityInit {
+	var info *migrate.ParityInit
+	if plan, err := mockParityPlan(report, roles); err != nil {
+		info = &migrate.ParityInit{Problem: err.Error(), Window: migrate.ParityInitWindow}
+		if report != nil {
+			info.Rollback = migrate.RollbackNotes(report.Review)
+		}
+	} else {
+		info = migrate.ParityInitOf(plan, report.Review)
+	}
+	opt := func(s string) apiv1.OptString {
+		if s == "" {
+			return apiv1.OptString{}
+		}
+		return apiv1.NewOptString(s)
+	}
+	out := apiv1.MigrationParityInit{
+		Finishing: info.Finishing, Confirmation: opt(info.Confirmation), Problem: opt(info.Problem), UnprotectedWindow: info.Window,
+		Rollback: append([]string{}, info.Rollback...), Erases: make([]apiv1.MigrationParityErase, 0, len(info.Erases)),
+	}
+	for _, e := range info.Erases {
+		item := apiv1.MigrationParityErase{Role: apiv1.MigrationParityEraseRole(e.Role), Device: e.Device, Serial: opt(e.Serial), Wwn: opt(e.WWN), Partition: e.Partition}
+		if e.Size > 0 {
+			item.Size = apiv1.NewOptInt64(e.Size)
+		}
+		out.Erases = append(out.Erases, item)
+	}
+	return out
+}
+
+// InitializeMigrationParity answers as production does, in production's order:
+// nothing is initialised unless an import is pending (no_import_pending) and its
+// latest verify passed (verify_required), whatever the request carries; then the
+// typed confirmation must be the one the plan computes (confirmation_required).
+// The job it queues has finished at once, as the others do, and leaves the array
+// past its point of no return.
+func (h *handler) InitializeMigrationParity(ctx context.Context, req *apiv1.MigrationInitializeParityRequest) (*apiv1.Job, error) {
+	if !h.migration.imported.Load() {
+		return nil, mockMigrateError(migrate.ErrParityNotPending)
+	}
+	h.migration.mu.Lock()
+	report, roles, verify := h.migration.report, h.migration.roles, h.migration.verify
+	h.migration.mu.Unlock()
+	if verify == nil || verify.Status != apiv1.MigrationVerifyStatusPassed {
+		return nil, mockMigrateError(fmt.Errorf("%w: the latest verify did not pass", migrate.ErrVerifyRequired))
+	}
+	plan, err := mockParityPlan(report, roles)
+	if err != nil {
+		return nil, mockMigrateError(err)
+	}
+	if req == nil || req.Confirmation == "" || req.Confirmation != plan.ParityInitConfirmation() {
+		return nil, &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationParity, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	h.mu.Lock()
+	j.Status = apiv1.JobStatusSucceeded
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	h.jobs[j.ID] = *j
+	h.mu.Unlock()
+	h.migration.mu.Lock()
+	h.migration.initialized, h.migration.verify = true, nil
+	h.migration.mu.Unlock()
+	h.migration.imported.Store(false)
 	return j, nil
 }
 
@@ -814,7 +921,7 @@ func mockMachineDisks(rv *migrate.Review) []disk.Disk {
 // serves no array until an import has recorded one; every other scenario serves
 // its own.
 func (h *handler) arrayScenario() string {
-	if h.scenario == "migration-pending" && !h.migration.imported.Load() {
+	if h.scenario == "migration-pending" && !h.migration.imported.Load() && !h.migration.initializedNow() {
 		return "fresh-install"
 	}
 	return h.scenario
@@ -865,6 +972,10 @@ func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 	j.FinishedAt = apiv1.NewOptNilDateTime(now)
 	h.jobs[j.ID] = *j
 	h.mu.Unlock()
+	// An import that runs again forgets the verify result, as production's does.
+	h.migration.mu.Lock()
+	h.migration.roles, h.migration.verify = assignments, nil
+	h.migration.mu.Unlock()
 	h.migration.imported.Store(true)
 	h.seedMockMigration(report.Import.SeedPlan())
 	return j, nil

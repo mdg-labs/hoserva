@@ -1108,6 +1108,42 @@ func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigR
 	return r, ht.ErrNotImplemented
 }
 
+// InitializeMigrationParity implements initializeMigrationParity operation.
+//
+// Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a
+// disk of the old array: queues a `migration_parity` job (topology class) that formats the former
+// Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or
+// partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the
+// array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files
+// placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level
+// directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are
+// available without a restart, and queues the initial `sync` as an ordinary sync job, which runs
+// through the threshold guard like every other. The data disks are never formatted. Until the sync
+// completes the array has no redundancy at all: `getMigration` `parityInit` states that window and
+// what rollback means for this session's boot mode and layout, and the user is shown them before this
+// is called.
+//
+// `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names
+// every device that will be erased, in the style of the array setup's own typed confirmation. A wrong
+// or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused
+// before anything is queued with 409 `verify_required` unless the latest verify of the adopted array
+// passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an
+// import is pending its point of no return (or an initialisation is unfinished), and with 400
+// `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
+// cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
+// is not a mirrored pair, and whenever a second Unraid boot device is attached). The job resolves
+// every disk again from a fresh inventory by identity immediately before the first format and refuses,
+// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
+// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
+// formatted disks are recorded leaves the migration in `initializing`: running this again with the
+// `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and
+// topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
+//
+// POST /migrate/initialize-parity
+func (UnimplementedHandler) InitializeMigrationParity(ctx context.Context, req *MigrationInitializeParityRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // InstallTemplate implements installTemplate operation.
 //
 // Resolves the inputs exactly as `previewTemplateInstall` does, and generates each secret that has no

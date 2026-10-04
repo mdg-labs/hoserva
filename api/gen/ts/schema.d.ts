@@ -1909,6 +1909,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/migrate/initialize-parity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cross the point of no return and initialise parity
+         * @description Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a disk of the old array: queues a `migration_parity` job (topology class) that formats the former Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are available without a restart, and queues the initial `sync` as an ordinary sync job, which runs through the threshold guard like every other. The data disks are never formatted. Until the sync completes the array has no redundancy at all: `getMigration` `parityInit` states that window and what rollback means for this session's boot mode and layout, and the user is shown them before this is called.
+         *
+         *     `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names every device that will be erased, in the style of the array setup's own typed confirmation. A wrong or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused before anything is queued with 409 `verify_required` unless the latest verify of the adopted array passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an import is pending its point of no return (or an initialisation is unfinished), and with 400 `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool is not a mirrored pair, and whenever a second Unraid boot device is attached). The job resolves every disk again from a fresh inventory by identity immediately before the first format and refuses, erasing nothing, when one is not the disk that was confirmed. A failure before the first format leaves the migration pending, with the adopted disks mounted read-only again. A failure after the formatted disks are recorded leaves the migration in `initializing`: running this again with the `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
+         */
+        post: operations["initializeMigrationParity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/migrate/report": {
         parameters: {
             query?: never;
@@ -3321,7 +3343,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "migration_import" | "migration_verify" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "migration_import" | "migration_verify" | "migration_parity" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -5394,10 +5416,10 @@ export interface components {
             error?: string | null;
         };
         /**
-         * @description `imported` is an adopted array waiting for its point of no return: the data disks are mounted read-only and parity and cache are untouched (`startMigrationImport`). The verify phase (`startMigrationVerify`) moves it to `verifying` while it runs, to `verify_failed` when it found a mismatch or did not finish, and to `verified` when every comparison passed; only `verified` leads to the point of no return.
+         * @description `imported` is an adopted array waiting for its point of no return: the data disks are mounted read-only and parity and cache are untouched (`startMigrationImport`). The verify phase (`startMigrationVerify`) moves it to `verifying` while it runs, to `verify_failed` when it found a mismatch or did not finish, and to `verified` when every comparison passed; only `verified` leads to the point of no return (`initializeMigrationParity`). `initializing` is a point of no return that stopped after the former parity and cache disks were formatted and recorded: running it again finishes it and erases nothing.
          * @enum {string}
          */
-        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned" | "imported" | "verifying" | "verify_failed" | "verified";
+        MigrationPhase: "none" | "scanning" | "scan_failed" | "scanned" | "imported" | "verifying" | "verify_failed" | "verified" | "initializing";
         /** @enum {string} */
         MigrationImportRole: "parity" | "data" | "cache" | "ignore";
         /** @description One disk of the mapping, named by its stable identity and never by a `/dev` name. Give `serial` or `wwn`; the cache on a spare partition of the boot disk gives `byId` and `partUuid` instead. */
@@ -5570,6 +5592,39 @@ export interface components {
             zipOnly: boolean;
             report?: components["schemas"]["MigrationReport"];
             verify?: components["schemas"]["MigrationVerify"];
+            parityInit?: components["schemas"]["MigrationParityInit"];
+        };
+        MigrationInitializeParityRequest: {
+            /** @description The exact typed confirmation `getMigration` `parityInit.confirmation` gives, naming every device that will be erased. */
+            confirmation: string;
+        };
+        /** @description One device the point of no return erases. */
+        MigrationParityErase: {
+            /** @enum {string} */
+            role: "parity" | "cache";
+            /** @description The device node, as it is named in `confirmation`. */
+            device: string;
+            serial?: string;
+            wwn?: string;
+            /** Format: int64 */
+            size?: number;
+            /** @description True when only a partition of the device's disk is erased (the cache of an Unraid boot + data device, or a spare partition of the boot disk); the rest of that disk is left alone. */
+            partition: boolean;
+        };
+        /** @description What the point of no return (`initializeMigrationParity`) would do now, present in the `verified` phase (only a passing verify offers it) and in `initializing`. The screen and the command show `unprotectedWindow` and `rollback` before asking for `confirmation`. */
+        MigrationParityInit: {
+            /** @description True in `initializing`: the former parity and cache disks are already formatted and recorded, and running `initializeMigrationParity` with this `confirmation` finishes the rest and erases nothing. */
+            finishing: boolean;
+            /** @description The exact string `initializeMigrationParity` requires. Absent when `problem` is set. */
+            confirmation?: string;
+            /** @description Every device the point of no return erases; empty when `finishing`. */
+            erases: components["schemas"]["MigrationParityErase"][];
+            /** @description Why it cannot be offered now (a disk missing, swapped or not allowed); no `confirmation` is given. */
+            problem?: string;
+            /** @description The unprotected window in doc 05 §5's terms: the array has no redundancy from the moment Unraid's array stopped until the initial sync completes. */
+            unprotectedWindow: string;
+            /** @description What rollback means once this is confirmed, for this session's boot mode and layout (doc 05 §5): the general statement first, then the row of the table that applies. */
+            rollback: string[];
         };
         MigrationVerifyCounts: {
             /** Format: int64 */
@@ -8591,6 +8646,31 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description The queued `migration_verify` job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    initializeMigrationParity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MigrationInitializeParityRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued `migration_parity` job. */
             200: {
                 headers: {
                     [name: string]: unknown;
