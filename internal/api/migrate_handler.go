@@ -63,6 +63,12 @@ func migrateError(err error) error {
 		return &apiError{code: "scan_outdated", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrImportPending):
 		return &apiError{code: "migration_in_progress", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrVerifyNotPending):
+		return &apiError{code: "no_import_pending", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrNoBaseline):
+		return &apiError{code: "no_migration_baseline", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrVerifyNotConfigured):
+		return errMigrationNotConfigured()
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errUnraidStick(err)
 	case migrate.IsImportRoleError(err):
@@ -114,6 +120,25 @@ func (h *Handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 		return nil, fmt.Errorf("encoding migration_import params: %w", err)
 	}
 	j, err := h.Scheduler.Submit(ctx, job.TypeMigrationImport, []string{migrate.JobResource}, body)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
+}
+
+// StartMigrationVerify queues the migration_verify job, which compares the
+// adopted disks and the pool with the scan's baseline (doc 05 §4 step 16).
+func (h *Handler) StartMigrationVerify(ctx context.Context) (*apiv1.Job, error) {
+	if h.Migration == nil || h.Scheduler == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	if err := h.Migration.CheckVerify(ctx); err != nil {
+		return nil, migrateError(err)
+	}
+	if h.Migration.Adopted == nil || h.Migration.ConfirmReadOnly == nil {
+		return nil, errMigrationNotConfigured()
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeMigrationVerify, []string{migrate.JobResource}, nil)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}
@@ -203,6 +228,9 @@ func (h *Handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	if st.Report != nil {
 		out.Report = apiv1.NewOptMigrationReport(migrationReportToAPI(st.Report))
 	}
+	if st.Verify != nil {
+		out.Verify = apiv1.NewOptMigrationVerify(migrationVerifyToAPI(st.Verify))
+	}
 	offer, err := h.Migration.FlashOffer(ctx)
 	if err != nil {
 		return nil, migrateError(err)
@@ -220,6 +248,44 @@ func (h *Handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 		out.FlashDevices = append(out.FlashDevices, item)
 	}
 	return out, nil
+}
+
+func migrationVerifyToAPI(v *migrate.VerifyResult) apiv1.MigrationVerify {
+	out := apiv1.MigrationVerify{
+		Status: apiv1.MigrationVerifyStatus(v.Status), Error: optString(v.Error), StartedAt: v.StartedAt,
+		Disks: verifyScopesToAPI(v.Disks), Shares: verifyScopesToAPI(v.Shares), Duplicates: v.Duplicates,
+		DuplicateSample: make([]apiv1.MigrationVerifyDuplicate, 0, len(v.DuplicateSample)),
+	}
+	if !v.FinishedAt.IsZero() {
+		out.FinishedAt = apiv1.NewOptDateTime(v.FinishedAt)
+	}
+	for _, d := range v.DuplicateSample {
+		out.DuplicateSample = append(out.DuplicateSample, apiv1.MigrationVerifyDuplicate{Path: d.Path, Disks: d.Disks})
+	}
+	return out
+}
+
+func verifyScopesToAPI(scopes []migrate.VerifyScope) []apiv1.MigrationVerifyScope {
+	out := make([]apiv1.MigrationVerifyScope, 0, len(scopes))
+	counts := func(c migrate.VerifyCounts) apiv1.MigrationVerifyCounts {
+		return apiv1.MigrationVerifyCounts{Files: c.Files, Symlinks: c.Symlinks, Special: c.Special, Bytes: c.Bytes}
+	}
+	list := func(l migrate.VerifyList) apiv1.MigrationVerifyList {
+		paths := l.Paths
+		if paths == nil {
+			paths = []string{}
+		}
+		return apiv1.MigrationVerifyList{Total: l.Total, Paths: paths}
+	}
+	for i := range scopes {
+		sc := &scopes[i]
+		out = append(out, apiv1.MigrationVerifyScope{
+			Name: sc.Name, Passed: sc.Passed(), Problem: optString(sc.Problem), Expected: counts(sc.Expected), Found: counts(sc.Found),
+			Hashed: sc.Hashed, Missing: list(sc.Missing), Extra: list(sc.Extra), SizeChanged: list(sc.SizeChanged),
+			ChecksumChanged: list(sc.ChecksumChanged), Changed: list(sc.Changed),
+		})
+	}
+	return out
 }
 
 func migrationReportToAPI(r *migrate.Report) apiv1.MigrationReport {

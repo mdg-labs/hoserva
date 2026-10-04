@@ -382,3 +382,43 @@ func TestWriteCatchAllMount_ReadOnlyForAPendingMigration(t *testing.T) {
 		t.Errorf("the ordinary catch-all is read-only:\n%s", body)
 	}
 }
+
+// A pending migration writes the catch-all read-only and no unit for a share or
+// its mover target, however the shares are configured: /mnt/user/<share> is a
+// directory of the read-only pool.
+func TestWritePoolMounts_OnlyTheReadOnlyCatchAllForAPendingMigration(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	state := PoolState{
+		DataDisks: []string{"/mnt/disk1", "/mnt/disk2"},
+		Options:   pool.Options{MinFreeSpace: "50G"},
+		ReadOnly:  true,
+		Shares: []PoolShare{
+			{Name: "media", CacheMode: pool.ArrayOnly, CreatePolicy: pool.FillDisksInOrder, MinFreeSpace: "2000K"},
+			{Name: "appdata", CacheMode: pool.CacheOnly, CreatePolicy: pool.BalanceAcrossDisks},
+			{Name: "docs", CacheMode: pool.CacheThenMove, CreatePolicy: pool.BalanceAcrossDisks},
+		},
+	}
+	if err := g.WritePoolMounts(context.Background(), state, "share", 1, time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	units, _ := filepath.Glob(filepath.Join(g.Root, "systemd", "system", "*.mount"))
+	if len(units) != 1 || filepath.Base(units[0]) != "mnt-user.mount" {
+		t.Fatalf("units = %v, want only the catch-all", units)
+	}
+	body, _ := os.ReadFile(units[0])
+	if !strings.Contains(string(body), "What=/mnt/disk1=RO:/mnt/disk2=RO\n") || !strings.Contains(string(body)+"\n", ",ro\n") {
+		t.Errorf("the catch-all is not read-only:\n%s", body)
+	}
+
+	// The same state once the migration has passed its point of no return
+	// writes the shares' own mounts, and prunes none of the catch-all's.
+	state.ReadOnly = false
+	state.CachePath = "/mnt/cache"
+	if err := g.WritePoolMounts(context.Background(), state, "share", 2, time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	media, err := os.ReadFile(filepath.Join(g.Root, "systemd", "system", "mnt-user-media.mount"))
+	if err != nil || !strings.Contains(string(media), "minfreespace=2000K,") || !strings.Contains(string(media), "/media=RW") {
+		t.Errorf("mnt-user-media.mount = %s, %v", media, err)
+	}
+}

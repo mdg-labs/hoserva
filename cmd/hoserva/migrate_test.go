@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"io"
 	"net"
 	"net/http"
@@ -41,6 +42,16 @@ type migrateDaemon struct {
 	review        []apiv1.MigrationDisk
 	importReq     string
 	importRefusal *apiv1.Error
+
+	// phase, when set, is the phase GET /migrate serves in place of scanned,
+	// and importLog is what the finished import job's log says.
+	phase     apiv1.MigrationPhase
+	importLog string
+
+	// verify is the result GET /migrate serves, and verifyRefusal answers
+	// POST /migrate/verify.
+	verify        *apiv1.MigrationVerify
+	verifyRefusal *apiv1.Error
 }
 
 func startMigrateDaemon(t *testing.T) *migrateDaemon {
@@ -116,6 +127,9 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/migrate":
 		m := apiv1.Migration{Phase: apiv1.MigrationPhaseScanned, ZipOnly: d.zipOnly, FlashDevices: []apiv1.MigrationFlashDevice{}}
+		if d.phase != "" {
+			m.Phase = d.phase
+		}
 		if !d.zipOnly {
 			m.FlashDevices = append(m.FlashDevices, apiv1.MigrationFlashDevice{Device: "/dev/sdb", Size: 16 << 30, Model: apiv1.NewOptString("Flash Drive")})
 		}
@@ -126,6 +140,9 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 			GeneratedAt: time.Now().UTC(), UnraidVersion: apiv1.NewOptString("7.3.2"), UnverifiedLayout: true, Verdict: apiv1.MigrationVerdictGoWithWarnings,
 			Rows: []apiv1.MigrationReportRow{{Check: "smart", Status: apiv1.MigrationCheckStatusFlag, Detail: "x"}},
 		})
+		if d.verify != nil {
+			m.Verify = apiv1.NewOptMigrationVerify(*d.verify)
+		}
 		if d.review != nil {
 			rep := m.Report.Value
 			rep.Review = apiv1.NewOptMigrationReview(apiv1.MigrationReview{Disks: d.review, Shares: []apiv1.MigrationSharePreview{}, Capture: apiv1.MigrationCapture{State: apiv1.MigrationCaptureStatePresent}})
@@ -143,6 +160,39 @@ func (d *migrateDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationImport, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
 		out, err := j.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/migrate/verify":
+		if d.verifyRefusal != nil {
+			out, err := d.verifyRefusal.MarshalJSON()
+			reply(http.StatusConflict, out, err)
+			return
+		}
+		j := apiv1.Job{ID: d.id, Type: apiv1.JobTypeMigrationVerify, Class: apiv1.JobClassTopology, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
+		out, err := j.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs/"+d.id.String()+"/log":
+		w.Header().Set("Content-Type", "application/gzip")
+		zw := gzip.NewWriter(w)
+		_, _ = zw.Write([]byte(d.importLog))
+		_ = zw.Close()
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/shares":
+		nfs := apiv1.ShareNFS{Hosts: []string{}, Squash: apiv1.ShareNFSSquashRootSquash}
+		media := apiv1.Share{Name: "media", Path: "/mnt/user/media", CacheMode: apiv1.ShareCacheModeArrayOnly, CreatePolicy: apiv1.ArrayCreatePolicyMfs, Usage: apiv1.NilShareUsage{Null: true}, Nfs: apiv1.ShareNFS{Hosts: []string{}, Squash: apiv1.ShareNFSSquashRootSquash}}
+		media.Migration = apiv1.NewOptShareMigration(apiv1.ShareMigration{
+			TargetCacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeCacheOnly),
+			Notes:           []string{"Unraid's High-water allocation has no equivalent in Hoserva: the share is mapped to Balance across disks (mfs) (Q11)."},
+		})
+		own := apiv1.Share{Name: "mine", Path: "/mnt/user/mine", CacheMode: apiv1.ShareCacheModeArrayOnly, CreatePolicy: apiv1.ArrayCreatePolicyMfs, Usage: apiv1.NilShareUsage{Null: true}, Nfs: nfs}
+		list := apiv1.ListSharesOK{Shares: []apiv1.Share{media, own}}
+		out, err := list.MarshalJSON()
+		reply(200, out, err)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/users":
+		alice := apiv1.UserSummary{ID: uuid.New(), Username: "alice", Role: apiv1.UserRoleShareOnly, CreatedAt: time.Now().UTC()}
+		alice.LastLogin.SetToNull()
+		admin := apiv1.UserSummary{ID: uuid.New(), Username: "admin", Role: apiv1.UserRoleAdmin, CreatedAt: time.Now().UTC()}
+		admin.LastLogin.SetToNull()
+		list := apiv1.ListUsersOK{Users: []apiv1.UserSummary{admin, alice}}
+		out, err := list.MarshalJSON()
 		reply(200, out, err)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/migrate/report":
 		w.Header().Set("Content-Type", "text/markdown")
@@ -455,8 +505,50 @@ func TestMigrateImportSendsTheScansProposalAfterTheUserConfirms(t *testing.T) {
 		t.Fatalf("request = %s (%v), want confirm and four roles", d.importRequest(), err)
 	}
 	got := d.seen()
-	if len(got) != 3 || got[0] != "GET /api/v1/migrate" || got[1] != "POST /api/v1/migrate/import" || got[2] != "GET /api/v1/jobs/"+d.id.String() {
+	if len(got) != 4 || got[0] != "GET /api/v1/migrate" || got[1] != "POST /api/v1/migrate/import" || got[2] != "GET /api/v1/jobs/"+d.id.String() || got[3] != "GET /api/v1/jobs/"+d.id.String()+"/log" {
 		t.Errorf("requests = %v", got)
+	}
+}
+
+// The import's output lists every account with the reminder to set its
+// password, which the job's log carries, and says what comes next.
+func TestMigrateImportPrintsTheJobsLogWithTheAccountsToSetPasswordsFor(t *testing.T) {
+	d := importDaemon(t)
+	d.importLog = "account alice created without a password: set one in the web UI (Users) before its SMB clients reconnect\nshare \"Family Photos\" was not created: the name is not valid for Hoserva\n"
+	printed, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Import log:", "account alice created without a password", `share "Family Photos" was not created`, "Set a password for each account"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+}
+
+// Once the import is pending, status lists the shares it seeded with their
+// target cache mode and notes, and the accounts that have no password yet.
+func TestMigrateStatusListsWhatTheImportSeeded(t *testing.T) {
+	d := startMigrateDaemon(t)
+	d.phase = apiv1.MigrationPhaseImported
+	printed, err := runBackupCLI(t, d.sock, "migrate", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Migration: imported", "Share media: array-only, cache mode cache-only once the cache exists", "mapped to Balance across disks", "Account alice: no password set yet"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("status output lacks %q:\n%s", want, printed)
+		}
+	}
+	for _, never := range []string{"Share mine", "Account admin"} {
+		if strings.Contains(printed, never) {
+			t.Errorf("status lists %q, which the import did not create:\n%s", never, printed)
+		}
+	}
+	d.phase = ""
+	printed, err = runBackupCLI(t, d.sock, "migrate", "status")
+	if err != nil || strings.Contains(printed, "Share media") {
+		t.Errorf("status before an import lists shares: %q, %v", printed, err)
 	}
 }
 
@@ -594,4 +686,95 @@ func TestMigrateImportRefusalAndFailedJobAreCommandFailures(t *testing.T) {
 	if _, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes"); err == nil || !strings.Contains(err.Error(), "migration import") {
 		t.Errorf("migrate import with a failed job = %v, want it named", err)
 	}
+}
+
+func verifyScope(name string, expected, found int64, passed bool) apiv1.MigrationVerifyScope {
+	list := apiv1.MigrationVerifyList{Paths: []string{}}
+	return apiv1.MigrationVerifyScope{
+		Name: name, Passed: passed, Expected: apiv1.MigrationVerifyCounts{Files: expected, Bytes: expected * 10}, Found: apiv1.MigrationVerifyCounts{Files: found, Bytes: found * 10},
+		Hashed: 3, Missing: list, Extra: list, SizeChanged: list, ChecksumChanged: list, Changed: list,
+	}
+}
+
+func TestMigrateVerifyPrintsThePassingComparisonAndExitsZero(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+	d := startMigrateDaemon(t)
+	d.verify = &apiv1.MigrationVerify{
+		Status: apiv1.MigrationVerifyStatusPassed, StartedAt: time.Now().UTC(), Duplicates: 1,
+		Disks:           []apiv1.MigrationVerifyScope{verifyScope("disk1", 5, 5, true)},
+		Shares:          []apiv1.MigrationVerifyScope{verifyScope("media", 5, 5, true)},
+		DuplicateSample: []apiv1.MigrationVerifyDuplicate{{Path: "media/a.txt", Disks: []string{"disk1", "disk2"}}},
+	}
+	printed, err := runBackupCLI(t, d.sock, "migrate", "verify")
+	if err != nil {
+		t.Fatalf("migrate verify: %v", err)
+	}
+	for _, want := range []string{"disk disk1", "share media", "match", "media/a.txt (disk1, disk2)", "Verify passed"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+	got := d.seen()
+	if len(got) != 3 || got[0] != "POST /api/v1/migrate/verify" || got[1] != "GET /api/v1/jobs/"+d.id.String() || got[2] != "GET /api/v1/migrate" {
+		t.Errorf("requests = %v, want the start, one poll and the session", got)
+	}
+}
+
+// A mismatch prints what differs and exits non-zero, and so does a job that
+// succeeded without a passing result: the command never reads silence as a pass.
+func TestMigrateVerifyExitsNonZeroUnlessEverythingPassed(t *testing.T) {
+	old := backupWaitInterval
+	backupWaitInterval = time.Millisecond
+	t.Cleanup(func() { backupWaitInterval = old })
+
+	t.Run("a mismatch", func(t *testing.T) {
+		d := startMigrateDaemon(t)
+		d.jobStatus = apiv1.JobStatusFailed
+		bad := verifyScope("disk1", 5, 5, false)
+		bad.SizeChanged = apiv1.MigrationVerifyList{Total: 1, Paths: []string{"media/a.txt"}}
+		d.verify = &apiv1.MigrationVerify{
+			Status: apiv1.MigrationVerifyStatusFailed, StartedAt: time.Now().UTC(),
+			Disks: []apiv1.MigrationVerifyScope{bad}, Shares: []apiv1.MigrationVerifyScope{},
+		}
+		printed, err := runBackupCLI(t, d.sock, "migrate", "verify")
+		if err == nil || !strings.Contains(err.Error(), "failed") {
+			t.Fatalf("migrate verify = %v, want it to fail", err)
+		}
+		for _, want := range []string{"DIFFERS", "disk1: 1 size changed", "media/a.txt"} {
+			if !strings.Contains(printed, want) {
+				t.Errorf("output lacks %q:\n%s", want, printed)
+			}
+		}
+		if strings.Contains(printed, "Verify passed") {
+			t.Errorf("a failed verify printed that it passed:\n%s", printed)
+		}
+	})
+	for name, result := range map[string]*apiv1.MigrationVerify{
+		"a succeeded job with no result":             nil,
+		"a succeeded job whose result is not a pass": {Status: apiv1.MigrationVerifyStatusFailed, StartedAt: time.Now().UTC(), Disks: []apiv1.MigrationVerifyScope{}, Shares: []apiv1.MigrationVerifyScope{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := startMigrateDaemon(t)
+			d.verify = result
+			if _, err := runBackupCLI(t, d.sock, "migrate", "verify"); err == nil || !strings.Contains(err.Error(), "do not go on") {
+				t.Errorf("migrate verify = %v, want it to refuse to go on", err)
+			}
+		})
+	}
+	t.Run("a cancelled job", func(t *testing.T) {
+		d := startMigrateDaemon(t)
+		d.jobStatus = apiv1.JobStatusCancelled
+		if _, err := runBackupCLI(t, d.sock, "migrate", "verify"); err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Errorf("migrate verify = %v, want it to say the job was cancelled", err)
+		}
+	})
+	t.Run("a refusal", func(t *testing.T) {
+		d := startMigrateDaemon(t)
+		d.verifyRefusal = &apiv1.Error{Code: "no_import_pending", Message: "there is no adopted Unraid array to verify"}
+		if _, err := runBackupCLI(t, d.sock, "migrate", "verify"); err == nil || !strings.Contains(err.Error(), "no adopted Unraid array") {
+			t.Errorf("migrate verify = %v, want the daemon's refusal", err)
+		}
+	})
 }

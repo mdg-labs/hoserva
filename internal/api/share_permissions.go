@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -130,6 +131,73 @@ ORDER BY g.name`, shareName)
 		return nil, nil, fmt.Errorf("listing share group permissions: %w", err)
 	}
 	return users, groups, nil
+}
+
+var _ share.AccessReader = (*AuthStore)(nil)
+
+// ShareGrants reads every share's grants for smb.conf: its per-user
+// grants by username, and each group grant with the usernames of the
+// group's members.
+func (s *AuthStore) ShareGrants(ctx context.Context) (map[string]share.ShareGrants, error) {
+	out := map[string]share.ShareGrants{}
+	userRows, err := s.db.QueryContext(ctx, `
+SELECT sup.share_name, u.username, sup.access
+FROM share_user_permissions sup
+JOIN users u ON u.id = sup.user_id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing share user grants: %w", err)
+	}
+	defer func() { _ = userRows.Close() }()
+	for userRows.Next() {
+		var shareName, username, access string
+		if err := userRows.Scan(&shareName, &username, &access); err != nil {
+			return nil, fmt.Errorf("scanning share user grant: %w", err)
+		}
+		g := out[shareName]
+		if g.Users == nil {
+			g.Users = map[string]string{}
+		}
+		g.Users[username] = access
+		out[shareName] = g
+	}
+	if err := userRows.Err(); err != nil {
+		return nil, fmt.Errorf("listing share user grants: %w", err)
+	}
+
+	groupRows, err := s.db.QueryContext(ctx, `
+SELECT sgp.share_name, sgp.group_id, sgp.access, COALESCE(u.username, '')
+FROM share_group_permissions sgp
+LEFT JOIN user_group_members m ON m.group_id = sgp.group_id
+LEFT JOIN users u ON u.id = m.user_id
+ORDER BY sgp.share_name, sgp.group_id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing share group grants: %w", err)
+	}
+	defer func() { _ = groupRows.Close() }()
+	type key struct{ share, group string }
+	index := map[key]int{}
+	for groupRows.Next() {
+		var shareName, groupID, access, member string
+		if err := groupRows.Scan(&shareName, &groupID, &access, &member); err != nil {
+			return nil, fmt.Errorf("scanning share group grant: %w", err)
+		}
+		g := out[shareName]
+		k := key{shareName, groupID}
+		i, ok := index[k]
+		if !ok {
+			i = len(g.Groups)
+			index[k] = i
+			g.Groups = append(g.Groups, share.GroupGrant{Access: access})
+		}
+		if member != "" {
+			g.Groups[i].Members = append(g.Groups[i].Members, member)
+		}
+		out[shareName] = g
+	}
+	if err := groupRows.Err(); err != nil {
+		return nil, fmt.Errorf("listing share group grants: %w", err)
+	}
+	return out, nil
 }
 
 // SetSharePermissions replaces shareName's rows in both permission tables

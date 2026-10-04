@@ -337,9 +337,9 @@ func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 // topology job is admitted, again before a queued one starts and before an
 // interrupted one resumes: while it reports true the array is an Unraid
 // import's adoption, mounted read-only with parity and cache not yet formatted
-// (doc 05 §4 steps 14-16), and only the migration import's own retry is
-// admitted. A check that fails refuses the job: an unknown state is not
-// "nothing pending". Submit makes the check (admitLocked), and so do dispatch()
+// (doc 05 §4 steps 14-16), and only the migration import's own retry and the
+// migration verify, which only reads, are admitted. A check that fails refuses
+// the job: an unknown state is not "nothing pending". Submit makes the check (admitLocked), and so do dispatch()
 // for a job that waited in the queue and Resume (resumableJobLocked) for an
 // interrupted one, because the import may have recorded its pending array while
 // that job waited or after it was interrupted. Unset, nothing is refused.
@@ -351,12 +351,13 @@ func (s *Scheduler) SetMigrationPending(check func(ctx context.Context) (bool, e
 }
 
 // admitMigrationLocked refuses a job that could write parity or the array, or
-// change its topology, while a migration is pending. Both admitLocked, for a
-// job being submitted, dispatch(), for a queued job about to start, and
+// change its topology, while a migration is pending. The migration import and
+// the migration verify are never refused. Both admitLocked, for a job being
+// submitted, dispatch(), for a queued job about to start, and
 // resumableJobLocked, for an interrupted job being resumed, call it. Callers
 // must hold s.mu.
 func (s *Scheduler) admitMigrationLocked(ctx context.Context, t Type) error {
-	if s.migrationPending == nil || t == TypeMigrationImport {
+	if s.migrationPending == nil || t == TypeMigrationImport || t == TypeMigrationVerify {
 		return nil
 	}
 	switch class, _ := ClassOf(t); class {
@@ -375,12 +376,12 @@ func (s *Scheduler) admitMigrationLocked(ctx context.Context, t Type) error {
 }
 
 // takesTopologyBackup reports whether a job of type t, in class, starts with the
-// pre-topology config backup. A migration scan is in the Topology class so no
-// storage job runs beside it, but it only reads: it changes no topology, and its
-// repeated runs must not use the bounded retention the real changes' backups
-// rely on.
+// pre-topology config backup. A migration scan or verify is in the Topology
+// class so no storage job runs beside it, but it only reads: it changes no
+// topology, and its repeated runs must not use the bounded retention the real
+// changes' backups rely on.
 func takesTopologyBackup(t Type, class Class) bool {
-	return class == ClassTopology && t != TypeMigrationScan
+	return class == ClassTopology && t != TypeMigrationScan && t != TypeMigrationVerify
 }
 
 // runTopologyBackup runs the pre-topology config backup (doc 10 §1, #406,

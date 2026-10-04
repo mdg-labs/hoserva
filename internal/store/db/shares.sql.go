@@ -28,7 +28,8 @@ SELECT
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
     nfs_enabled, nfs_hosts, nfs_squash,
-    created_at, updated_at
+    created_at, updated_at,
+    min_free_space, target_cache_mode, migration_notes
 FROM shares WHERE name = ?
 `
 
@@ -51,6 +52,9 @@ func (q *Queries) GetShare(ctx context.Context, name string) (*Share, error) {
 		&i.NfsSquash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MinFreeSpace,
+		&i.TargetCacheMode,
+		&i.MigrationNotes,
 	)
 	return &i, err
 }
@@ -62,13 +66,15 @@ INSERT INTO shares (
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
     nfs_enabled, nfs_hosts, nfs_squash,
-    created_at, updated_at
+    created_at, updated_at,
+    min_free_space, target_cache_mode, migration_notes
 ) VALUES (
     ?, ?, ?,
     ?, ?, ?, ?,
     ?, ?, ?,
     ?, ?, ?,
-    ?, ?
+    ?, ?,
+    ?, ?, ?
 )
 `
 
@@ -88,6 +94,9 @@ type InsertShareParams struct {
 	NfsSquash             string         `json:"nfs_squash"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
+	MinFreeSpace          string         `json:"min_free_space"`
+	TargetCacheMode       string         `json:"target_cache_mode"`
+	MigrationNotes        string         `json:"migration_notes"`
 }
 
 // sqlc input (#46): typed Go query code for the shares table, generated
@@ -111,6 +120,9 @@ func (q *Queries) InsertShare(ctx context.Context, arg InsertShareParams) error 
 		arg.NfsSquash,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.MinFreeSpace,
+		arg.TargetCacheMode,
+		arg.MigrationNotes,
 	)
 	return err
 }
@@ -121,7 +133,8 @@ SELECT
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
     nfs_enabled, nfs_hosts, nfs_squash,
-    created_at, updated_at
+    created_at, updated_at,
+    min_free_space, target_cache_mode, migration_notes
 FROM shares
 ORDER BY name ASC
 `
@@ -151,6 +164,9 @@ func (q *Queries) ListShares(ctx context.Context) ([]*Share, error) {
 			&i.NfsSquash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MinFreeSpace,
+			&i.TargetCacheMode,
+			&i.MigrationNotes,
 		); err != nil {
 			return nil, err
 		}
@@ -171,7 +187,8 @@ SET cache_mode = ?, create_policy = ?,
     smb_enabled = ?, smb_guest = ?, smb_read_only = ?, smb_browseable = ?,
     smb_recycle = ?, smb_time_machine = ?, smb_time_machine_max_size = ?,
     nfs_enabled = ?, nfs_hosts = ?, nfs_squash = ?,
-    updated_at = ?
+    updated_at = ?,
+    min_free_space = ?, target_cache_mode = ?, migration_notes = ?
 WHERE name = ?
 `
 
@@ -189,6 +206,9 @@ type UpdateShareParams struct {
 	NfsHosts              string         `json:"nfs_hosts"`
 	NfsSquash             string         `json:"nfs_squash"`
 	UpdatedAt             string         `json:"updated_at"`
+	MinFreeSpace          string         `json:"min_free_space"`
+	TargetCacheMode       string         `json:"target_cache_mode"`
+	MigrationNotes        string         `json:"migration_notes"`
 	Name                  string         `json:"name"`
 }
 
@@ -207,6 +227,9 @@ func (q *Queries) UpdateShare(ctx context.Context, arg UpdateShareParams) (int64
 		arg.NfsHosts,
 		arg.NfsSquash,
 		arg.UpdatedAt,
+		arg.MinFreeSpace,
+		arg.TargetCacheMode,
+		arg.MigrationNotes,
 		arg.Name,
 	)
 	if err != nil {

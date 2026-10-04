@@ -35,6 +35,8 @@ func mapShareError(err error) error {
 		return &apiError{code: "share_wrong_path", statusCode: 400, message: err.Error()}
 	case errors.Is(err, share.ErrFileNotFound):
 		return &apiError{code: "share_file_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, share.ErrMigrationPending):
+		return &apiError{code: "migration_in_progress", statusCode: 409, message: err.Error()}
 	case errors.Is(err, share.ErrNoArray), errors.Is(err, store.ErrNoArray):
 		return &apiError{code: "no_array", statusCode: 409, message: err.Error()}
 	case errors.Is(err, config.ErrUnmanaged), errors.Is(err, config.ErrExistingHostFile):
@@ -278,7 +280,7 @@ func shareToAPI(s share.Share) apiv1.Share {
 	if squash == "" {
 		squash = apiv1.ShareNFSSquashRootSquash
 	}
-	return apiv1.Share{
+	out := apiv1.Share{
 		Name:         apiv1.ShareName(s.Name),
 		Path:         s.Path(),
 		CacheMode:    apiv1.ShareCacheMode(s.CacheMode),
@@ -294,6 +296,17 @@ func shareToAPI(s share.Share) apiv1.Share {
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}
+	if s.MinFreeSpace != "" {
+		out.MinFreeSpace = apiv1.NewOptString(s.MinFreeSpace)
+	}
+	if s.TargetCacheMode != "" || len(s.MigrationNotes) > 0 {
+		m := apiv1.ShareMigration{Notes: append([]string{}, s.MigrationNotes...)}
+		if s.TargetCacheMode != "" {
+			m.TargetCacheMode = apiv1.NewOptShareCacheMode(apiv1.ShareCacheMode(s.TargetCacheMode))
+		}
+		out.Migration = apiv1.NewOptShareMigration(m)
+	}
+	return out
 }
 
 // shareUsageToAPI maps share.Usage to the API's nullable ShareUsage

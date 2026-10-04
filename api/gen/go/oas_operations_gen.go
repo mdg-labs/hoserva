@@ -156,6 +156,7 @@ const (
 	StartMigrationDeviceScanOperation       OperationName = "StartMigrationDeviceScan"
 	StartMigrationImportOperation           OperationName = "StartMigrationImport"
 	StartMigrationScanOperation             OperationName = "StartMigrationScan"
+	StartMigrationVerifyOperation           OperationName = "StartMigrationVerify"
 	StartMoverOperation                     OperationName = "StartMover"
 	StartRebalanceOperation                 OperationName = "StartRebalance"
 	StartRestoreDrillOperation              OperationName = "StartRestoreDrill"

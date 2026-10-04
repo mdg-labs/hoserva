@@ -42,6 +42,11 @@ type MigrationImportDeps struct {
 	// Array returns the daemon's current array sequence, which mounts and
 	// unmounts the catch-all pool.
 	Array func() *ArraySequence
+	// Seed creates the shares and accounts of the Unraid configuration once the
+	// disks are adopted and the pool is mounted (doc 05 §4 steps 3, 4 and 15),
+	// writing to no adopted disk, and reports what it created to out. It is
+	// all-or-nothing: an error means it left nothing of itself behind.
+	Seed func(ctx context.Context, out io.Writer) error
 	// Now, when set, stamps generated-file headers; nil uses time.Now.
 	Now func() time.Time
 	// IsMounted, when set, answers whether where is a mountpoint for the undo
@@ -64,7 +69,7 @@ func (d MigrationImportDeps) mounted(where string) (bool, error) {
 }
 
 func (d MigrationImportDeps) complete() bool {
-	return d.Plan != nil && d.Runner != nil && d.Store != nil && d.Generator != nil && d.Mounter != nil && d.ArrayReady != nil && d.Array != nil
+	return d.Plan != nil && d.Runner != nil && d.Store != nil && d.Generator != nil && d.Mounter != nil && d.ArrayReady != nil && d.Array != nil && d.Seed != nil
 }
 
 // RunMigrationImport is the RunFunc hoservad registers for TypeMigrationImport.
@@ -124,6 +129,9 @@ func RunMigrationImport(d MigrationImportDeps) RunFunc {
 		}
 		if err := d.apply(ctx, out, created); err != nil {
 			return d.undo(ctx, out, err)
+		}
+		if err := d.Seed(ctx, out); err != nil {
+			return d.undo(ctx, out, fmt.Errorf("seeding the shares and accounts: %w", err))
 		}
 		_, _ = fmt.Fprintf(out, "adopted %d data disk(s) read-only at /mnt/diskN and unioned them at %s; %d parity and %d cache disk(s) recorded and left untouched\n",
 			len(fresh.Data), pool.CatchAllPath, len(fresh.Parity), cacheCount(fresh))
@@ -210,7 +218,13 @@ func (d MigrationImportDeps) reapply(ctx context.Context, out io.Writer, plan di
 		return store.ErrArrayExists
 	}
 	_, _ = fmt.Fprintln(out, "this adoption is already recorded: applying it again")
-	return d.apply(ctx, out, settings.CreatedAt)
+	if err := d.apply(ctx, out, settings.CreatedAt); err != nil {
+		return err
+	}
+	if err := d.Seed(ctx, out); err != nil {
+		return fmt.Errorf("seeding the shares and accounts: %w", err)
+	}
+	return nil
 }
 
 func samePendingRows(disks []store.ArrayDisk, recorded []store.RecordedDisk, wantDisks []store.ArrayDisk, wantRecorded []store.RecordedDisk) bool {

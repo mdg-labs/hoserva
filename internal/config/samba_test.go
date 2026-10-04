@@ -120,3 +120,83 @@ func TestEnsureSambaCustomConf(t *testing.T) {
 		t.Fatalf("clobbered existing custom conf: %q", got)
 	}
 }
+
+func sambaSection(t *testing.T, conf, name string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(conf, "\n["+name+"]\n")
+	if !ok {
+		t.Fatalf("no [%s] section in:\n%s", name, conf)
+	}
+	section, _, _ := strings.Cut(rest, "\n[")
+	section, _, _ = strings.Cut(section, "\ninclude = ")
+	return section
+}
+
+func TestRenderSambaConf_AccessRestrictsNonGuestShares(t *testing.T) {
+	conf := RenderSambaConf([]SambaShare{
+		{Name: "rw", Access: &SambaAccess{ValidUsers: []string{"alice", "bob"}, WriteList: []string{"alice"}}},
+		{Name: "ro", ReadOnly: true, Access: &SambaAccess{ValidUsers: []string{"alice"}, WriteList: []string{"alice"}}},
+		{Name: "closed", Access: &SambaAccess{}},
+		{Name: "guest", Guest: true, Access: &SambaAccess{ValidUsers: []string{"alice"}}},
+		{Name: "unset"},
+		{Name: "writer-not-valid", Access: &SambaAccess{ValidUsers: []string{"alice"}, WriteList: []string{"mallory"}}},
+	})
+
+	rw := sambaSection(t, conf, "rw")
+	for _, want := range []string{"read only = yes", "valid users = alice bob", "write list = alice"} {
+		if !strings.Contains(rw, want) {
+			t.Errorf("[rw] lacks %q:\n%s", want, rw)
+		}
+	}
+	if ro := sambaSection(t, conf, "ro"); strings.Contains(ro, "write list") || !strings.Contains(ro, "read only = yes") {
+		t.Errorf("[ro] must stay read-only whatever its grants:\n%s", ro)
+	}
+	closed := sambaSection(t, conf, "closed")
+	if !strings.Contains(closed, "available = no") || strings.Contains(closed, "valid users") || strings.Contains(closed, "read only = no") {
+		t.Errorf("[closed] must be unavailable, and an empty list must never render as `valid users =`:\n%s", closed)
+	}
+	if guest := sambaSection(t, conf, "guest"); strings.Contains(guest, "valid users") || strings.Contains(guest, "available") || !strings.Contains(guest, "read only = no") || !strings.Contains(guest, "guest ok = yes") {
+		t.Errorf("[guest] keeps its rendering:\n%s", guest)
+	}
+	if unset := sambaSection(t, conf, "unset"); strings.Contains(unset, "valid users") || !strings.Contains(unset, "read only = no") {
+		t.Errorf("[unset] with no Access renders as before:\n%s", unset)
+	}
+	if w := sambaSection(t, conf, "writer-not-valid"); strings.Contains(w, "write list") {
+		t.Errorf("a writer that is not in valid users must not be rendered:\n%s", w)
+	}
+}
+
+func TestRenderSambaConf_AccessNamesCannotInjectConfig(t *testing.T) {
+	bad := []string{
+		"@staff", "+wheel", "&nis", "%U", "%S", "a%Ub", "eve, root", "eve,root",
+		"x\nforce user = root", "x\r\n[evil]", "say \"hi\"", "it's", `back\slash`, "tab\tbed",
+		"a;b", "a#b", "a=b", "a[b", "*", "a?b", "`id`", " lead", "trail ", "", "bad\xffutf8",
+	}
+	conf := RenderSambaConf([]SambaShare{{Name: "s", Access: &SambaAccess{
+		ValidUsers: append([]string{"good", "two words", "j.doe-1_x", "jürgen"}, bad...),
+		WriteList:  append([]string{"good"}, bad...),
+	}}})
+	section := sambaSection(t, conf, "s")
+	if want := "   valid users = good \"two words\" j.doe-1_x \"jürgen\"\n"; !strings.Contains(section, want) {
+		t.Errorf("section lacks %q:\n%s", want, section)
+	}
+	if want := "   write list = good\n"; !strings.Contains(section, want) {
+		t.Errorf("section lacks %q:\n%s", want, section)
+	}
+	if strings.Count(conf, "\n[") != 1 || strings.Contains(conf, "force user") || strings.Contains(conf, "evil") {
+		t.Errorf("a username injected configuration:\n%s", conf)
+	}
+	for _, name := range bad {
+		if SambaUserListable(name) {
+			t.Errorf("SambaUserListable(%q) = true", name)
+		}
+	}
+	if !SambaUserListable("two words") || !SambaUserListable("good") {
+		t.Error("ordinary names must be listable")
+	}
+
+	allBad := RenderSambaConf([]SambaShare{{Name: "s", Access: &SambaAccess{ValidUsers: bad, WriteList: bad}}})
+	if section := sambaSection(t, allBad, "s"); !strings.Contains(section, "available = no") || strings.Contains(section, "valid users") {
+		t.Errorf("a share whose every name is refused must be closed, not unrestricted:\n%s", section)
+	}
+}

@@ -9,13 +9,15 @@ INSERT INTO shares (
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
     nfs_enabled, nfs_hosts, nfs_squash,
-    created_at, updated_at
+    created_at, updated_at,
+    min_free_space, target_cache_mode, migration_notes
 ) VALUES (
     ?, ?, ?,
     ?, ?, ?, ?,
     ?, ?, ?,
     ?, ?, ?,
-    ?, ?
+    ?, ?,
+    ?, ?, ?
 );
 
 -- name: GetShare :one
@@ -24,7 +26,8 @@ SELECT
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
     nfs_enabled, nfs_hosts, nfs_squash,
-    created_at, updated_at
+    created_at, updated_at,
+    min_free_space, target_cache_mode, migration_notes
 FROM shares WHERE name = ?;
 
 -- name: ListShares :many
@@ -33,7 +36,8 @@ SELECT
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
     nfs_enabled, nfs_hosts, nfs_squash,
-    created_at, updated_at
+    created_at, updated_at,
+    min_free_space, target_cache_mode, migration_notes
 FROM shares
 ORDER BY name ASC;
 
@@ -43,7 +47,8 @@ SET cache_mode = ?, create_policy = ?,
     smb_enabled = ?, smb_guest = ?, smb_read_only = ?, smb_browseable = ?,
     smb_recycle = ?, smb_time_machine = ?, smb_time_machine_max_size = ?,
     nfs_enabled = ?, nfs_hosts = ?, nfs_squash = ?,
-    updated_at = ?
+    updated_at = ?,
+    min_free_space = ?, target_cache_mode = ?, migration_notes = ?
 WHERE name = ?;
 
 -- name: DeleteShare :execrows

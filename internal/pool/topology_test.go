@@ -364,3 +364,32 @@ func TestCatchAllMountReadOnly(t *testing.T) {
 		t.Errorf("CatchAllMountReadOnly(nil) = %v, want ErrNoDataDisks", err)
 	}
 }
+
+// An Unraid share's floor is its own minfreespace in every mount of the share,
+// and a share without one keeps the array's.
+func TestShareMinFreeSpaceOverridesOptions(t *testing.T) {
+	opts := Options{MinFreeSpace: "50G", Responsiveness: Responsive}
+	with := Share{Name: "media", CacheMode: ArrayOnly, CreatePolicy: BalanceAcrossDisks, MinFreeSpace: "1000K"}
+	without := Share{Name: "media", CacheMode: ArrayOnly, CreatePolicy: BalanceAcrossDisks}
+	build := map[string]func(Share) (Mount, error){
+		"share":       func(s Share) (Mount, error) { return ShareMount(s, testDisks, "/mnt/cache", opts) },
+		"mover":       func(s Share) (Mount, error) { return MoverTargetMount(s, testDisks, opts) },
+		"share-no-rm": func(s Share) (Mount, error) { return ShareMountRemoving(s, testDisks, "/mnt/cache", "", opts) },
+	}
+	for name, f := range build {
+		m, err := f(with)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := m.optionsString(); !strings.Contains(got, "minfreespace=1000K,") || strings.Contains(got, "50G") {
+			t.Errorf("%s: options = %q, want the share's minfreespace", name, got)
+		}
+		m, err = f(without)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := m.optionsString(); !strings.Contains(got, "minfreespace=50G,") {
+			t.Errorf("%s: options = %q, want the array's minfreespace", name, got)
+		}
+	}
+}

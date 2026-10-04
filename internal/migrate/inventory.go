@@ -54,6 +54,10 @@ type Share struct {
 	Floor        string            `json:"floor,omitempty"`
 	Include      []string          `json:"include,omitempty"`
 	Exclude      []string          `json:"exclude,omitempty"`
+	// ReadList and WriteList are the account names of shareReadList and
+	// shareWriteList, as listed; they apply to a secure or private share.
+	ReadList  []string `json:"readList,omitempty"`
+	WriteList []string `json:"writeList,omitempty"`
 }
 
 // TemplateClass says what a dockerMan template stands for in the capture.
@@ -245,6 +249,7 @@ func parseShare(name string, data []byte, globals map[string]string) (Share, err
 		Name: name, Allocator: v["shareAllocator"], UseCache: v["shareUseCache"], CachePool: v["shareCachePool"],
 		Export: v["shareExport"], Security: v["shareSecurity"], SplitLevel: v["shareSplitLevel"], Floor: v["shareFloor"],
 		Include: splitList(v["shareInclude"]), Exclude: splitList(v["shareExclude"]),
+		ReadList: splitList(v["shareReadList"]), WriteList: splitList(v["shareWriteList"]),
 	}
 	if sh.Include == nil {
 		sh.Include = splitList(globals["shareUserInclude"])

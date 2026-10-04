@@ -88,7 +88,7 @@ func (h *Handler) DeleteUser(ctx context.Context, params apiv1.DeleteUserParams)
 	if err := h.Auth.DeleteUser(ctx, params.UserId.String()); err != nil {
 		return mapAuthError(err)
 	}
-	return nil
+	return h.refreshSMBAccess(ctx)
 }
 
 func (h *Handler) SetUserPassword(ctx context.Context, req *apiv1.SetUserPasswordRequest, params apiv1.SetUserPasswordParams) error {
@@ -134,6 +134,9 @@ func (h *Handler) UpdateUserSharePermissions(ctx context.Context, req *apiv1.Upd
 	if err := h.Auth.SetUserSharePermissions(ctx, params.UserId.String(), entries); err != nil {
 		return nil, mapAuthError(err)
 	}
+	if err := h.refreshSMBAccess(ctx); err != nil {
+		return nil, err
+	}
 	updated, err := h.Auth.GetUserSharePermissions(ctx, params.UserId.String())
 	if err != nil {
 		return nil, mapAuthError(err)
@@ -175,7 +178,7 @@ func (h *Handler) DeleteUserGroup(ctx context.Context, params apiv1.DeleteUserGr
 	if err := h.Auth.DeleteGroup(ctx, params.GroupId.String()); err != nil {
 		return mapAuthError(err)
 	}
-	return nil
+	return h.refreshSMBAccess(ctx)
 }
 
 func (h *Handler) SetUserGroupMembers(ctx context.Context, req *apiv1.SetUserGroupMembersRequest, params apiv1.SetUserGroupMembersParams) (*apiv1.UserGroup, error) {
@@ -189,6 +192,9 @@ func (h *Handler) SetUserGroupMembers(ctx context.Context, req *apiv1.SetUserGro
 	g, err := h.Auth.SetGroupMembers(ctx, params.GroupId.String(), ids)
 	if err != nil {
 		return nil, mapAuthError(err)
+	}
+	if err := h.refreshSMBAccess(ctx); err != nil {
+		return nil, err
 	}
 	out := groupToAPI(g)
 	return &out, nil

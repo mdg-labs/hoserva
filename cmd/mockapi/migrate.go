@@ -12,9 +12,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/migrate"
+	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/template"
 	migrationpending "github.com/mdg-labs/hoserva/web/fixtures/migration-pending"
 )
@@ -38,6 +42,12 @@ type mockMigration struct {
 	// topology jobs are refused as production's scheduler refuses them. It is read
 	// without mu, from handlers that hold the handler's own lock.
 	imported atomic.Bool
+	// verify is the result of the latest verify, and verifyRuns how many have
+	// run: the first fails with the scenario's failing result and every later
+	// one passes with its passing result, so a UI sees a mismatch and then the
+	// re-run that clears it.
+	verify     *apiv1.MigrationVerify
+	verifyRuns int
 }
 
 func errMigrationInProgress() error {
@@ -76,6 +86,8 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("migration_no_go", 409, err)
 	case errors.Is(err, migrate.ErrImportNoReview):
 		return errMigrationRefusal("scan_outdated", 409, err)
+	case errors.Is(err, migrate.ErrVerifyNotPending):
+		return errMigrationRefusal("no_import_pending", 409, err)
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errMigrationRefusal("unraid_stick", 409, err)
 	case migrate.IsImportRoleError(err):
@@ -164,6 +176,7 @@ func mockMigrationReport(flash *migrate.Flash, version string, unverified bool, 
 	if disk3Fixed {
 		r.Verdict = migrate.VerdictGoWithWarnings
 	}
+	r.Import = mockMigrationImport()
 	r.Review = mockReview(flash, at, disk3Refusal)
 	return r
 }
@@ -243,6 +256,88 @@ func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrat
 		{Name: "documents", AllocationMethod: "mostfree", Include: []string{}, Exclude: []string{}},
 	}
 	return rv
+}
+
+// mockMigrationImport is what the report's scan parsed, matching the rows and
+// the share preview above: three shares and two accounts, which the import
+// seeds.
+func mockMigrationImport() migrate.Import {
+	return migrate.Import{
+		Shares: []migrate.Share{
+			{Name: "backup", Allocator: "fillup", CreatePolicy: pool.FillDisksInOrder, UseCache: "no", CacheMode: pool.ArrayOnly, Export: "-", Security: "private", Exclude: []string{"disk3"}, ReadList: []string{"bob"}},
+			{Name: "documents", Allocator: "mostfree", CreatePolicy: pool.BalanceAcrossDisks, UseCache: "yes", CacheMode: pool.CacheThenMove, Export: "e", Security: "public"},
+			{Name: "media", Allocator: "highwater", CreatePolicy: pool.BalanceAcrossDisks, UseCache: "no", CacheMode: pool.ArrayOnly, Export: "e", Security: "private", SplitLevel: "2", Floor: "50000000", ReadList: []string{"bob"}, WriteList: []string{"alice"}},
+		},
+		Users: []string{"alice", "bob"},
+	}
+}
+
+// seedMockMigration creates the shares and accounts the import seeds, from the
+// same plan production's job builds, and skips a name that already exists as
+// production does.
+func (h *handler) seedMockMigration(plan migrate.SeedPlan) {
+	now := time.Now().UTC().Truncate(time.Second)
+	h.usersMu.Lock()
+	ids := map[string]uuid.UUID{}
+	for _, u := range h.users {
+		ids[strings.ToLower(u.Username)] = u.ID
+	}
+	for _, name := range plan.Users {
+		if _, ok := ids[name]; ok {
+			continue
+		}
+		u := apiv1.UserSummary{ID: uuid.New(), Username: name, Role: apiv1.UserRoleShareOnly, CreatedAt: now}
+		u.LastLogin.SetToNull()
+		h.users[u.ID] = u
+		ids[name] = u.ID
+	}
+	h.usersMu.Unlock()
+
+	h.mu.Lock()
+	created := map[string]share.SeedShare{}
+	for _, sh := range plan.Shares {
+		if _, ok := h.shares[sh.Name]; ok {
+			continue
+		}
+		s := apiv1.Share{
+			Name:         apiv1.ShareName(sh.Name),
+			Path:         "/mnt/user/" + sh.Name,
+			CacheMode:    apiv1.ShareCacheModeArrayOnly,
+			CreatePolicy: apiv1.ArrayCreatePolicy(sh.CreatePolicy),
+			Smb:          apiv1.ShareSMB{Enabled: sh.SMB.Enabled, Guest: sh.SMB.Guest, Browseable: sh.SMB.Browseable},
+			Nfs:          defaultShareNFS(sh.Name),
+			Usage:        apiv1.NilShareUsage{Null: true},
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if sh.MinFreeSpace != "" {
+			s.MinFreeSpace = apiv1.NewOptString(sh.MinFreeSpace)
+		}
+		if sh.TargetCacheMode != "" || len(sh.Notes) > 0 {
+			m := apiv1.ShareMigration{Notes: append([]string{}, sh.Notes...)}
+			if sh.TargetCacheMode != "" {
+				m.TargetCacheMode = apiv1.NewOptShareCacheMode(apiv1.ShareCacheMode(sh.TargetCacheMode))
+			}
+			s.Migration = apiv1.NewOptShareMigration(m)
+		}
+		h.shares[sh.Name] = s
+		created[sh.Name] = sh
+	}
+	h.mu.Unlock()
+
+	h.usersMu.Lock()
+	defer h.usersMu.Unlock()
+	for name, sh := range created {
+		result := apiv1.SharePermissionsResult{Users: []apiv1.UserPermissionEntry{}, Groups: []apiv1.GroupPermissionEntry{}}
+		for _, a := range sh.Access {
+			id := ids[a.Username]
+			result.Users = append(result.Users, apiv1.UserPermissionEntry{UserId: id, Username: a.Username, Access: apiv1.ShareAccessLevel(a.Access)})
+			user := h.userSharePermissions[id]
+			user.Permissions = append(user.Permissions, apiv1.UserSharePermission{ShareName: apiv1.ShareName(name), Access: apiv1.ShareAccessLevel(a.Access)})
+			h.userSharePermissions[id] = user
+		}
+		h.sharePermissions[apiv1.ShareName(name)] = result
+	}
 }
 
 func seededMigration(scenario string) *mockMigration {
@@ -354,6 +449,13 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	}
 	if h.migration.imported.Load() {
 		out.Phase = apiv1.MigrationPhaseImported
+		if v := h.migration.verify; v != nil {
+			out.Verify = apiv1.NewOptMigrationVerify(*v)
+			out.Phase = apiv1.MigrationPhaseVerifyFailed
+			if v.Status == apiv1.MigrationVerifyStatusPassed {
+				out.Phase = apiv1.MigrationPhaseVerified
+			}
+		}
 	}
 	if !out.ZipOnly {
 		out.FlashDevices = append(out.FlashDevices, apiv1.MigrationFlashDevice{
@@ -362,6 +464,54 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 		})
 	}
 	return out, nil
+}
+
+// StartMigrationVerify answers as production does before the job: nothing is
+// verified unless an import is pending. The job it queues has finished at once,
+// as the scans do. The first run fails with the scenario's failing result and
+// the job failed, every later run passes.
+func (h *handler) StartMigrationVerify(ctx context.Context) (*apiv1.Job, error) {
+	if !h.migration.imported.Load() {
+		return nil, mockMigrateError(migrate.ErrVerifyNotPending)
+	}
+	j, err := h.queueMockJobIn(apiv1.JobTypeMigrationVerify, apiv1.JobClassTopology)
+	if err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	h.migration.verifyRuns++
+	name := "verify-failed.json"
+	if h.migration.verifyRuns > 1 {
+		name = "verify-passed.json"
+	}
+	h.migration.mu.Unlock()
+	raw, err := migrationpending.Verify.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	var result apiv1.MigrationVerify
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", name, err)
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("%s does not match the API's MigrationVerify: %w", name, err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	result.StartedAt, result.FinishedAt = now, apiv1.NewOptDateTime(now)
+	h.mu.Lock()
+	j.StartedAt = apiv1.NewOptNilDateTime(now)
+	j.FinishedAt = apiv1.NewOptNilDateTime(now)
+	j.Status = apiv1.JobStatusSucceeded
+	if result.Status != apiv1.MigrationVerifyStatusPassed {
+		j.Status = apiv1.JobStatusFailed
+		j.Error = apiv1.NewOptNilError(apiv1.Error{Code: "job_failed", Message: "migration verify: " + migrate.ErrVerifyMismatch.Error()})
+	}
+	h.jobs[j.ID] = *j
+	h.mu.Unlock()
+	h.migration.mu.Lock()
+	h.migration.verify = &result
+	h.migration.mu.Unlock()
+	return j, nil
 }
 
 func mockMigrationReportToAPI(r *migrate.Report) apiv1.MigrationReport {
@@ -716,5 +866,6 @@ func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 	h.jobs[j.ID] = *j
 	h.mu.Unlock()
 	h.migration.imported.Store(true)
+	h.seedMockMigration(report.Import.SeedPlan())
 	return j, nil
 }

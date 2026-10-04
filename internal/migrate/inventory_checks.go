@@ -219,6 +219,11 @@ func addShareRow(r *Report, sh Share, dirs *dirIndex) int {
 	}
 	var parts []string
 
+	if err := pool.ValidateShareName(sh.Name); err != nil {
+		worse(StatusFlag)
+		parts = append(parts, "not carried over: "+invalidShareNameReason)
+	}
+
 	policy, exact, known := allocationPolicy(sh.Allocator)
 	switch {
 	case !known:

@@ -23,6 +23,7 @@ type importFix struct {
 	h        *api.Handler
 	svc      *migrate.Service
 	registry *job.Registry
+	sessions *store.MigrationSessionStore
 	// blockScan, when set, holds every scan job until it is closed.
 	blockScan chan struct{}
 	params    [][]byte
@@ -37,11 +38,11 @@ func newImportFix(t *testing.T, more func(*disk.FakeProvider)) *importFix {
 	if more != nil {
 		more(disks)
 	}
-	f := &importFix{h: h, registry: registry}
+	f := &importFix{h: h, registry: registry, sessions: store.NewMigrationSessionStore(openTestDB(t))}
 	f.svc = &migrate.Service{
 		Dir:      filepath.Join(t.TempDir(), "migrate"),
 		Scanner:  &migrate.Scanner{Disks: disks, UIDOwner: func(int) (string, error) { return "", nil }},
-		Sessions: store.NewMigrationSessionStore(openTestDB(t)),
+		Sessions: f.sessions,
 		JobEnded: func(ctx context.Context, id string) (string, bool, error) {
 			j, err := h.Store.Get(ctx, id)
 			if err != nil {

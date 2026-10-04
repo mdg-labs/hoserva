@@ -1,0 +1,249 @@
+{
+  "status": "passed",
+  "startedAt": "2026-01-06T02:10:00Z",
+  "finishedAt": "2026-01-06T04:52:31Z",
+  "disks": [
+    {
+      "name": "disk1",
+      "passed": true,
+      "expected": {
+        "files": 41872,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 3180241778101
+      },
+      "found": {
+        "files": 41872,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 3180241778101
+      },
+      "hashed": 20211,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "disk3",
+      "passed": true,
+      "expected": {
+        "files": 18340,
+        "symlinks": 0,
+        "special": 1,
+        "bytes": 1402019443712
+      },
+      "found": {
+        "files": 18340,
+        "symlinks": 0,
+        "special": 1,
+        "bytes": 1402019443712
+      },
+      "hashed": 9104,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "disk4",
+      "passed": true,
+      "expected": {
+        "files": 2210,
+        "symlinks": 3,
+        "special": 0,
+        "bytes": 88410233990
+      },
+      "found": {
+        "files": 2210,
+        "symlinks": 3,
+        "special": 0,
+        "bytes": 88410233990
+      },
+      "hashed": 2210,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    }
+  ],
+  "shares": [
+    {
+      "name": "backup",
+      "passed": true,
+      "expected": {
+        "files": 1203,
+        "symlinks": 0,
+        "special": 0,
+        "bytes": 92114003211
+      },
+      "found": {
+        "files": 1203,
+        "symlinks": 0,
+        "special": 0,
+        "bytes": 92114003211
+      },
+      "hashed": 0,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "documents",
+      "passed": true,
+      "expected": {
+        "files": 20112,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 214003998101
+      },
+      "found": {
+        "files": 20112,
+        "symlinks": 12,
+        "special": 0,
+        "bytes": 214003998101
+      },
+      "hashed": 0,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    },
+    {
+      "name": "media",
+      "passed": true,
+      "expected": {
+        "files": 41105,
+        "symlinks": 3,
+        "special": 1,
+        "bytes": 4364312001003
+      },
+      "found": {
+        "files": 41105,
+        "symlinks": 3,
+        "special": 1,
+        "bytes": 4364312001003
+      },
+      "hashed": 0,
+      "missing": {
+        "total": 0,
+        "paths": []
+      },
+      "extra": {
+        "total": 0,
+        "paths": []
+      },
+      "sizeChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "checksumChanged": {
+        "total": 0,
+        "paths": []
+      },
+      "changed": {
+        "total": 0,
+        "paths": []
+      }
+    }
+  ],
+  "duplicates": 2,
+  "duplicateSample": [
+    {
+      "path": "documents/old/notes.txt",
+      "disks": [
+        "disk1",
+        "disk3"
+      ]
+    },
+    {
+      "path": "media/.keep",
+      "disks": [
+        "disk1",
+        "disk3",
+        "disk4"
+      ]
+    }
+  ]
+}

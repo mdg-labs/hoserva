@@ -491,6 +491,14 @@ CREATE TABLE host_config (
 -- generated samba/smb.conf (Q73 for Time Machine max size); NFS columns
 -- drive generated /etc/exports (doc 03 §4.2). Per-user ACLs belong to a
 -- later issue. Expand-only (D16).
+-- min_free_space is the share's own mergerfs minfreespace ('' keeps the array's,
+-- array_settings.min_free_space); an Unraid import sets it from the share's
+-- floor (doc 09 §1). target_cache_mode is the cache mode an Unraid import
+-- wants the share to have once the cache exists: while the migration is pending
+-- there is no cache, so cache_mode is array-only and this holds the mapped one
+-- ('' for a share with nothing to apply). migration_notes is a JSON array of
+-- what the import could not map exactly, in plain language. All three are
+-- declared last because SQLite's ALTER TABLE ADD COLUMN can only append (Q60).
 CREATE TABLE shares (
     name TEXT PRIMARY KEY,
     cache_mode TEXT NOT NULL CHECK (cache_mode IN ('cache-then-move', 'cache-only', 'array-only')),
@@ -506,7 +514,10 @@ CREATE TABLE shares (
     nfs_hosts TEXT NOT NULL DEFAULT '[]',
     nfs_squash TEXT NOT NULL DEFAULT 'root_squash' CHECK (nfs_squash IN ('root_squash', 'no_root_squash', 'all_squash')),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    min_free_space TEXT NOT NULL DEFAULT '',
+    target_cache_mode TEXT NOT NULL DEFAULT '' CHECK (target_cache_mode IN ('', 'cache-then-move', 'cache-only', 'array-only')),
+    migration_notes TEXT NOT NULL DEFAULT '[]'
 ) STRICT;
 
 -- Let's Encrypt DNS-01 (#211, Q9, Q28): one row, id=1, the same singleton
@@ -581,9 +592,10 @@ CREATE INDEX user_group_members_user_id_idx ON user_group_members (user_id);
 
 -- Per-user share access (#49, Q27, doc 03 §7): none/read-only/read-write,
 -- editable from the user or the share. A user with no row for a share is
--- not represented — none of the three levels is assumed. Enforcing this
--- in generated Samba/mergerfs config, and the file ownership/mode a grant
--- implies, is a later issue; this table is the stored grant itself.
+-- not represented — none of the three levels is assumed. internal/share
+-- renders these grants, with the group grants below, into each non-guest
+-- share's smb.conf section (valid users, write list); the file ownership
+-- and mode a grant implies is not derived from them.
 CREATE TABLE share_user_permissions (
     share_name TEXT NOT NULL REFERENCES shares (name) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -904,7 +916,9 @@ CREATE TABLE registry_credentials (
 -- uploaded; report is that scan's report as JSON. scan_* is a scan that has not
 -- finished: scan_file is its staged upload, scan_unverified_layout and
 -- scan_full_checksums are the options it was started with, scan_error is empty
--- while it runs and says why it stopped otherwise. Every column is empty ('' or 0) when it
+-- while it runs and says why it stopped otherwise. verify is the result of the
+-- verify phase against the scan's baseline, as JSON, which the migrate package
+-- owns. Every column is empty ('' or 0) when it
 -- does not apply. The zip itself is never in the database or in a config
 -- archive: it holds secrets.
 CREATE TABLE migration_session (
@@ -918,5 +932,6 @@ CREATE TABLE migration_session (
     scan_received_at TEXT NOT NULL DEFAULT '',
     scan_unverified_layout INTEGER NOT NULL DEFAULT 0 CHECK (scan_unverified_layout IN (0, 1)),
     scan_error TEXT NOT NULL DEFAULT '',
-    scan_full_checksums INTEGER NOT NULL DEFAULT 0 CHECK (scan_full_checksums IN (0, 1))
+    scan_full_checksums INTEGER NOT NULL DEFAULT 0 CHECK (scan_full_checksums IN (0, 1)),
+    verify TEXT NOT NULL DEFAULT ''
 ) STRICT;

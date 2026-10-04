@@ -29,6 +29,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -181,16 +183,82 @@ func labInventory(t *testing.T, a *labArray, withLinks bool, slots ...string) *d
 // labImport is the daemon's part of the import, built the way hoservad builds
 // it, over this lab's disks.
 type labImport struct {
-	t       *testing.T
-	a       *labArray
-	rr      *recordingRunner
-	svc     *Service
-	arrays  *store.ArrayStore
-	genRoot string
-	sched   *job.Scheduler
+	t        *testing.T
+	a        *labArray
+	rr       *recordingRunner
+	svc      *Service
+	arrays   *store.ArrayStore
+	genRoot  string
+	sched    *job.Scheduler
+	registry *job.Registry
+	gen      *cfggen.Generator
+	db       *sql.DB
+
+	// seeder, when set, is what the import job runs once the disks are adopted:
+	// the shares and accounts of the scan, through a real share service.
+	seeder func(ctx context.Context, out io.Writer) error
+	// shareFS refuses and records every write the share service attempts.
+	shareFS *labShareFS
+	shares  *share.Service
 
 	mu  sync.Mutex
 	seq *job.ArraySequence
+}
+
+// labShareFS is the share service's filesystem: it refuses, and records, every
+// call that could write to an adopted disk, so a seed that tried to would fail
+// here and not only through the disks' read-only mounts.
+type labShareFS struct {
+	share.OSFS
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *labShareFS) deny(call string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+	return errors.New("the lab refuses writes to an adopted disk: " + call)
+}
+
+func (f *labShareFS) MkdirAll(path string, _ fs.FileMode) error { return f.deny("MkdirAll " + path) }
+func (f *labShareFS) Chmod(path string, _ fs.FileMode) error    { return f.deny("Chmod " + path) }
+func (f *labShareFS) Chown(path string, _, _ int) error         { return f.deny("Chown " + path) }
+func (f *labShareFS) RemoveAll(path string) error               { return f.deny("RemoveAll " + path) }
+func (f *labShareFS) RemoveConfined(root, rel string) error {
+	return f.deny("RemoveConfined " + root + " " + rel)
+}
+
+// enableSeed makes the import seed the scan's shares and accounts, through a
+// share.Service as hoservad builds it over these stores (its mounter is
+// never used: a pending migration mounts no share).
+func (li *labImport) enableSeed() {
+	li.t.Helper()
+	li.shareFS = &labShareFS{}
+	li.shares = &share.Service{
+		Shares:     store.NewShareStore(li.db),
+		Array:      li.arrays,
+		Gen:        li.gen,
+		FS:         li.shareFS,
+		Mounter:    pool.Mounter{Runner: li.rr},
+		PostCommit: li.rebuild,
+	}
+	li.seeder = func(ctx context.Context, out io.Writer) error {
+		plan, err := li.svc.SeedPlan(ctx)
+		if err != nil {
+			return err
+		}
+		in := share.SeedInput{Shares: plan.Shares}
+		for _, name := range plan.Users {
+			in.Users = append(in.Users, share.SeedUser{Username: name, PasswordHash: "not-a-password"})
+		}
+		res, err := li.shares.SeedMigration(ctx, in)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "seeded %d shares and %d accounts\n", len(res.Shares), len(res.Users))
+		return nil
+	}
 }
 
 // failingMounter fails the mount of one mountpoint and delegates the rest.
@@ -210,13 +278,14 @@ func newLabImport(t *testing.T, a *labArray, mounter func(disk.UnitMounter) disk
 	t.Helper()
 	sessions, db := newSessionsDB(t)
 	_ = sessions
-	li := &labImport{t: t, a: a, rr: &recordingRunner{inner: a.runner}, arrays: store.NewArrayStore(db), genRoot: t.TempDir()}
+	li := &labImport{t: t, a: a, rr: &recordingRunner{inner: a.runner}, arrays: store.NewArrayStore(db), genRoot: t.TempDir(), db: db}
 	sc := a.scanner(t, nil)
 	li.svc = &Service{Dir: filepath.Join(t.TempDir(), "migrate"), Scanner: sc, Sessions: sessions}
 	li.svc.Pending = li.arrays.MigrationPending
 
 	gen := cfggen.NewGenerator(li.genRoot)
 	gen.StoppedFlagPath = filepath.Join(li.genRoot, "array-stopped")
+	li.gen = gen
 	var um disk.UnitMounter = disk.DirectMounter{Runner: li.rr}
 	if mounter != nil {
 		um = mounter(um)
@@ -237,7 +306,14 @@ func newLabImport(t *testing.T, a *labArray, mounter func(disk.UnitMounter) disk
 		Mounter:    um,
 		ArrayReady: li.rebuild,
 		Array:      li.current,
+		Seed: func(ctx context.Context, out io.Writer) error {
+			if li.seeder == nil {
+				return nil
+			}
+			return li.seeder(ctx, out)
+		},
 	}))
+	li.registry = registry
 	li.sched = job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), registry)
 	li.sched.SetMigrationPending(li.arrays.MigrationPending)
 	t.Cleanup(li.cleanup)
@@ -421,6 +497,71 @@ func readFileOrFail(t *testing.T, path string) []byte {
 	return data
 }
 
+// assertSeededWithoutWriting is the data-loss scenario of seeding the shares
+// and accounts (#299): the import created the scan's shares in the database,
+// exported them read-only, and neither made a directory on, nor changed the
+// mode or owner of, any adopted disk. The whole-device sha256 of every source
+// disk is asserted by the caller after the job; this adds what that cannot say
+// by itself: the share service attempted no write, no top-level directory on a
+// data disk is one the fixture did not put there, and a write through a share's
+// path in the pool is refused.
+func assertSeededWithoutWriting(t *testing.T, li *labImport, manifest map[string]map[string]manifestFile, dataSlots []string) {
+	t.Helper()
+	ctx := context.Background()
+	if len(li.shareFS.calls) != 0 {
+		t.Errorf("seeding attempted writes to the adopted disks: %v", li.shareFS.calls)
+	}
+	rows, err := li.shares.Shares.List(ctx)
+	if err != nil || len(rows) < 5 {
+		t.Fatalf("seeded shares = %d, %v, want the scan's shares", len(rows), err)
+	}
+	for _, r := range rows {
+		if r.CacheMode != string(pool.ArrayOnly) {
+			t.Errorf("share %s is %s while no cache exists, want array-only", r.Name, r.CacheMode)
+		}
+	}
+	media, err := li.shares.Shares.Get(ctx, "media")
+	if err != nil || media.CreatePolicy != string(pool.BalanceAcrossDisks) || len(media.MigrationNotes) == 0 {
+		t.Errorf("media = %+v, %v, want the High-water mapping noted", media, err)
+	}
+	var appdata store.Share
+	if appdata, err = li.shares.Shares.Get(ctx, "appdata"); err != nil || appdata.TargetCacheMode != string(pool.CacheOnly) {
+		t.Errorf("appdata = %+v, %v, want cache-only recorded as its target", appdata, err)
+	}
+
+	for i, slot := range dataSlots {
+		top := map[string]bool{}
+		for path := range manifest[slot] {
+			top[strings.SplitN(path, "/", 2)[0]] = true
+		}
+		entries, err := os.ReadDir(fmt.Sprintf("/mnt/disk%d", i+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.Name() != "lost+found" && !top[e.Name()] {
+				t.Errorf("/mnt/disk%d holds %s, which the fixture did not put there", i+1, e.Name())
+			}
+		}
+	}
+	for _, name := range []string{"media", "documents"} {
+		p := filepath.Join("/mnt/user", name, "written-by-the-test")
+		if err := os.WriteFile(p, []byte("x"), 0o644); err == nil {
+			_ = os.Remove(p)
+			t.Errorf("a write through /mnt/user/%s succeeded", name)
+		}
+	}
+
+	units, _ := filepath.Glob(filepath.Join(li.genRoot, "systemd", "system", "mnt-user-*.mount"))
+	if len(units) != 0 {
+		t.Errorf("units for shares: %v, want none while the migration is pending", units)
+	}
+	smb := readFileOrFail(t, filepath.Join(li.genRoot, "samba", "smb.conf"))
+	if !bytes.Contains(smb, []byte("[media]")) || bytes.Contains(smb, []byte("read only = no")) {
+		t.Errorf("smb.conf must export the shares read-only:\n%s", smb)
+	}
+}
+
 // TestLabImport_AdoptsReadOnlyAndNeverWritesASourceDisk is the rollback
 // guarantee of doc 05 §5. It scans #74's primary fixture, imports it, reads the
 // whole array back through the pool, stops and starts the array, and compares
@@ -436,6 +577,7 @@ func TestLabImport_AdoptsReadOnlyAndNeverWritesASourceDisk(t *testing.T) {
 	}
 	a.disks = labInventory(t, a, true, "parity", "disk1", "disk2", "disk3", "cache")
 	li := newLabImport(t, a, nil)
+	li.enableSeed()
 	zipData := readFileOrFail(t, a.zip)
 	li.scanZip(zipData)
 	a.assertUnchanged(before, "after the scan")
@@ -537,6 +679,7 @@ func TestLabImport_AdoptsReadOnlyAndNeverWritesASourceDisk(t *testing.T) {
 	dataSlots := []string{"disk1", "disk2", "disk3"}
 	assertPoolMatchesManifest(t, manifest, dataSlots, 20, "after the import")
 	assertWritesRefused(t, "/mnt/disk1", "/mnt/disk2", "/mnt/disk3")
+	assertSeededWithoutWriting(t, li, manifest, dataSlots)
 
 	// Stop and start the array through ArraySequence, as `hoserva array stop` and
 	// `start` do: the disks come back read-only from the same devices.

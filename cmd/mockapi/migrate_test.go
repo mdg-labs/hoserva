@@ -812,3 +812,127 @@ func TestMockMigration_TheCacheOfAnUnraidBootAndDataDeviceIsItsDataPartition(t *
 		t.Errorf("cache = %+v, want partition 4 only", c)
 	}
 }
+
+// The verify phase is refused until an import is pending, as production refuses
+// it. Once one is, the first run fails with the scenario's failing result (the
+// job failed, the phase verify_failed, the files named) and the next passes, so a
+// UI sees both.
+func TestMockMigration_VerifyFailsOnceThenPasses(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	if _, err := h.StartMigrationVerify(ctx); err == nil {
+		t.Fatal("a verify before an import was accepted")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "no_import_pending" {
+		t.Errorf("before an import = %d %s, want 409 no_import_pending", st, code)
+	}
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := h.StartMigrationVerify(ctx)
+	if err != nil {
+		t.Fatalf("StartMigrationVerify after the import: %v", err)
+	}
+	if j.Type != apiv1.JobTypeMigrationVerify || j.Class != apiv1.JobClassTopology {
+		t.Errorf("job = %+v", j)
+	}
+	done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID})
+	if err != nil || done.Status != apiv1.JobStatusFailed {
+		t.Fatalf("the first verify job = %+v, %v, want failed", done, err)
+	}
+	m, _ := h.GetMigration(ctx)
+	v, ok := m.Verify.Get()
+	if m.Phase != apiv1.MigrationPhaseVerifyFailed || !ok || v.Status != apiv1.MigrationVerifyStatusFailed {
+		t.Fatalf("after the first verify: phase = %s, verify = %+v", m.Phase, v)
+	}
+	var named bool
+	for _, d := range v.Disks {
+		named = named || (!d.Passed && len(d.SizeChanged.Paths) == 1 && len(d.ChecksumChanged.Paths) == 1 && len(d.Missing.Paths) == 1)
+	}
+	if !named {
+		t.Errorf("the failing result names no file of each kind: %+v", v.Disks)
+	}
+
+	j, err = h.StartMigrationVerify(ctx)
+	if err != nil {
+		t.Fatalf("the re-run: %v", err)
+	}
+	if done, err := h.GetJob(ctx, apiv1.GetJobParams{JobId: j.ID}); err != nil || done.Status != apiv1.JobStatusSucceeded {
+		t.Fatalf("the re-run job = %+v, %v, want succeeded", done, err)
+	}
+	m, _ = h.GetMigration(ctx)
+	v, _ = m.Verify.Get()
+	if m.Phase != apiv1.MigrationPhaseVerified || v.Status != apiv1.MigrationVerifyStatusPassed || v.Duplicates == 0 {
+		t.Errorf("after the re-run: phase = %s, verify = %+v", m.Phase, v)
+	}
+	for _, scope := range append(append([]apiv1.MigrationVerifyScope{}, v.Disks...), v.Shares...) {
+		if !scope.Passed {
+			t.Errorf("scope %s did not pass in the passing fixture", scope.Name)
+		}
+	}
+}
+
+// Once the mock's import has run, the shares and accounts it seeds are in
+// listShares and listUsers as production's job leaves them: array-only with the
+// Unraid cache mode as a target, notes, no password, and no new share or share
+// data deletion while the import is pending.
+func TestMockMigration_TheImportSeedsSharesAndUsers(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
+		t.Fatal(err)
+	}
+	if shares, _ := h.ListShares(ctx); len(shares.Shares) != 0 {
+		t.Fatalf("shares before the import = %d", len(shares.Shares))
+	}
+	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
+		t.Fatal(err)
+	}
+	shares, _ := h.ListShares(ctx)
+	byName := map[string]apiv1.Share{}
+	for _, s := range shares.Shares {
+		byName[string(s.Name)] = s
+	}
+	if len(byName) != 3 {
+		t.Fatalf("shares = %v, want backup, documents and media", shares.Shares)
+	}
+	media := byName["media"]
+	if media.CacheMode != apiv1.ShareCacheModeArrayOnly || media.CreatePolicy != apiv1.ArrayCreatePolicyMfs || media.MinFreeSpace.Or("") != "50000000K" {
+		t.Errorf("media = %+v", media)
+	}
+	if m, ok := media.Migration.Get(); !ok || len(m.Notes) == 0 || !strings.Contains(strings.Join(m.Notes, "\n"), "mapped to Balance across disks") {
+		t.Errorf("media migration = %+v", media.Migration)
+	}
+	docs := byName["documents"]
+	if m, ok := docs.Migration.Get(); !ok || m.TargetCacheMode.Or("") != apiv1.ShareCacheModeCacheThenMove || docs.CacheMode != apiv1.ShareCacheModeArrayOnly || !docs.Smb.Guest {
+		t.Errorf("documents = %+v", docs)
+	}
+	users, _ := h.ListUsers(ctx)
+	seeded := map[string]apiv1.UserSummary{}
+	for _, u := range users.Users {
+		seeded[u.Username] = u
+	}
+	for _, name := range []string{"alice", "bob"} {
+		if u, ok := seeded[name]; !ok || u.Role != apiv1.UserRoleShareOnly || u.HasCredential {
+			t.Errorf("%s = %+v, want a share-only account without a credential", name, u)
+		}
+	}
+	perms, err := h.GetSharePermissions(ctx, apiv1.GetSharePermissionsParams{Name: "media"})
+	if err != nil || len(perms.Users) != 2 {
+		t.Errorf("media permissions = %+v, %v", perms, err)
+	}
+
+	if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "fresh", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err == nil {
+		t.Error("a share was created while the import is pending")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_in_progress" {
+		t.Errorf("createShare = %d %s, want 409 migration_in_progress", st, code)
+	}
+	if err := h.DeleteShareData(ctx, &apiv1.DeleteShareDataRequest{Confirmation: "media"}, apiv1.DeleteShareDataParams{Name: "media"}); err == nil {
+		t.Error("a share's files were deleted while the import is pending")
+	} else if st, code := mockErrCode(t, err); st != 409 || code != "migration_in_progress" {
+		t.Errorf("deleteShareData = %d %s, want 409 migration_in_progress", st, code)
+	}
+}

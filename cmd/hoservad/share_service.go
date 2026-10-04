@@ -24,3 +24,12 @@ func newShareService(shareStore *store.ShareStore, arrayStore *store.ArrayStore,
 		Usages:  usages,
 	}
 }
+
+// newShareServiceWithAccess is newShareService with the grants smb.conf is
+// generated from (#594): the auth store the permission handlers write.
+// Without them every non-guest share is rendered closed.
+func newShareServiceWithAccess(shareStore *store.ShareStore, arrayStore *store.ArrayStore, generator *cfggen.Generator, mounter share.Mounter, usages share.UsageReader, access share.AccessReader) *share.Service {
+	svc := newShareService(shareStore, arrayStore, generator, mounter, usages)
+	svc.Access = access
+	return svc
+}

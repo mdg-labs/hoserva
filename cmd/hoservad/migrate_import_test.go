@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -11,13 +12,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/auth"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -42,6 +47,58 @@ type importWiring struct {
 	root    string
 	mounts  []string
 	unmount []string
+	// shares is the share service main.go hands the handler and the import job,
+	// over a filesystem that fails every write and a mounter that records the
+	// share mounts, so nothing under /mnt is ever touched.
+	shares      *share.Service
+	shareFS     *noWriteFS
+	shareMounts *recordingShareMounter
+	rebuild     func(ctx context.Context) error
+	generator   *cfggen.Generator
+	disks       *disk.FakeProvider
+}
+
+// noWriteFS is the share service's filesystem for a pending migration: it
+// records every call that could write to an adopted disk and refuses it, so a
+// test never writes a path under /mnt and fails on the attempt.
+type noWriteFS struct {
+	share.OSFS
+	calls []string
+}
+
+func (f *noWriteFS) deny(call string) error {
+	f.calls = append(f.calls, call)
+	return errors.New("the test's filesystem refuses writes: " + call)
+}
+
+func (f *noWriteFS) MkdirAll(path string, _ os.FileMode) error { return f.deny("MkdirAll " + path) }
+func (f *noWriteFS) Chmod(path string, _ os.FileMode) error    { return f.deny("Chmod " + path) }
+func (f *noWriteFS) Chown(path string, _, _ int) error         { return f.deny("Chown " + path) }
+func (f *noWriteFS) RemoveAll(path string) error               { return f.deny("RemoveAll " + path) }
+func (f *noWriteFS) RemoveConfined(root, rel string) error {
+	return f.deny("RemoveConfined " + root + " " + rel)
+}
+
+// recordingShareMounter fakes share.Mounter and keeps each mount it was given,
+// of which a pending migration has none.
+type recordingShareMounter struct {
+	mu       sync.Mutex
+	mounted  []pool.Mount
+	unmounts []string
+}
+
+func (m *recordingShareMounter) Mount(_ context.Context, mnt pool.Mount) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mounted = append(m.mounted, mnt)
+	return nil
+}
+
+func (m *recordingShareMounter) Unmount(_ context.Context, where string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unmounts = append(m.unmounts, where)
+	return nil
 }
 
 // wireImport wires the migrator and its import the way main.go does, over a
@@ -63,7 +120,7 @@ func wireImport(t *testing.T) *importWiring {
 	runner.Script("findmnt", []string{"-n", "-o", "UUID", "/mnt/disk1"}, []byte("10000000-0000-4000-8000-000000000002\n"), nil)
 	runner.Script("findmnt", []string{"-n", "-o", "OPTIONS", "/mnt/disk1"}, []byte("ro,nosuid,nodev,noexec,noatime\n"), nil)
 	runner.Script("findmnt", []string{"-n", "-o", "OPTIONS", pool.CatchAllPath}, []byte("ro,nosuid,nodev,relatime\n"), nil)
-	im := &importWiring{w: w, runner: runner, mounter: disk.NewFakeMounter(), root: filepath.Join(w.root, "etc")}
+	im := &importWiring{w: w, runner: runner, mounter: disk.NewFakeMounter(), root: filepath.Join(w.root, "etc"), disks: disks}
 
 	if err := wireMigration(context.Background(), w.handler, w.registry, disks, disk.NewFakeReadOnlyMounter(), runner, store.NewMigrationSessionStore(w.db), w.root); err != nil {
 		t.Fatal(err)
@@ -83,7 +140,20 @@ func wireImport(t *testing.T) *importWiring {
 		w.handler.SetArray(seq)
 		return nil
 	}
-	if err := wireMigrationImport(w.handler, w.registry, w.arrays, cfggen.NewGenerator(im.root), runner, im.mounter, rebuild); err != nil {
+	im.rebuild = rebuild
+	im.generator = cfggen.NewGenerator(im.root)
+	im.shareFS, im.shareMounts = &noWriteFS{}, &recordingShareMounter{}
+	authStore := api.NewAuthStore(w.db)
+	im.shares = newShareServiceWithAccess(shares, w.arrays, im.generator, im.shareMounts, nil, authStore)
+	im.shares.FS = im.shareFS
+	im.shares.PostCommit = rebuild
+	machineKey, err := auth.LoadOrGenerateMachineKey(context.Background(), filepath.Join(w.root, "secret.key"), authStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.handler.Shares = im.shares
+	w.handler.Auth = api.NewAuthService(authStore, machineKey)
+	if err := wireMigrationImport(w.handler, w.registry, w.arrays, im.generator, runner, im.mounter, rebuild, im.shares); err != nil {
 		t.Fatal(err)
 	}
 	return im
@@ -224,7 +294,7 @@ func TestMigrationImportWiring_AFailedMountLeavesNoArray(t *testing.T) {
 func TestWireMigrationImport_FailsWithoutTheSessionOrTheArrayStore(t *testing.T) {
 	w := newContainersWiringHarness(t)
 	wire := func() error {
-		return wireMigrationImport(w.handler, job.NewRegistry(), w.arrays, cfggen.NewGenerator(t.TempDir()), disk.NewFakeRunner(), disk.NewFakeMounter(), func(context.Context) error { return nil })
+		return wireMigrationImport(w.handler, job.NewRegistry(), w.arrays, cfggen.NewGenerator(t.TempDir()), disk.NewFakeRunner(), disk.NewFakeMounter(), func(context.Context) error { return nil }, &share.Service{})
 	}
 	if err := wire(); err == nil {
 		t.Error("wireMigrationImport succeeded with no migration session")
@@ -262,14 +332,15 @@ func TestMain_WiresTheImportAndTheScheduler(t *testing.T) {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			if fn.Name == "wireMigrationImport" && len(call.Args) == 7 {
+			if fn.Name == "wireMigrationImport" && len(call.Args) == 8 {
 				handler, _ := call.Args[0].(*ast.Ident)
 				registry, _ := call.Args[1].(*ast.Ident)
 				arrays, _ := call.Args[2].(*ast.Ident)
 				mounter, _ := call.Args[5].(*ast.CallExpr)
 				ready, _ := call.Args[6].(*ast.Ident)
-				if handler != nil && registry != nil && arrays != nil && mounter != nil && ready != nil &&
-					handler.Name == "handler" && registry.Name == "registry" && arrays.Name == "arrayStore" && ready.Name == "rebuildArraySequence" {
+				shares, _ := call.Args[7].(*ast.Ident)
+				if handler != nil && registry != nil && arrays != nil && mounter != nil && ready != nil && shares != nil &&
+					handler.Name == "handler" && registry.Name == "registry" && arrays.Name == "arrayStore" && ready.Name == "rebuildArraySequence" && shares.Name == "shareService" {
 					if id, ok := mounter.Fun.(*ast.Ident); ok && id.Name == "newArrayDiskMounter" && len(mounter.Args) == 2 {
 						if lit, ok := mounter.Args[1].(*ast.CompositeLit); ok {
 							if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "SystemdMounter" {
@@ -293,7 +364,7 @@ func TestMain_WiresTheImportAndTheScheduler(t *testing.T) {
 		return true
 	})
 	if !imported {
-		t.Error("main.go does not call wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{...}), rebuildArraySequence)")
+		t.Error("main.go does not call wireMigrationImport(handler, registry, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{...}), rebuildArraySequence, shareService)")
 	}
 	if !gated {
 		t.Error("main.go does not call scheduler.SetMigrationPending(arrayStore.MigrationPending)")
@@ -357,5 +428,81 @@ func TestNewArraySequence_APendingImportIsReadOnlyAndDeviceBound(t *testing.T) {
 	}
 	if mc := seq.CatchAll.(pool.MountController); mc.Mnt.ReadOnly || strings.Contains(mc.Mnt.What, "=RO") {
 		t.Errorf("an ordinary array's pool is read-only: %+v", mc.Mnt)
+	}
+}
+
+// POST /migrate/verify is reachable through the daemon's own server, job registry
+// and scheduler: refused until an import is pending, admitted beside the pending
+// import that refuses every other topology job, and its job reads the adopted
+// disks from the array store, checks their mounts against the kernel's mount
+// table through the daemon's runner and records its result in the session. The
+// adopted disk's mountpoint is not a directory on this machine, so the verify
+// cannot read it and must fail, never pass.
+func TestMigrationVerifyWiring_IsReachableOverHTTPWhileTheImportIsPending(t *testing.T) {
+	im := wireImport(t)
+	w := im.w
+
+	if status, body := w.doBody(t, http.MethodPost, "/migrate/verify", ``); status != http.StatusConflict || !bytes.Contains(body, []byte("no_import_pending")) {
+		t.Fatalf("POST /migrate/verify before an import = %d %s, want 409 no_import_pending", status, body)
+	}
+	im.scan(t)
+	status, body := w.doBody(t, http.MethodPost, "/migrate/import", importBody)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/import = %d %s", status, body)
+	}
+	var imp struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &imp); err != nil {
+		t.Fatal(err)
+	}
+	if done := w.awaitJobByID(t, imp.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("import job = %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/migrate/verify", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/verify while the import is pending = %d %s, want 200", status, body)
+	}
+	var queued struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Class string `json:"class"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil || queued.Type != "migration_verify" || queued.Class != "topology" {
+		t.Fatalf("queued job = %s (%v)", body, err)
+	}
+	done := w.awaitJobByID(t, queued.ID)
+	if done.Status != job.StatusFailed {
+		t.Fatalf("verify job = %s %s, want failed: the adopted disk's mountpoint is not readable here", done.Status, done.ErrorMessage)
+	}
+	var sawDisk, sawPool bool
+	for _, c := range im.runner.Calls() {
+		args := strings.Join(c.Args, " ")
+		if c.Name == "findmnt" && strings.HasSuffix(args, "OPTIONS /mnt/disk1") {
+			sawDisk = true
+		}
+	}
+	for _, c := range im.runner.Calls() {
+		if c.Name == "findmnt" && strings.HasSuffix(strings.Join(c.Args, " "), "OPTIONS "+pool.CatchAllPath) {
+			sawPool = true
+		}
+	}
+	if !sawDisk || !sawPool {
+		t.Errorf("the mount table was not asked about the adopted disk (%v) and the pool (%v) before they were read", sawDisk, sawPool)
+	}
+	status, body = w.do(t, http.MethodGet, "/migrate")
+	var session struct {
+		Phase  string `json:"phase"`
+		Verify struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"verify"`
+	}
+	if err := json.Unmarshal(body, &session); status != http.StatusOK || err != nil {
+		t.Fatalf("GET /migrate = %d %s (%v)", status, body, err)
+	}
+	if session.Phase != "verify_failed" || session.Verify.Status != "failed" || !strings.Contains(session.Verify.Error, "disk1") {
+		t.Errorf("GET /migrate = %s, want the verify_failed phase and a failed result naming the unreadable disk", body)
 	}
 }

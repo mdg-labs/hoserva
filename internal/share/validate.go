@@ -21,6 +21,9 @@ var (
 	// ErrNoArray is create/update/delete when array topology has never
 	// been written.
 	ErrNoArray = errors.New("share: no array topology")
+	// ErrMigrationPending is a share operation that would write to an
+	// adopted Unraid disk before the migration's point of no return.
+	ErrMigrationPending = errors.New("share: an Unraid migration is pending")
 )
 
 var (

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/config"
@@ -90,6 +91,14 @@ type Share struct {
 	Usage        Usage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// MinFreeSpace is the share's own mergerfs minfreespace; empty uses the
+	// array's.
+	MinFreeSpace string
+	// TargetCacheMode is the cache mode an Unraid import mapped the share to,
+	// recorded while the share is array-only because no cache exists yet.
+	TargetCacheMode pool.CacheMode
+	// MigrationNotes are the settings the import could not map exactly.
+	MigrationNotes []string
 }
 
 // Path is the share's user-facing mount (D10).
@@ -138,7 +147,16 @@ type Service struct {
 	// service never computes usage itself, only reads what the sync job
 	// already persisted.
 	Usages UsageReader
-	Now    func() time.Time
+	// Access supplies each share's per-user and per-group grants for
+	// smb.conf. Nil is no grants at all, which renders every non-guest
+	// share closed.
+	Access AccessReader
+	// filesMu is held from the moment the generated files are computed
+	// (the share rows and the grants are read) until the last of them is
+	// written, by every writer of smb.conf: a writer that read the grants
+	// before a change must not write its file after the change's own.
+	filesMu sync.Mutex
+	Now     func() time.Time
 	// CatchAll is the directory browse lists under. Empty uses
 	// pool.CatchAllPath. Tests point it at a temp dir so listing never
 	// walks the host's /mnt/user.
@@ -309,9 +327,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 		return Share{}, err
 	}
 
-	_, disks, err := s.array(ctx)
+	settings, disks, err := s.array(ctx)
 	if err != nil {
 		return Share{}, err
+	}
+	if settings.MigrationPending {
+		return Share{}, fmt.Errorf("%w: a new share would need a directory on every adopted disk, which are read-only until the point of no return", ErrMigrationPending)
 	}
 	data, cache, _ := splitDisks(disks)
 	if (mode == pool.CacheThenMove || mode == pool.CacheOnly) && cache == "" {
@@ -322,13 +343,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 	if err != nil {
 		return Share{}, err
 	}
-	for _, dir := range roots {
-		if err := s.FS.MkdirAll(dir, 0o755); err != nil {
-			return Share{}, fmt.Errorf("share: creating branch directory %s: %w", dir, err)
-		}
-		if err := s.ensureShareDirOwnership(dir); err != nil {
-			return Share{}, err
-		}
+	if err := s.ensureBranchDirs(roots); err != nil {
+		return Share{}, err
 	}
 
 	now := s.now().UTC()
@@ -372,6 +388,7 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 			return Share{}, err
 		}
 		existing.CacheMode = *in.CacheMode
+		existing.TargetCacheMode = ""
 	}
 	if in.CreatePolicy != nil {
 		if err := validateCreatePolicy(*in.CreatePolicy); err != nil {
@@ -397,7 +414,7 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 		existing.NFS = nfs
 	}
 
-	_, disks, err := s.array(ctx)
+	settings, disks, err := s.array(ctx)
 	if err != nil {
 		return Share{}, err
 	}
@@ -409,11 +426,8 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 	if err != nil {
 		return Share{}, err
 	}
-	for _, dir := range roots {
-		if err := s.FS.MkdirAll(dir, 0o755); err != nil {
-			return Share{}, fmt.Errorf("share: creating branch directory %s: %w", dir, err)
-		}
-		if err := s.ensureShareDirOwnership(dir); err != nil {
+	if !settings.MigrationPending {
+		if err := s.ensureBranchDirs(roots); err != nil {
 			return Share{}, err
 		}
 	}
@@ -435,6 +449,21 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 		return Share{}, applyCause(err)
 	}
 	return existing, nil
+}
+
+// ensureBranchDirs creates each share branch directory and brings it to the
+// shared group and setgid mode. It is never called while a migration is
+// pending: the adopted disks are not written before the point of no return.
+func (s *Service) ensureBranchDirs(roots []string) error {
+	for _, dir := range roots {
+		if err := s.FS.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("share: creating branch directory %s: %w", dir, err)
+		}
+		if err := s.ensureShareDirOwnership(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureShareDirOwnership brings a share's top-level branch directory to
@@ -472,14 +501,15 @@ func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
 	if err := s.unmountShare(ctx, existing); err != nil {
 		return err
 	}
-	if err := s.Shares.Delete(ctx, name); err != nil {
+	grants, err := s.Shares.Remove(ctx, name)
+	if err != nil {
 		if rbErr := s.restoreLiveMounts(ctx, existing); rbErr != nil {
 			return fmt.Errorf("%w (remounting share: %v)", err, rbErr)
 		}
 		return err
 	}
 	if err := s.apply(ctx, Share{}, false, ""); err != nil {
-		if insErr := s.Shares.Insert(ctx, toStore(existing)); insErr != nil {
+		if insErr := s.Shares.Restore(context.WithoutCancel(ctx), toStore(existing), grants); insErr != nil {
 			return fmt.Errorf("%w (restoring deleted share: %v)", applyCause(err), insErr)
 		}
 		if rbErr := s.rollbackFiles(ctx, err); rbErr != nil {
@@ -505,9 +535,12 @@ func (s *Service) DeleteData(ctx context.Context, name, confirmation string) err
 	if err != nil {
 		return err
 	}
-	_, disks, err := s.array(ctx)
+	settings, disks, err := s.array(ctx)
 	if err != nil {
 		return err
+	}
+	if settings.MigrationPending {
+		return fmt.Errorf("%w: the adopted disks are not written until the point of no return, so no share's files are deleted", ErrMigrationPending)
 	}
 	data, cache, _ := splitDisks(disks)
 	roots, err := shareDataRoots(existing.Name, existing.CacheMode, data, cache)
@@ -675,6 +708,8 @@ func (s *Service) rollbackFiles(ctx context.Context, applyErr error) error {
 }
 
 func (s *Service) restoreGenerated(ctx context.Context) error {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
 	state, smb, nfs, err := s.shareFiles(ctx)
 	if err != nil {
 		return err
@@ -697,6 +732,8 @@ func shareFileWriteSkippable(err error) bool {
 }
 
 func (s *Service) applyTopologyFiles(ctx context.Context) error {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
 	state, smb, nfs, err := s.shareFiles(ctx)
 	if err != nil {
 		return err
@@ -721,7 +758,9 @@ func (s *Service) applyTopologyFiles(ctx context.Context) error {
 // the array is running, so every data disk is mounted — it also creates
 // each share's branch directory on every data disk, so the branches the
 // live mounts are about to be given exist. It never creates a directory
-// while the array is stopped: an unmounted /mnt/diskN is the boot disk.
+// while the array is stopped: an unmounted /mnt/diskN is the boot disk, and
+// never while an Unraid migration is pending, when the adopted disks are
+// read-only and the files it writes are the read-only ones shareFiles builds.
 func (s *Service) ApplyTopology(ctx context.Context, live bool) error {
 	if err := s.applyTopologyFiles(ctx); err != nil {
 		return err
@@ -729,9 +768,12 @@ func (s *Service) ApplyTopology(ctx context.Context, live bool) error {
 	if !live {
 		return nil
 	}
-	_, disks, err := s.array(ctx)
+	settings, disks, err := s.array(ctx)
 	if err != nil {
 		return err
+	}
+	if settings.MigrationPending {
+		return nil
 	}
 	data, cache, _ := splitDisks(disks)
 	rows, err := s.Shares.List(ctx)
@@ -744,13 +786,8 @@ func (s *Service) ApplyTopology(ctx context.Context, live bool) error {
 		if err != nil {
 			return err
 		}
-		for _, dir := range roots {
-			if err := s.FS.MkdirAll(dir, 0o755); err != nil {
-				return fmt.Errorf("share: creating branch directory %s: %w", dir, err)
-			}
-			if err := s.ensureShareDirOwnership(dir); err != nil {
-				return err
-			}
+		if err := s.ensureBranchDirs(roots); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -783,26 +820,39 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 		CreatePolicy: pool.CreatePolicy(settings.CreatePolicy),
 		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
 		RemovingDisk: removingDataDisk(disks),
+		ReadOnly:     settings.MigrationPending,
 	}
 	var smb []config.SambaShare
 	var nfs []config.NFSShare
+	var grants map[string]ShareGrants
 	for _, row := range rows {
 		sh := shareFromStore(row)
 		state.Shares = append(state.Shares, config.PoolShare{
 			Name:         sh.Name,
 			CacheMode:    sh.CacheMode,
 			CreatePolicy: sh.CreatePolicy,
+			MinFreeSpace: sh.MinFreeSpace,
 		})
 		if sh.SMB.Enabled {
-			smb = append(smb, config.SambaShare{
+			ss := config.SambaShare{
 				Name:               sh.Name,
 				Guest:              sh.SMB.Guest,
-				ReadOnly:           sh.SMB.ReadOnly,
+				ReadOnly:           sh.SMB.ReadOnly || settings.MigrationPending,
 				Browseable:         sh.SMB.Browseable,
 				Recycle:            sh.SMB.Recycle,
 				TimeMachine:        sh.SMB.TimeMachine,
 				TimeMachineMaxSize: sh.SMB.TimeMachineMaxSize,
-			})
+			}
+			if !sh.SMB.Guest {
+				if grants == nil && s.Access != nil {
+					if grants, err = s.Access.ShareGrants(ctx); err != nil {
+						return config.PoolState{}, nil, nil, fmt.Errorf("share: reading the access grants for smb.conf: %w", err)
+					}
+				}
+				valid, write := effectiveAccess(grants[sh.Name])
+				ss.Access = &config.SambaAccess{ValidUsers: valid, WriteList: write}
+			}
+			smb = append(smb, ss)
 		}
 		if sh.NFS.Enabled {
 			nfs = append(nfs, config.NFSShare{
@@ -816,22 +866,9 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 }
 
 func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, prevMode pool.CacheMode) error {
-	state, smb, nfs, err := s.shareFiles(ctx)
+	state, err := s.writeShareFiles(ctx)
 	if err != nil {
 		return err
-	}
-	if err := s.Gen.CanWriteShareFiles(ctx, state); err != nil {
-		return err
-	}
-	now := s.now()
-	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
-		return &applyWrittenError{err: err}
-	}
-	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil {
-		return &applyWrittenError{err: err}
-	}
-	if err := s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now); err != nil {
-		return &applyWrittenError{err: err}
 	}
 	if mountLatest && s.Mounter != nil && latest.Name != "" {
 		dropMover := latest.CacheMode == pool.CacheOnly && prevMode != "" && prevMode != pool.CacheOnly
@@ -842,8 +879,35 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, pre
 	return nil
 }
 
+// writeShareFiles generates the pool units, smb.conf and exports from the
+// stored state under filesMu. A failure after the first file was written is an
+// applyWrittenError.
+func (s *Service) writeShareFiles(ctx context.Context) (config.PoolState, error) {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
+	state, smb, nfs, err := s.shareFiles(ctx)
+	if err != nil {
+		return config.PoolState{}, err
+	}
+	if err := s.Gen.CanWriteShareFiles(ctx, state); err != nil {
+		return config.PoolState{}, err
+	}
+	now := s.now()
+	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
+		return config.PoolState{}, &applyWrittenError{err: err}
+	}
+	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil {
+		return config.PoolState{}, &applyWrittenError{err: err}
+	}
+	if err := s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now); err != nil {
+		return config.PoolState{}, &applyWrittenError{err: err}
+	}
+	return state, nil
+}
+
 // syncLiveMounts applies latest's own share and mover-target mounts to
-// the live pool, choosing pool's *MountRemoving builder over its plain
+// the live pool (none while a migration is pending: /mnt/user/<share> is a
+// directory of the read-only catch-all), choosing pool's *MountRemoving builder over its plain
 // counterpart exactly when state.RemovingDisk is set (#359, doc 09 §4
 // step 2) — a share update reached while a disk is being evacuated must
 // not remount that disk back onto RW.
@@ -853,6 +917,10 @@ func (s *Service) syncLiveMounts(ctx context.Context, latest Share, dropMover bo
 		Name:         latest.Name,
 		CacheMode:    latest.CacheMode,
 		CreatePolicy: latest.CreatePolicy,
+		MinFreeSpace: latest.MinFreeSpace,
+	}
+	if state.ReadOnly {
+		return nil
 	}
 	var mnt pool.Mount
 	var err error
@@ -953,8 +1021,11 @@ func shareFromStore(row store.Share) Share {
 			Hosts:   append([]string(nil), row.NFSHosts...),
 			Squash:  row.NFSSquash,
 		},
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		MinFreeSpace:    row.MinFreeSpace,
+		TargetCacheMode: pool.CacheMode(row.TargetCacheMode),
+		MigrationNotes:  append([]string(nil), row.MigrationNotes...),
 	}
 }
 
@@ -975,6 +1046,9 @@ func toStore(s Share) store.Share {
 		NFSSquash:             s.NFS.Squash,
 		CreatedAt:             s.CreatedAt,
 		UpdatedAt:             s.UpdatedAt,
+		MinFreeSpace:          s.MinFreeSpace,
+		TargetCacheMode:       string(s.TargetCacheMode),
+		MigrationNotes:        append([]string(nil), s.MigrationNotes...),
 	}
 }
 

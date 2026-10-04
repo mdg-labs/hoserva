@@ -33,6 +33,7 @@ const (
 	TypePoolRemount           Type = "pool_remount"
 	TypeMigrationScan         Type = "migration_scan"
 	TypeMigrationImport       Type = "migration_import"
+	TypeMigrationVerify       Type = "migration_verify"
 	TypeAppdataBackup         Type = "appdata_backup"
 	TypeAppdataRestore        Type = "appdata_restore"
 	TypeAppdataRestorePreview Type = "appdata_restore_preview"
@@ -116,6 +117,7 @@ var classOf = map[Type]Class{
 	TypePoolRemount:       ClassTopology,
 	TypeMigrationScan:     ClassTopology,
 	TypeMigrationImport:   ClassTopology,
+	TypeMigrationVerify:   ClassTopology,
 
 	TypeAppdataBackup:         ClassService,
 	TypeAppdataRestore:        ClassService,

@@ -29,6 +29,17 @@ type Share struct {
 	Name         string
 	CacheMode    CacheMode
 	CreatePolicy CreatePolicy
+	// MinFreeSpace, when set, is this share's own mergerfs minfreespace in
+	// place of the Options' one (an Unraid share's floor, doc 09 §1).
+	MinFreeSpace string
+}
+
+// optionsFor is opts with the share's own minfreespace, when it has one.
+func (s Share) optionsFor(opts Options) Options {
+	if s.MinFreeSpace != "" {
+		opts.MinFreeSpace = s.MinFreeSpace
+	}
+	return opts
 }
 
 // shareNamePattern mirrors the convention scripts/devenv/lib.sh's own

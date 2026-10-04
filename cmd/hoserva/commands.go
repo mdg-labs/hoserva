@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -846,17 +847,14 @@ func logsCmd() *cobra.Command {
 					return mapAPIErr(err)
 				}
 				if jsonOutput {
-					body, err := io.ReadAll(log.Data)
-					if err != nil {
+					var text bytes.Buffer
+					if err := printFinishedJobLog(log.Data, &text); err != nil {
 						return err
 					}
-					emit(string(body))
+					emit(text.String())
 					return nil
 				}
-				if _, err := io.Copy(os.Stdout, log.Data); err != nil {
-					return err
-				}
-				return nil
+				return printFinishedJobLog(log.Data, os.Stdout)
 			}
 			out, err := c.ListJobs(apiCtx(), apiv1.ListJobsParams{})
 			if err != nil {
@@ -919,17 +917,32 @@ func followJobLog(id uuid.UUID) error {
 }
 
 // printGzip decompresses src to dst as bytes arrive. A src that ends before
-// its first byte is an empty log, not an error.
+// its first byte is an empty log, not an error. One that ends inside the
+// first header is not gzip, so it is reported as a header error rather than
+// as the io.ErrUnexpectedEOF a caller reads as a missing trailer.
 func printGzip(src io.Reader, dst io.Writer) error {
 	gz, err := gzip.NewReader(src)
 	if err != nil {
-		if errors.Is(err, io.EOF) {
+		if err == io.EOF {
 			return nil
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return fmt.Errorf("%w: body ends inside the header", gzip.ErrHeader)
 		}
 		return err
 	}
 	_, err = io.Copy(dst, gz)
 	return err
+}
+
+// printFinishedJobLog prints a job log fetched without --follow. The body of a
+// job still running has no gzip trailer, as in followJobLog, and what it
+// carried is printed.
+func printFinishedJobLog(src io.Reader, dst io.Writer) error {
+	if err := printGzip(src, dst); err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("reading the job log: %w", err)
+	}
+	return nil
 }
 
 func configCmd() *cobra.Command {

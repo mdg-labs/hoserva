@@ -174,7 +174,7 @@ func shareMount(share Share, dataDisks []string, cachePath, removingDisk string,
 		What:              what,
 		FSName:            "hoserva-" + share.Name,
 		CreatePolicy:      share.CreatePolicy,
-		Options:           opts,
+		Options:           share.optionsFor(opts),
 		Description:       fmt.Sprintf("Hoserva share %s", share.Name),
 		RequiresMountsFor: requires,
 	}, nil
@@ -215,7 +215,7 @@ func moverTargetMount(share Share, dataDisks []string, removingDisk string, opts
 		What:              strings.Join(shareBranchesRemoving(dataDisks, share.Name, "RW", removingDisk), ":"),
 		FSName:            "hoserva-" + share.Name,
 		CreatePolicy:      share.CreatePolicy,
-		Options:           opts,
+		Options:           share.optionsFor(opts),
 		Description:       fmt.Sprintf("Hoserva share %s — mover write target", share.Name),
 		RequiresMountsFor: append([]string(nil), dataDisks...),
 	}, nil

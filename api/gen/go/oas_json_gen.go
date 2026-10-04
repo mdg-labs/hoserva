@@ -16683,6 +16683,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeMigrationScan
 	case JobTypeMigrationImport:
 		*s = JobTypeMigrationImport
+	case JobTypeMigrationVerify:
+		*s = JobTypeMigrationVerify
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
 	case JobTypeAppdataRestore:
@@ -20198,9 +20200,15 @@ func (s *Migration) encodeFields(e *jx.Encoder) {
 			s.Report.Encode(e)
 		}
 	}
+	{
+		if s.Verify.Set {
+			e.FieldStart("verify")
+			s.Verify.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfMigration = [8]string{
+var jsonFieldsNameOfMigration = [9]string{
 	0: "phase",
 	1: "scanError",
 	2: "sourceSize",
@@ -20209,6 +20217,7 @@ var jsonFieldsNameOfMigration = [8]string{
 	5: "flashDevices",
 	6: "zipOnly",
 	7: "report",
+	8: "verify",
 }
 
 // Decode decodes Migration from json.
@@ -20216,7 +20225,7 @@ func (s *Migration) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode Migration to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -20310,6 +20319,16 @@ func (s *Migration) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"report\"")
 			}
+		case "verify":
+			if err := func() error {
+				s.Verify.Reset()
+				if err := s.Verify.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"verify\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -20319,8 +20338,9 @@ func (s *Migration) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b01100001,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -21767,6 +21787,12 @@ func (s *MigrationPhase) Decode(d *jx.Decoder) error {
 		*s = MigrationPhaseScanned
 	case MigrationPhaseImported:
 		*s = MigrationPhaseImported
+	case MigrationPhaseVerifying:
+		*s = MigrationPhaseVerifying
+	case MigrationPhaseVerifyFailed:
+		*s = MigrationPhaseVerifyFailed
+	case MigrationPhaseVerified:
+		*s = MigrationPhaseVerified
 	default:
 		*s = MigrationPhase(v)
 	}
@@ -23640,6 +23666,944 @@ func (s MigrationVerdict) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *MigrationVerdict) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationVerify) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationVerify) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("status")
+		s.Status.Encode(e)
+	}
+	{
+		if s.Error.Set {
+			e.FieldStart("error")
+			s.Error.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("startedAt")
+		json.EncodeDateTime(e, s.StartedAt)
+	}
+	{
+		if s.FinishedAt.Set {
+			e.FieldStart("finishedAt")
+			s.FinishedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		if s.Disks != nil {
+			e.FieldStart("disks")
+			e.ArrStart()
+			for _, elem := range s.Disks {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.Shares != nil {
+			e.FieldStart("shares")
+			e.ArrStart()
+			for _, elem := range s.Shares {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		e.FieldStart("duplicates")
+		e.Int64(s.Duplicates)
+	}
+	{
+		if s.DuplicateSample != nil {
+			e.FieldStart("duplicateSample")
+			e.ArrStart()
+			for _, elem := range s.DuplicateSample {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
+}
+
+var jsonFieldsNameOfMigrationVerify = [8]string{
+	0: "status",
+	1: "error",
+	2: "startedAt",
+	3: "finishedAt",
+	4: "disks",
+	5: "shares",
+	6: "duplicates",
+	7: "duplicateSample",
+}
+
+// Decode decodes MigrationVerify from json.
+func (s *MigrationVerify) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationVerify to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "status":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Status.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"status\"")
+			}
+		case "error":
+			if err := func() error {
+				s.Error.Reset()
+				if err := s.Error.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"error\"")
+			}
+		case "startedAt":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.StartedAt = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startedAt\"")
+			}
+		case "finishedAt":
+			if err := func() error {
+				s.FinishedAt.Reset()
+				if err := s.FinishedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"finishedAt\"")
+			}
+		case "disks":
+			if err := func() error {
+				s.Disks = make([]MigrationVerifyScope, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MigrationVerifyScope
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Disks = append(s.Disks, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"disks\"")
+			}
+		case "shares":
+			if err := func() error {
+				s.Shares = make([]MigrationVerifyScope, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MigrationVerifyScope
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Shares = append(s.Shares, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"shares\"")
+			}
+		case "duplicates":
+			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				v, err := d.Int64()
+				s.Duplicates = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"duplicates\"")
+			}
+		case "duplicateSample":
+			if err := func() error {
+				s.DuplicateSample = make([]MigrationVerifyDuplicate, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MigrationVerifyDuplicate
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.DuplicateSample = append(s.DuplicateSample, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"duplicateSample\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationVerify")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b01000101,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationVerify) {
+					name = jsonFieldsNameOfMigrationVerify[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationVerify) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationVerify) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationVerifyCounts) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationVerifyCounts) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("files")
+		e.Int64(s.Files)
+	}
+	{
+		e.FieldStart("symlinks")
+		e.Int64(s.Symlinks)
+	}
+	{
+		e.FieldStart("special")
+		e.Int64(s.Special)
+	}
+	{
+		e.FieldStart("bytes")
+		e.Int64(s.Bytes)
+	}
+}
+
+var jsonFieldsNameOfMigrationVerifyCounts = [4]string{
+	0: "files",
+	1: "symlinks",
+	2: "special",
+	3: "bytes",
+}
+
+// Decode decodes MigrationVerifyCounts from json.
+func (s *MigrationVerifyCounts) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationVerifyCounts to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "files":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Int64()
+				s.Files = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"files\"")
+			}
+		case "symlinks":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int64()
+				s.Symlinks = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"symlinks\"")
+			}
+		case "special":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Int64()
+				s.Special = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"special\"")
+			}
+		case "bytes":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Int64()
+				s.Bytes = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"bytes\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationVerifyCounts")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationVerifyCounts) {
+					name = jsonFieldsNameOfMigrationVerifyCounts[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationVerifyCounts) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationVerifyCounts) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationVerifyDuplicate) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationVerifyDuplicate) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("path")
+		e.Str(s.Path)
+	}
+	{
+		e.FieldStart("disks")
+		e.ArrStart()
+		for _, elem := range s.Disks {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfMigrationVerifyDuplicate = [2]string{
+	0: "path",
+	1: "disks",
+}
+
+// Decode decodes MigrationVerifyDuplicate from json.
+func (s *MigrationVerifyDuplicate) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationVerifyDuplicate to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "path":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Path = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"path\"")
+			}
+		case "disks":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Disks = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Disks = append(s.Disks, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"disks\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationVerifyDuplicate")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationVerifyDuplicate) {
+					name = jsonFieldsNameOfMigrationVerifyDuplicate[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationVerifyDuplicate) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationVerifyDuplicate) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationVerifyList) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationVerifyList) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("total")
+		e.Int64(s.Total)
+	}
+	{
+		e.FieldStart("paths")
+		e.ArrStart()
+		for _, elem := range s.Paths {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfMigrationVerifyList = [2]string{
+	0: "total",
+	1: "paths",
+}
+
+// Decode decodes MigrationVerifyList from json.
+func (s *MigrationVerifyList) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationVerifyList to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "total":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Int64()
+				s.Total = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"total\"")
+			}
+		case "paths":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Paths = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Paths = append(s.Paths, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"paths\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationVerifyList")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationVerifyList) {
+					name = jsonFieldsNameOfMigrationVerifyList[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationVerifyList) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationVerifyList) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationVerifyScope) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationVerifyScope) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		e.FieldStart("passed")
+		e.Bool(s.Passed)
+	}
+	{
+		if s.Problem.Set {
+			e.FieldStart("problem")
+			s.Problem.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("expected")
+		s.Expected.Encode(e)
+	}
+	{
+		e.FieldStart("found")
+		s.Found.Encode(e)
+	}
+	{
+		e.FieldStart("hashed")
+		e.Int64(s.Hashed)
+	}
+	{
+		e.FieldStart("missing")
+		s.Missing.Encode(e)
+	}
+	{
+		e.FieldStart("extra")
+		s.Extra.Encode(e)
+	}
+	{
+		e.FieldStart("sizeChanged")
+		s.SizeChanged.Encode(e)
+	}
+	{
+		e.FieldStart("checksumChanged")
+		s.ChecksumChanged.Encode(e)
+	}
+	{
+		e.FieldStart("changed")
+		s.Changed.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfMigrationVerifyScope = [11]string{
+	0:  "name",
+	1:  "passed",
+	2:  "problem",
+	3:  "expected",
+	4:  "found",
+	5:  "hashed",
+	6:  "missing",
+	7:  "extra",
+	8:  "sizeChanged",
+	9:  "checksumChanged",
+	10: "changed",
+}
+
+// Decode decodes MigrationVerifyScope from json.
+func (s *MigrationVerifyScope) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationVerifyScope to nil")
+	}
+	var requiredBitSet [2]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "name":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "passed":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Passed = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"passed\"")
+			}
+		case "problem":
+			if err := func() error {
+				s.Problem.Reset()
+				if err := s.Problem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"problem\"")
+			}
+		case "expected":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				if err := s.Expected.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"expected\"")
+			}
+		case "found":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.Found.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"found\"")
+			}
+		case "hashed":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				v, err := d.Int64()
+				s.Hashed = int64(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hashed\"")
+			}
+		case "missing":
+			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				if err := s.Missing.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"missing\"")
+			}
+		case "extra":
+			requiredBitSet[0] |= 1 << 7
+			if err := func() error {
+				if err := s.Extra.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"extra\"")
+			}
+		case "sizeChanged":
+			requiredBitSet[1] |= 1 << 0
+			if err := func() error {
+				if err := s.SizeChanged.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"sizeChanged\"")
+			}
+		case "checksumChanged":
+			requiredBitSet[1] |= 1 << 1
+			if err := func() error {
+				if err := s.ChecksumChanged.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"checksumChanged\"")
+			}
+		case "changed":
+			requiredBitSet[1] |= 1 << 2
+			if err := func() error {
+				if err := s.Changed.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"changed\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationVerifyScope")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [2]uint8{
+		0b11111011,
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationVerifyScope) {
+					name = jsonFieldsNameOfMigrationVerifyScope[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationVerifyScope) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationVerifyScope) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MigrationVerifyStatus as json.
+func (s MigrationVerifyStatus) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes MigrationVerifyStatus from json.
+func (s *MigrationVerifyStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationVerifyStatus to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch MigrationVerifyStatus(v) {
+	case MigrationVerifyStatusRunning:
+		*s = MigrationVerifyStatusRunning
+	case MigrationVerifyStatusPassed:
+		*s = MigrationVerifyStatusPassed
+	case MigrationVerifyStatusFailed:
+		*s = MigrationVerifyStatusFailed
+	default:
+		*s = MigrationVerifyStatus(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s MigrationVerifyStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationVerifyStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -27557,6 +28521,39 @@ func (s *OptMigrationUnraidRole) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes MigrationVerify as json.
+func (o OptMigrationVerify) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes MigrationVerify from json.
+func (o *OptMigrationVerify) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptMigrationVerify to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptMigrationVerify) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptMigrationVerify) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes NetworkAddressMethod as json.
 func (o OptNetworkAddressMethod) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -28120,6 +29117,39 @@ func (s OptShareCacheMode) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptShareCacheMode) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ShareMigration as json.
+func (o OptShareMigration) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ShareMigration from json.
+func (o *OptShareMigration) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptShareMigration to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptShareMigration) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptShareMigration) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -33743,18 +34773,32 @@ func (s *Share) encodeFields(e *jx.Encoder) {
 		e.FieldStart("updatedAt")
 		json.EncodeDateTime(e, s.UpdatedAt)
 	}
+	{
+		if s.MinFreeSpace.Set {
+			e.FieldStart("minFreeSpace")
+			s.MinFreeSpace.Encode(e)
+		}
+	}
+	{
+		if s.Migration.Set {
+			e.FieldStart("migration")
+			s.Migration.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfShare = [9]string{
-	0: "name",
-	1: "path",
-	2: "cacheMode",
-	3: "createPolicy",
-	4: "smb",
-	5: "nfs",
-	6: "usage",
-	7: "createdAt",
-	8: "updatedAt",
+var jsonFieldsNameOfShare = [11]string{
+	0:  "name",
+	1:  "path",
+	2:  "cacheMode",
+	3:  "createPolicy",
+	4:  "smb",
+	5:  "nfs",
+	6:  "usage",
+	7:  "createdAt",
+	8:  "updatedAt",
+	9:  "minFreeSpace",
+	10: "migration",
 }
 
 // Decode decodes Share from json.
@@ -33861,6 +34905,26 @@ func (s *Share) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"updatedAt\"")
+			}
+		case "minFreeSpace":
+			if err := func() error {
+				s.MinFreeSpace.Reset()
+				if err := s.MinFreeSpace.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"minFreeSpace\"")
+			}
+		case "migration":
+			if err := func() error {
+				s.Migration.Reset()
+				if err := s.Migration.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"migration\"")
 			}
 		default:
 			return d.Skip()
@@ -34420,6 +35484,131 @@ func (s *ShareDiskUsage) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ShareDiskUsage) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ShareMigration) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ShareMigration) encodeFields(e *jx.Encoder) {
+	{
+		if s.TargetCacheMode.Set {
+			e.FieldStart("targetCacheMode")
+			s.TargetCacheMode.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("notes")
+		e.ArrStart()
+		for _, elem := range s.Notes {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfShareMigration = [2]string{
+	0: "targetCacheMode",
+	1: "notes",
+}
+
+// Decode decodes ShareMigration from json.
+func (s *ShareMigration) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ShareMigration to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "targetCacheMode":
+			if err := func() error {
+				s.TargetCacheMode.Reset()
+				if err := s.TargetCacheMode.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"targetCacheMode\"")
+			}
+		case "notes":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Notes = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Notes = append(s.Notes, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"notes\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ShareMigration")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000010,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfShareMigration) {
+					name = jsonFieldsNameOfShareMigration[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ShareMigration) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ShareMigration) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

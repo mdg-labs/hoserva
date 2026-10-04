@@ -349,3 +349,38 @@ func TestScheduler_ResumesAStorageJobWhenNoMigrationIsPending(t *testing.T) {
 		})
 	}
 }
+
+// The migration verify only reads, so it is the one Topology job admitted while a
+// migration is pending, and it takes no pre-topology backup; every other storage
+// job is still refused.
+func TestScheduler_AdmitsTheMigrationVerifyWhileAMigrationIsPending(t *testing.T) {
+	s := newTestScheduler(t)
+	var ran atomic.Int32
+	s.registry.Register(TypeMigrationVerify, true, func(context.Context, *RunContext) error {
+		ran.Add(1)
+		return nil
+	})
+	s.registry.Register(TypeSync, false, func(context.Context, *RunContext) error { return nil })
+	s.SetMigrationPending(func(context.Context) (bool, error) { return true, nil })
+
+	ctx := context.Background()
+	if _, err := s.Submit(ctx, TypeSync, nil, nil); !errors.Is(err, ErrMigrationInProgress) {
+		t.Fatalf("a sync while a migration is pending = %v, want the migration_in_progress refusal", err)
+	}
+	j, err := s.Submit(ctx, TypeMigrationVerify, []string{"migration"}, nil)
+	if err != nil {
+		t.Fatalf("a migration verify while a migration is pending = %v, want it admitted", err)
+	}
+	if done := awaitJob(t, s, j.ID); done.Status != StatusSucceeded || ran.Load() != 1 {
+		t.Errorf("the verify job = %s, ran %d times", done.Status, ran.Load())
+	}
+	if class, ok := ClassOf(TypeMigrationVerify); !ok || class != ClassTopology {
+		t.Errorf("class = %s, want topology", class)
+	}
+	if takesTopologyBackup(TypeMigrationVerify, ClassTopology) {
+		t.Error("a migration verify takes the pre-topology config backup, which repeated runs would use up")
+	}
+	if !takesTopologyBackup(TypeDiskAdd, ClassTopology) {
+		t.Error("a disk add no longer takes the pre-topology config backup")
+	}
+}

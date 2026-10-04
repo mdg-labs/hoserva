@@ -214,6 +214,7 @@ type MigrationSession struct {
 	ScanUnverifiedLayout int64  `json:"scan_unverified_layout"`
 	ScanError            string `json:"scan_error"`
 	ScanFullChecksums    int64  `json:"scan_full_checksums"`
+	Verify               string `json:"verify"`
 }
 
 type MoverRunResult struct {
@@ -368,6 +369,9 @@ type Share struct {
 	NfsSquash             string         `json:"nfs_squash"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
+	MinFreeSpace          string         `json:"min_free_space"`
+	TargetCacheMode       string         `json:"target_cache_mode"`
+	MigrationNotes        string         `json:"migration_notes"`
 }
 
 type ShareGroupPermission struct {

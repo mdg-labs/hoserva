@@ -266,7 +266,9 @@ type Invoker interface {
 	// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
 	// doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
 	// mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
-	// writes.
+	// writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no
+	// return: a new share would need a directory on every adopted disk, and those are not written until
+	// then. The import creates its own shares (`startMigrationImport`).
 	//
 	// POST /shares
 	CreateShare(ctx context.Context, request *CreateShareRequest) (*Share, error)
@@ -336,7 +338,8 @@ type Invoker interface {
 	//
 	// Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
 	// the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
-	// place. `confirmation` must equal the share name.
+	// place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an
+	// Unraid import is pending its point of no return: the adopted disks are not written until then.
 	//
 	// POST /shares/{name}/data/delete
 	DeleteShareData(ctx context.Context, request *DeleteShareDataRequest, params DeleteShareDataParams) error
@@ -1763,6 +1766,20 @@ type Invoker interface {
 	// deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
 	// Nothing is read from the Unraid flash: the import uses the report the scan stored.
 	//
+	// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
+	// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its
+	// allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as
+	// `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no
+	// return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read
+	// and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of,
+	// such as High-water allocation or a split level, is in `migration.notes`. The shares are exported
+	// read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces,
+	// for instance) is reported in the job's log with the reason and never renamed, and the scan's report
+	// flags it. Each account is created share-only without a password: passwords are never read from the
+	// flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is
+	// all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or
+	// account that already exists is left as it is.
+	//
 	// POST /migrate/import
 	StartMigrationImport(ctx context.Context, request *MigrationImportRequest) (*Job, error)
 	// StartMigrationScan invokes startMigrationScan operation.
@@ -1791,6 +1808,27 @@ type Invoker interface {
 	//
 	// POST /migrate/scan
 	StartMigrationScan(ctx context.Context, request *StartMigrationScanReq) (*Job, error)
+	// StartMigrationVerify invokes startMigrationVerify operation.
+	//
+	// Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a
+	// `migration_verify` job (topology class, read-only, and admitted while the import is pending) that
+	// walks every adopted data disk through its read-only mount and every share through the read-only pool
+	// at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it
+	// compares the file, symlink and special-file counts, the total bytes, every file's size, every
+	// symlink's target and every special file's type, and it hashes again exactly the files the baseline
+	// hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are
+	// the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first
+	// disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or
+	// directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the
+	// result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A
+	// disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is
+	// written to a source disk. The result is in `getMigration`; the job reports its progress and can be
+	// cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending`
+	// unless an import is pending its point of no return (`startMigrationImport`), 409
+	// `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+	//
+	// POST /migrate/verify
+	StartMigrationVerify(ctx context.Context) (*Job, error)
 	// StartMover invokes startMover operation.
 	//
 	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
@@ -2005,7 +2043,9 @@ type Invoker interface {
 	// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
 	// `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
 	// the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
-	// filesystem.
+	// filesystem. While an Unraid import is pending its point of no return it creates no directory on any
+	// adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a
+	// cache mode here replaces the one the import recorded as the share's target.
 	//
 	// PATCH /shares/{name}
 	UpdateShare(ctx context.Context, request *UpdateShareRequest, params UpdateShareParams) (*Share, error)
@@ -4727,7 +4767,9 @@ func (c *Client) sendCreateNotificationChannel(ctx context.Context, request *Cre
 // per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
 // doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
 // mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
-// writes.
+// writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no
+// return: a new share would need a directory on every adopted disk, and those are not written until
+// then. The import creates its own shares (`startMigrationImport`).
 //
 // POST /shares
 func (c *Client) CreateShare(ctx context.Context, request *CreateShareRequest) (*Share, error) {
@@ -5839,7 +5881,8 @@ func (c *Client) sendDeleteShare(ctx context.Context, request *ConfirmShareReque
 //
 // Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
 // the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
-// place. `confirmation` must equal the share name.
+// place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an
+// Unraid import is pending its point of no return: the adopted disks are not written until then.
 //
 // POST /shares/{name}/data/delete
 func (c *Client) DeleteShareData(ctx context.Context, request *DeleteShareDataRequest, params DeleteShareDataParams) error {
@@ -22806,6 +22849,20 @@ func (c *Client) sendStartMigrationDeviceScan(ctx context.Context, request *Star
 // deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
 // Nothing is read from the Unraid flash: the import uses the report the scan stored.
 //
+// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
+// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its
+// allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as
+// `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no
+// return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read
+// and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of,
+// such as High-water allocation or a split level, is in `migration.notes`. The shares are exported
+// read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces,
+// for instance) is reported in the job's log with the reason and never renamed, and the scan's report
+// flags it. Each account is created share-only without a password: passwords are never read from the
+// flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is
+// all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or
+// account that already exists is left as it is.
+//
 // POST /migrate/import
 func (c *Client) StartMigrationImport(ctx context.Context, request *MigrationImportRequest) (*Job, error) {
 	res, err := c.sendStartMigrationImport(ctx, request)
@@ -23071,6 +23128,146 @@ func (c *Client) sendStartMigrationScan(ctx context.Context, request *StartMigra
 
 	stage = "DecodeResponse"
 	result, err := decodeStartMigrationScanResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartMigrationVerify invokes startMigrationVerify operation.
+//
+// Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a
+// `migration_verify` job (topology class, read-only, and admitted while the import is pending) that
+// walks every adopted data disk through its read-only mount and every share through the read-only pool
+// at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it
+// compares the file, symlink and special-file counts, the total bytes, every file's size, every
+// symlink's target and every special file's type, and it hashes again exactly the files the baseline
+// hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are
+// the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first
+// disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or
+// directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the
+// result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A
+// disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is
+// written to a source disk. The result is in `getMigration`; the job reports its progress and can be
+// cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending`
+// unless an import is pending its point of no return (`startMigrationImport`), 409
+// `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+//
+// POST /migrate/verify
+func (c *Client) StartMigrationVerify(ctx context.Context) (*Job, error) {
+	res, err := c.sendStartMigrationVerify(ctx)
+	return res, err
+}
+
+func (c *Client) sendStartMigrationVerify(ctx context.Context) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startMigrationVerify"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/verify"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartMigrationVerifyOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/verify"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartMigrationVerifyOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartMigrationVerifyOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartMigrationVerifyResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -26165,7 +26362,9 @@ func (c *Client) sendUpdateScheduledJob(ctx context.Context, request *UpdateSche
 // Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
 // `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
 // the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
-// filesystem.
+// filesystem. While an Unraid import is pending its point of no return it creates no directory on any
+// adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a
+// cache mode here replaces the one the import recorded as the share's target.
 //
 // PATCH /shares/{name}
 func (c *Client) UpdateShare(ctx context.Context, request *UpdateShareRequest, params UpdateShareParams) (*Share, error) {

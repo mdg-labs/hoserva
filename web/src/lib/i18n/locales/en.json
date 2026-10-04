@@ -1576,6 +1576,7 @@
       "pool_remount": "Pool remount",
       "migration_scan": "Unraid migration scan",
       "migration_import": "Unraid disk adoption",
+      "migration_verify": "Unraid migration verify",
       "appdata_backup": "Appdata backup",
       "appdata_restore": "Appdata restore",
       "appdata_restore_preview": "Appdata restore preview",

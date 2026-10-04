@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/google/uuid"
 	ht "github.com/ogen-go/ogen/http"
 	"github.com/spf13/cobra"
 
@@ -18,7 +20,7 @@ import (
 
 func migrateCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "migrate", Short: "Migrate from Unraid (doc 05)"}
-	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateForgetCmd())
+	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateVerifyCmd(), migrateForgetCmd())
 	return cmd
 }
 
@@ -146,6 +148,10 @@ var migrationPhaseLabels = map[apiv1.MigrationPhase]string{
 	apiv1.MigrationPhaseScanFailed: "the last scan did not finish",
 	apiv1.MigrationPhaseScanned:    "scanned",
 	apiv1.MigrationPhaseImported:   "imported: the data disks are adopted read-only, waiting for the point of no return",
+
+	apiv1.MigrationPhaseVerifying:    "verifying the adopted disks against the scan's baseline",
+	apiv1.MigrationPhaseVerifyFailed: "verify failed: the adopted disks differ from the scan's baseline, or the verify did not finish",
+	apiv1.MigrationPhaseVerified:     "verified: the adopted disks match the scan's baseline",
 }
 
 func migrateStatusCmd() *cobra.Command {
@@ -195,6 +201,10 @@ func migrateStatusCmd() *cobra.Command {
 					counts[row.Status]++
 				}
 				fmt.Printf("Findings: %d refuse, %d flag, %d warn\n", counts[apiv1.MigrationCheckStatusRefuse], counts[apiv1.MigrationCheckStatusFlag], counts[apiv1.MigrationCheckStatusWarn])
+			}
+			switch m.Phase {
+			case apiv1.MigrationPhaseImported, apiv1.MigrationPhaseVerifying, apiv1.MigrationPhaseVerifyFailed, apiv1.MigrationPhaseVerified:
+				return printSeeded(c)
 			}
 			return nil
 		},
@@ -340,6 +350,132 @@ func migrationPreviewReport(pv *apiv1.MigrationTemplatePreview) string {
 	return sb.String()
 }
 
+func migrateVerifyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "verify",
+		Short: "Compare the adopted disks with the scan's baseline, before parity is touched",
+		Long: "Step 16 of the migration, the last checkpoint where problems are cheap. Walks every adopted data disk through its " +
+			"read-only mount and every share through the read-only pool, compares file, symlink and special-file counts, total bytes, " +
+			"every file's size and every symlink's target with the scan's baseline, and hashes again exactly the files the baseline " +
+			"hashed. A path two disks hold is shown once by the pool, from the first disk, and is listed, never counted as missing or " +
+			"extra. Nothing is written to a source disk. It waits for the comparison and prints it, and exits non-zero unless every " +
+			"disk and share matches; a verify can be run again. Ctrl-C stops waiting and the job keeps running.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			j, err := c.StartMigrationVerify(apiCtx())
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			done, err := waitForJob(ctx, c, j.ID)
+			if err != nil {
+				return err
+			}
+			m, err := c.GetMigration(apiCtx())
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			v, haveResult := m.Verify.Get()
+			if jsonOutput {
+				if haveResult {
+					emit(v)
+				} else {
+					emit(done)
+				}
+			} else if haveResult {
+				printMigrationVerify(os.Stdout, v)
+			}
+			if done.Status == apiv1.JobStatusSucceeded && haveResult && v.Status == apiv1.MigrationVerifyStatusPassed {
+				if !jsonOutput {
+					fmt.Println("Verify passed: every adopted disk and share matches the scan's baseline.")
+				}
+				return nil
+			}
+			switch {
+			case done.Status == apiv1.JobStatusSucceeded:
+				return fmt.Errorf("migration verify %s ended without a passing result: do not go on", done.ID)
+			case done.Status != apiv1.JobStatusFailed:
+				return fmt.Errorf("migration verify %s ended %s: it did not pass, do not go on", done.ID, done.Status)
+			}
+			if e, ok := done.Error.Get(); ok && e.Message != "" {
+				return fmt.Errorf("migration verify %s failed: %s", done.ID, e.Message)
+			}
+			return fmt.Errorf("migration verify %s failed", done.ID)
+		},
+	}
+}
+
+// printMigrationVerify prints the comparison of every disk and share, and under
+// it what differs.
+func printMigrationVerify(w io.Writer, v apiv1.MigrationVerify) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "SCOPE\tFILES EXPECTED\tFILES FOUND\tBYTES EXPECTED\tBYTES FOUND\tSAMPLE HASHED\tRESULT")
+	row := func(kind string, s apiv1.MigrationVerifyScope) {
+		name := s.Name
+		if name == "" {
+			name = "(files in the pool's root)"
+		}
+		result := "match"
+		if !s.Passed {
+			result = "DIFFERS"
+		}
+		_, _ = fmt.Fprintf(tw, "%s %s\t%d\t%d\t%d\t%d\t%d\t%s\n", kind, name, s.Expected.Files, s.Found.Files, s.Expected.Bytes, s.Found.Bytes, s.Hashed, result)
+	}
+	for _, d := range v.Disks {
+		row("disk", d)
+	}
+	for _, sh := range v.Shares {
+		row("share", sh)
+	}
+	_ = tw.Flush()
+	if e, ok := v.Error.Get(); ok {
+		_, _ = fmt.Fprintf(w, "\nThe verify did not finish: %s\n", e)
+	}
+	for _, group := range [][]apiv1.MigrationVerifyScope{v.Disks, v.Shares} {
+		for _, s := range group {
+			if s.Passed {
+				continue
+			}
+			name := s.Name
+			if name == "" {
+				name = "(pool root)"
+			}
+			if p, ok := s.Problem.Get(); ok {
+				_, _ = fmt.Fprintf(w, "\n%s: %s\n", name, p)
+			}
+			for _, l := range []struct {
+				what string
+				list apiv1.MigrationVerifyList
+			}{
+				{"missing", s.Missing}, {"not in the baseline", s.Extra}, {"size changed", s.SizeChanged},
+				{"checksum changed", s.ChecksumChanged}, {"kind or link target changed", s.Changed},
+			} {
+				if l.list.Total == 0 {
+					continue
+				}
+				_, _ = fmt.Fprintf(w, "\n%s: %d %s\n", name, l.list.Total, l.what)
+				for _, p := range l.list.Paths {
+					_, _ = fmt.Fprintf(w, "  %s\n", p)
+				}
+				if int64(len(l.list.Paths)) < l.list.Total {
+					_, _ = fmt.Fprintf(w, "  ... and %d more\n", l.list.Total-int64(len(l.list.Paths)))
+				}
+			}
+		}
+	}
+	if v.Duplicates > 0 {
+		_, _ = fmt.Fprintf(w, "\n%d path(s) are on more than one disk and are shown once through the pool, from the first disk; they are not counted as missing or extra:\n", v.Duplicates)
+		for _, d := range v.DuplicateSample {
+			_, _ = fmt.Fprintf(w, "  %s (%s)\n", d.Path, strings.Join(d.Disks, ", "))
+		}
+	}
+}
+
 func migrateForgetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "forget",
@@ -445,7 +581,8 @@ func migrateImportCmd() *cobra.Command {
 				emit(done)
 				return nil
 			}
-			fmt.Println("The data disks are adopted read-only at /mnt/user. Check the pool, then verify before parity is touched.")
+			printImportLog(c, j.ID)
+			fmt.Println("The data disks are adopted read-only at /mnt/user, with the shares and accounts of the Unraid configuration. Set a password for each account listed above, check the pool, then verify before parity is touched.")
 			return nil
 		},
 	}
@@ -453,6 +590,63 @@ func migrateImportCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&cachePartitions, "cache-partition", nil, "A spare partition of the boot disk as the cache, as <by-id name>:<partuuid>")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm the mapping shown (required)")
 	return cmd
+}
+
+// printImportLog prints what the finished import job says it did, which is
+// where each created account is listed with the reminder to set its password
+// and each share that was not created with the reason. The import has already
+// succeeded, so a log that cannot be read is said, not a failure.
+func printImportLog(c *apiv1.Client, id uuid.UUID) {
+	log, err := c.GetJobLog(apiCtx(), apiv1.GetJobLogParams{JobId: id})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "The import's log could not be read (%v); `hoserva logs --job %s` shows it.\n", err, id)
+		return
+	}
+	zr, err := gzip.NewReader(log.Data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "The import's log could not be read (%v); `hoserva logs --job %s` shows it.\n", err, id)
+		return
+	}
+	defer func() { _ = zr.Close() }()
+	fmt.Println("Import log:")
+	if _, err := io.Copy(os.Stdout, zr); err != nil {
+		fmt.Fprintf(os.Stderr, "The import's log could not be read to its end: %v\n", err)
+	}
+	fmt.Println()
+}
+
+// printSeeded lists what the import created: each share it seeded with the cache
+// mode still to be applied and what could not be mapped exactly, and each
+// account that has no password yet.
+func printSeeded(c *apiv1.Client) error {
+	shares, err := c.ListShares(apiCtx())
+	if err != nil {
+		return mapAPIErr(err)
+	}
+	users, err := c.ListUsers(apiCtx())
+	if err != nil {
+		return mapAPIErr(err)
+	}
+	for _, sh := range shares.Shares {
+		m, ok := sh.Migration.Get()
+		if !ok {
+			continue
+		}
+		line := fmt.Sprintf("Share %s: %s", sh.Name, sh.CacheMode)
+		if t, ok := m.TargetCacheMode.Get(); ok {
+			line += fmt.Sprintf(", cache mode %s once the cache exists", t)
+		}
+		fmt.Println(line)
+		for _, n := range m.Notes {
+			fmt.Printf("  %s\n", n)
+		}
+	}
+	for _, u := range users.Users {
+		if u.Role == apiv1.UserRoleShareOnly && !u.HasCredential {
+			fmt.Printf("Account %s: no password set yet\n", u.Username)
+		}
+	}
+	return nil
 }
 
 // importMapping is the disk-role mapping the import sends: the scan's proposals
