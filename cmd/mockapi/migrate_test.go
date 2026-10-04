@@ -724,12 +724,15 @@ func TestMockMigration_TheBootDiskIsNeverAWholeDiskRole(t *testing.T) {
 	ctx := context.Background()
 	h, _ := newHandler("migration-pending")
 	zipData := contractFlashZip("7.3.2", func(f map[string]string) {
-		f["config/hoserva/capture.json"] = `{"boot":{"mode":"internal","filesystem":"zfs","mirrored":false,"sharedWithDataPool":true,"devices":[{"serial":"BOOTNVME1","model":"EXAMPLE NVMe"}]}}`
+		f["config/hoserva/capture.json"] = `{"boot":{"mode":"internal","filesystem":"zfs","mirrored":false,"shared_with_data_pool":true,"devices":[{"serial":"BOOTNVME1","model":"EXAMPLE NVMe"}]}}`
 	})
 	for i := 0; i < 2; i++ {
 		if _, err := h.StartMigrationScan(ctx, contractScanRequest(zipData, false)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if rv := servedReview(t, h); !rv.Boot.SharedWithCache.Or(false) {
+		t.Fatalf("boot = %+v, want the boot disk shared with the cache", rv.Boot)
 	}
 	for _, role := range []apiv1.MigrationImportRole{apiv1.MigrationImportRoleParity, apiv1.MigrationImportRoleData, apiv1.MigrationImportRoleCache} {
 		roles := []apiv1.MigrationImportDisk{mockImportRole(apiv1.MigrationImportRoleParity, "EXAMPLE_PARITY"), mockImportRole(apiv1.MigrationImportRoleData, "EXAMPLE_DISK1")}
