@@ -351,6 +351,8 @@ Actions: create share, edit, delete (with explicit warning about data), browse.
 
 **SMB** — enable, guest access, read-only, browseable, recycle bin, Time Machine support with a maximum size (Q73), per-user and per-group access (no access / read-only / read-write), export path preview.
 
+A share is **closed by default** (Q27): until a user or group is granted read-only or read-write access, no account can reach it over SMB, and the generated `smb.conf` renders it `available = no`. Access is always granted on purpose, never inherited by every account. A guest share is the one exception, since guest access is itself the explicit choice to open it.
+
 **NFS** — enable, allowed hosts and subnets, squash options, export line preview.
 
 **Browse** — a simple file browser: navigate, see file sizes, see which underlying disk holds each file (mergerfs `user.mergerfs.basepath` xattr), delete. Not a full file manager; enough to answer "where did that go". Browsing is an explicit action and may wake disks.

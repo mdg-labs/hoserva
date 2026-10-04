@@ -436,6 +436,8 @@ This fits the scan's existing role: it already reports things it does not migrat
 **Default: three roles.** *Admin*: full UI. *Viewer*: read-only UI. *Share-only*: SMB/NFS access, no UI login at all, and the default for newly created users. Setting a password writes both the UI hash and the Samba passdb entry in one action.
 Doc 03 §7 gives every user both UI login and SMB access. That means every family member with a share login can reach a UI that formats disks, which is the wrong default on a box that runs as root.
 
+**Share access is closed by default (maintainer decision 2026-10-04, #594).** A non-guest share that no user or group has been granted renders `available = no` in the generated `smb.conf`, so no account reaches it until access is granted on purpose (doc 03 §4.2). Least privilege is the reason: an account that exists for one share never gains another by default, and an empty `valid users` list would otherwise mean every account.
+
 ### Q28 — Secrets at rest *(contradiction)*
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 10 §1, doc 11 §2, doc 03 §1
 
