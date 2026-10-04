@@ -400,10 +400,13 @@ func (s *ArrayStore) RecordParityInit(ctx context.Context, disks []ArrayDisk) er
 }
 
 // FinishMigration drops the record of the former parity and cache disks, the
-// last step of the point of no return. It refuses (ErrMigrationNotFinishing)
-// unless RecordParityInit has run and this has not.
+// last step of the point of no return, and in the same statement records that
+// the initial sync is owed (InitialSyncOwed): the migration reads finished from
+// then on, so a stop before the sync is queued must leave a durable record of
+// it. It refuses (ErrMigrationNotFinishing) unless RecordParityInit has run and
+// this has not.
 func (s *ArrayStore) FinishMigration(ctx context.Context) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE array_settings SET migration_recorded = '' WHERE migration_pending = 0 AND migration_recorded != ''`)
+	res, err := s.db.ExecContext(ctx, `UPDATE array_settings SET migration_recorded = '', initial_sync_owed = 1 WHERE migration_pending = 0 AND migration_recorded != ''`)
 	if err != nil {
 		return fmt.Errorf("store: finishing the migration: %w", err)
 	}
@@ -411,6 +414,30 @@ func (s *ArrayStore) FinishMigration(ctx context.Context) error {
 		return fmt.Errorf("store: finishing the migration: %w", err)
 	} else if n == 0 {
 		return ErrMigrationNotFinishing
+	}
+	return nil
+}
+
+// InitialSyncOwed reports whether a finished migration's initial sync has not
+// been queued yet. An error is never "nothing owed": the caller must not treat
+// a failed read as an array whose parity is built.
+func (s *ArrayStore) InitialSyncOwed(ctx context.Context) (bool, error) {
+	row, err := s.q.GetArraySettings(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("store: reading whether the initial sync is owed: %w", err)
+	}
+	return row.InitialSyncOwed != 0, nil
+}
+
+// ClearInitialSyncOwed records that the initial sync has been queued (or that
+// parity has been built some other way). Clearing what is not owed is not an
+// error.
+func (s *ArrayStore) ClearInitialSyncOwed(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE array_settings SET initial_sync_owed = 0 WHERE initial_sync_owed != 0`); err != nil {
+		return fmt.Errorf("store: clearing the owed initial sync: %w", err)
 	}
 	return nil
 }

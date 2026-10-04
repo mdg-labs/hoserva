@@ -417,6 +417,10 @@ func run(cfg config) error {
 	// the mount check backupService already applies to a pool destination
 	// guards an unmounted pool regardless.
 	poolWriteGate := &backup.PoolWriteGate{}
+	// afterStart is every array sequence's AfterStart: an owed initial sync that
+	// the daemon's own start could not queue (a persisted `array stop`) is queued
+	// by the `array start` that follows (doc 05 §5).
+	afterStart := owedInitialSyncAfterStart(arrayStore, scheduler, notifyService)
 	// storageTarget is shared with rebuildArraySequence below (and the
 	// SIGHUP handler installed once it exists) so every later call can
 	// tell an unchanged rebuild from a real readiness or topology
@@ -435,6 +439,7 @@ func run(cfg config) error {
 	if arraySeq != nil {
 		arraySeq.StorageTarget = storageTarget
 		arraySeq.PoolWriteGate = poolWriteGate
+		arraySeq.AfterStart = afterStart
 	}
 	// Startup brings the pool up itself on an ordinary boot (see its own
 	// doc comment), and never issues a systemctl start/restart of a unit
@@ -552,7 +557,7 @@ func run(cfg config) error {
 	// (cmd/hoservad/array.go) also re-applies ackHolder to the fresh gate
 	// it builds, so an earlier acknowledgement of a still-missing disk
 	// survives this rebuild instead of being undone by it (#385).
-	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, poolWriteGate, handler, ackHolder, apps.arrayService())
+	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, poolWriteGate, handler, ackHolder, apps.arrayService(), afterStart)
 	// installReloadHandler (cmd/hoservad/reload.go) re-runs
 	// rebuildArraySequence on SIGHUP — packaging/debian/hoserva-storage.rules's own
 	// trigger for a disk arriving or leaving while hoservad is already
@@ -712,6 +717,10 @@ func run(cfg config) error {
 	if err := job.RecoverDiskUpgradeData(ctx, scheduler, upgradeDataDeps); err != nil {
 		log.Printf("hoservad: data-disk upgrade startup recovery: %v", err)
 	}
+	// A migration that stopped between finishing and queueing its initial sync
+	// leaves an array with no parity (doc 05 §5): queue it now that the sync job
+	// is registered and the scheduler's gates are set.
+	queueOwedInitialSync(ctx, arrayStore, scheduler, notifyService)
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {

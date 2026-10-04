@@ -19,6 +19,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
+	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/share"
@@ -437,5 +438,332 @@ func TestWireMigrationParity_FailsWithoutTheSessionOrTheArrayStore(t *testing.T)
 	w.handler.ArrayStore = w.arrays
 	if err := wire(); err != nil {
 		t.Errorf("wireMigrationParity with both = %v", err)
+	}
+}
+
+type publishedEvent struct {
+	event notify.EventType
+	title string
+}
+
+type fakeEventPublisher struct {
+	mu     sync.Mutex
+	events []publishedEvent
+}
+
+func (p *fakeEventPublisher) Publish(_ context.Context, event notify.EventType, title, _ string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, publishedEvent{event, title})
+	return nil
+}
+
+func (p *fakeEventPublisher) published() []publishedEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]publishedEvent(nil), p.events...)
+}
+
+// A daemon that stopped after the point of no return finished and before the
+// initial sync was queued finishes it at its next start, through the daemon's
+// own scheduler, job registry and engine: the migration reads finished and no
+// sync is queued (the test holds the sync back with the scheduler's battery
+// hold, so the job ends having queued nothing, as a stopped daemon would), the
+// start that finds the sync owed
+// queues an ordinary sync, and the engine's guard stands in its way as for any
+// other sync.
+func TestMigrationParityWiring_AStopBeforeTheInitialSyncIsFinishedByTheNextStart(t *testing.T) {
+	pw := wireParity(t)
+	w := pw.w
+	ctx := context.Background()
+	pw.scanAndImport(t)
+	pw.setVerify(t, migrate.VerifyPassed)
+
+	w.scheduler.PauseForBattery(ctx)
+	status, body := w.doBody(t, http.MethodPost, "/migrate/initialize-parity", `{"confirmation":"ERASE /dev/sdb"}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/initialize-parity = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	done := w.awaitJobByID(t, queued.ID)
+	if done.Status != job.StatusFailed || !strings.Contains(done.ErrorMessage, "the initial sync could not be queued") {
+		t.Fatalf("migration_parity job = %s %q, want it finished but for the sync", done.Status, done.ErrorMessage)
+	}
+	if unfinished, err := w.arrays.MigrationUnfinished(ctx); err != nil || unfinished {
+		t.Fatalf("MigrationUnfinished = %v, %v: the scenario is a finished migration", unfinished, err)
+	}
+	if owed, err := w.arrays.InitialSyncOwed(ctx); err != nil || !owed {
+		t.Fatalf("InitialSyncOwed = %v, %v, want it recorded", owed, err)
+	}
+	syncs := func() []*job.Job {
+		var out []*job.Job
+		jobs, err := w.handler.Store.List(ctx, job.ListFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, j := range jobs {
+			if j.Type == job.TypeSync {
+				out = append(out, j)
+			}
+		}
+		return out
+	}
+	if got := syncs(); len(got) != 0 {
+		t.Fatalf("syncs before the next start = %d, want none", len(got))
+	}
+
+	w.scheduler.ResumeFromBattery()
+	publisher := &fakeEventPublisher{}
+	queueOwedInitialSync(ctx, w.arrays, w.scheduler, publisher)
+	if owed, _ := w.arrays.InitialSyncOwed(ctx); owed {
+		t.Error("the sync is still owed after the start queued it")
+	}
+	got := syncs()
+	if len(got) != 1 {
+		t.Fatalf("syncs after the next start = %d, want the initial sync", len(got))
+	}
+	if opts, err := job.SyncOptsFromParams(got[0].Params); err != nil || opts.Confirm || opts.DryRun {
+		t.Errorf("sync params = %+v, %v, want a real sync that confirms no guard block", opts, err)
+	}
+	if sj := w.awaitJobByID(t, got[0].ID); sj.Status != job.StatusFailed || !strings.Contains(sj.ErrorMessage, "the test runs no snapraid") {
+		t.Errorf("the queued sync ended %s: %q, want it to have reached the engine (the test's runner refuses it)", sj.Status, sj.ErrorMessage)
+	}
+	if events := publisher.published(); len(events) != 0 {
+		t.Errorf("published %v for a sync that was queued", events)
+	}
+
+	queueOwedInitialSync(ctx, w.arrays, w.scheduler, publisher)
+	if got := syncs(); len(got) != 1 {
+		t.Errorf("a second start queued another sync: %d syncs", len(got))
+	}
+}
+
+// A daemon that starts with a persisted `array stop` cannot queue the sync it
+// owes (the scheduler refuses every job in maintenance mode): it says so as an
+// alert, not only in the log, and keeps the sync owed for the start after.
+func TestQueueOwedInitialSync_ARefusedSyncIsAnAlertAndStaysOwed(t *testing.T) {
+	pw := wireParity(t)
+	w := pw.w
+	ctx := context.Background()
+	pw.scanAndImport(t)
+	pw.setVerify(t, migrate.VerifyPassed)
+	w.scheduler.PauseForBattery(ctx)
+	status, body := w.doBody(t, http.MethodPost, "/migrate/initialize-parity", `{"confirmation":"ERASE /dev/sdb"}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /migrate/initialize-parity = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	w.awaitJobByID(t, queued.ID)
+
+	// The battery hold above only stands in for the stop that left the sync
+	// unqueued; what a start meets is the persisted array stop.
+	w.scheduler.ResumeFromBattery()
+	if err := w.scheduler.EnterMaintenance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &fakeEventPublisher{}
+	queueOwedInitialSync(ctx, w.arrays, w.scheduler, publisher)
+	events := publisher.published()
+	if len(events) != 1 || events[0].event != notify.EventSyncFailed {
+		t.Fatalf("published %v, want one sync_failed alert", events)
+	}
+	if owed, err := w.arrays.InitialSyncOwed(ctx); err != nil || !owed {
+		t.Errorf("InitialSyncOwed = %v, %v, want it kept for the next start", owed, err)
+	}
+}
+
+// An initial sync a daemon start could not queue because of a persisted `array
+// stop` is queued by the `array start` that follows, through the same path and
+// so through the scheduler and the engine's threshold guard, and exactly once.
+// The sequence is the one newRebuildArraySequence builds, as the daemon does.
+func TestArrayStart_QueuesTheInitialSyncAStartInMaintenanceCouldNot(t *testing.T) {
+	ctx, h, arrays, shares, provider, runner, db, registry := newArrayTestEnvWithDB(t)
+	assigned := persistSampleArray(t, arrays)
+	presentMatchingDisks(provider, assigned)
+	engine := parity.NewFakeEngine()
+	engine.ScriptGuardBlock(parity.GuardResult{Blocked: true, Triggers: []parity.GuardTrigger{parity.TriggerZeroFiles}})
+	registry.Register(job.TypeSync, false, job.RunSync(engine))
+	if _, err := db.ExecContext(ctx, `UPDATE array_settings SET initial_sync_owed = 1`); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &fakeEventPublisher{}
+	storageTarget := newTestStorageTargetSync(t)
+	storageTarget.PoolMounted = func(string) (bool, error) { return true, nil }
+	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, provider, runner, storageTarget, nil, h, &acknowledgedDegraded{}, nil,
+		owedInitialSyncAfterStart(arrays, h.Scheduler, publisher))
+	if err := rebuild(ctx); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	syncs := func() []*job.Job {
+		var out []*job.Job
+		jobs, err := h.Store.List(ctx, job.ListFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, j := range jobs {
+			if j.Type == job.TypeSync {
+				out = append(out, j)
+			}
+		}
+		return out
+	}
+
+	if err := h.Scheduler.EnterMaintenance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queueOwedInitialSync(ctx, arrays, h.Scheduler, publisher)
+	if owed, err := arrays.InitialSyncOwed(ctx); err != nil || !owed {
+		t.Fatalf("InitialSyncOwed after a daemon start in maintenance mode = %v, %v, want it kept", owed, err)
+	}
+	if got := syncs(); len(got) != 0 {
+		t.Fatalf("a daemon start in maintenance mode queued %d syncs", len(got))
+	}
+	if events := publisher.published(); len(events) != 1 || events[0].event != notify.EventSyncFailed {
+		t.Fatalf("published %v, want one sync_failed alert", events)
+	}
+
+	seq := h.CurrentArray()
+	isolateDiskCheck(t, seq)
+	realCatchAll, ok := seq.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController", seq.CatchAll)
+	}
+	seq.CatchAll = arrayTestCatchAll{where: pool.CatchAllPath, argv: realCatchAll.Mnt.Argv(), runner: runner}
+	if _, err := h.StartArray(ctx); err != nil {
+		t.Fatalf("StartArray: %v", err)
+	}
+	if owed, err := arrays.InitialSyncOwed(ctx); err != nil || owed {
+		t.Errorf("InitialSyncOwed after array start = %v, %v, want it cleared", owed, err)
+	}
+	got := syncs()
+	if len(got) != 1 {
+		t.Fatalf("syncs after array start = %d, want the initial sync", len(got))
+	}
+	if opts, err := job.SyncOptsFromParams(got[0].Params); err != nil || opts.Confirm || opts.DryRun {
+		t.Errorf("sync params = %+v, %v, want a real sync that confirms no guard block", opts, err)
+	}
+	done, err := h.Scheduler.Await(ctx, got[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != job.StatusFailed || !strings.Contains(done.ErrorMessage, "threshold guard blocked the sync") {
+		t.Errorf("the sync ended %s: %q, want it stopped by the threshold guard, never run around it", done.Status, done.ErrorMessage)
+	}
+	if events := publisher.published(); len(events) != 1 {
+		t.Errorf("published %v, want only the one alert of the refused start", events)
+	}
+
+	if err := h.Scheduler.EnterMaintenance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.StartArray(ctx); err != nil {
+		t.Fatalf("second StartArray: %v", err)
+	}
+	if got := syncs(); len(got) != 1 {
+		t.Errorf("a second array start queued another sync: %d syncs", len(got))
+	}
+}
+
+// main.go must give every array sequence the hook that queues an owed initial
+// sync on `array start`: the one it builds at start and the one every rebuild
+// builds.
+func TestMain_WiresTheOwedInitialSyncIntoEveryArraySequence(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hookDefined, assigned, rebuilt bool
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			if len(x.Lhs) == 1 && len(x.Rhs) == 1 {
+				call, _ := x.Rhs[0].(*ast.CallExpr)
+				if lhs, ok := x.Lhs[0].(*ast.Ident); ok && lhs.Name == "afterStart" && call != nil && len(call.Args) == 3 {
+					if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "owedInitialSyncAfterStart" {
+						hookDefined = true
+					}
+				}
+				if sel, ok := x.Lhs[0].(*ast.SelectorExpr); ok && sel.Sel.Name == "AfterStart" {
+					if recv, ok := sel.X.(*ast.Ident); ok && recv.Name == "arraySeq" {
+						if rhs, ok := x.Rhs[0].(*ast.Ident); ok && rhs.Name == "afterStart" {
+							assigned = true
+						}
+					}
+				}
+			}
+		case *ast.CallExpr:
+			if fn, ok := x.Fun.(*ast.Ident); ok && fn.Name == "newRebuildArraySequence" && len(x.Args) == 11 {
+				if last, ok := x.Args[10].(*ast.Ident); ok && last.Name == "afterStart" {
+					rebuilt = true
+				}
+			}
+		}
+		return true
+	})
+	if !hookDefined {
+		t.Error("main.go does not build afterStart with owedInitialSyncAfterStart(arrayStore, scheduler, notifyService)")
+	}
+	if !assigned {
+		t.Error("main.go does not set arraySeq.AfterStart = afterStart")
+	}
+	if !rebuilt {
+		t.Error("main.go does not pass afterStart to newRebuildArraySequence")
+	}
+}
+
+// main.go must queue what a stopped migration owes, after the parity engine is
+// registered and the scheduler's gates are set, and before the listeners start.
+func TestMain_QueuesTheInitialSyncAMigrationOwes(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queuePos, registerPos, gatePos, listenPos token.Pos
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := func(i int) string {
+			switch a := call.Args[i].(type) {
+			case *ast.Ident:
+				return a.Name
+			}
+			return ""
+		}
+		switch fn := call.Fun.(type) {
+		case *ast.Ident:
+			if fn.Name == "queueOwedInitialSync" && len(call.Args) == 4 && name(1) == "arrayStore" && name(2) == "scheduler" && name(3) == "notifyService" {
+				queuePos = call.Pos()
+			}
+			if fn.Name == "buildTCPServer" {
+				listenPos = call.Pos()
+			}
+		case *ast.SelectorExpr:
+			switch fn.Sel.Name {
+			case "register":
+				if id, ok := fn.X.(*ast.Ident); ok && id.Name == "parityReg" && registerPos == 0 {
+					registerPos = call.Pos()
+				}
+			case "RestorePersistedMaintenance":
+				gatePos = call.Pos()
+			}
+		}
+		return true
+	})
+	if queuePos == 0 {
+		t.Fatal("main.go does not call queueOwedInitialSync(ctx, arrayStore, scheduler, notifyService)")
+	}
+	if registerPos == 0 || queuePos < registerPos || gatePos == 0 || queuePos < gatePos {
+		t.Error("main.go queues the owed sync before the parity engine is registered or the persisted maintenance mode restored")
+	}
+	if listenPos == 0 || queuePos > listenPos {
+		t.Error("main.go queues the owed sync after the listeners are built")
 	}
 }

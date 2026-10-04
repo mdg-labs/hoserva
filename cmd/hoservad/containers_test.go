@@ -147,7 +147,7 @@ func TestRebuildArraySequence_KeepsTheContainerService(t *testing.T) {
 
 	s := newTestStorageTargetSync(t)
 	s.PoolMounted = func(string) (bool, error) { return true, nil }
-	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, disks, runner, s, nil, h, &acknowledgedDegraded{}, apps.arrayService())
+	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, disks, runner, s, nil, h, &acknowledgedDegraded{}, apps.arrayService(), nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}

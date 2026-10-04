@@ -1147,6 +1147,45 @@ func TestArraySequence_Start_ExitMaintenanceFailureRollsBackToStopped(t *testing
 	}
 }
 
+// AfterStart runs once the start has succeeded and maintenance mode is exited,
+// so what it queues is admitted, and never when the start failed.
+func TestArraySequence_Start_RunsAfterStartOnlyOnceTheArrayIsLive(t *testing.T) {
+	ctx := context.Background()
+	var log []string
+	s := newTestScheduler(t)
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	var calls int
+	var inMaintenance bool
+	seq := ArraySequence{
+		Scheduler: s,
+		Disks:     []ArrayMount{&fakeArrayMount{where: "/mnt/disk1", log: &log}},
+		AfterStart: func(context.Context) {
+			calls++
+			inMaintenance = s.InMaintenance()
+		},
+	}
+	if err := seq.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if calls != 1 || inMaintenance {
+		t.Fatalf("AfterStart ran %d times, in maintenance mode = %v, want once, after maintenance mode was exited", calls, inMaintenance)
+	}
+
+	failing := ArraySequence{
+		Scheduler:  s,
+		Disks:      []ArrayMount{&fakeArrayMount{where: "/mnt/disk1", mountErr: errors.New("mount failed"), log: &log}},
+		AfterStart: func(context.Context) { calls++ },
+	}
+	if err := failing.Start(ctx); err == nil {
+		t.Fatal("Start with a failing mount succeeded")
+	}
+	if calls != 1 {
+		t.Errorf("AfterStart ran for a start that failed (%d calls)", calls)
+	}
+}
+
 // fakeReadinessGate is ArraySequence's Gate fake.
 type fakeReadinessGate struct{ ready bool }
 
