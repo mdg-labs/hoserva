@@ -21,4 +21,8 @@ email="$(printf '%s\n' "$ident" | sed -n 's/^.* <\([^>]*\)>.*$/\1/p')"
 trailer="Signed-off-by: $name <$email>"
 grep -qF "$trailer" "$msg_file" && exit 0
 
-printf '\n%s\n' "$trailer" >> "$msg_file"
+# interpret-trailers, not a plain append: it puts the trailer in the
+# message's trailer block, or opens one after a blank line. A message
+# without a final newline (`git merge -m`) would otherwise get the
+# trailer glued onto its subject.
+git interpret-trailers --in-place --if-exists addIfDifferent --trailer "$trailer" "$msg_file"
