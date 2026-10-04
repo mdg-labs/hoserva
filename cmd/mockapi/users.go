@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/share"
 )
 
 // #49's users/groups/sessions/permissions mock: an in-memory store, like
@@ -87,11 +88,15 @@ func (h *handler) ListUsers(ctx context.Context) (*apiv1.ListUsersOK, error) {
 }
 
 func (h *handler) CreateUser(ctx context.Context, req *apiv1.CreateUserRequest) (*apiv1.UserSummary, error) {
+	username := strings.ToLower(req.Username)
+	if err := share.ValidateAccountName(username); err != nil {
+		return nil, &mockError{code: "invalid_username", statusCode: 400, message: err.Error()}
+	}
 	h.usersMu.Lock()
 	defer h.usersMu.Unlock()
 	for _, u := range h.users {
-		if strings.EqualFold(u.Username, req.Username) {
-			return nil, errUserExists(req.Username)
+		if strings.EqualFold(u.Username, username) {
+			return nil, errUserExists(username)
 		}
 	}
 	role := apiv1.UserRoleShareOnly
@@ -100,7 +105,7 @@ func (h *handler) CreateUser(ctx context.Context, req *apiv1.CreateUserRequest) 
 	}
 	u := apiv1.UserSummary{
 		ID:           uuid.New(),
-		Username:     req.Username,
+		Username:     username,
 		Role:         role,
 		TotpEnrolled: false,
 		CreatedAt:    time.Now().UTC(),

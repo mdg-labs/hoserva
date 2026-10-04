@@ -114,8 +114,11 @@ func (s *Service) seedRows(in SeedInput) ([]store.SeedUser, []store.SeedShare, e
 	known := map[string]bool{}
 	users := make([]store.SeedUser, 0, len(in.Users))
 	for _, u := range in.Users {
-		if u.Username == "" || u.PasswordHash == "" || known[u.Username] {
-			return nil, nil, fmt.Errorf("%w: seed user %q is empty, has no placeholder hash or is listed twice", ErrInvalidInput, u.Username)
+		if err := ValidateAccountName(u.Username); err != nil {
+			return nil, nil, fmt.Errorf("%w: seed user: %w", ErrInvalidInput, err)
+		}
+		if u.PasswordHash == "" || known[u.Username] {
+			return nil, nil, fmt.Errorf("%w: seed user %q has no placeholder hash or is listed twice", ErrInvalidInput, u.Username)
 		}
 		known[u.Username] = true
 		users = append(users, store.SeedUser{ID: uuid.NewString(), Username: u.Username, PasswordHash: u.PasswordHash, CreatedAt: now})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -473,5 +474,86 @@ func TestDeleteUserBoundsBeforeCommit(t *testing.T) {
 	}
 	if !sawDeadline {
 		t.Error("beforeCommit's context has no deadline — a hung external process could hold the write lock indefinitely")
+	}
+}
+
+func TestCreateUserFoldsTheNameAndRefusesOneAnAccountCannotCarry(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+
+	u, err := svc.CreateUser(ctx, "Alice", "")
+	if err != nil {
+		t.Fatalf("CreateUser(Alice): %v", err)
+	}
+	if u.Username != "alice" {
+		t.Errorf("username = %q, want the lower-cased form", u.Username)
+	}
+	for _, name := range []string{"", "alice smith", "-x", "a;b", "9lives", "ünï"} {
+		if _, err := svc.CreateUser(ctx, name, ""); !errors.Is(err, api.ErrInvalidUsername) {
+			t.Errorf("CreateUser(%q) = %v, want ErrInvalidUsername", name, err)
+		}
+	}
+	if _, err := svc.CreateUser(ctx, "ALICE", ""); !errors.Is(err, api.ErrUserExists) {
+		t.Errorf("CreateUser(ALICE) after alice = %v, want ErrUserExists", err)
+	}
+}
+
+// A user row written before names had to be valid (or by an import) can carry a
+// name no system account can: setting its password is refused before the UI
+// credential is touched or any account is made.
+func TestSetUserPasswordRefusesANameNoSystemAccountCanCarry(t *testing.T) {
+	svc, db := newAuthTestService(t)
+	fake := share.NewFakeSambaAccounts()
+	svc.SambaAccounts = fake
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO users (id, username, password_hash, role, totp_last_step, created_at) VALUES ('legacy', 'bob smith', 'old-hash', 'share-only', 0, '2026-10-04T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.SetUserPassword(ctx, "legacy", "correct horse battery staple"); !errors.Is(err, api.ErrInvalidUsername) {
+		t.Fatalf("SetUserPassword = %v, want ErrInvalidUsername", err)
+	}
+	stored, err := svc.Store.GetUserByID(ctx, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PasswordHash != "old-hash" || stored.HasSMBCredential() {
+		t.Errorf("the credential was written before the name was refused: %+v", stored)
+	}
+	if _, ok := fake.Password("bob smith"); ok {
+		t.Error("a Samba account was written for a name no system account can carry")
+	}
+}
+
+// A name that a system account Hoserva did not create already holds is refused
+// as such, and the UI credential is rolled back like any other failed write.
+func TestSetUserPasswordRefusesANameAForeignSystemAccountHolds(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	fake := share.NewFakeSambaAccounts()
+	fake.FailSetPassword(share.ErrAccountNameTaken)
+	svc.SambaAccounts = fake
+	ctx := context.Background()
+	u, err := svc.CreateUser(ctx, "daemon", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := svc.Store.GetUserByID(ctx, u.ID)
+
+	if _, err := svc.SetUserPassword(ctx, u.ID, "correct horse battery staple"); !errors.Is(err, api.ErrAccountNameTaken) {
+		t.Fatalf("SetUserPassword = %v, want ErrAccountNameTaken", err)
+	}
+	after, _ := svc.Store.GetUserByID(ctx, u.ID)
+	if after.PasswordHash != before.PasswordHash || after.HasSMBCredential() {
+		t.Errorf("the UI credential was not rolled back: %+v", after)
+	}
+}
+
+// The service the daemon builds provisions system accounts: its default
+// SambaAccounts is the one that execs useradd around smbpasswd, not a bare
+// smbpasswd that tdbsam refuses for a name no system account holds.
+func TestNewAuthServiceDefaultsToProvisioningSystemAccounts(t *testing.T) {
+	svc := api.NewAuthService(nil, nil)
+	if want := share.NewSmbpasswdAccounts(); !reflect.DeepEqual(svc.SambaAccounts, want) {
+		t.Errorf("default SambaAccounts = %#v, want %#v", svc.SambaAccounts, want)
 	}
 }

@@ -77,6 +77,7 @@ func newShareAndAuthTestHandler(t *testing.T) (*api.Handler, *api.AuthService) {
 		t.Fatalf("machine key: %v", err)
 	}
 	authSvc := api.NewAuthService(authStore, key)
+	authSvc.SambaAccounts = share.NewFakeSambaAccounts()
 
 	return &api.Handler{Shares: shareSvc, Auth: authSvc}, authSvc
 }

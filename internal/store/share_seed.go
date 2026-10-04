@@ -43,7 +43,8 @@ type Seeded struct {
 // per-user grants of the shares it creates, in one transaction: any failure
 // leaves nothing of it. A share or user that already exists is left exactly as
 // it is and reported in Existing*, and a grant is written only for a share this
-// call created. A grant for a username that is neither created here nor already
+// call created. A user already exists when an account of the same name without
+// regard to case does, since usernames are unique that way. A grant for a username that is neither created here nor already
 // an account is an error, never skipped.
 func (s *ShareStore) SeedMigration(ctx context.Context, users []SeedUser, shares []SeedShare) (Seeded, error) {
 	var out Seeded
@@ -56,7 +57,7 @@ func (s *ShareStore) SeedMigration(ctx context.Context, users []SeedUser, shares
 	ids := map[string]string{}
 	for _, u := range users {
 		var id string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE username = ?`, u.Username).Scan(&id)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE lower(username) = lower(?)`, u.Username).Scan(&id)
 		switch {
 		case err == nil:
 			ids[u.Username] = id

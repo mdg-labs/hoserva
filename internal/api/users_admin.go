@@ -10,11 +10,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/share"
 )
 
 var (
-	// ErrUserExists is CreateUser's refusal of a duplicate username.
-	ErrUserExists = errors.New("a user with that name already exists")
+	// ErrUserExists is CreateUser's refusal of a duplicate username. Names
+	// are unique without regard to case, because Samba matches them that
+	// way.
+	ErrUserExists = errors.New("a user with that name already exists (usernames are not case-sensitive)")
+	// ErrInvalidUsername is CreateUser or SetUserPassword refusing a name
+	// Hoserva cannot give a system account, which every Samba login needs.
+	ErrInvalidUsername = share.ErrInvalidAccountName
+	// ErrAccountNameTaken is SetUserPassword refusing a name that a system
+	// account Hoserva did not create already holds.
+	ErrAccountNameTaken = share.ErrAccountNameTaken
 	// ErrUserNotFound is UpdateUserRole/DeleteUser/SetUserPassword/the
 	// permission and group-membership operations naming an unknown user.
 	ErrUserNotFound = errors.New("no such user")
@@ -56,10 +65,16 @@ func validateManagedRole(role string) (string, error) {
 // it one, on both the UI and Samba side together. The placeholder hash
 // written here is a random value nobody knows, so the account has no
 // working credential until a real password is set, mirroring "no default
-// credential ever exists" (doc 01 §7).
+// credential ever exists" (doc 01 §7). The name is folded to lower case and
+// must be one a system account can carry (ErrInvalidUsername), since setting
+// its password creates that account.
 func (s *AuthService) CreateUser(ctx context.Context, username, role string) (*User, error) {
 	role, err := validateManagedRole(role)
 	if err != nil {
+		return nil, err
+	}
+	username = normalizeUsername(username)
+	if err := share.ValidateAccountName(username); err != nil {
 		return nil, err
 	}
 	placeholder, err := auth.HashPasswordContext(ctx, uuid.NewString())
@@ -108,7 +123,10 @@ func (s *AuthService) UpdateUserRole(ctx context.Context, userID, role string) (
 // password set (#49). It refuses (ErrCannotModifyAdmin) the sole admin
 // account. If removing the Samba account fails, the whole delete is
 // rolled back and nothing is removed (ErrSambaDeleteFailed), rather than
-// leaving a half-deleted user.
+// leaving a half-deleted user. The Samba entry goes before the system
+// account behind it (share.SmbpasswdAccounts.Delete), so a failure of the
+// second step rolls the delete back with the user still listed but already
+// unable to log in; deleting again finishes it.
 func (s *AuthService) DeleteUser(ctx context.Context, userID string) error {
 	return s.Store.DeleteUser(ctx, userID, func(ctx context.Context, username string) error {
 		if err := s.SambaAccounts.Delete(ctx, username); err != nil {
@@ -143,6 +161,9 @@ func (s *AuthService) SetUserPassword(ctx context.Context, userID, password stri
 	if u.Role == roleAdmin {
 		return nil, ErrCannotModifyAdmin
 	}
+	if err := share.ValidateAccountName(u.Username); err != nil {
+		return nil, err
+	}
 	oldHash := u.PasswordHash
 	firstSMBCredential := u.SMBCredentialSetAt == nil
 
@@ -176,6 +197,9 @@ func (s *AuthService) SetUserPassword(ctx context.Context, userID, password stri
 		}
 		if rbErr != nil {
 			return nil, fmt.Errorf("samba password write failed (%v), and rolling back the UI credential also failed: %w", err, rbErr)
+		}
+		if errors.Is(err, share.ErrAccountNameTaken) {
+			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrSambaPasswordFailed, err)
 	}

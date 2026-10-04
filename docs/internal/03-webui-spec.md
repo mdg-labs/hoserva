@@ -457,6 +457,7 @@ Full metadata, progress, complete captured stdout/stderr with search, downloadab
 - User list: name, role, TOTP enabled, last login, share access summary
 - **Roles** (Q27): *Admin* (full UI), *Viewer* (read-only UI), *Share-only* (SMB/NFS, no UI login — the default for new users, so a family member's share login never reaches a page that formats disks)
 - Create, edit, delete users; setting a password updates the UI credential and the Samba passdb entry together
+- A user's name is lower case (letters, digits, `_`, `.`, `-`, starting with a letter or `_`, at most 64 characters) and unique without regard to case: Samba logs in by that name, and setting the first password creates the system account behind it (a locked account with no home and no shell, group `users`, UID 30000–39999, Q26). A name that a system account Hoserva did not create already holds is refused. Deleting a user removes the Samba entry and then that account.
 - Group management; share data is group `users` (GID 100), identical to Unraid (Q26)
 - Per-user share permissions, editable from either side (here or on the share)
 - Session list with revoke

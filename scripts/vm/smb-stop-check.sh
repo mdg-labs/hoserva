@@ -36,11 +36,10 @@
 # account's own grants, so it never touches another account's access to
 # the share and is idempotent across the steps that share this account).
 #
-# setUserPassword's own Samba write (internal/share.SmbpasswdAccounts,
-# `smbpasswd -a -s`) requires the Unix account it names to already
-# exist — hoservad never provisions one itself, the same precondition
-# scripts/devenv/smb-check.sh already works around for the lab — so this
-# script creates a nologin system account for SMB_USERNAME first.
+# setUserPassword provisions the locked nologin Unix account that
+# `smbpasswd -a -s` needs (internal/share.CommandUnixAccounts), so this
+# script does not create one: an account it made itself would sit outside
+# the range hoservad owns and be refused as a foreign account (409).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,9 +83,6 @@ else
     die "createUser($SMB_USERNAME) did not return an id: $CREATE_USER_RESULT"
   fi
 fi
-
-echo "smb-stop-check[$HOSERVA_LAB_ID]: provisioning a Unix account for $SMB_USERNAME so smbpasswd -a (setUserPassword) has an account to attach to"
-vm_ssh "getent passwd '$SMB_USERNAME' >/dev/null 2>&1 || sudo useradd -M -N -s /usr/sbin/nologin '$SMB_USERNAME'"
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: setting a Samba password for $SMB_USERNAME through setUserPassword"
 SET_PW_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"

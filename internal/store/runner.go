@@ -287,6 +287,12 @@ func (r *Runner) Apply(ctx context.Context) (applied []Migration, snapshotPath s
 	}
 
 	for _, m := range pending {
+		if check, ok := preflights[m.Checksum]; ok {
+			if err := check(ctx, tx); err != nil {
+				_ = tx.Rollback()
+				return nil, snapshotPath, fmt.Errorf("migration %q cannot be applied: %w", m.Filename, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 			_ = tx.Rollback()
 			return nil, snapshotPath, fmt.Errorf("applying migration %q: %w", m.Filename, err)

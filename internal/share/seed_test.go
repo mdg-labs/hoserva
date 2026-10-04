@@ -198,14 +198,16 @@ func testServiceWithFS(t *testing.T) (context.Context, *Service, testLayout, *re
 // list seeds none of them and creates no user.
 func TestSeedMigration_ValidatesEverythingBeforeTheFirstWrite(t *testing.T) {
 	cases := map[string]func(in *SeedInput){
-		"a share name with a space":    func(in *SeedInput) { in.Shares[1].Name = "my share" },
-		"a duplicate share":            func(in *SeedInput) { in.Shares[1].Name = "media" },
-		"an unknown create policy":     func(in *SeedInput) { in.Shares[1].CreatePolicy = "bogus" },
-		"an unknown target mode":       func(in *SeedInput) { in.Shares[1].TargetCacheMode = "bogus" },
-		"a minimum free space":         func(in *SeedInput) { in.Shares[1].MinFreeSpace = "1000 K" },
-		"a grant to an unknown user":   func(in *SeedInput) { in.Shares[1].Access = []SeedAccess{{"carol", "read-only"}} },
-		"an unknown access level":      func(in *SeedInput) { in.Shares[1].Access = []SeedAccess{{"alice", "admin"}} },
-		"a user without a placeholder": func(in *SeedInput) { in.Users[0].PasswordHash = "" },
+		"a share name with a space":                func(in *SeedInput) { in.Shares[1].Name = "my share" },
+		"a duplicate share":                        func(in *SeedInput) { in.Shares[1].Name = "media" },
+		"an unknown create policy":                 func(in *SeedInput) { in.Shares[1].CreatePolicy = "bogus" },
+		"an unknown target mode":                   func(in *SeedInput) { in.Shares[1].TargetCacheMode = "bogus" },
+		"a minimum free space":                     func(in *SeedInput) { in.Shares[1].MinFreeSpace = "1000 K" },
+		"a grant to an unknown user":               func(in *SeedInput) { in.Shares[1].Access = []SeedAccess{{"carol", "read-only"}} },
+		"an unknown access level":                  func(in *SeedInput) { in.Shares[1].Access = []SeedAccess{{"alice", "admin"}} },
+		"a user without a placeholder":             func(in *SeedInput) { in.Users[0].PasswordHash = "" },
+		"an upper-case username":                   func(in *SeedInput) { in.Users[0].Username = "Alice" },
+		"a username a system account cannot carry": func(in *SeedInput) { in.Users[0].Username = "alice smith" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
