@@ -251,6 +251,55 @@ jobs:
       - name: Check the outbound-request allowlist
         run: make web-outbound-test
 
+  # The docs site (issue #82, Q3, Q90). Every push and pull request runs the
+  # job; the build itself runs only when something it depends on changed, so
+  # an unrelated change reports success without paying for it. A diff that
+  # cannot be computed builds, never skips.
+  site-build:
+    name: Docs site (Q3, Q90)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Detect changes under site/
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=""
+          case "$EVENT_NAME" in
+            pull_request)
+              # The checkout is the merge of the PR into its base; the first
+              # parent is the base's tip.
+              base="$(git rev-parse HEAD^1)" || base=""
+              ;;
+            push)
+              if git fetch --no-tags --depth=1 origin "$BEFORE"; then
+                base="$BEFORE"
+              fi
+              ;;
+          esac
+          changed=true
+          if [ -n "$base" ] && files="$(git diff --name-only "$base" HEAD)"; then
+            if ! printf '%s\n' "$files" | grep -Eq '^(site/|Makefile$|\.github/workflows/ci\.yml$|scripts/release/assemble-pages-site\.sh$)'; then
+              changed=false
+            fi
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "site build needed: $changed"
+      - if: steps.changed.outputs.changed == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: site/.nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build the docs site and check its layout
+        if: steps.changed.outputs.changed == 'true'
+        run: make site-build
+
   lab:
     name: Loop-device lab (L2)
     runs-on: ubuntu-latest

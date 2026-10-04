@@ -284,7 +284,9 @@ Four phases, matching above:
 
 Migration needs its own documentation, not a README section.
 
-**Astro Starlight, at the root of the project site on GitHub Pages (Q66)** — consistent with the existing Astro stack, with versioning, search, and dark mode out of the box, and it builds in CI without a server. Lives in `site/` at the repo root; `docs/internal/` holds the design docs (Q3).
+**Docusaurus, at the root of the project site on GitHub Pages (Q66)** — docs-only mode, with its native docs versioning, a local build-time search index (no hosted search service), and dark mode, and it builds in CI without a server. React matches the web UI's stack. Lives in `site/` at the repo root; `docs/internal/` holds the design docs (Q3).
+
+**Versioning (Q90).** Every stable Hoserva minor release gets its own docs version, a snapshot kept in the repo that `npx docusaurus docs:version X.Y` writes in the release-prep commit for `vX.Y.0`, so an old version's docs are fixed with an ordinary commit rather than a new release. Beta pre-release tags are never snapshotted. Before the first stable release the current docs are the whole site, at the root, with the "unreleased" banner. Once a version exists, the root serves the latest stable version, the current docs (`main`) are served at `/next/` with the "unreleased" banner and `noindex`, older versions carry the "unmaintained" banner, and a navbar dropdown switches between them. All versions stay published until build time or the Pages size canary forces the oldest to be dropped.
 
 ### Structure
 
