@@ -1265,7 +1265,9 @@ step_templates_and_containers() {
 
 step_scrub() {
   local name="8 a scrub covers the array and reports no errors" job st bad="" pct
-  api POST /parity/scrub '{"percent":100}'
+  # allBlocks: without it hoserva scrub passes snapraid -o 10 and skips every
+  # block the initial sync wrote less than ten days ago, which is all of them
+  api POST /parity/scrub '{"percent":100,"allBlocks":true}'
   job=$(jq -r '.id // empty' <<<"$API_BODY" 2>/dev/null || true)
   if [[ ! "$API_CODE" =~ ^2 || -z "$job" ]]; then
     fail "$name" "startScrub answered HTTP $API_CODE: $API_BODY"
@@ -1282,7 +1284,7 @@ step_scrub() {
   if [[ "$st" =~ ([0-9]+)%\ of\ the\ array\ is\ not\ scrubbed ]]; then
     pct=${BASH_REMATCH[1]}
     if ((pct > 0)); then
-      bad+="the scrub job succeeded but ${pct}% of the array is still not scrubbed (hoserva scrub passes snapraid -o 10, so blocks synced less than 10 days ago are skipped); "
+      bad+="the scrub job succeeded but ${pct}% of the array is still not scrubbed after a scrub of every block; "
     fi
   fi
   if [[ -z "$bad" ]]; then
