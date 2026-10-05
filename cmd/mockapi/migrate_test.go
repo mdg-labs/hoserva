@@ -1290,3 +1290,191 @@ func TestMockMigration_ParityInitQueuesTheInitialSyncAndNeverReportsInitializing
 		t.Error("phase = initializing without the stop control")
 	}
 }
+
+func mockContainersCode(t *testing.T, what string, err error, status int, code string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s was accepted, want %d %s", what, status, code)
+	}
+	if st, c := mockErrCode(t, err); st != status || c != code {
+		t.Errorf("%s = %d %s, want %d %s", what, st, c, status, code)
+	}
+}
+
+func mockSelect(names ...string) *apiv1.MigrationStacksRequest {
+	req := &apiv1.MigrationStacksRequest{}
+	for _, n := range names {
+		req.Items = append(req.Items, apiv1.MigrationStackSelection{Name: n})
+	}
+	return req
+}
+
+// Phase D's operations are gated on the migration the way production's are, by
+// the same unfinished state the scheduler's gate reads: refused with no array,
+// with an import pending and with the initialisation stopped part-way, and open
+// once the point of no return has finished.
+func TestMockMigration_ContainersAreRefusedUntilThePointOfNoReturnHasFinished(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	refused := func(when string) {
+		t.Helper()
+		_, err := h.CreateMigrationStacks(ctx, mockSelect("my-photos.xml"))
+		mockContainersCode(t, when+": create", err, 409, "parity_not_initialized")
+		_, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"})
+		mockContainersCode(t, when+": start", err, 409, "parity_not_initialized")
+		_, err = h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+		mockContainersCode(t, when+": check", err, 409, "parity_not_initialized")
+		_, err = h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
+		mockContainersCode(t, when+": confirm", err, 409, "parity_not_initialized")
+		if list, err := h.ListMigrationContainers(ctx); err != nil || list.ParityInitialized {
+			t.Errorf("%s: list = %+v, %v, want the offer with parityInitialized false", when, list, err)
+		}
+		if got, _ := h.ListStacks(ctx); got != nil {
+			for _, s := range got.Stacks {
+				if s.Name == "photos" || s.Name == "gateway" {
+					t.Errorf("%s: a refused request created stack %s", when, s.Name)
+				}
+			}
+		}
+	}
+	refused("before the import")
+
+	h.migration.stopParityInit = true
+	mockVerifiedMigration(t, h)
+	refused("with the import pending")
+	m, _ := h.GetMigration(ctx)
+	if _, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: m.ParityInit.Value.Confirmation.Value}); err != nil {
+		t.Fatal(err)
+	}
+	refused("with the initialisation stopped part-way")
+	if _, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: disk.ParityInitFinishConfirmation}); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := h.ListMigrationContainers(ctx); err != nil || !list.ParityInitialized {
+		t.Fatalf("list after the point of no return = %+v, %v", list, err)
+	}
+	if _, err := h.CreateMigrationStacks(ctx, mockSelect("my-photos.xml")); err != nil {
+		t.Errorf("create after the point of no return: %v", err)
+	}
+}
+
+func mockCrossedMigration(t *testing.T) *handler {
+	t.Helper()
+	ctx := context.Background()
+	h, _ := newHandler("migration-pending")
+	mockVerifiedMigration(t, h)
+	m, _ := h.GetMigration(ctx)
+	if _, err := h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: m.ParityInit.Value.Confirmation.Value}); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// The offer pre-selects only the autostart list, in its order, lists the
+// project and the container made by hand, and a request is refused as
+// production refuses it: warnings need an acknowledgement, nothing is created
+// from a refused request, one start at a time, a data check before a
+// confirmation.
+func TestMockMigration_ContainersOfferCreateStartAndConfirmAsProductionDoes(t *testing.T) {
+	ctx := context.Background()
+	h := mockCrossedMigration(t)
+
+	list, err := h.ListMigrationContainers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pre, order []string
+	for _, tm := range list.Templates {
+		order = append(order, string(tm.Class)+":"+tm.File)
+		if tm.Preselected {
+			pre = append(pre, tm.File)
+		}
+	}
+	if len(pre) != 1 || pre[0] != "my-photos.xml" || strings.Join(order, " ") != "autostart:my-photos.xml running:my-gateway.xml" {
+		t.Errorf("pre-selected %v in groups %v, want only the autostart template, first", pre, order)
+	}
+	if len(list.ComposeProjects) != 1 || list.ComposeProjects[0].Name != "stack" || len(list.ByHand) != 1 || list.ByHand[0].Image.Or("") == "" {
+		t.Errorf("projects %+v, by hand %+v", list.ComposeProjects, list.ByHand)
+	}
+
+	_, err = h.CreateMigrationStacks(ctx, mockSelect("my-photos.xml", "my-gateway.xml"))
+	mockContainersCode(t, "create with unacknowledged warnings", err, 409, "warnings_not_acknowledged")
+	_, err = h.CreateMigrationStacks(ctx, mockSelect())
+	mockContainersCode(t, "create with nothing selected", err, 400, "invalid_selection")
+	_, err = h.CreateMigrationStacks(ctx, mockSelect("my-photos.xml", "my-photos.xml"))
+	mockContainersCode(t, "create with a name twice", err, 400, "invalid_selection")
+	_, err = h.CreateMigrationStacks(ctx, mockSelect("nothing.xml"))
+	mockContainersCode(t, "create of an unknown template", err, 404, "template_not_found")
+	if stacks, _ := h.ListStacks(ctx); len(stacks.Stacks) > 0 {
+		for _, s := range stacks.Stacks {
+			if s.Name == "photos" || s.Name == "gateway" {
+				t.Fatalf("a refused request created stack %s", s.Name)
+			}
+		}
+	}
+
+	req := mockSelect("my-gateway.xml", "my-photos.xml", "stack")
+	req.Items[0].Acknowledged = apiv1.NewOptBool(true)
+	res, err := h.CreateMigrationStacks(ctx, req)
+	if err != nil || len(res.Results) != 3 || res.Results[0].Name != "my-photos.xml" {
+		t.Fatalf("create = %+v, %v, want three results, the autostart template first", res, err)
+	}
+	for _, r := range res.Results {
+		if r.Status != apiv1.MigrationStackResultStatusCreated {
+			t.Errorf("result %+v, want created", r)
+		}
+	}
+	if res, _ = h.CreateMigrationStacks(ctx, mockSelect("my-photos.xml")); res == nil || res.Results[0].Status != apiv1.MigrationStackResultStatusAlreadyCreated {
+		t.Errorf("a second create = %+v, want already created", res)
+	}
+
+	_, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "nothing"})
+	mockContainersCode(t, "start of an unknown stack", err, 404, "migrated_stack_not_found")
+	_, err = h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+	mockContainersCode(t, "check before the start", err, 409, "container_not_started")
+	if _, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "gateway"})
+	mockContainersCode(t, "a second start while the first is unconfirmed", err, 409, "container_unconfirmed")
+	if l, _ := h.ListMigrationContainers(ctx); l.Awaiting.Or("") != "photos" || l.Next.Set {
+		t.Errorf("awaiting %q next %q, want photos awaiting and nothing next", l.Awaiting.Or(""), l.Next.Or(""))
+	}
+	_, err = h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
+	mockContainersCode(t, "confirm before the data check", err, 409, "data_check_required")
+	check, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+	if err != nil || !check.AllOk {
+		t.Fatalf("check = %+v, %v", check, err)
+	}
+	st, err := h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
+	if err != nil || st.State != apiv1.MigrationContainerStackStateConfirmed {
+		t.Fatalf("confirm = %+v, %v", st, err)
+	}
+	_, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"})
+	mockContainersCode(t, "start of a confirmed stack", err, 409, "container_confirmed")
+	if _, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "gateway"}); err != nil {
+		t.Errorf("start of the next stack once the first is confirmed: %v", err)
+	}
+}
+
+// A path a check finds empty or missing needs the user to accept it; the mock
+// reads no disk and so reads it off the path's name.
+func TestMockMigration_AFailedDataCheckNeedsAcceptingToConfirm(t *testing.T) {
+	ctx := context.Background()
+	h := mockCrossedMigration(t)
+	compose := "services:\n  web:\n    image: example/web:1\n    volumes:\n      - /mnt/user/appdata/web-empty:/data\n      - /mnt/cache/appdata/web:/config\n      - /var/lib/other:/x\n"
+	if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "other", Compose: compose}); err != nil {
+		t.Fatal(err)
+	}
+	h.migration.containers = append(h.migration.containers, mockMigratedStack{name: "other", source: "other.xml", kind: apiv1.MigrationContainerStackKindTemplate, state: apiv1.MigrationContainerStackStateStarted})
+	check, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "other"})
+	if err != nil || check.AllOk || len(check.Paths) != 2 || check.Paths[0].Status != apiv1.MigrationDataPathStatusEmpty || check.Paths[1].Status != apiv1.MigrationDataPathStatusOk {
+		t.Fatalf("check = %+v, %v, want the two paths under /mnt, the first empty", check, err)
+	}
+	_, err = h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "other"})
+	mockContainersCode(t, "confirm after a failed check", err, 409, "data_check_failed")
+	st, err := h.ConfirmMigrationContainer(ctx, apiv1.NewOptMigrationContainerConfirmRequest(apiv1.MigrationContainerConfirmRequest{AcceptFailedCheck: apiv1.NewOptBool(true)}), apiv1.ConfirmMigrationContainerParams{Name: "other"})
+	if err != nil || st.State != apiv1.MigrationContainerStackStateConfirmed {
+		t.Errorf("confirm accepting the failed check = %+v, %v", st, err)
+	}
+}

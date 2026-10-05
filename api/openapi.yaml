@@ -3751,6 +3751,212 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /migrate/containers:
+    get:
+      operationId: listMigrationContainers
+      summary: What the migration's Phase D can create, and what it has created
+      description: >-
+        Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the
+        latest scan. `templates` are every template of the scan grouped by
+        `class` in the order the groups are shown (`autostart` in Unraid's own
+        autostart order, then `running`, `stopped`, `template_only` and
+        `unknown`); only a creatable template on Unraid's autostart list whose
+        stack does not exist yet is `preselected`, so with no capture (class
+        `unknown`) nothing is. Every one can still be selected. `composeProjects`
+        are the Compose Manager projects, offered with their own
+        `compose.yaml`; `byHand` are the containers created with `docker run`
+        and their image, which nothing is generated for: they are recreated by
+        hand. The preview of each (the generated Compose, every warning
+        including the writable-layer warning) is `getMigrationTemplate`, and
+        should be read before `createMigrationStacks`. `stacks` are the stacks
+        `createMigrationStacks` created, in the order they are offered for
+        starting (Unraid's autostart order first), each with its `state`;
+        `awaiting` names the started stack that must be confirmed or stopped
+        before another is started, and `next` the stack to start now.
+        `parityInitialized` is false until the migration is past its point of
+        no return (`initializeMigrationParity`); the operations that create
+        or start something refuse until then. This reads no disk. 404
+        `no_migration_report` before a scan has finished and 404
+        `no_template_preview` for a report made before scans converted
+        templates.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The offer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationContainers'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createMigrationStacks
+      summary: Create stopped Compose stacks from the scan's templates and projects
+      description: >-
+        Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped,
+        through the stack layer (`createStack`) for each selected template or
+        Compose Manager project of the scan, from the generated Compose the
+        preview showed (`getMigrationTemplate`), or the project's own
+        `compose.yaml`. Nothing is started and nothing is written outside the
+        stacks directory. A stack is named after the template's `<Name>` (or
+        the project's name), lowercased with every character a stack name may
+        not hold turned into `-`.
+
+
+        Refused as a whole, before any stack is created: 409
+        `parity_not_initialized` until the migration is past its point of no
+        return (the initialisation has finished: an array exists and no import
+        is pending or part-way through step 17); 400 `invalid_selection` for
+        an empty selection, a name given twice or two selections that would
+        create one stack name; 404 `template_not_found`, `no_migration_report`
+        or `no_template_preview`; 409 `template_source_unavailable` when the
+        Flash Backup zip is not kept; 409 `template_unconvertible` for a
+        template the converter could not read; and 409
+        `warnings_not_acknowledged` for a template whose conversion has
+        warnings that need manual action (Q36) unless its selection says
+        `acknowledged`. After that each stack is created on its own and the
+        answer has one result per selection, in the order they are made
+        (Unraid's autostart order first): a stack that could not be created
+        says why in `error`, with the code `createStack` gives (`stack_exists`,
+        `invalid_stack`, ...), and the stacks before it stay created and
+        recorded. A selection whose stack already exists from this migration
+        is `already_created`, so the same request can be sent again.
+      tags: [migrate]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationStacksRequest'
+      responses:
+        "200":
+          description: One result per selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationStacksCreated'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /migrate/containers/{name}/start:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: A stack `listMigrationContainers` shows in `stacks`.
+    post:
+      operationId: startMigrationContainer
+      summary: Start one migrated stack
+      description: >-
+        Step 20 of the migration (doc 05 §4): queues the `stack_start` job
+        (`startStack`) for a stack `createMigrationStacks` created, and records
+        that it was started. Containers are started one at a time: this is
+        refused with 409 `container_unconfirmed` while another migrated stack
+        that was started is neither confirmed (`confirmMigrationContainer`) nor
+        stopped, which includes one whose start job is still running or whose
+        containers are running, and when that cannot be read. Refused before
+        anything is queued with 409 `parity_not_initialized` until the
+        migration is past its point of no return, 404 `migrated_stack_not_found`
+        for a name the migration did not create, 409 `container_confirmed` for
+        a stack already confirmed, 404 `stack_not_found` when the stack was
+        removed since, and 409 `array_stopped` or 503 `array_state_unknown`
+        as `startStack` answers. The stack's `waitSeconds` is what Unraid's
+        autostart list waited after starting it, as a suggestion. Run
+        `checkMigrationContainer` once the job has succeeded.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued `stack_start` job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /migrate/containers/{name}/check:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: A stack `listMigrationContainers` shows in `stacks`.
+    post:
+      operationId: checkMigrationContainer
+      summary: Check that a started stack's containers see their data
+      description: >-
+        The data check of step 20 (doc 05 §4): for each bind mount of the
+        stack's containers whose host path is under `/mnt/user` or
+        `/mnt/cache`, whether the path exists and is not empty. A directory
+        counts as empty when it holds no entry, a file when it has no byte;
+        a path that cannot be read is `unreadable`, never `ok`. It reads one
+        directory entry of each path (which can spin a disk up), when asked
+        and never on a timer, and records that a check ran since the latest
+        start, which `confirmMigrationContainer` needs. A stack with no
+        bind mount under those paths has nothing to check and is `allOk`.
+        Refused with 409 `container_not_started` for a stack that was not
+        started, 409 `no_container` while the stack has no container (its
+        start has not created one), 409 `parity_not_initialized` and 404
+        `migrated_stack_not_found` as `startMigrationContainer` does.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: What the stack's containers see.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationContainerCheck'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /migrate/containers/{name}/confirm:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: A stack `listMigrationContainers` shows in `stacks`.
+    post:
+      operationId: confirmMigrationContainer
+      summary: Confirm a started stack sees its data
+      description: >-
+        Records that the user read the data check and the started stack sees its
+        data, which offers the next stack. Refused with 409
+        `container_not_started` for a stack that was not started, 409
+        `data_check_required` until `checkMigrationContainer` has run since the
+        latest start, 409 `data_check_failed` when that check found a path that
+        is missing, empty or unreadable unless `acceptFailedCheck` is true
+        (a container whose data directory is meant to be empty), and 409
+        `container_not_running` when none of the stack's containers is running
+        (stop the container instead, to go on without it). Confirming a
+        confirmed stack changes nothing. 409 `parity_not_initialized` and 404
+        `migrated_stack_not_found` as `startMigrationContainer` does.
+      tags: [migrate]
+      x-hoserva-role: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationContainerConfirmRequest'
+      responses:
+        "200":
+          description: The stack, confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationContainerStack'
+        default:
+          $ref: '#/components/responses/Error'
+
   /appdata/backup:
     get:
       operationId: getAppdataBackup
@@ -11511,6 +11717,254 @@ components:
         error:
           type: string
           description: Why the template or project could not be read. Present only when `status` is `failed`.
+
+    MigrationContainerTemplate:
+      type: object
+      required: [name, file, class, status, warningCount, creatable, preselected, created]
+      properties:
+        name:
+          type: string
+          description: The template's `<Name>`.
+        file:
+          type: string
+          description: The template's file name, which `createMigrationStacks` and `getMigrationTemplate` take.
+        class:
+          $ref: '#/components/schemas/MigrationTemplateClass'
+        status:
+          $ref: '#/components/schemas/MigrationTemplateStatus'
+        warningCount:
+          type: integer
+          description: The warnings that make a conversion not clean (Q36).
+        error:
+          type: string
+          description: Why the converter could not read the template. Present only when `status` is `failed`.
+        stack:
+          type: string
+          description: The name its stack would have. Absent when the template's name cannot make a stack name.
+        autostartPosition:
+          type: integer
+          description: The 1-based place on Unraid's autostart list. Absent off the list.
+        autostartWaitSeconds:
+          type: integer
+          description: The seconds Unraid's autostart list waits after starting it, as a suggestion. Absent when it gives none.
+        creatable:
+          type: boolean
+          description: False for a template the converter could not read.
+        preselected:
+          type: boolean
+          description: >-
+            True for a creatable template on Unraid's autostart list whose stack
+            does not exist yet, and for nothing else.
+        created:
+          type: boolean
+          description: Whether its stack was created from this migration.
+
+    MigrationContainerProject:
+      type: object
+      required: [name, containers, status, creatable, created]
+      properties:
+        name:
+          type: string
+          description: The project's name, which `createMigrationStacks` and `getMigrationTemplate` take.
+        containers:
+          type: array
+          items:
+            type: string
+          description: The containers the capture shows the project running.
+        status:
+          $ref: '#/components/schemas/MigrationTemplateStatus'
+        error:
+          type: string
+          description: Why the project's `compose.yaml` could not be read. Present only when `status` is `failed`.
+        stack:
+          type: string
+          description: The name its stack would have. Absent when the project's name cannot make a stack name.
+        creatable:
+          type: boolean
+          description: False for a project whose `compose.yaml` is missing from the source or could not be read.
+        created:
+          type: boolean
+
+    MigrationByHandContainer:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+          description: The image the container was created from. Absent when the capture does not say.
+
+    MigrationContainerStack:
+      type: object
+      required: [name, source, kind, state, awaiting, checked, checkFailed]
+      properties:
+        name:
+          type: string
+          description: The stack's name, which the start, check and confirm operations take.
+        source:
+          type: string
+          description: The template file or Compose Manager project it was created from.
+        kind:
+          type: string
+          enum: [template, compose_project]
+        state:
+          type: string
+          enum: [created, started, confirmed]
+          description: >-
+            `created` is a stack that was not started by the migration,
+            `started` one whose start was queued and that is not confirmed,
+            `confirmed` one the user confirmed sees its data.
+        autostartPosition:
+          type: integer
+          description: The 1-based place on Unraid's autostart list. Absent off the list.
+        waitSeconds:
+          type: integer
+          description: The seconds Unraid's autostart list waited after starting it, as a suggestion for the wait before the next. Absent when it gives none.
+        awaiting:
+          type: boolean
+          description: >-
+            True for a started stack that is neither confirmed nor known to be
+            stopped; also true when that cannot be read. Another stack is not
+            started while one is.
+        checked:
+          type: boolean
+          description: Whether a data check has run since the latest start.
+        checkFailed:
+          type: boolean
+          description: Whether that check found a path that is missing, empty or unreadable.
+
+    MigrationContainers:
+      type: object
+      required: [parityInitialized, templates, composeProjects, byHand, stacks]
+      properties:
+        parityInitialized:
+          type: boolean
+          description: Whether the migration is past its point of no return. No stack is created or started before.
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationContainerTemplate'
+        composeProjects:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationContainerProject'
+        byHand:
+          type: array
+          description: >-
+            Containers created by hand. No template describes them, so nothing
+            is generated for them: they are recreated by hand.
+          items:
+            $ref: '#/components/schemas/MigrationByHandContainer'
+        stacks:
+          type: array
+          description: The stacks created from the scan, in the order they are offered for starting.
+          items:
+            $ref: '#/components/schemas/MigrationContainerStack'
+        awaiting:
+          type: string
+          description: The stack to confirm or stop before another is started. Absent when none.
+        next:
+          type: string
+          description: The stack to start now. Absent when one awaits confirmation or all are confirmed.
+
+    MigrationStackSelection:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: A template's file name or a Compose Manager project's name, as `listMigrationContainers` shows it.
+        acknowledged:
+          type: boolean
+          description: >-
+            The user has read this template's warnings (`getMigrationTemplate`)
+            and creates its stack all the same. Needed for a conversion with a
+            warning that needs manual action; not needed for a clean one or a
+            project.
+
+    MigrationStacksRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MigrationStackSelection'
+
+    MigrationStackResult:
+      type: object
+      required: [name, stack, status]
+      properties:
+        name:
+          type: string
+          description: The selection, as sent.
+        stack:
+          type: string
+          description: The stack's name.
+        status:
+          type: string
+          enum: [created, already_created, failed]
+        error:
+          $ref: '#/components/schemas/Error'
+
+    MigrationStacksCreated:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationStackResult'
+
+    MigrationDataPath:
+      type: object
+      required: [container, path, destination, status]
+      properties:
+        container:
+          type: string
+        path:
+          type: string
+          description: The host path of the bind mount.
+        destination:
+          type: string
+          description: Where the container sees it.
+        status:
+          type: string
+          enum: [ok, empty, missing, unreadable]
+          description: >-
+            `ok` for a path that exists and is not empty; `empty` for a
+            directory with no entry or a file with no byte; `missing` for a
+            path that does not exist; `unreadable` for one that could not be
+            read, which is never fine.
+        error:
+          type: string
+          description: Why a path is `unreadable`.
+
+    MigrationContainerCheck:
+      type: object
+      required: [stack, running, allOk, paths]
+      properties:
+        stack:
+          type: string
+        running:
+          type: boolean
+          description: Whether one of the stack's containers is running.
+        allOk:
+          type: boolean
+          description: Whether every path is `ok`. True when there is no path to check.
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationDataPath'
+
+    MigrationContainerConfirmRequest:
+      type: object
+      properties:
+        acceptFailedCheck:
+          type: boolean
+          description: Confirm although the data check found a path that is missing, empty or unreadable.
 
     AppdataBackupContainer:
       type: object

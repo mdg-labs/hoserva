@@ -644,6 +644,8 @@ func run(cfg config) error {
 		log.Printf("hoservad: the Unraid import is not available: %v", err)
 	} else if err := wireMigrationParity(handler, registry, scheduler, disks, arrayStore, generator, linuxDisks.Exec, newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}), parityReg.callArrayReady, shareService); err != nil {
 		log.Printf("hoservad: the Unraid parity initialisation is not available: %v", err)
+	} else if err := wireMigrationContainers(handler, arrayStore); err != nil {
+		log.Printf("hoservad: the Unraid migration's containers are not available: %v", err)
 	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{

@@ -138,6 +138,20 @@ type Handler interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// CheckMigrationContainer implements checkMigrationContainer operation.
+	//
+	// The data check of step 20 (doc 05 §4): for each bind mount of the stack's containers whose host
+	// path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory
+	// counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is
+	// `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when
+	// asked and never on a timer, and records that a check ran since the latest start, which
+	// `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check
+	// and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409
+	// `no_container` while the stack has no container (its start has not created one), 409
+	// `parity_not_initialized` and 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+	//
+	// POST /migrate/containers/{name}/check
+	CheckMigrationContainer(ctx context.Context, params CheckMigrationContainerParams) (*MigrationContainerCheck, error)
 	// ConfigureLetsEncrypt implements configureLetsEncrypt operation.
 	//
 	// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
@@ -149,6 +163,19 @@ type Handler interface {
 	//
 	// POST /settings/network/lets-encrypt
 	ConfigureLetsEncrypt(ctx context.Context, req *ConfigureLetsEncryptRequest) (*Job, error)
+	// ConfirmMigrationContainer implements confirmMigrationContainer operation.
+	//
+	// Records that the user read the data check and the started stack sees its data, which offers the next
+	// stack. Refused with 409 `container_not_started` for a stack that was not started, 409
+	// `data_check_required` until `checkMigrationContainer` has run since the latest start, 409
+	// `data_check_failed` when that check found a path that is missing, empty or unreadable unless
+	// `acceptFailedCheck` is true (a container whose data directory is meant to be empty), and 409
+	// `container_not_running` when none of the stack's containers is running (stop the container instead,
+	// to go on without it). Confirming a confirmed stack changes nothing. 409 `parity_not_initialized` and
+	// 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+	//
+	// POST /migrate/containers/{name}/confirm
+	ConfirmMigrationContainer(ctx context.Context, req OptMigrationContainerConfirmRequest, params ConfirmMigrationContainerParams) (*MigrationContainerStack, error)
 	// ConfirmNetworkSettings implements confirmNetworkSettings operation.
 	//
 	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
@@ -231,6 +258,31 @@ type Handler interface {
 	//
 	// POST /setup/admin
 	CreateFirstAdmin(ctx context.Context, req *CreateFirstAdminRequest) (*UserHeaders, error)
+	// CreateMigrationStacks implements createMigrationStacks operation.
+	//
+	// Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped, through the stack layer
+	// (`createStack`) for each selected template or Compose Manager project of the scan, from the
+	// generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`.
+	// Nothing is started and nothing is written outside the stacks directory. A stack is named after the
+	// template's `<Name>` (or the project's name), lowercased with every character a stack name may not
+	// hold turned into `-`.
+	//
+	// Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is
+	// past its point of no return (the initialisation has finished: an array exists and no import is
+	// pending or part-way through step 17); 400 `invalid_selection` for an empty selection, a name given
+	// twice or two selections that would create one stack name; 404 `template_not_found`,
+	// `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash
+	// Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read;
+	// and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual
+	// action (Q36) unless its selection says `acknowledged`. After that each stack is created on its own
+	// and the answer has one result per selection, in the order they are made (Unraid's autostart order
+	// first): a stack that could not be created says why in `error`, with the code `createStack` gives
+	// (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A
+	// selection whose stack already exists from this migration is `already_created`, so the same request
+	// can be sent again.
+	//
+	// POST /migrate/containers
+	CreateMigrationStacks(ctx context.Context, req *MigrationStacksRequest) (*MigrationStacksCreated, error)
 	// CreateNotificationChannel implements createNotificationChannel operation.
 	//
 	// A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the
@@ -1054,6 +1106,27 @@ type Handler interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// ListMigrationContainers implements listMigrationContainers operation.
+	//
+	// Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the latest scan. `templates`
+	// are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in
+	// Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a
+	// creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so
+	// with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are
+	// the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers
+	// created with `docker run` and their image, which nothing is generated for: they are recreated by
+	// hand. The preview of each (the generated Compose, every warning including the writable-layer
+	// warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are
+	// the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's
+	// autostart order first), each with its `state`; `awaiting` names the started stack that must be
+	// confirmed or stopped before another is started, and `next` the stack to start now.
+	// `parityInitialized` is false until the migration is past its point of no return
+	// (`initializeMigrationParity`); the operations that create or start something refuse until then. This
+	// reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview`
+	// for a report made before scans converted templates.
+	//
+	// GET /migrate/containers
+	ListMigrationContainers(ctx context.Context) (*MigrationContainers, error)
 	// ListMigrationTemplates implements listMigrationTemplates operation.
 	//
 	// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
@@ -1725,6 +1798,22 @@ type Handler interface {
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, req *StartFixRequest) (*Job, error)
+	// StartMigrationContainer implements startMigrationContainer operation.
+	//
+	// Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack
+	// `createMigrationStacks` created, and records that it was started. Containers are started one at a
+	// time: this is refused with 409 `container_unconfirmed` while another migrated stack that was started
+	// is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one whose start job
+	// is still running or whose containers are running, and when that cannot be read. Refused before
+	// anything is queued with 409 `parity_not_initialized` until the migration is past its point of no
+	// return, 404 `migrated_stack_not_found` for a name the migration did not create, 409
+	// `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when the stack was
+	// removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack` answers. The
+	// stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a suggestion. Run
+	// `checkMigrationContainer` once the job has succeeded.
+	//
+	// POST /migrate/containers/{name}/start
+	StartMigrationContainer(ctx context.Context, params StartMigrationContainerParams) (*Job, error)
 	// StartMigrationDeviceScan implements startMigrationDeviceScan operation.
 	//
 	// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB

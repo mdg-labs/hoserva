@@ -20,7 +20,7 @@ import (
 
 func migrateCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "migrate", Short: "Migrate from Unraid (doc 05)"}
-	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateUndoImportCmd(), migrateVerifyCmd(), migrateInitializeParityCmd(), migrateForgetCmd())
+	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateContainersCmd(), migrateImportCmd(), migrateUndoImportCmd(), migrateVerifyCmd(), migrateInitializeParityCmd(), migrateForgetCmd())
 	return cmd
 }
 

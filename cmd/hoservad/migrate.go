@@ -202,6 +202,50 @@ func wireMigrationParity(handler *api.Handler, registry *job.Registry, scheduler
 	return nil
 }
 
+// wireMigrationContainers is what main.go calls, after wireMigrationParity, to
+// make Phase D's container steps reachable (doc 05 §4 steps 19 and 20): the
+// migrator creates the user's stacks, starts them one at a time and checks that
+// each sees its data through the Compose stack layer wireStacks gave the
+// handler, and only once the migration is past its point of no return. The stack
+// start itself is the stack_start job wireStacks registered. It fails when
+// wireMigration or wireStacks has not run, so a missing piece is an error
+// instead of operations that answer 501.
+func wireMigrationContainers(handler *api.Handler, arrays *store.ArrayStore) error {
+	if handler.Migration == nil {
+		return errors.New("the migration session is not wired")
+	}
+	if handler.Stacks == nil {
+		return errors.New("the Compose stack layer is not wired")
+	}
+	if handler.ArrayStore != arrays {
+		return errors.New("the handler's array store is not the one the migration records the array in")
+	}
+	handler.Migration.Stacks = handler.Stacks
+	handler.Migration.Initialized = migrationInitialized(arrays)
+	return nil
+}
+
+// migrationInitialized is whether the parity initialisation has been confirmed:
+// an array exists and no migration is pending or part-way through its point of
+// no return (store.ArrayStore.MigrationUnfinished), the same question the
+// scheduler asks before it admits a parity, array-write or topology job. A
+// record that cannot be read is an error, not an answer.
+func migrationInitialized(arrays *store.ArrayStore) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		if _, _, err := arrays.GetArray(ctx); err != nil {
+			if errors.Is(err, store.ErrNoArray) {
+				return false, nil
+			}
+			return false, fmt.Errorf("reading the array: %w", err)
+		}
+		unfinished, err := arrays.MigrationUnfinished(ctx)
+		if err != nil {
+			return false, err
+		}
+		return !unfinished, nil
+	}
+}
+
 // eventPublisher is the notification service's one publisher this file uses.
 type eventPublisher interface {
 	Publish(ctx context.Context, event notify.EventType, title, message string) error

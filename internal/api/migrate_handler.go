@@ -71,6 +71,32 @@ func migrateError(err error) error {
 		return errMigrationNotConfigured()
 	case errors.Is(err, migrate.ErrVerifyRequired):
 		return &apiError{code: "verify_required", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrContainersNotConfigured):
+		return errMigrationNotConfigured()
+	case errors.Is(err, migrate.ErrParityNotInitialized):
+		return &apiError{code: "parity_not_initialized", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrInvalidSelection):
+		return &apiError{code: "invalid_selection", statusCode: 400, message: err.Error()}
+	case errors.Is(err, migrate.ErrTemplateUnconvertible):
+		return &apiError{code: "template_unconvertible", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrWarningsNotAcknowledged):
+		return &apiError{code: "warnings_not_acknowledged", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrStackNotMigrated):
+		return &apiError{code: "migrated_stack_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, migrate.ErrContainerUnconfirmed):
+		return &apiError{code: "container_unconfirmed", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrContainerConfirmed):
+		return &apiError{code: "container_confirmed", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrContainerNotStarted):
+		return &apiError{code: "container_not_started", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrNoContainer):
+		return &apiError{code: "no_container", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrDataCheckRequired):
+		return &apiError{code: "data_check_required", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrDataCheckFailed):
+		return &apiError{code: "data_check_failed", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrContainerNotRunning):
+		return &apiError{code: "container_not_running", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrParityNotPending):
 		return &apiError{code: "no_import_pending", statusCode: 409, message: err.Error()}
 	case errors.Is(err, disk.ErrUnraidStick):

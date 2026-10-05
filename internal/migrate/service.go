@@ -151,7 +151,22 @@ type Service struct {
 	// parity and cache disks were formatted and recorded, with the rest of it left
 	// (store.ArrayStore.MigrationFinishing). Nil means it never is.
 	Finishing func(ctx context.Context) (bool, error)
+	// Initialized reports whether the parity initialisation has been confirmed:
+	// an array exists and no migration is pending or part-way through its point
+	// of no return. Phase D (containers.go) creates and starts nothing until it
+	// is true; nil means it never is.
+	Initialized func(ctx context.Context) (bool, error)
+	// Stacks is the Compose stack layer the migrated containers are created
+	// through. Nil means this daemon creates none.
+	Stacks StackLayer
+	// DataRoots are the host paths a migrated container's data lives under,
+	// which the data check reads; nil means /mnt/user and /mnt/cache.
+	DataRoots []string
 
+	// flowMu serialises the Phase D operations that read the record of the
+	// created stacks, decide, and then act (create, start, confirm). It is taken
+	// before mu, never after.
+	flowMu sync.Mutex
 	// stickMu serialises the one private mountpoint a flash device is read at.
 	// It is taken after mu, never before.
 	stickMu sync.Mutex
@@ -657,6 +672,9 @@ func (s *Service) commit(ctx context.Context, upload string, rec scanRecord, rep
 		return errors.New("this scan was replaced or forgotten")
 	}
 	sess.Source = &SourceInfo{File: rec.File, Size: rec.Size, ReceivedAt: rec.ReceivedAt}
+	if sess.Report != nil {
+		report.Containers = sess.Report.Containers
+	}
 	sess.Report = report
 	sess.Scan = nil
 	sess.Verify = nil

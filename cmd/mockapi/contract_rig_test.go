@@ -797,6 +797,20 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	stacks.RequireArrayRunning = h.Lifecycle.RequireArrayRunning
 	stacks.Provider = h.Lifecycle.Provider
 	stacks.AppdataRoots = h.Lifecycle.AppdataRoots
+	// Phase D creates and starts stacks through the same stack layer, once the
+	// array record says the migration is past its point of no return, as
+	// hoservad's migrationInitialized reads it.
+	migrationSvc.Stacks = stacks
+	migrationSvc.Initialized = func(ctx context.Context) (bool, error) {
+		if _, _, err := arrayStore.GetArray(ctx); err != nil {
+			if errors.Is(err, store.ErrNoArray) {
+				return false, nil
+			}
+			return false, err
+		}
+		unfinished, err := arrayStore.MigrationUnfinished(ctx)
+		return !unfinished, err
+	}
 	// Template install resolves the mock's own catalog through the real
 	// installer, against this rig's Docker fake and an empty host socket
 	// table, so the host's own listeners never decide a case.

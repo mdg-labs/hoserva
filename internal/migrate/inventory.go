@@ -32,8 +32,11 @@ type Import struct {
 	Users           []string         `json:"users"`
 	Templates       []TemplateEntry  `json:"templates"`
 	ComposeProjects []ComposeProject `json:"composeProjects"`
-	Networks        []Network        `json:"networks"`
-	Schedules       Schedules        `json:"schedules"`
+	// ByHand are the containers the capture shows created with docker run:
+	// no template describes them, so nothing is generated for them.
+	ByHand    []ByHandContainer `json:"byHand,omitempty"`
+	Networks  []Network         `json:"networks"`
+	Schedules Schedules         `json:"schedules"`
 	// TemplateCounts is nil for a report made before templates were converted
 	// by the scan.
 	TemplateCounts *TemplateCounts `json:"templateCounts,omitempty"`
@@ -96,6 +99,13 @@ type ComposeProject struct {
 	File       string   `json:"file,omitempty"`
 	Containers []string `json:"containers,omitempty"`
 	Outcome    *Outcome `json:"outcome,omitempty"`
+}
+
+// ByHandContainer is a container created by hand, named with the image it was
+// created from, which is all a person needs to recreate it.
+type ByHandContainer struct {
+	Name  string `json:"name"`
+	Image string `json:"image,omitempty"`
 }
 
 // NetworkSubnet is one entry of a network's IPAM configuration.
@@ -289,6 +299,7 @@ type captureContainer struct {
 		Running bool   `json:"Running"`
 	} `json:"State"`
 	Config struct {
+		Image  string            `json:"Image"`
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
 }

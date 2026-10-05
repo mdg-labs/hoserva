@@ -121,6 +121,11 @@ type Report struct {
 	// Import is the parsed configuration the later steps seed from. It is kept
 	// with the report in the session and is not part of the API's report.
 	Import Import `json:"import"`
+	// Containers is Phase D's record of the stacks created from this report and
+	// how far each has come (containers.go). It is not part of a scan: a new
+	// scan carries the earlier report's record over, so the stacks already
+	// created stay known.
+	Containers *ContainerFlow `json:"containers,omitempty"`
 }
 
 func (r *Report) add(check string, st Status, subject, format string, args ...any) {

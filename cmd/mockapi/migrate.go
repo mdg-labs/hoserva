@@ -7,14 +7,18 @@ import (
 	"hash/fnv"
 	"io"
 	"io/fs"
+	"path"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
@@ -61,6 +65,12 @@ type mockMigration struct {
 	// is read without mu, from handlers that hold the handler's own lock.
 	stopParityInit bool
 	finishing      atomic.Bool
+
+	// flowMu serialises Phase D's create, start and confirm as production's does,
+	// and containers is its record of the stacks created from the report, which
+	// outlives a new scan as production's does.
+	flowMu     sync.Mutex
+	containers []mockMigratedStack
 }
 
 // unfinished is whether the migration is still pending in production's sense,
@@ -852,12 +862,13 @@ type mockMigrationTemplate struct {
 	file     string
 	class    apiv1.MigrationTemplateClass
 	position int
+	wait     int
 	conv     *template.Conversion
 }
 
 func mockMigrationTemplates() ([]mockMigrationTemplate, error) {
 	classes := map[string]mockMigrationTemplate{
-		"my-photos.xml":  {class: apiv1.MigrationTemplateClassAutostart, position: 1},
+		"my-photos.xml":  {class: apiv1.MigrationTemplateClassAutostart, position: 1, wait: 30},
 		"my-gateway.xml": {class: apiv1.MigrationTemplateClassRunning},
 	}
 	networks := []template.NetworkDef{{
@@ -1109,4 +1120,444 @@ func (h *handler) StartMigrationImport(ctx context.Context, req *apiv1.Migration
 	h.migration.imported.Store(true)
 	h.seedMockMigration(report.Import.SeedPlan())
 	return j, nil
+}
+
+// mockMigratedStack is a stack Phase D created from the mock's report.
+type mockMigratedStack struct {
+	name, source string
+	kind         apiv1.MigrationContainerStackKind
+	position     int
+	wait         int
+	state        apiv1.MigrationContainerStackState
+	checked      bool
+	checkFailed  bool
+}
+
+// mockByHand is the container the mock's capture shows created with docker run.
+var mockByHand = migrate.ByHandContainer{Name: "scratch", Image: "alpine:3.20"}
+
+// mockParityInitialized is production's migrationInitialized: an array exists
+// and no migration is pending or part-way through its point of no return.
+func (h *handler) mockParityInitialized() bool {
+	return !h.migration.unfinished() && mockArrayDisks(h.arrayScenario()) != nil
+}
+
+func (h *handler) requireMockParityInitialized() error {
+	if !h.mockParityInitialized() {
+		return errMigrationRefusal("parity_not_initialized", 409, migrate.ErrParityNotInitialized)
+	}
+	return nil
+}
+
+// mockOrderedStacks is the created stacks in the order they are offered:
+// Unraid's autostart list first, then the others as they were created.
+func mockOrderedStacks(in []mockMigratedStack) []mockMigratedStack {
+	out := append([]mockMigratedStack(nil), in...)
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].position, out[j].position
+		return a > 0 && (b == 0 || a < b)
+	})
+	return out
+}
+
+func mockStackIndex(stacks []mockMigratedStack, match func(mockMigratedStack) bool) int {
+	for i := range stacks {
+		if match(stacks[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *mockMigration) stackFor(name string) (int, error) {
+	i := mockStackIndex(m.containers, func(s mockMigratedStack) bool { return s.name == name })
+	if i < 0 {
+		return -1, errMigrationRefusal("migrated_stack_not_found", 404, fmt.Errorf("%w: %q", migrate.ErrStackNotMigrated, name))
+	}
+	return i, nil
+}
+
+func mockStackToAPI(s mockMigratedStack, awaiting bool) apiv1.MigrationContainerStack {
+	out := apiv1.MigrationContainerStack{Name: s.name, Source: s.source, Kind: s.kind, State: s.state, Awaiting: awaiting, Checked: s.checked, CheckFailed: s.checkFailed}
+	if s.position > 0 {
+		out.AutostartPosition = apiv1.NewOptInt(s.position)
+	}
+	if s.wait > 0 {
+		out.WaitSeconds = apiv1.NewOptInt(s.wait)
+	}
+	return out
+}
+
+// ListMigrationContainers answers as production's Offer does, over the mock's
+// templates and the one project and by-hand container its capture lists. A
+// started stack is awaiting confirmation until it is confirmed: the mock's
+// containers are never stopped.
+func (h *handler) ListMigrationContainers(ctx context.Context) (*apiv1.MigrationContainers, error) {
+	if err := h.requireMigrationReport(); err != nil {
+		return nil, err
+	}
+	templates, err := mockMigrationTemplates()
+	if err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	stacks := mockOrderedStacks(h.migration.containers)
+	h.migration.mu.Unlock()
+	created := func(source string) bool {
+		return mockStackIndex(stacks, func(s mockMigratedStack) bool { return s.source == source }) >= 0
+	}
+	order := map[apiv1.MigrationTemplateClass]int{
+		apiv1.MigrationTemplateClassAutostart: 0, apiv1.MigrationTemplateClassRunning: 1, apiv1.MigrationTemplateClassStopped: 2,
+		apiv1.MigrationTemplateClassTemplateOnly: 3, apiv1.MigrationTemplateClassUnknown: 4,
+	}
+	sort.SliceStable(templates, func(i, j int) bool {
+		a, b := templates[i], templates[j]
+		if order[a.class] != order[b.class] {
+			return order[a.class] < order[b.class]
+		}
+		if a.class == apiv1.MigrationTemplateClassAutostart && a.position != b.position {
+			return a.position < b.position
+		}
+		return a.file < b.file
+	})
+	out := &apiv1.MigrationContainers{
+		ParityInitialized: h.mockParityInitialized(),
+		Templates:         make([]apiv1.MigrationContainerTemplate, 0, len(templates)),
+		ComposeProjects: []apiv1.MigrationContainerProject{{
+			Name: "stack", Containers: []string{"stack-web"}, Status: apiv1.MigrationTemplateStatusPreviewed,
+			Stack: apiv1.NewOptString(migrate.StackNameFor("stack")), Creatable: true, Created: created("stack"),
+		}},
+		ByHand: []apiv1.MigrationByHandContainer{{Name: mockByHand.Name, Image: apiv1.NewOptString(mockByHand.Image)}},
+		Stacks: make([]apiv1.MigrationContainerStack, 0, len(stacks)),
+	}
+	for _, t := range templates {
+		status := apiv1.MigrationTemplateStatusClean
+		if !t.conv.Clean() {
+			status = apiv1.MigrationTemplateStatusWarnings
+		}
+		item := apiv1.MigrationContainerTemplate{
+			Name: t.conv.Metadata.Title, File: t.file, Class: t.class, Status: status, WarningCount: actionWarnings(t.conv),
+			Stack: apiv1.NewOptString(migrate.StackNameFor(t.conv.Metadata.Title)), Creatable: true, Created: created(t.file),
+		}
+		item.Preselected = !item.Created && t.class == apiv1.MigrationTemplateClassAutostart && t.position > 0
+		if t.position > 0 {
+			item.AutostartPosition = apiv1.NewOptInt(t.position)
+		}
+		if t.wait > 0 {
+			item.AutostartWaitSeconds = apiv1.NewOptInt(t.wait)
+		}
+		out.Templates = append(out.Templates, item)
+	}
+	for _, s := range stacks {
+		awaiting := s.state == apiv1.MigrationContainerStackStateStarted
+		out.Stacks = append(out.Stacks, mockStackToAPI(s, awaiting))
+		if awaiting && !out.Awaiting.Set {
+			out.Awaiting = apiv1.NewOptString(s.name)
+		}
+	}
+	if !out.Awaiting.Set {
+		for _, s := range out.Stacks {
+			if s.State != apiv1.MigrationContainerStackStateConfirmed {
+				out.Next = apiv1.NewOptString(s.Name)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+type mockPlannedStack struct {
+	name, stack, compose string
+	kind                 apiv1.MigrationContainerStackKind
+	position, wait       int
+}
+
+// CreateMigrationStacks mirrors production's CreateStacks: the parity gate,
+// then a selection that is empty or repeats itself, then each selection in
+// turn (not found, unreadable, unacknowledged warnings, a name no stack can
+// have, a stack name two selections share), all before the first stack is made;
+// then one result per selection, a failure of one leaving the others created.
+func (h *handler) CreateMigrationStacks(ctx context.Context, req *apiv1.MigrationStacksRequest) (*apiv1.MigrationStacksCreated, error) {
+	if err := h.requireMockParityInitialized(); err != nil {
+		return nil, err
+	}
+	if len(req.Items) == 0 {
+		return nil, errMigrationRefusal("invalid_selection", 400, fmt.Errorf("%w: select at least one template or Compose Manager project", migrate.ErrInvalidSelection))
+	}
+	h.migration.flowMu.Lock()
+	defer h.migration.flowMu.Unlock()
+	seen := map[string]bool{}
+	for _, it := range req.Items {
+		if seen[it.Name] {
+			return nil, errMigrationRefusal("invalid_selection", 400, fmt.Errorf("%w: %q is selected twice", migrate.ErrInvalidSelection, it.Name))
+		}
+		seen[it.Name] = true
+	}
+	templates, err := mockMigrationTemplates()
+	if err != nil {
+		return nil, err
+	}
+	var plan []mockPlannedStack
+	stacks := map[string]string{}
+	for _, it := range req.Items {
+		if err := h.requireMigrationReport(); err != nil {
+			return nil, err
+		}
+		h.migration.mu.Lock()
+		fromStick := h.migration.device != ""
+		h.migration.mu.Unlock()
+		if fromStick {
+			return nil, errMigrationRefusal("template_source_unavailable", 409, fmt.Errorf("%q: %w", it.Name, migrate.ErrSourceUnavailable))
+		}
+		p := mockPlannedStack{name: it.Name, kind: apiv1.MigrationContainerStackKindTemplate}
+		found := false
+		if it.Name == "stack" {
+			found, p.kind, p.compose, p.stack = true, apiv1.MigrationContainerStackKindComposeProject, mockComposeProject, migrate.StackNameFor("stack")
+		}
+		for _, t := range templates {
+			if t.file != it.Name {
+				continue
+			}
+			found = true
+			if actionWarnings(t.conv) > 0 && !it.Acknowledged.Or(false) {
+				return nil, errMigrationRefusal("warnings_not_acknowledged", 409, fmt.Errorf("%q: %w", it.Name, migrate.ErrWarningsNotAcknowledged))
+			}
+			p.compose, p.stack, p.position, p.wait = t.conv.Compose, migrate.StackNameFor(t.conv.Metadata.Title), t.position, t.wait
+		}
+		if !found {
+			return nil, errMigrationRefusal("template_not_found", 404, fmt.Errorf("%q: %w", it.Name, migrate.ErrTemplateNotFound))
+		}
+		if !container.ValidStackName(p.stack) {
+			return nil, errMigrationRefusal("invalid_selection", 400, fmt.Errorf("%w: %q has no name a stack can have", migrate.ErrInvalidSelection, it.Name))
+		}
+		if other, dup := stacks[p.stack]; dup {
+			return nil, errMigrationRefusal("invalid_selection", 400, fmt.Errorf("%w: %q and %q would both create the stack %q", migrate.ErrInvalidSelection, other, it.Name, p.stack))
+		}
+		stacks[p.stack] = it.Name
+		plan = append(plan, p)
+	}
+	sort.SliceStable(plan, func(i, j int) bool {
+		a, b := plan[i].position, plan[j].position
+		return a > 0 && (b == 0 || a < b)
+	})
+	out := &apiv1.MigrationStacksCreated{Results: make([]apiv1.MigrationStackResult, 0, len(plan))}
+	for _, p := range plan {
+		res := apiv1.MigrationStackResult{Name: p.name, Stack: p.stack, Status: apiv1.MigrationStackResultStatusCreated}
+		h.migration.mu.Lock()
+		i := mockStackIndex(h.migration.containers, func(s mockMigratedStack) bool { return s.source == p.name })
+		var earlier string
+		if i >= 0 {
+			earlier = h.migration.containers[i].name
+		}
+		h.migration.mu.Unlock()
+		if i >= 0 {
+			h.stacksMu.Lock()
+			_, exists := h.stacks[earlier]
+			h.stacksMu.Unlock()
+			if exists {
+				res.Status = apiv1.MigrationStackResultStatusAlreadyCreated
+				out.Results = append(out.Results, res)
+				continue
+			}
+		}
+		if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: p.stack, Compose: p.compose}); err != nil {
+			res.Status = apiv1.MigrationStackResultStatusFailed
+			var me *mockError
+			if errors.As(err, &me) {
+				res.Error = apiv1.NewOptError(apiv1.Error{Code: me.code, Message: me.message})
+			} else {
+				res.Error = apiv1.NewOptError(apiv1.Error{Code: "stack_action_failed", Message: err.Error()})
+			}
+			out.Results = append(out.Results, res)
+			continue
+		}
+		entry := mockMigratedStack{name: p.stack, source: p.name, kind: p.kind, position: p.position, wait: p.wait, state: apiv1.MigrationContainerStackStateCreated}
+		h.migration.mu.Lock()
+		if i >= 0 {
+			h.migration.containers[i] = entry
+		} else {
+			h.migration.containers = append(h.migration.containers, entry)
+		}
+		h.migration.mu.Unlock()
+		out.Results = append(out.Results, res)
+	}
+	return out, nil
+}
+
+// StartMigrationContainer mirrors production's StartContainer: the parity gate,
+// a stack the migration created, one not yet confirmed, the stack's row, the
+// array, and another started stack that is not confirmed, then the stack_start
+// job, which the mock leaves queued as it does for startStack.
+func (h *handler) StartMigrationContainer(ctx context.Context, params apiv1.StartMigrationContainerParams) (*apiv1.Job, error) {
+	if err := h.requireMockParityInitialized(); err != nil {
+		return nil, err
+	}
+	if err := h.requireMigrationReport(); err != nil {
+		return nil, err
+	}
+	h.migration.flowMu.Lock()
+	defer h.migration.flowMu.Unlock()
+	h.migration.mu.Lock()
+	i, err := h.migration.stackFor(params.Name)
+	var target mockMigratedStack
+	if err == nil {
+		target = h.migration.containers[i]
+	}
+	h.migration.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if target.state == apiv1.MigrationContainerStackStateConfirmed {
+		return nil, errMigrationRefusal("container_confirmed", 409, fmt.Errorf("%w: %s", migrate.ErrContainerConfirmed, params.Name))
+	}
+	h.stacksMu.Lock()
+	_, ok := h.stacks[params.Name]
+	h.stacksMu.Unlock()
+	if !ok {
+		return nil, errStackNotFound(params.Name)
+	}
+	if err := h.requireArrayRunning(); err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	for _, s := range h.migration.containers {
+		if s.name != params.Name && s.state == apiv1.MigrationContainerStackStateStarted {
+			h.migration.mu.Unlock()
+			return nil, errMigrationRefusal("container_unconfirmed", 409, fmt.Errorf("%w: %s", migrate.ErrContainerUnconfirmed, s.name))
+		}
+	}
+	h.migration.mu.Unlock()
+	j, err := h.queueServiceJob(apiv1.JobTypeStackStart)
+	if err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	if i, err := h.migration.stackFor(params.Name); err == nil {
+		s := &h.migration.containers[i]
+		s.state, s.checked, s.checkFailed = apiv1.MigrationContainerStackStateStarted, false, false
+	}
+	h.migration.mu.Unlock()
+	return j, nil
+}
+
+// mockBindPaths are the host paths under /mnt/user and /mnt/cache the stack's
+// Compose file mounts.
+func mockBindPaths(compose string) []string {
+	var doc struct {
+		Services map[string]struct {
+			Volumes []any `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+	if yaml.Unmarshal([]byte(compose), &doc) != nil {
+		return nil
+	}
+	var names []string
+	for n := range doc.Services {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var out []string
+	for _, n := range names {
+		for _, v := range doc.Services[n].Volumes {
+			src := ""
+			switch x := v.(type) {
+			case string:
+				src, _, _ = strings.Cut(x, ":")
+			case map[string]any:
+				src, _ = x["source"].(string)
+			}
+			for _, root := range []string{"/mnt/user", "/mnt/cache"} {
+				if src == root || strings.HasPrefix(src, root+"/") {
+					out = append(out, src)
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+// CheckMigrationContainer mirrors production's CheckContainer. The mock reads no
+// disk: a path whose last element holds "empty" or "missing" reads as that, and
+// every other path as holding data.
+func (h *handler) CheckMigrationContainer(ctx context.Context, params apiv1.CheckMigrationContainerParams) (*apiv1.MigrationContainerCheck, error) {
+	if err := h.requireMockParityInitialized(); err != nil {
+		return nil, err
+	}
+	if err := h.requireMigrationReport(); err != nil {
+		return nil, err
+	}
+	h.migration.mu.Lock()
+	i, err := h.migration.stackFor(params.Name)
+	var st mockMigratedStack
+	if err == nil {
+		st = h.migration.containers[i]
+	}
+	h.migration.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if st.state == apiv1.MigrationContainerStackStateCreated {
+		return nil, errMigrationRefusal("container_not_started", 409, fmt.Errorf("%w: %s", migrate.ErrContainerNotStarted, params.Name))
+	}
+	h.stacksMu.Lock()
+	stack := h.stacks[params.Name]
+	h.stacksMu.Unlock()
+	out := &apiv1.MigrationContainerCheck{Stack: params.Name, Running: true, AllOk: true, Paths: []apiv1.MigrationDataPath{}}
+	for _, p := range mockBindPaths(stack.Compose.Or("")) {
+		item := apiv1.MigrationDataPath{Container: params.Name, Path: p, Destination: "/data", Status: apiv1.MigrationDataPathStatusOk}
+		switch last := path.Base(p); {
+		case strings.Contains(last, "missing"):
+			item.Status = apiv1.MigrationDataPathStatusMissing
+		case strings.Contains(last, "empty"):
+			item.Status = apiv1.MigrationDataPathStatusEmpty
+		}
+		if item.Status != apiv1.MigrationDataPathStatusOk {
+			out.AllOk = false
+		}
+		out.Paths = append(out.Paths, item)
+	}
+	if st.state == apiv1.MigrationContainerStackStateStarted {
+		h.migration.mu.Lock()
+		if i, err := h.migration.stackFor(params.Name); err == nil {
+			h.migration.containers[i].checked, h.migration.containers[i].checkFailed = true, !out.AllOk
+		}
+		h.migration.mu.Unlock()
+	}
+	return out, nil
+}
+
+// ConfirmMigrationContainer mirrors production's ConfirmContainer, whose last
+// refusal, no container running, the mock cannot reach: its containers run until
+// they are confirmed.
+func (h *handler) ConfirmMigrationContainer(ctx context.Context, req apiv1.OptMigrationContainerConfirmRequest, params apiv1.ConfirmMigrationContainerParams) (*apiv1.MigrationContainerStack, error) {
+	if err := h.requireMockParityInitialized(); err != nil {
+		return nil, err
+	}
+	if err := h.requireMigrationReport(); err != nil {
+		return nil, err
+	}
+	h.migration.flowMu.Lock()
+	defer h.migration.flowMu.Unlock()
+	h.migration.mu.Lock()
+	defer h.migration.mu.Unlock()
+	i, err := h.migration.stackFor(params.Name)
+	if err != nil {
+		return nil, err
+	}
+	st := &h.migration.containers[i]
+	accept := req.Or(apiv1.MigrationContainerConfirmRequest{}).AcceptFailedCheck.Or(false)
+	switch {
+	case st.state == apiv1.MigrationContainerStackStateConfirmed:
+	case st.state != apiv1.MigrationContainerStackStateStarted:
+		return nil, errMigrationRefusal("container_not_started", 409, fmt.Errorf("%w: %s", migrate.ErrContainerNotStarted, params.Name))
+	case !st.checked:
+		return nil, errMigrationRefusal("data_check_required", 409, fmt.Errorf("%w: %s", migrate.ErrDataCheckRequired, params.Name))
+	case st.checkFailed && !accept:
+		return nil, errMigrationRefusal("data_check_failed", 409, fmt.Errorf("%w: %s", migrate.ErrDataCheckFailed, params.Name))
+	default:
+		st.state = apiv1.MigrationContainerStackStateConfirmed
+	}
+	out := mockStackToAPI(*st, false)
+	return &out, nil
 }
