@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -85,6 +86,34 @@ func TestSystemdMounter_Mount_AdoptsAlreadyOwnMount(t *testing.T) {
 	}
 	if set["user.mergerfs.branches"] != m.What {
 		t.Fatalf("applyRuntime branches = %q, want %q", set["user.mergerfs.branches"], m.What)
+	}
+}
+
+// TestSystemdMounter_Mount_AdoptsLiveReadOnlyPoolUnchanged is #621 on the
+// production mounter: a read-only catch-all the storage target already
+// started is adopted without a write the kernel would refuse with EROFS.
+func TestSystemdMounter_Mount_AdoptsLiveReadOnlyPoolUnchanged(t *testing.T) {
+	where := testWhere(t)
+	m := Mount{
+		Where: where, What: "/mnt/disk1=RO:/mnt/disk2=RO", FSName: "hoserva-pool", ReadOnly: true,
+		CreatePolicy: DefaultCreatePolicy, Options: Options{MinFreeSpace: "20G"},
+	}
+	r := disk.NewFakeRunner()
+	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte(m.FSName+"\n"), nil)
+
+	live := map[string]string{
+		"user.mergerfs.branches":        m.What,
+		"user.mergerfs.category.create": string(DefaultCreatePolicy),
+		"user.mergerfs.minfreespace":    "21474836480",
+	}
+	mounter := SystemdMounter{
+		Runner:       r,
+		IsMountpoint: func(string) (bool, error) { return true, nil },
+		GetXattr:     func(_, attr string) ([]byte, error) { return []byte(live[attr]), nil },
+		SetXattr:     func(string, string, []byte) error { return syscall.EROFS },
+	}
+	if err := mounter.Mount(context.Background(), m); err != nil {
+		t.Fatalf("Mount: got %v, want nil for a live read-only pool that already has these options", err)
 	}
 }
 

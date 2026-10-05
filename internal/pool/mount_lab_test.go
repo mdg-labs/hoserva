@@ -24,8 +24,10 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -290,5 +292,63 @@ func TestLabPoolTopology_MountsInOrderAndSurvivesRemount(t *testing.T) {
 	}
 	if got := mustReadFile(t, filepath.Join(shareMount.Where, "hello.txt")); got != "hello from the lab" {
 		t.Fatalf("after remount, hello.txt = %q, want the byte-identical original", got)
+	}
+}
+
+// TestLabMounter_MountAdoptsLiveReadOnlyPool is #621's regression test: the
+// storage target can already have mounted the read-only catch-all of a
+// pending Unraid adoption by the time the import applies the same mount to it
+// (a retried apply, or hoserva-storage.target pulling the unit in). The kernel
+// refuses setxattr on a read-only mount, so writing the runtime options back
+// to the mount's control file failed with EROFS even though nothing differed.
+// Mounting an already-live read-only pool with the values it already has must
+// be a no-op; a value that would change cannot be applied to a read-only
+// mount, and must say so without touching it.
+func TestLabMounter_MountAdoptsLiveReadOnlyPool(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	mounter := Mounter{Runner: disk.CommandRunner{}}
+
+	dataDisks := []string{
+		filepath.Join(lab, "mnt", "disk1"),
+		filepath.Join(lab, "mnt", "disk2"),
+	}
+	for _, d := range dataDisks {
+		if _, err := os.Stat(d); err != nil {
+			t.Fatalf("data disk %s not present — expected create-array.sh to have mounted it: %v", d, err)
+		}
+	}
+	mustWriteFile(t, filepath.Join(dataDisks[0], "adopted.txt"), "on an adopted disk")
+
+	opts := Options{MinFreeSpace: "50M", Responsiveness: Responsive}
+	where := filepath.Join(lab, "mnt", "pool-ro-test")
+	mustMkdirAll(t, where)
+	ro, err := CatchAllMountReadOnly(dataDisks, opts)
+	if err != nil {
+		t.Fatalf("CatchAllMountReadOnly: %v", err)
+	}
+	ro.Where = where
+	t.Cleanup(func() { _ = mounter.Unmount(context.Background(), where) })
+
+	if err := mounter.Mount(ctx, ro); err != nil {
+		t.Fatalf("mounting the read-only pool: %v", err)
+	}
+	if err := mounter.Mount(ctx, ro); err != nil {
+		t.Fatalf("applying the same mount to the live read-only pool: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(where, "adopted.txt")); got != "on an adopted disk" {
+		t.Fatalf("the pool does not serve the adopted disk after the second Mount: %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(where, "new.txt"), []byte("x"), 0o644); !errors.Is(err, syscall.EROFS) {
+		t.Fatalf("a write through the read-only pool: got %v, want EROFS", err)
+	}
+
+	changed := ro
+	changed.Options.MinFreeSpace = "60M"
+	if err := mounter.Mount(ctx, changed); !errors.Is(err, syscall.EROFS) {
+		t.Fatalf("a changed option on a live read-only pool: got %v, want EROFS", err)
+	}
+	if got := mustReadFile(t, filepath.Join(where, "adopted.txt")); got != "on an adopted disk" {
+		t.Fatalf("the refused change disturbed the pool: %q", got)
 	}
 }
