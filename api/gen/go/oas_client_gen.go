@@ -2095,7 +2095,10 @@ type Invoker interface {
 	// §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
 	// mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
 	// copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
-	// There is no second relocation-invocation path.
+	// There is no second relocation-invocation path. Moving to the cache is refused with 409
+	// `no_cache_disk` before any job is queued while the array has no cache disk, and with 409 `no_array`
+	// while there is no array; a failure to read the array topology fails the request rather than assuming
+	// a cache.
 	//
 	// POST /shares/{name}/relocate
 	StartShareRelocation(ctx context.Context, request *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)
@@ -25279,7 +25282,10 @@ func (c *Client) sendStartScrub(ctx context.Context, request *StartScrubRequest)
 // §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
 // mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
 // copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
-// There is no second relocation-invocation path.
+// There is no second relocation-invocation path. Moving to the cache is refused with 409
+// `no_cache_disk` before any job is queued while the array has no cache disk, and with 409 `no_array`
+// while there is no array; a failure to read the array topology fails the request rather than assuming
+// a cache.
 //
 // POST /shares/{name}/relocate
 func (c *Client) StartShareRelocation(ctx context.Context, request *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error) {

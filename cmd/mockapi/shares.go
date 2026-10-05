@@ -51,6 +51,22 @@ func mockCacheModeNeedsCacheDisk(mode apiv1.ShareCacheMode, scenario string) err
 	return errShareInvalidInput(fmt.Sprintf("cache mode %q needs a cache disk", mode))
 }
 
+// mockRequireCacheDisk mirrors internal/api's requireCacheDisk: a
+// relocation to the cache is refused before a job is queued when the array
+// has no cache disk (no_cache_disk), or no array at all (no_array).
+func mockRequireCacheDisk(scenario string) error {
+	disks := mockArrayDisks(scenario)
+	if disks == nil {
+		return &mockError{code: "no_array", statusCode: 409, message: "no array has been created yet"}
+	}
+	for _, d := range disks {
+		if d.Role == store.ArrayRoleCache {
+			return nil
+		}
+	}
+	return &mockError{code: "no_cache_disk", statusCode: 409, message: "the array has no cache disk to relocate this share to"}
+}
+
 // defaultShareNFS and normalizeShareNFS both stamp fsid from name the
 // same way internal/api's shareToAPI does (#351), so the mock's
 // response matches what a real hoservad would return for the same
@@ -238,6 +254,11 @@ func (h *handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	defer h.mu.Unlock()
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return nil, errShareNotFound(params.Name)
+	}
+	if req.To == apiv1.StartShareRelocationRequestToCache {
+		if err := mockRequireCacheDisk(h.scenario); err != nil {
+			return nil, err
+		}
 	}
 	// Production's Scheduler.Submit refuses every job type but
 	// TypeDiskUpgradeData while maintenance mode is active (Q70).

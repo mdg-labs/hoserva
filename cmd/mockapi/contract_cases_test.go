@@ -2380,6 +2380,17 @@ var contractCases = []contractCase{
 	},
 	{
 		op:   "StartShareRelocation",
+		name: "to_cache_without_a_cache_disk_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "StartShareRelocation",
 		name: "refused_in_maintenance_mode",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {

@@ -970,7 +970,7 @@ export interface paths {
         put?: never;
         /**
          * Relocate a share between cache and array
-         * @description Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09 §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path.
+         * @description Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09 §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path. Moving to the cache is refused with 409 `no_cache_disk` before any job is queued while the array has no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology fails the request rather than assuming a cache.
          */
         post: operations["startShareRelocation"];
         delete?: never;
