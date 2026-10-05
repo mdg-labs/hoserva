@@ -228,14 +228,36 @@ serial_of() {
   echo "${s:0:20}"
 }
 
-# domain_dev_for_serial SERIAL prints the target dev (vdh) of this lab's disk
-# with that serial, from the live domain XML.
+# domain_dev_for_serial SERIAL prints the target dev (vdh) of every disk in this
+# lab's domain whose serial, cut to the guest's 20 bytes, is SERIAL. The domain
+# XML carries create-vm.sh's full serial; SERIAL is what serial_of derives from it.
 domain_dev_for_serial() {
   virsh -c "$VM_CONNECT" dumpxml "$VM_DOMAIN" | awk -v want="$1" '
     /<disk /       { dev = ""; ser = "" }
     /<target dev=/ { match($0, /dev=.[a-z0-9]+./); dev = substr($0, RSTART + 5, RLENGTH - 6) }
     /<serial>/     { s = $0; gsub(/.*<serial>|<\/serial>.*/, "", s); ser = s }
-    /<\/disk>/     { if (ser == want) { print dev; exit } }'
+    /<\/disk>/     { if (substr(ser, 1, 20) == want) print dev }'
+}
+
+# slot_dev SLOT sets SLOT_DEV to the target dev of the slot's disk in the domain,
+# and fails with STEP_REASON unless exactly one disk carries its serial. The disk
+# name leads create-vm.sh's serial and differs within its first 5 bytes, so the
+# first 20 bytes name one disk whatever the lab id's length.
+slot_dev() {
+  local serial devs
+  serial=$(serial_of "$1")
+  devs=$(domain_dev_for_serial "$serial")
+  case "$(printf '%s' "$devs" | grep -c .)" in
+    1) SLOT_DEV=$devs ;;
+    0)
+      STEP_REASON="the domain has no disk with the serial $serial"
+      return 1
+      ;;
+    *)
+      STEP_REASON="more than one disk of the domain has the serial $serial (${devs//$'\n'/ }), so none is picked"
+      return 1
+      ;;
+  esac
 }
 
 # ----------------------------------------------------------------- step 1
@@ -281,11 +303,8 @@ grow_cache_disk() {
   local slot=$CACHE_SLOT dev bytes want
   [[ -n "$slot" ]] || return 0
   [[ -z "${D_BOOT[$slot]:-}" ]] || return 0
-  dev=$(domain_dev_for_serial "$(serial_of "$slot")")
-  [[ -n "$dev" ]] || {
-    STEP_REASON="the domain has no disk with the serial $(serial_of "$slot")"
-    return 1
-  }
+  slot_dev "$slot" || return 1
+  dev=$SLOT_DEV
   bytes=$(numfmt --from=iec "${D_SIZE[$slot]}")
   want=$((CACHE_GROWN_GIB * 1024 * 1024 * 1024))
   if ((bytes >= want)); then return 0; fi
@@ -299,11 +318,8 @@ grow_cache_disk() {
 detach_fixture_cache() {
   local slot=$CACHE_SLOT dev
   [[ -n "$slot" ]] || return 0
-  dev=$(domain_dev_for_serial "$(serial_of "$slot")")
-  [[ -n "$dev" ]] || {
-    STEP_REASON="the domain has no disk with the serial $(serial_of "$slot")"
-    return 1
-  }
+  slot_dev "$slot" || return 1
+  dev=$SLOT_DEV
   echo "vm-migration-suite[$HOSERVA_LAB_ID]: shared NVMe: detaching the fixture's cache disk $dev; the OS disk's spare partition is the cache"
   vm_assert_own_domain "$VM_DOMAIN"
   virsh -c "$VM_CONNECT" detach-disk "$VM_DOMAIN" "$dev" --live >/dev/null
