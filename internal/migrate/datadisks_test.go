@@ -1469,3 +1469,122 @@ func TestDataDisks_AParityDiskHoldingACopyOfADataDisksUUID(t *testing.T) {
 		}
 	})
 }
+
+// sharedBtrfs makes disk2 and disk3 two btrfs devices carrying one filesystem
+// UUID, each superblock saying it spans devices devices.
+func (e *dataEnv) sharedBtrfs(devices int) {
+	e.t.Helper()
+	list, _ := e.disks.List(context.Background())
+	var uuid string
+	for _, d := range list {
+		if d.Device == e.dev["disk2"] {
+			uuid = d.FSUUID
+		}
+	}
+	e.setFS("disk2", 2, "btrfs")
+	e.setFS("disk3", 3, "btrfs")
+	e.setDisk("disk3", func(d *disk.Disk) { d.FSUUID = uuid })
+	e.scriptBtrfs(e.dev["disk2"]+"1", devices, 0)
+	e.scriptBtrfs(e.dev["disk3"]+"1", devices, 0)
+}
+
+func refusalCode(r *Report, slot string) RefusalCode {
+	for _, d := range r.Review.Disks {
+		if d.Slot == slot && d.Refused {
+			return d.RefusalCode
+		}
+	}
+	return ""
+}
+
+// Two devices of one multi-device btrfs filesystem carry one UUID, as two
+// cloned filesystems do. The superblock's device count tells them apart: a
+// filesystem spanning more than one device is refused as a multi-device
+// member, and a clone, whose superblock says one device, stays a duplicate.
+// Either way both disks are refused and neither is checked or mounted.
+func TestDataDisks_TwoDevicesOfOneBtrfsFilesystemAreRefusedAsMembersNotAsClones(t *testing.T) {
+	cases := []struct {
+		name    string
+		devices int
+		code    RefusalCode
+		text    string
+	}{
+		{"one filesystem on two devices", 2, RefuseMultiDeviceBtrfs, "one of 2 devices of a btrfs filesystem"},
+		{"one filesystem on three devices", 3, RefuseMultiDeviceBtrfs, "one of 3 devices of a btrfs filesystem"},
+		{"a cloned single-device filesystem", 1, RefuseDuplicateUUID, "its filesystem UUID is also on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newDataEnv(t, primary)
+			e.sharedBtrfs(tc.devices)
+			r := e.scan()
+			for _, slot := range []string{"disk2", "disk3"} {
+				if !hasRowText(r, CheckDataDisks, StatusRefuse, slot, tc.text) {
+					t.Errorf("%s: no refusal saying %q: %+v", slot, tc.text, rowsFor(r, CheckDataDisks))
+				}
+				if got := refusalCode(r, slot); got != tc.code {
+					t.Errorf("%s: refusal code = %q, want %q", slot, got, tc.code)
+				}
+			}
+			if r.Verdict != VerdictNoGo {
+				t.Errorf("verdict = %s, want no_go", r.Verdict)
+			}
+			for _, dev := range []string{e.dev["disk2"] + "1", e.dev["disk3"] + "1"} {
+				if e.ran("btrfs", "check", "--readonly", dev) {
+					t.Errorf("%s was checked after it was refused", dev)
+				}
+				for _, m := range e.mountedDevices() {
+					if m == dev {
+						t.Errorf("%s was mounted after it was refused", dev)
+					}
+				}
+			}
+		})
+	}
+}
+
+// The other member of a multi-device filesystem need not be a data disk (an
+// unassigned device, a cache member): the disk the capture names is still
+// refused as a member, not as a clone of a disk that is not adopted.
+func TestDataDisks_AMultiDeviceBtrfsMemberSharingItsUUIDWithAnUnassignedDisk(t *testing.T) {
+	e := newDataEnv(t, primary)
+	list, _ := e.disks.List(context.Background())
+	var uuid string
+	for _, d := range list {
+		if d.Device == e.dev["disk2"] {
+			uuid = d.FSUUID
+		}
+	}
+	e.setFS("disk2", 2, "btrfs")
+	e.disks.AddDisk("/dev/sdx", disk.Disk{Serial: "OTHER", Size: 8 << 30, Filesystem: "btrfs", FSUUID: uuid, FSDevice: "/dev/sdx1"})
+	e.scriptBtrfs(e.dev["disk2"]+"1", 2, 0)
+	r := e.scan()
+	if got := refusalCode(r, "disk2"); got != RefuseMultiDeviceBtrfs {
+		t.Errorf("refusal code = %q, want %q: %+v", got, RefuseMultiDeviceBtrfs, rowsFor(r, CheckDataDisks))
+	}
+	for _, m := range e.mountedDevices() {
+		if m == e.dev["disk2"]+"1" {
+			t.Errorf("the member was mounted")
+		}
+	}
+}
+
+// A superblock that cannot be read leaves a shared UUID unexplained, and the
+// disk is still refused, never passed as "not a duplicate".
+func TestDataDisks_ASharedBtrfsUUIDWithAnUnreadableSuperblockIsStillRefused(t *testing.T) {
+	e := newDataEnv(t, primary)
+	e.sharedBtrfs(2)
+	e.runner.Script("btrfs", []string{"inspect-internal", "dump-super", e.dev["disk2"] + "1"}, nil, errors.New("exit status 1"))
+	r := e.scan()
+	if got := refusalCode(r, "disk2"); got != RefuseDuplicateUUID {
+		t.Errorf("disk2 refusal code = %q, want %q: %+v", got, RefuseDuplicateUUID, rowsFor(r, CheckDataDisks))
+	}
+	if got := refusalCode(r, "disk3"); got != RefuseMultiDeviceBtrfs {
+		t.Errorf("disk3 refusal code = %q, want %q", got, RefuseMultiDeviceBtrfs)
+	}
+	for _, m := range e.mountedDevices() {
+		if m == e.dev["disk2"]+"1" || m == e.dev["disk3"]+"1" {
+			t.Errorf("a disk of the shared pair was mounted: %v", e.mountedDevices())
+		}
+	}
+}

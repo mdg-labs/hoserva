@@ -282,9 +282,34 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 	// never found by its UUID, so the copy cannot be mounted in its place; with
 	// no such link nothing but the UUID could tell the two apart, and it is
 	// refused.
+	//
+	// The devices of one multi-device btrfs filesystem share its UUID too, and
+	// are not clones: the superblock's own device count tells them apart (a
+	// clone of a single-device filesystem says one device, a member says the
+	// filesystem's), so a btrfs disk whose UUID is shared reads its superblock
+	// first and a filesystem spanning devices is refused as that, not as a
+	// duplicate. A superblock that cannot be read explains nothing: the
+	// disk is refused as before, for the shared UUID or at the later superblock
+	// check, never passed.
 	dataDevices := map[string]bool{}
 	for _, m := range candidates {
 		dataDevices[m.disk.Device] = true
+	}
+	type superRead struct {
+		sb  btrfsSuperblock
+		err error
+	}
+	supers := map[*member]superRead{}
+	superOf := func(m *member) (superRead, error) {
+		if c, ok := supers[m]; ok {
+			return c, nil
+		}
+		sb, err := btrfsSuper(ctx, s.Runner, m.disk.FSDevice)
+		if cerr := ctx.Err(); cerr != nil {
+			return superRead{}, cerr
+		}
+		supers[m] = superRead{sb, err}
+		return supers[m], nil
 	}
 	var unique []*member
 	for _, m := range candidates {
@@ -296,6 +321,16 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 				sharedData = append(sharedData, dev)
 			default:
 				sharedOther = append(sharedOther, dev)
+			}
+		}
+		if m.fs == disk.BTRFS && len(sharedData)+len(sharedOther) > 0 {
+			sr, cerr := superOf(m)
+			if cerr != nil {
+				return cerr
+			}
+			if sr.err == nil && sr.sb.devices != 1 {
+				r.refuseDisk(m, CheckDataDisks, RefuseMultiDeviceBtrfs, "it is one of %d devices of a btrfs filesystem, which is not a self-contained filesystem per disk (Q23)", sr.sb.devices)
+				continue
 			}
 		}
 		switch {
@@ -317,13 +352,14 @@ func (s *Scanner) checkDataDisks(ctx context.Context, r *Report, f *Flash, membe
 	var clean []*member
 	for _, m := range unique {
 		if m.fs == disk.BTRFS {
-			sb, err := btrfsSuper(ctx, s.Runner, m.disk.FSDevice)
-			if cerr := ctx.Err(); cerr != nil {
+			sr, cerr := superOf(m)
+			if cerr != nil {
 				return cerr
 			}
+			sb := sr.sb
 			switch {
-			case err != nil:
-				r.refuseDisk(m, CheckDataDisks, RefuseUnverifiedFS, "it could not be shown to be a single-device btrfs filesystem with a clean log (%s)", briefly(err))
+			case sr.err != nil:
+				r.refuseDisk(m, CheckDataDisks, RefuseUnverifiedFS, "it could not be shown to be a single-device btrfs filesystem with a clean log (%s)", briefly(sr.err))
 				continue
 			case sb.devices != 1:
 				r.refuseDisk(m, CheckDataDisks, RefuseMultiDeviceBtrfs, "it is one of %d devices of a btrfs filesystem, which is not a self-contained filesystem per disk (Q23)", sb.devices)
