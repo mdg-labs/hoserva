@@ -181,10 +181,14 @@ func NextChainRun(now time.Time, loc *time.Location, startTime string) time.Time
 }
 
 // ChainIsDue reports whether today's start time has been reached in loc
-// and this window has not already been claimed. lastRun is nil when the
-// chain has never started. A missed night is not backfilled: only
-// today's window is considered.
-func ChainIsDue(now time.Time, loc *time.Location, startTime string, lastRun *time.Time) bool {
+// and this window has not already been claimed. A window is claimed by
+// lastRun, or — while the chain has never started (lastRun nil) — by
+// armedAt, the moment the chain was set up and able to run (the later of
+// its settings' last save and the first instant it could be started), so a
+// chain armed after today's start time waits for tomorrow's, exactly as
+// NextChainRun reports, instead of starting at once. A missed night is not
+// backfilled: only today's window is considered.
+func ChainIsDue(now time.Time, loc *time.Location, startTime string, lastRun *time.Time, armedAt time.Time) bool {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -198,10 +202,11 @@ func ChainIsDue(now time.Time, loc *time.Location, startTime string, lastRun *ti
 	if localNow.Before(todayStart) {
 		return false
 	}
-	if lastRun != nil && !lastRun.In(loc).Before(todayStart) {
-		return false
+	claimedAt := armedAt
+	if lastRun != nil {
+		claimedAt = *lastRun
 	}
-	return true
+	return claimedAt.In(loc).Before(todayStart)
 }
 
 // NextOtherJobRun returns the next local instant a separately scheduled job runs.

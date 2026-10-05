@@ -187,22 +187,36 @@ type ClaimedChain struct {
 }
 
 // ClaimDueChain returns a claimed window when today's start time has
-// been reached and this night has not already been claimed. A nil result
-// means the chain is not due. Last-run is recorded before the caller
-// constructs MaintenanceChain.Run, not after it succeeds.
-func (s *ScheduleService) ClaimDueChain(ctx context.Context) (*ClaimedChain, error) {
+// been reached and this night has not already been claimed — by an earlier
+// run, or, for a chain that has never run, by the later of the moment its
+// settings were created or last saved and runnableSince, the instant the
+// caller first had the means to run it (job.ChainIsDue). A zero
+// runnableSince adds no bound. A nil result means the chain is not due.
+// Last-run is recorded before the caller constructs MaintenanceChain.Run,
+// not after it succeeds.
+//
+// The nextRun the API reports is the next start time after now, which for a
+// never-run chain is its first window, since neither the settings' save
+// time nor runnableSince is later than now. While the caller cannot run
+// the chain yet (no parity), that start is only the earliest the chain
+// could first run at: a start passing before parity is wired is not
+// claimed, and the first run is then the next start after it is.
+func (s *ScheduleService) ClaimDueChain(ctx context.Context, runnableSince time.Time) (*ClaimedChain, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	if err := s.Schedules.EnsureDefaults(ctx, now.UTC().Format(timeFormat)); err != nil {
 		return nil, err
 	}
-	chain, lastRun, err := s.loadChainWithLastRun(ctx)
+	chain, lastRun, configuredAt, err := s.loadChainWithLastRun(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if runnableSince.After(configuredAt) {
+		configuredAt = runnableSince
+	}
 	loc := s.timezone(ctx)
-	if !job.ChainIsDue(now, loc, chain.StartTime, lastRun) {
+	if !job.ChainIsDue(now, loc, chain.StartTime, lastRun, configuredAt) {
 		return nil, nil
 	}
 	if err := s.Schedules.SetChainLastRun(ctx, now.UTC().Format(timeFormat)); err != nil {
@@ -276,23 +290,31 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-func (s *ScheduleService) loadChainWithLastRun(ctx context.Context) (job.ChainSettings, *time.Time, error) {
+// loadChainWithLastRun returns the chain settings, when the chain last
+// started (nil if never) and when its settings were created or last saved.
+// A missing row reports configuredAt as now, so the chain waits for its
+// next start time instead of being due.
+func (s *ScheduleService) loadChainWithLastRun(ctx context.Context) (job.ChainSettings, *time.Time, time.Time, error) {
 	row, err := s.Schedules.GetChain(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return job.DefaultChainSettings(), nil, nil
+			return job.DefaultChainSettings(), nil, s.now(), nil
 		}
-		return job.ChainSettings{}, nil, fmt.Errorf("schedule: loading chain: %w", err)
+		return job.ChainSettings{}, nil, time.Time{}, fmt.Errorf("schedule: loading chain: %w", err)
 	}
 	chain := chainFromRow(row)
+	configuredAt, err := time.Parse(timeFormat, row.UpdatedAt)
+	if err != nil {
+		return job.ChainSettings{}, nil, time.Time{}, fmt.Errorf("schedule: parsing chain updated_at: %w", err)
+	}
 	if row.LastRunAt == "" {
-		return chain, nil, nil
+		return chain, nil, configuredAt, nil
 	}
 	t, err := time.Parse(timeFormat, row.LastRunAt)
 	if err != nil {
-		return job.ChainSettings{}, nil, fmt.Errorf("schedule: parsing chain last_run_at: %w", err)
+		return job.ChainSettings{}, nil, time.Time{}, fmt.Errorf("schedule: parsing chain last_run_at: %w", err)
 	}
-	return chain, &t, nil
+	return chain, &t, configuredAt, nil
 }
 
 func chainFromRow(row *ScheduleChainRow) job.ChainSettings {
