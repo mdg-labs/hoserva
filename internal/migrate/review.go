@@ -279,6 +279,7 @@ func reviewDisks(f *Flash, members []*member, machine []disk.Disk) []ReviewDisk 
 		out = append(out, m.reviewDisk(f))
 	}
 	out = AddBootDisks(out, f, machine)
+	proposeOneCache(out[:len(members)], members, f.ReviewBoot())
 	claimed := map[string]bool{}
 	for _, d := range out {
 		if d.Device != "" {
@@ -298,6 +299,52 @@ func reviewDisks(f *Flash, members []*member, machine []disk.Disk) []ReviewDisk 
 		out = append(out, rd)
 	}
 	return out
+}
+
+// cachePoolName is the pool whose disk is proposed as Hoserva's cache when
+// Unraid has several (doc 05 §2): the pool named cache, which is what Unraid
+// itself calls /mnt/cache, else the first by name. A boot pool of an internal
+// boot with no cache on it is not a cache pool.
+func cachePoolName(rows []ReviewDisk, members []*member, boot ReviewBoot) string {
+	var chosen string
+	for i, m := range members {
+		if m.pool == "" || deadBootPool(rows[i], boot) {
+			continue
+		}
+		if m.pool == "cache" {
+			return m.pool
+		}
+		if chosen == "" || m.pool < chosen {
+			chosen = m.pool
+		}
+	}
+	return chosen
+}
+
+func deadBootPool(row ReviewDisk, boot ReviewBoot) bool {
+	return row.UnraidBoot && boot.SharedWithCache != nil && !*boot.SharedWithCache
+}
+
+// proposeOneCache keeps the roles proposed for pool devices to the ones the
+// import accepts: it takes the cache role for one disk, the first device of the
+// cache pool that matched a disk of this machine, at most one cache disk in
+// all. Every other pool device that was proposed cache is proposed ignore,
+// which leaves it untouched, and so is the Unraid boot device that holds no
+// cache, which the import refuses as a cache. rows are the member rows, in
+// members' order.
+func proposeOneCache(rows []ReviewDisk, members []*member, boot ReviewBoot) {
+	pool := cachePoolName(rows, members, boot)
+	taken := false
+	for i, m := range members {
+		if m.pool == "" || rows[i].ProposedRole != ProposeCache {
+			continue
+		}
+		if deadBootPool(rows[i], boot) || m.pool != pool || taken {
+			rows[i].ProposedRole = ProposeIgnore
+			continue
+		}
+		taken = true
+	}
 }
 
 func claimedByAny(members []*member, d disk.Disk) bool {

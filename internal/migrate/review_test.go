@@ -859,3 +859,186 @@ func TestReview_ABootDiskInADataSlotIsNotProposedDataWhenTheDisksAreNotChecked(t
 		t.Errorf("disk3 = %+v, want data", d)
 	}
 }
+
+// proposedRoles is what accepting the scan's proposal sends to the import: every
+// row that is proposed a role and matched a disk of this machine, by its WWN or
+// else its serial.
+func proposedRoles(r *Report) []disk.AdoptionAssignment {
+	var out []disk.AdoptionAssignment
+	for _, d := range r.Review.Disks {
+		if d.ProposedRole == "" || d.Device == "" {
+			continue
+		}
+		a := disk.AdoptionAssignment{Role: disk.AdoptionRole(d.ProposedRole)}
+		if d.WWN != "" {
+			a.WWN = d.WWN
+		} else {
+			a.Serial = d.Serial
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func assertProposalImports(t *testing.T, r *Report, p disk.Provider) {
+	t.Helper()
+	listed, err := p.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanFromReview(r.Review, listed, proposedRoles(r)); err != nil {
+		t.Errorf("the import refuses the scan's own proposal %+v: %v", proposedRoles(r), err)
+	}
+}
+
+// importableDisks is this machine as the import sees it: fixtureDisks, with the
+// filesystem node and UUID a data disk is adopted from.
+func importableDisks(spec fixtureSpec) *disk.FakeProvider {
+	p := disk.NewFakeProvider()
+	for i, d := range spec.disks {
+		fsType := d.fs
+		if d.kind == "parity" {
+			fsType = "xfs"
+		}
+		dev := fmt.Sprintf("/dev/sd%c", "bcdefghij"[i])
+		p.AddDisk(dev, disk.Disk{
+			Serial: d.serial(), Size: d.size, Filesystem: fsType, FSDevice: dev + "1",
+			FSUUID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1),
+		})
+	}
+	return p
+}
+
+func proposedRole(t *testing.T, r *Report, slot string) ProposedRole {
+	t.Helper()
+	return reviewDisk(t, r, slot).ProposedRole
+}
+
+// What the scan proposes is what the import accepts: every fixture variant's
+// proposal passes the import's own role validation unchanged.
+func TestReview_TheProposedRolesAreRolesTheImportAccepts(t *testing.T) {
+	for _, variant := range fixtureVariants {
+		t.Run(variant, func(t *testing.T) {
+			files, spec := flashTree(t, variant)
+			p := importableDisks(spec)
+			r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(proposedRoles(r)) == 0 {
+				t.Fatal("nothing is proposed, so nothing was checked")
+			}
+			assertProposalImports(t, r, p)
+		})
+	}
+}
+
+// Unraid's named pools: one disk is Hoserva's cache, from the pool named cache
+// (doc 05 §2); every other pool's disk is proposed ignore, which leaves it
+// untouched.
+func TestReview_NamedPoolsProposeOneCacheDisk(t *testing.T) {
+	t.Run("the pool named cache", func(t *testing.T) {
+		files, spec := flashTree(t, "unraid-named-pools")
+		p := importableDisks(spec)
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := proposedRole(t, r, "pool cache"); got != ProposeCache {
+			t.Errorf("pool cache = %q, want cache", got)
+		}
+		if got := proposedRole(t, r, "pool fast"); got != ProposeIgnore {
+			t.Errorf("pool fast = %q, want ignore", got)
+		}
+		assertProposalImports(t, r, p)
+	})
+	t.Run("the pool named cache wins over one sorting before it", func(t *testing.T) {
+		files, spec := flashTree(t, "unraid-named-pools")
+		files["config/pools/archive.cfg"] = files["config/pools/fast.cfg"]
+		delete(files, "config/pools/fast.cfg")
+		p := importableDisks(spec)
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c, a := proposedRole(t, r, "pool cache"), proposedRole(t, r, "pool archive"); c != ProposeCache || a != ProposeIgnore {
+			t.Errorf("cache = %q, archive = %q, want cache and ignore", c, a)
+		}
+		assertProposalImports(t, r, p)
+	})
+	t.Run("no pool named cache: the first by name", func(t *testing.T) {
+		files, spec := flashTree(t, "unraid-named-pools")
+		files["config/pools/archive.cfg"] = files["config/pools/cache.cfg"]
+		delete(files, "config/pools/cache.cfg")
+		p := importableDisks(spec)
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a, f := proposedRole(t, r, "pool archive"), proposedRole(t, r, "pool fast"); a != ProposeCache || f != ProposeIgnore {
+			t.Errorf("archive = %q, fast = %q, want cache and ignore", a, f)
+		}
+		assertProposalImports(t, r, p)
+	})
+	t.Run("a pool of two disks", func(t *testing.T) {
+		files, spec := flashTree(t, "unraid-named-pools")
+		files["config/pools/cache.cfg"] = append(files["config/pools/cache.cfg"], []byte("diskId.1=\"FIXTURE_fast-hoserva-test\"\n")...)
+		delete(files, "config/pools/fast.cfg")
+		p := importableDisks(spec)
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cache := 0
+		for _, d := range r.Review.Disks {
+			if d.ProposedRole == ProposeCache {
+				cache++
+			}
+		}
+		if cache != 1 {
+			t.Errorf("%d disks are proposed cache, want one: %+v", cache, r.Review.Disks)
+		}
+		assertProposalImports(t, r, p)
+	})
+}
+
+// An Unraid internal boot device with no cache on it is the boot pool's own
+// device: the import refuses any role but ignore for it, so that is what is
+// proposed, while another pool's disk is still proposed cache.
+func TestReview_ADedicatedInternalBootDeviceIsProposedIgnore(t *testing.T) {
+	build := func(t *testing.T, withCache bool) (*Report, disk.Provider) {
+		files, spec := flashTree(t, "unraid-internal-boot")
+		if withCache {
+			spec.disks = append(spec.disks, fixtureDisk{slot: "fast", kind: "pool", fs: "xfs", size: 320 << 20})
+			files["config/pools/fast.cfg"] = []byte("diskId=\"" + spec.disks[len(spec.disks)-1].id() + "\"\n")
+		}
+		p := importableDisks(spec)
+		for i, d := range spec.disks {
+			if d.kind == "boot" {
+				dev := fmt.Sprintf("/dev/sd%c", "bcdefghij"[i])
+				p.AddDisk(dev, disk.Disk{Serial: d.serial(), Size: d.size, Filesystem: "zfs_member", UnraidBoot: true})
+			}
+		}
+		r, err := scanner(p).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r, p
+	}
+
+	t.Run("no cache anywhere", func(t *testing.T) {
+		r, p := build(t, false)
+		d := reviewDisk(t, r, "pool boot")
+		if !d.UnraidBoot || d.ProposedRole != ProposeIgnore {
+			t.Errorf("the boot pool's row = %+v, want the Unraid boot device, proposed ignore", d)
+		}
+		assertProposalImports(t, r, p)
+	})
+	t.Run("another pool is the cache", func(t *testing.T) {
+		r, p := build(t, true)
+		if a, b := proposedRole(t, r, "pool boot"), proposedRole(t, r, "pool fast"); a != ProposeIgnore || b != ProposeCache {
+			t.Errorf("boot = %q, fast = %q, want ignore and cache", a, b)
+		}
+		assertProposalImports(t, r, p)
+	})
+}

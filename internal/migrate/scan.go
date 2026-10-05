@@ -119,6 +119,8 @@ func InspectUpload(upload io.Reader, opts ScanOptions) (*Flash, error) {
 // device.
 type member struct {
 	subject string
+	// pool is the pool's name for a pool device, empty for an array slot.
+	pool    string
 	role    Role
 	id      string
 	index   int
@@ -229,7 +231,7 @@ func buildMembers(f *Flash, disks []disk.Disk) []*member {
 		out = append(out, &member{subject: sl.Name, role: role, id: sl.ID, index: sl.Index, unraid: sl.SizeKiB * 1024, slotFs: sl.FsType})
 	}
 	for _, p := range f.Pools {
-		out = append(out, &member{subject: "pool " + p.Pool, role: RoleCache, id: p.ID})
+		out = append(out, &member{subject: "pool " + p.Pool, pool: p.Pool, role: RoleCache, id: p.ID})
 	}
 
 	claims := map[string][]*member{}
