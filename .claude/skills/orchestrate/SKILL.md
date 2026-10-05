@@ -362,9 +362,18 @@ between.
    unavailable comparison as an empty `R`, and never act without a
    successful check.
 2. **In flight** — each unit dispatched but not yet landed, or landed-pending.
-   If it has committed, its files are `git -C <workspace> diff --name-only
-   dev..HEAD`, all counted as reviewable (no filter credit). If it has not
-   committed yet, use its estimate from step 3.
+   **Every count in this check is a CodeRabbit-reviewable count — never a raw
+   file count.** The cap is CodeRabbit's, so a file it never reviews never
+   counts. If the unit has committed, its files are
+   `git -C <workspace> diff --name-only origin/dev..HEAD -- . <excludes>`,
+   where `<excludes>` is one `':!<pattern>'` per `!`-prefixed entry in
+   `.coderabbit.yaml`'s `reviews.path_filters`, read the same way
+   `dev-diff.sh` reads them (today `api/gen/**`, `internal/store/db/**`,
+   `spikes/**`). Use `origin/dev`, not `dev`: the clone's own `dev` *is* the
+   executor's commit. Report the unit by this filtered count. A raw commit
+   file count is never quoted as the unit's size, in the plan or in a
+   progress update. If it has not committed yet, use its estimate from
+   step 3, which counts only files that are not excluded either.
 3. **Estimate high, never low.** For an issue not yet committed, `E` is the
    **larger** of its `Expected files:` line and a count derived from its
    step-3 scope at **one file per backticked file path and four per
@@ -386,7 +395,7 @@ between.
   A dropped issue goes back to `status:ready` if you touched its label, and
   is listed in the report as "dropped for the budget".
 - **A dispatch would push P to 90 or above** — don't dispatch it; drop it.
-- **Landing a commit would take |R ∪ commit files| past 100** — do not
+- **Landing a commit would take |R ∪ the commit's reviewable files| (filtered as in item 2) past 100** — do not
   land. Stop the run, leave the commit in its clone, and tell the maintainer
   a promotion is needed first. In-flight work that fits lands as built.
 - **|R| is already ≥ 90 at the start of a run** — dispatch nothing; tell
@@ -624,7 +633,7 @@ re-deriving them from GitHub.
 ## 8. On PASS — land, sequentially, never in parallel
 
 **Run the promotion-diff budget check (step 4) before every landing.** If
-`R` plus this commit's files would pass 100, do not land it — stop the run
+`R` plus this commit's reviewable files (step 4, item 2) would pass 100, do not land it — stop the run
 and say a promotion is needed first.
 
 Land one commit at a time, in bundle order, skipping members that FAILed.
