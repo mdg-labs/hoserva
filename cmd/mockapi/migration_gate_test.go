@@ -104,6 +104,29 @@ func TestMockJobsRefusedWhileMigrationUnfinished(t *testing.T) {
 				return err
 			}
 		}},
+		{"UpgradeDiskData", "healthy", func(t *testing.T, client apiv1.Invoker) func() error {
+			plan, err := client.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdf"})
+			if err != nil {
+				t.Fatalf("PlanDiskUpgrade(data): %v", err)
+			}
+			if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				t.Fatalf("StopArray: %v", err)
+			}
+			return func() error {
+				_, err := client.UpgradeDisk(ctx, &apiv1.UpgradeDiskRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdf", Confirmation: plan.Confirmation})
+				return err
+			}
+		}},
+		{"UpgradeDiskParity", "healthy", func(t *testing.T, client apiv1.Invoker) func() error {
+			plan, err := client.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{Mountpoint: "/mnt/parity", Device: "/dev/sdf"})
+			if err != nil {
+				t.Fatalf("PlanDiskUpgrade(parity): %v", err)
+			}
+			return func() error {
+				_, err := client.UpgradeDisk(ctx, &apiv1.UpgradeDiskRequest{Mountpoint: "/mnt/parity", Device: "/dev/sdf", Confirmation: plan.Confirmation, NewMountpoint: plan.NewMountpoint})
+				return err
+			}
+		}},
 		{"FinishDiskRemoval", "sync-blocked", func(t *testing.T, client apiv1.Invoker) func() error {
 			return func() error {
 				_, err := client.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: "/mnt/disk5", Confirmation: job.EvacuationConfirmation("/mnt/disk5")})

@@ -554,12 +554,16 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 		h.mu.Lock()
 		pendingID, pending := h.pendingDiskUpgradeLocked()
 		stopped := h.maintenance
+		migrating := h.migration.unfinished()
 		h.mu.Unlock()
 		if pending {
 			return nil, errDiskUpgradePending(pendingID)
 		}
 		if !stopped {
 			return nil, errArrayNotStopped()
+		}
+		if migrating {
+			return nil, errMigrationInProgress()
 		}
 		jobType = apiv1.JobTypeDiskUpgradeData
 	case store.ArrayRoleParity:
@@ -579,9 +583,13 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 		// other than a data-disk upgrade (doc 02 §4 E8).
 		h.mu.Lock()
 		inMaintenance := h.maintenance
+		migrating := h.migration.unfinished()
 		h.mu.Unlock()
 		if inMaintenance {
 			return nil, errMaintenanceMode()
+		}
+		if migrating {
+			return nil, errMigrationInProgress()
 		}
 		jobType = apiv1.JobTypeDiskUpgradeParity
 	}
