@@ -33,6 +33,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -225,6 +226,15 @@ func (lp *labParity) assertNothingFormatted(when string) {
 	lp.a.assertUnchanged(lp.before, when)
 }
 
+// parityConfirmation is the typed confirmation naming exactly the parity disk
+// and the cache. The product sorts the device names, so the expected text does
+// too, whichever loop device the lab gave each slot.
+func parityConfirmation(a *labArray) string {
+	devices := []string{a.slot("cache").whole, a.slot("parity").whole}
+	sort.Strings(devices)
+	return "ERASE " + strings.Join(devices, ", ")
+}
+
 // A client that skips the API's checks and submits the job directly is refused
 // by the job itself, before anything is stopped, unmounted or erased: without a
 // verify, after a failed one, and with a passing verify but a confirmation that
@@ -237,7 +247,7 @@ func TestLabParity_InitialisingWithoutAPassingVerifyOrTheRightConfirmationErases
 			t.Fatalf("ExpectedParityConfirmation = %v, want ErrVerifyRequired: the API offers no confirmation without a pass", err)
 		}
 		// The confirmation a verified array would have, which a client could guess.
-		guess := "ERASE " + lp.a.slot("cache").whole + ", " + lp.a.slot("parity").whole
+		guess := parityConfirmation(lp.a)
 		done := lp.attempt(guess)
 		if done.Status != job.StatusFailed || !strings.Contains(done.ErrorMessage, "no passing verify") {
 			t.Fatalf("the job ended %s: %q, want it refused for want of a verify", done.Status, done.ErrorMessage)
@@ -260,7 +270,7 @@ func TestLabParity_InitialisingWithoutAPassingVerifyOrTheRightConfirmationErases
 		if done.Status != job.StatusFailed || res == nil || res.Status != VerifyFailed {
 			t.Fatalf("the verify ended %s (%s): %+v, want it failed on the removed file", done.Status, done.ErrorMessage, res)
 		}
-		guess := "ERASE " + lp.a.slot("cache").whole + ", " + lp.a.slot("parity").whole
+		guess := parityConfirmation(lp.a)
 		done = lp.attempt(guess)
 		if done.Status != job.StatusFailed || !strings.Contains(done.ErrorMessage, "latest verify failed") {
 			t.Fatalf("the job ended %s: %q, want it refused after a failed verify", done.Status, done.ErrorMessage)
@@ -310,7 +320,7 @@ func TestLabParity_FormatsOnlyTheConfirmedDevicesSyncsThroughTheGuardAndKeepsEve
 	if err != nil {
 		t.Fatalf("ExpectedParityConfirmation: %v", err)
 	}
-	if wantStr := "ERASE " + a.slot("cache").whole + ", " + a.slot("parity").whole; want != wantStr {
+	if wantStr := parityConfirmation(a); want != wantStr {
 		t.Fatalf("confirmation = %q, want %q: the parity disk and the cache, no data disk", want, wantStr)
 	}
 	if info, err := li.svc.ParityInit(ctx); err != nil || info == nil || info.Confirmation != want || len(info.Erases) != 2 {
