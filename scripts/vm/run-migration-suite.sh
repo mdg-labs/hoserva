@@ -92,6 +92,8 @@ declare -a STEP_RESULTS=()
 ANY_FAILED=0
 RUN_FAILED=0
 DIAGNOSTICS_TAKEN=0
+COLLECT_PID=
+CLEANUP_SIGNALED=0
 RUN_LABEL=""
 
 record() {
@@ -1454,8 +1456,21 @@ collect_run_diagnostics() {
   vm_domain_running "$VM_DOMAIN" || return 0
   dir+="/$VARIANT"
   [[ "${LAYOUT:-separate}" == separate ]] || dir+="-$LAYOUT"
-  timeout 300 "$script_dir/collect-diagnostics.sh" "$dir/diagnostics" ||
+  # in the background so that a signal reaches the trap while it runs: a trap
+  # waits for a foreground child, and timeout sits in its own process group
+  timeout 300 "$script_dir/collect-diagnostics.sh" "$dir/diagnostics" &
+  COLLECT_PID=$!
+  wait "$COLLECT_PID" ||
     echo "vm-migration-suite[$HOSERVA_LAB_ID]: collecting the guest's diagnostics failed" >&2
+  COLLECT_PID=
+}
+
+# cleanup_signal is the INT and TERM trap once cleanup runs: a signal cuts the
+# diagnostics short and never skips the VM's teardown.
+# shellcheck disable=SC2317 # run by the trap set in cleanup
+cleanup_signal() {
+  CLEANUP_SIGNALED=1
+  if [[ -n "$COLLECT_PID" ]]; then kill "$COLLECT_PID" 2>/dev/null || true; fi
 }
 
 print_summary() {
@@ -1494,13 +1509,17 @@ main() {
   # shellcheck disable=SC2317 # run by the EXIT trap below
   cleanup() {
     local rc=$?
+    trap cleanup_signal INT TERM
     if ((rc != 0)); then collect_run_diagnostics; fi
+    # destroy-vm.sh and the virsh calls under it inherit the ignored signals
+    trap '' INT TERM
     if [[ "${HOSERVA_MIGRATION_KEEP_VM:-}" == 1 ]]; then
       echo "vm-migration-suite[$HOSERVA_LAB_ID]: HOSERVA_MIGRATION_KEEP_VM=1: the VM '$VM_DOMAIN' is left running; make vm-destroy removes it"
     elif ! "$script_dir/destroy-vm.sh"; then
       echo "vm-migration-suite[$HOSERVA_LAB_ID]: destroying the VM failed — run 'make vm-destroy HOSERVA_LAB_ID=$HOSERVA_LAB_ID'" >&2
       rc=1
     fi
+    if ((CLEANUP_SIGNALED && rc == 0)); then rc=130; fi
     exit "$rc"
   }
   # A signal must reach cleanup as a non-zero status: bash enters the EXIT trap
