@@ -2192,8 +2192,8 @@ func (UnimplementedHandler) RunParityDiff(ctx context.Context) (r *ParityDiffRes
 // directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
 // notification config is the same as no notification config"). A test that succeeds is also recorded
 // for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
-// enabled and its latest successful test is not older than its last change; a test that fails is not
-// recorded.
+// enabled and its latest successful test ran in a later second than the one the channel last changed
+// in; a test that fails is not recorded.
 //
 // POST /notifications/channels/{channelId}/test
 func (UnimplementedHandler) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (r *NotificationTestResult, _ error) {

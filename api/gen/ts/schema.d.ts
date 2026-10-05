@@ -340,7 +340,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test notification through a channel
-         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested notification config is the same as no notification config"). A test that succeeds is also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is enabled and its latest successful test is not older than its last change; a test that fails is not recorded.
+         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested notification config is the same as no notification config"). A test that succeeds is also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is enabled and its latest successful test ran in a later second than the one the channel last changed in; a test that fails is not recorded.
          */
         post: operations["sendTestNotification"];
         delete?: never;
