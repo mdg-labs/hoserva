@@ -4589,6 +4589,25 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartMigrationContainer",
+		name: "refused_while_another_started_stack_is_unconfirmed",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			req := contractStackSelection("my-photos.xml", "my-gateway.xml")
+			req.Items[1].Acknowledged = apiv1.NewOptBool(true)
+			if _, err := h.CreateMigrationStacks(ctx, req); err != nil {
+				return err
+			}
+			if _, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"}); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "gateway"})
+			return err
+		},
+	},
+	{
 		op:       "CheckMigrationContainer",
 		name:     "refused_before_the_parity_initialisation",
 		scenario: "fresh-install",

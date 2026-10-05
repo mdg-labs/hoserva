@@ -279,7 +279,9 @@ type Handler interface {
 	// first): a stack that could not be created says why in `error`, with the code `createStack` gives
 	// (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A
 	// selection whose stack already exists from this migration is `already_created`, so the same request
-	// can be sent again.
+	// can be sent again: that includes a stack this request made for the selection whose record was never
+	// written (the daemon stopped between the two), which is recorded now and never made again or deleted.
+	// A stack of that name the migration did not make is `stack_exists`.
 	//
 	// POST /migrate/containers
 	CreateMigrationStacks(ctx context.Context, req *MigrationStacksRequest) (*MigrationStacksCreated, error)
@@ -1119,7 +1121,8 @@ type Handler interface {
 	// warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are
 	// the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's
 	// autostart order first), each with its `state`; `awaiting` names the started stack that must be
-	// confirmed or stopped before another is started, and `next` the stack to start now.
+	// confirmed or stopped before another is started, and `next` the first stack not started yet; a stack
+	// that was started, stopped and never confirmed is offered as `next` only when none of those is left.
 	// `parityInitialized` is false until the migration is past its point of no return
 	// (`initializeMigrationParity`); the operations that create or start something refuse until then. This
 	// reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview`
@@ -1801,16 +1804,21 @@ type Handler interface {
 	// StartMigrationContainer implements startMigrationContainer operation.
 	//
 	// Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack
-	// `createMigrationStacks` created, and records that it was started. Containers are started one at a
-	// time: this is refused with 409 `container_unconfirmed` while another migrated stack that was started
-	// is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one whose start job
-	// is still running or whose containers are running, and when that cannot be read. Refused before
-	// anything is queued with 409 `parity_not_initialized` until the migration is past its point of no
-	// return, 404 `migrated_stack_not_found` for a name the migration did not create, 409
-	// `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when the stack was
-	// removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack` answers. The
-	// stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a suggestion. Run
-	// `checkMigrationContainer` once the job has succeeded.
+	// `createMigrationStacks` created, and records that it was started: the start is recorded before the
+	// job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and
+	// whose job is then not recorded leaves the stack recorded as started with no job. Containers are
+	// started one at a time: this is refused with 409 `container_unconfirmed` while another migrated stack
+	// that was started is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one
+	// whose start job is still running or whose containers are running, and one recorded as started with
+	// no job. When the state of another started stack cannot be read (its start job or its containers),
+	// nothing is queued and the read failure is returned as it is, not as `container_unconfirmed`: 503
+	// `docker_unavailable` when the Docker Engine cannot be reached, 500 otherwise. A failure to record
+	// the start is a 500. Refused before anything is queued with 409 `parity_not_initialized` until the
+	// migration is past its point of no return, 404 `migrated_stack_not_found` for a name the migration
+	// did not create, 409 `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when
+	// the stack was removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack`
+	// answers. The stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a
+	// suggestion. Run `checkMigrationContainer` once the job has succeeded.
 	//
 	// POST /migrate/containers/{name}/start
 	StartMigrationContainer(ctx context.Context, params StartMigrationContainerParams) (*Job, error)

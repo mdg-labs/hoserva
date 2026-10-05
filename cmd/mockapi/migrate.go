@@ -1257,7 +1257,7 @@ func (h *handler) ListMigrationContainers(ctx context.Context) (*apiv1.Migration
 	}
 	if !out.Awaiting.Set {
 		for _, s := range out.Stacks {
-			if s.State != apiv1.MigrationContainerStackStateConfirmed {
+			if s.State == apiv1.MigrationContainerStackStateCreated {
 				out.Next = apiv1.NewOptString(s.Name)
 				break
 			}

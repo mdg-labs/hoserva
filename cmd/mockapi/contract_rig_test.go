@@ -434,7 +434,22 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	registry := job.NewRegistry()
 	scheduler := job.NewScheduler(jobStore, logs, job.NewHub(), registry)
 	noop := func(context.Context, *job.RunContext) error { return nil }
+	// A started migration stack's start job stays running until the rig is
+	// torn down, so the one-at-a-time gate sees it as not over — the state the
+	// mock reports for a started stack — instead of racing the job's end.
+	releaseStackStarts := make(chan struct{})
+	holdStackStart := func(ctx context.Context, _ *job.RunContext) error {
+		select {
+		case <-releaseStackStarts:
+		case <-ctx.Done():
+		}
+		return nil
+	}
 	for _, jt := range contractProductionRunFuncs {
+		if jt == job.TypeStackStart {
+			registry.Register(jt, true, holdStackStart)
+			continue
+		}
 		registry.Register(jt, true, noop)
 	}
 	// The migration scan runs for real, over the rig's disks, so a case that
@@ -615,6 +630,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	// still be writing to jobStore (through db) or to logs' t.TempDir()
 	// when those get closed or removed out from under it (#397).
 	t.Cleanup(func() {
+		close(releaseStackStarts)
 		drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := scheduler.Drain(drainCtx); err != nil {

@@ -63,6 +63,15 @@ var (
 	ErrContainerNotRunning = errors.New("none of the stack's containers is running")
 )
 
+// migrationSourcePrefix starts the template source of every stack this flow
+// creates; the selection's name follows. The stack layer stores it in the same
+// row as the stack, so a stack whose record in the session was never written
+// still says which selection made it. A catalog template's source is a catalog
+// source id and is never this.
+const migrationSourcePrefix = "unraid-migration:"
+
+func migrationSource(selection string) string { return migrationSourcePrefix + selection }
+
 // StackLayer is the part of the Compose stack layer (*container.StackService)
 // the migrated containers use.
 type StackLayer interface {
@@ -277,7 +286,9 @@ type ContainerOffer struct {
 	// Stacks are the created stacks in the order they are offered.
 	Stacks []StackStatus
 	// Awaiting is the stack that must be confirmed or stopped before another is
-	// started, and Next the stack to start now; at most one is set.
+	// started, and Next the stack to start now; at most one is set. Next is the
+	// first stack not started yet; a stack that was started, stopped and never
+	// confirmed is offered only when none of those is left.
 	Awaiting string
 	Next     string
 }
@@ -346,7 +357,15 @@ func (s *Service) Offer(ctx context.Context) (*ContainerOffer, error) {
 	}
 	if out.Awaiting == "" {
 		for _, st := range out.Stacks {
-			if st.State != StackConfirmed {
+			if st.State == StackCreated {
+				out.Next = st.Name
+				break
+			}
+		}
+	}
+	if out.Awaiting == "" && out.Next == "" {
+		for _, st := range out.Stacks {
+			if st.State == StackStarted {
 				out.Next = st.Name
 				break
 			}
@@ -393,7 +412,9 @@ type plannedStack struct {
 // holds one result per selection, so a failure of stack k leaves the stacks
 // before it created and recorded, and says so. A selection whose stack already
 // exists from this migration is reported as already created, and made again if
-// the stack was removed since.
+// the stack was removed since. So is a stack this flow made whose record was
+// never written (the daemon stopped between the two): it is recorded now and
+// never made again or deleted.
 func (s *Service) CreateStacks(ctx context.Context, selection []StackSelection) ([]StackResult, error) {
 	if err := s.requireInitialized(ctx); err != nil {
 		return nil, err
@@ -467,21 +488,39 @@ func (s *Service) CreateStacks(ctx context.Context, selection []StackSelection) 
 				continue
 			}
 		}
-		res.Err = s.createStack(ctx, p)
+		recovered, err := s.createStack(ctx, p)
+		res.Err, res.AlreadyCreated = err, recovered && err == nil
 		results = append(results, res)
 	}
 	return results, nil
 }
 
-// createStack makes one stack and records it. A record that cannot be written
-// takes the new stack away again, so a stack exists only when the migration
-// knows it.
-func (s *Service) createStack(ctx context.Context, p plannedStack) error {
-	if _, err := s.Stacks.Create(ctx, container.NewStack{Name: p.stack, Compose: p.compose}); err != nil {
-		return err
+// createStack makes one stack and records it. The stack is created with a
+// template source that names this selection (migrationSource), so a stack of
+// that name that already exists and carries it was made by this flow for this
+// selection and only its record is missing; it is recorded and left as it is,
+// and recovered is true. A stack of that name that does not carry it is not the
+// migration's and is refused as it was. A record that cannot be written takes a
+// stack just created away again, so a stack the migration does not know is not
+// left behind; a stack found already existing is never removed.
+func (s *Service) createStack(ctx context.Context, p plannedStack) (recovered bool, err error) {
+	marker := migrationSource(p.sel.Name)
+	_, err = s.Stacks.Create(ctx, container.NewStack{Name: p.stack, Compose: p.compose, TemplateSource: marker})
+	if errors.Is(err, container.ErrStackExists) {
+		existing, gerr := s.Stacks.Get(ctx, p.stack)
+		if gerr != nil {
+			return false, errors.Join(err, fmt.Errorf("checking whether the migration made it: %w", gerr))
+		}
+		if existing.TemplateSource != marker {
+			return false, err
+		}
+		recovered, err = true, nil
+	}
+	if err != nil {
+		return false, err
 	}
 	entry := MigratedStack{Name: p.stack, Source: p.sel.Name, Kind: p.kind, Position: p.pos, WaitSeconds: p.wait, State: StackCreated}
-	err := s.updateFlow(ctx, func(f *ContainerFlow) error {
+	err = s.updateFlow(ctx, func(f *ContainerFlow) error {
 		for i := range f.Stacks {
 			if f.Stacks[i].Source == entry.Source {
 				f.Stacks[i] = entry
@@ -492,13 +531,16 @@ func (s *Service) createStack(ctx context.Context, p plannedStack) error {
 		return nil
 	})
 	if err == nil {
-		return nil
+		return recovered, nil
 	}
 	err = fmt.Errorf("recording stack %s in the migration: %w", p.stack, err)
+	if recovered {
+		return false, err
+	}
 	if _, rerr := s.Stacks.Remove(context.WithoutCancel(ctx), p.stack, false); rerr != nil {
 		err = errors.Join(err, fmt.Errorf("removing the stack again: %w", rerr))
 	}
-	return err
+	return false, err
 }
 
 // StartContainer queues the start of a migrated stack through submit, which
@@ -507,8 +549,10 @@ func (s *Service) createStack(ctx context.Context, p plannedStack) error {
 // already confirmed, while the array is stopped, and while another migrated
 // stack that was started is neither confirmed nor stopped (a stack whose start
 // job is still running counts as started, and so does one whose containers are
-// running). A stack that cannot be read is not known to be stopped, so it
-// refuses.
+// running, and so does one recorded as started with no job). A stack that
+// cannot be read is not known to be stopped, so it refuses. The start is
+// recorded before it is queued and the job's id after it; the record is put
+// back when submit fails.
 func (s *Service) StartContainer(ctx context.Context, name string, submit func(ctx context.Context, stack string) (jobID string, err error)) error {
 	if err := s.requireInitialized(ctx); err != nil {
 		return err
@@ -540,8 +584,33 @@ func (s *Service) StartContainer(ctx context.Context, name string, submit func(c
 			return fmt.Errorf("%w: %s", ErrContainerUnconfirmed, other.Name)
 		}
 	}
+	// The start is recorded before it is queued, with no job yet: a record that
+	// cannot be written then queues nothing, and a start that is queued and
+	// then not recorded (a write failure, a daemon that stops) leaves the stack
+	// recorded as started, which the gate above counts as unconfirmed.
+	if err := s.updateFlow(ctx, func(f *ContainerFlow) error {
+		i := f.index(name)
+		if i < 0 {
+			return fmt.Errorf("%w: %q", ErrStackNotMigrated, name)
+		}
+		f.Stacks[i].State, f.Stacks[i].StartJob = StackStarted, ""
+		f.Stacks[i].Checked, f.Stacks[i].CheckFailed = false, false
+		return nil
+	}); err != nil {
+		return fmt.Errorf("recording the start in the migration: %w", err)
+	}
 	id, err := submit(ctx, name)
 	if err != nil {
+		if rerr := s.updateFlow(ctx, func(f *ContainerFlow) error {
+			i := f.index(name)
+			if i < 0 {
+				return fmt.Errorf("%w: %q", ErrStackNotMigrated, name)
+			}
+			f.Stacks[i] = target
+			return nil
+		}); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("the migration still records %s as started, and no other container is started until it is confirmed or started again: %w", name, rerr))
+		}
 		return err
 	}
 	if err := s.updateFlow(ctx, func(f *ContainerFlow) error {
@@ -549,29 +618,29 @@ func (s *Service) StartContainer(ctx context.Context, name string, submit func(c
 		if i < 0 {
 			return fmt.Errorf("%w: %q", ErrStackNotMigrated, name)
 		}
-		f.Stacks[i].State, f.Stacks[i].StartJob = StackStarted, id
+		f.Stacks[i].StartJob = id
 		f.Stacks[i].Checked, f.Stacks[i].CheckFailed = false, false
 		return nil
 	}); err != nil {
-		return fmt.Errorf("the start was queued as job %s, but recording it in the migration failed: %w", id, err)
+		return fmt.Errorf("the start was queued as job %s, but recording the job in the migration failed: the stack stays recorded as started, and no other container is started until it is confirmed or started again: %w", id, err)
 	}
 	return nil
 }
 
 // awaiting reports whether a started stack is still in the way of the next:
-// its start job has not ended, or one of its containers is not stopped.
+// its start job has not ended, or one of its containers is not stopped. A
+// stack recorded as started with no job (the start was queued and its job never
+// recorded, or never queued) is not known to be over, so it is awaited.
 func (s *Service) awaiting(ctx context.Context, st MigratedStack) (bool, error) {
-	if st.StartJob != "" {
-		if s.JobEnded == nil {
-			return true, nil
-		}
-		_, ended, err := s.JobEnded(ctx, st.StartJob)
-		if err != nil {
-			return false, fmt.Errorf("reading the start job of stack %s: %w", st.Name, err)
-		}
-		if !ended {
-			return true, nil
-		}
+	if st.StartJob == "" || s.JobEnded == nil {
+		return true, nil
+	}
+	_, ended, err := s.JobEnded(ctx, st.StartJob)
+	if err != nil {
+		return false, fmt.Errorf("reading the start job of stack %s: %w", st.Name, err)
+	}
+	if !ended {
+		return true, nil
 	}
 	cs, err := s.Stacks.Containers(ctx, st.Name)
 	if err != nil {
