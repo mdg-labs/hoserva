@@ -160,7 +160,9 @@ export function ToolsMigratePage(): React.ReactElement {
   const syncEnabled = pastNoReturn && parityJob?.status === "succeeded";
   const syncJobs = useInitialSyncJobs(syncEnabled, syncPolling);
   const syncJob = syncEnabled && parityJob ? initialSyncOf(syncJobs.data?.jobs ?? [], parityJob) : undefined;
-  const wantSyncPolling = syncEnabled && (syncJob === undefined || jobActive(syncJob));
+  // The unprotected window stays open until a sync has succeeded, so a sync the
+  // schedule runs later is found whether the shown one is running, failed or absent.
+  const wantSyncPolling = syncEnabled && syncJob?.status !== "succeeded";
   if (wantSyncPolling !== syncPolling) {
     setSyncPolling(wantSyncPolling);
   }
