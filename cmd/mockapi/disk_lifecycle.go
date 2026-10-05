@@ -285,6 +285,9 @@ func (h *handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:        uuid.New(),
@@ -376,6 +379,9 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	// TypeDiskUpgradeData while maintenance mode is active (Q70).
 	if h.maintenance {
 		return nil, errMaintenanceMode()
+	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
 	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
@@ -631,6 +637,9 @@ func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRe
 	// TypeDiskUpgradeData while maintenance mode is active (Q70).
 	if h.maintenance {
 		return nil, errMaintenanceMode()
+	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
 	}
 	j := apiv1.Job{
 		ID:        uuid.New(),

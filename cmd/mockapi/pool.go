@@ -527,6 +527,9 @@ func (h *handler) StartMover(ctx context.Context) (*apiv1.Job, error) {
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),

@@ -107,6 +107,9 @@ func (h *handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:          uuid.New(),
@@ -172,6 +175,9 @@ func (h *handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskReque
 	// TypeDiskUpgradeData while maintenance mode is active (Q70).
 	if h.maintenance {
 		return nil, errMaintenanceMode()
+	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
 	}
 	if err := refuseIfEvacuationPending(h.jobs); err != nil {
 		return nil, err
