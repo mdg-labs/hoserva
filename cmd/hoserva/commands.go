@@ -741,6 +741,7 @@ func syncCmd() *cobra.Command {
 
 func scrubCmd() *cobra.Command {
 	var percent int32
+	var allBlocks bool
 	cmd := &cobra.Command{
 		Use:   "scrub",
 		Short: "Start a SnapRAID scrub",
@@ -756,6 +757,9 @@ func scrubCmd() *cobra.Command {
 				}
 				req.SetPercent(apiv1.NewOptInt32(percent))
 			}
+			if allBlocks {
+				req.SetAllBlocks(apiv1.NewOptBool(true))
+			}
 			out, err := c.StartScrub(apiCtx(), req)
 			if err != nil {
 				return mapAPIErr(err)
@@ -765,6 +769,7 @@ func scrubCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Int32Var(&percent, "percent", 0, "Scrub percentage cap")
+	cmd.Flags().BoolVar(&allBlocks, "all-blocks", false, "Scrub blocks of every age, not only those older than 10 days")
 	return cmd
 }
 

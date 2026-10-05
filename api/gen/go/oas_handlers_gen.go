@@ -35280,7 +35280,8 @@ func (s *Server) handleStartRestoreDrillRequest(args [0]string, argsEscaped bool
 
 // handleStartScrubRequest handles startScrub operation.
 //
-// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
+// `allBlocks` scrubs every block.
 //
 // POST /parity/scrub
 func (s *Server) handleStartScrubRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

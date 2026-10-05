@@ -202,6 +202,53 @@ func TestLabSync_NoOpSyncSucceeds(t *testing.T) {
 	}
 }
 
+// TestLabScrub_EveryBlockChecksWhatTheDefaultSkips is the engine side of
+// `hoserva scrub --all-blocks`: right after a sync every block is newer than
+// the default's 10-day cut-off, so the default scrub finds nothing to do and
+// still succeeds, while olderThanDays=0 (what the scrub job passes for
+// allBlocks) really scrubs. It stays above TestLabScrub_DetectsCorruption:
+// SnapRAID rechecks blocks marked bad whatever their age, and that test
+// leaves some behind in this lab's shared array.
+func TestLabScrub_EveryBlockChecksWhatTheDefaultSkips(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	engine, _ := labEngine(t, lab)
+
+	writeFile(t, filepath.Join(lab, "mnt/disk2/backup/scrub-all-blocks.bin"), 2_200_000)
+	syncOnce(t, ctx, engine)
+
+	ch, err := engine.Scrub(ctx, 100, DefaultScrubOlderThanDays)
+	if err != nil {
+		t.Fatalf("Scrub (default age): %v", err)
+	}
+	final, output := drainRealOutput(t, ch)
+	if final.Err != nil {
+		t.Fatalf("Scrub (default age) failed: %v", final.Err)
+	}
+	if !strings.Contains(output, "Nothing to do") {
+		t.Fatalf("a default scrub right after a sync printed %q, want SnapRAID's \"Nothing to do\"", output)
+	}
+
+	ch, err = engine.Scrub(ctx, 100, 0)
+	if err != nil {
+		t.Fatalf("Scrub (every block): %v", err)
+	}
+	final, output = drainRealOutput(t, ch)
+	if final.Err != nil {
+		t.Fatalf("Scrub (every block) failed: %v", final.Err)
+	}
+	if strings.Contains(output, "Nothing to do") || !strings.Contains(output, "Scrubbing...") {
+		t.Fatalf("an every-block scrub right after a sync printed %q, want it to scrub", output)
+	}
+	status, err := engine.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Freshness == FreshnessRed {
+		t.Fatalf("Freshness after a clean every-block scrub = %v, want it not red", status.Freshness)
+	}
+}
+
 // TestLabScrub_DetectsCorruption injects real silent corruption directly
 // on a data disk's own loop device — targeted at a known file's exact
 // extent via `xfs_bmap`, mirroring spike S5's own recipe exactly (doc 08
@@ -248,6 +295,19 @@ func TestLabScrub_DetectsCorruption(t *testing.T) {
 	if status.Freshness != FreshnessRed {
 		t.Fatalf("Status.Freshness after scrub found corruption = %v, want FreshnessRed", status.Freshness)
 	}
+}
+
+// drainRealOutput is drainReal that also returns every line the run printed.
+func drainRealOutput(t *testing.T, ch <-chan Progress) (Progress, string) {
+	t.Helper()
+	var last Progress
+	var out strings.Builder
+	for p := range ch {
+		last = p
+		out.WriteString(p.Output)
+		out.WriteString("\n")
+	}
+	return last, out.String()
 }
 
 // TestLabFix_RestoresADeletedFile deletes a synced file and confirms a

@@ -70,6 +70,12 @@ func (r *recordingEngine) Fix(ctx context.Context, opts parity.FixOpts) (<-chan 
 	return r.FakeEngine.Fix(ctx, opts)
 }
 
+func (r *recordingEngine) scrubAge() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastScrubAge
+}
+
 func (r *recordingEngine) snapshot() (parity.SyncOpts, bool, int, parity.FixOpts) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -287,6 +293,76 @@ func TestRunScrub_OmittedPercentUsesDefault(t *testing.T) {
 	_, _, pct, _ := eng.snapshot()
 	if pct != DefaultScrubPercent {
 		t.Fatalf("Scrub percent = %d, want default %d", pct, DefaultScrubPercent)
+	}
+}
+
+func TestRunScrub_AllBlocksReachesEngineAsAgeZero(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		params []byte
+		want   int
+	}{
+		{"every block", mustJSON(t, ScrubParams{AllBlocks: true}), 0},
+		{"every block with a percent", mustJSON(t, ScrubParams{Percent: intPtr(100), AllBlocks: true}), 0},
+		{"allBlocks false", mustJSON(t, ScrubParams{Percent: intPtr(100)}), parity.DefaultScrubOlderThanDays},
+		{"params from before the option", []byte(`{"percent":25}`), parity.DefaultScrubOlderThanDays},
+		{"no params", nil, parity.DefaultScrubOlderThanDays},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestScheduler(t)
+			eng := newRecordingEngine()
+			s.registry.Register(TypeScrub, false, RunScrub(eng))
+
+			j, err := s.Submit(ctx, TypeScrub, nil, tc.params)
+			if err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			finished := await(t, s, j.ID)
+			if finished.Status != StatusSucceeded {
+				t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+			}
+			if got := eng.scrubAge(); got != tc.want {
+				t.Fatalf("Scrub olderThanDays = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestScrubAllBlocksFromParams(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		params []byte
+		want   bool
+	}{
+		{"nil", nil, false},
+		{"null", []byte("null"), false},
+		{"empty object", []byte(`{}`), false},
+		{"params from before the option", []byte(`{"percent":8}`), false},
+		{"explicit false", []byte(`{"allBlocks":false}`), false},
+		{"explicit true", []byte(`{"allBlocks":true}`), true},
+		{"padded", []byte(" {\"allBlocks\":true} \n"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ScrubAllBlocksFromParams(tc.params)
+			if err != nil {
+				t.Fatalf("ScrubAllBlocksFromParams(%s): %v", tc.params, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ScrubAllBlocksFromParams(%s) = %v, want %v", tc.params, got, tc.want)
+			}
+		})
+	}
+
+	roundTrip := mustJSON(t, ScrubParams{Percent: intPtr(100), AllBlocks: true})
+	if all, err := ScrubAllBlocksFromParams(roundTrip); err != nil || !all {
+		t.Fatalf("ScrubAllBlocksFromParams(%s) = %v, %v, want true", roundTrip, all, err)
+	}
+	if pct, err := ScrubPercentFromParams(roundTrip); err != nil || pct != 100 {
+		t.Fatalf("ScrubPercentFromParams(%s) = %d, %v, want 100", roundTrip, pct, err)
+	}
+	if _, err := ScrubAllBlocksFromParams([]byte(`{"allBlocks":"yes"}`)); err == nil {
+		t.Fatal("ScrubAllBlocksFromParams accepted a non-boolean allBlocks")
 	}
 }
 

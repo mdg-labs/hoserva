@@ -119,7 +119,7 @@ This is the fundamental difference from Unraid, which writes parity synchronousl
 | Op | What it does | Scheduled |
 |---|---|---|
 | `sync` | Update parity to match current data | Nightly, in the maintenance chain after the mover (Q30) |
-| `scrub` | Verify a percentage of existing data against parity | Weekly, after that night's sync; default 8%, older than 10 days |
+| `scrub` | Verify a percentage of existing data against parity | Weekly, after that night's sync; default 8%, older than 10 days. A requested scrub can cover blocks of every age (`hoserva scrub --all-blocks`, SnapRAID `-o 0`): the default skips blocks scrubbed or synced within 10 days, so one right after a sync can find nothing to check |
 | `diff` | Report exactly what changed since last sync | Immediately before every sync, and on explicit request — **never on a timer**, because it stats every file and spins up every data disk |
 | `touch` | Set non-zero sub-second timestamps | Before a sync, only when `status` reports files needing it (Q17) |
 | `status` | Parity age, disk usage, error counts | Polled for the dashboard; reads the boot-device content file |

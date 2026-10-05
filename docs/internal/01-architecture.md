@@ -114,7 +114,7 @@ hoserva pool rebalance [--dry-run]      # doc 09 §3
 hoserva disk resume <job-id>            # resume a checkpointed relocation (Q29)
 
 hoserva sync [--dry-run] [--force]      # SnapRAID sync through the threshold guard; dry-run prints the diff
-hoserva scrub [--percent 8]
+hoserva scrub [--percent 8] [--all-blocks]   # --all-blocks scrubs blocks of every age, not only those older than 10 days (doc 02 §2)
 hoserva fix --disk 3
 hoserva mover run                       # doc 09 §2
 

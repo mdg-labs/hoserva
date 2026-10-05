@@ -40993,10 +40993,17 @@ func (s *StartScrubRequest) encodeFields(e *jx.Encoder) {
 			s.Percent.Encode(e)
 		}
 	}
+	{
+		if s.AllBlocks.Set {
+			e.FieldStart("allBlocks")
+			s.AllBlocks.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfStartScrubRequest = [1]string{
+var jsonFieldsNameOfStartScrubRequest = [2]string{
 	0: "percent",
+	1: "allBlocks",
 }
 
 // Decode decodes StartScrubRequest from json.
@@ -41016,6 +41023,16 @@ func (s *StartScrubRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"percent\"")
+			}
+		case "allBlocks":
+			if err := func() error {
+				s.AllBlocks.Reset()
+				if err := s.AllBlocks.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"allBlocks\"")
 			}
 		default:
 			return d.Skip()

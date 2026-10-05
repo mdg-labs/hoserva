@@ -1997,7 +1997,8 @@ type Handler interface {
 	StartRestoreDrill(ctx context.Context) (*Job, error)
 	// StartScrub implements startScrub operation.
 	//
-	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+	// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
+	// `allBlocks` scrubs every block.
 	//
 	// POST /parity/scrub
 	StartScrub(ctx context.Context, req *StartScrubRequest) (*Job, error)

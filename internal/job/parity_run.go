@@ -76,7 +76,15 @@ func RunScrub(eng parity.Engine) RunFunc {
 		if err != nil {
 			return err
 		}
-		ch, err := eng.Scrub(ctx, pct, parity.DefaultScrubOlderThanDays)
+		allBlocks, err := ScrubAllBlocksFromParams(rc.Params())
+		if err != nil {
+			return err
+		}
+		olderThanDays := parity.DefaultScrubOlderThanDays
+		if allBlocks {
+			olderThanDays = 0
+		}
+		ch, err := eng.Scrub(ctx, pct, olderThanDays)
 		return drainProgress(ch, err)
 	}
 }

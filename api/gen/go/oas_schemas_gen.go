@@ -21557,6 +21557,12 @@ func (s *StartRebalanceRequest) SetConfirmation(val string) {
 type StartScrubRequest struct {
 	// Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
 	Percent OptInt32 `json:"percent"`
+	// Scrub blocks of every age (`hoserva scrub --all-blocks`, SnapRAID `-o 0`). By default a scrub skips
+	// blocks scrubbed or synced within the last 10 days (doc 02 §2), so a scrub right after a sync can
+	// find nothing to check and still succeed. Set true when every block must be verified, such as the
+	// full scrub after the initial sync (doc 05 §4 step 22). Omitted means false. The scheduled scrub
+	// never sets it.
+	AllBlocks OptBool `json:"allBlocks"`
 }
 
 // GetPercent returns the value of Percent.
@@ -21564,9 +21570,19 @@ func (s *StartScrubRequest) GetPercent() OptInt32 {
 	return s.Percent
 }
 
+// GetAllBlocks returns the value of AllBlocks.
+func (s *StartScrubRequest) GetAllBlocks() OptBool {
+	return s.AllBlocks
+}
+
 // SetPercent sets the value of Percent.
 func (s *StartScrubRequest) SetPercent(val OptInt32) {
 	s.Percent = val
+}
+
+// SetAllBlocks sets the value of AllBlocks.
+func (s *StartScrubRequest) SetAllBlocks(val OptBool) {
+	s.AllBlocks = val
 }
 
 // Ref: #/components/schemas/StartShareRelocationRequest
