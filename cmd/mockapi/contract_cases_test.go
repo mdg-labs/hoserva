@@ -4707,8 +4707,12 @@ var contractCases = []contractCase{
 			if err != nil {
 				return err
 			}
+			firstAt, ok := first.AcknowledgedAt.Get()
+			if !ok || firstAt.IsZero() {
+				return fmt.Errorf("an acknowledgement recorded no time: %+v", first)
+			}
 			again, err := h.AcknowledgeMigrationChecklistItem(ctx, apiv1.AcknowledgeMigrationChecklistItemParams{Item: apiv1.MigrationChecklistItemIdRestoreDrill})
-			if err == nil && !again.AcknowledgedAt.Or(time.Time{}).Equal(first.AcknowledgedAt.Or(time.Time{})) {
+			if err == nil && !again.AcknowledgedAt.Or(time.Time{}).Equal(firstAt) {
 				return fmt.Errorf("a second acknowledgement replaced the first: %+v then %+v", first, again)
 			}
 			return err
