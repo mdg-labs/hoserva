@@ -37,6 +37,9 @@ type Import struct {
 	ByHand    []ByHandContainer `json:"byHand,omitempty"`
 	Networks  []Network         `json:"networks"`
 	Schedules Schedules         `json:"schedules"`
+	// UserScripts are the User Scripts plugin's entries the scan found, by name
+	// and schedule only: a script's content is never read.
+	UserScripts []UserScript `json:"userScripts,omitempty"`
 	// TemplateCounts is nil for a report made before templates were converted
 	// by the scan.
 	TemplateCounts *TemplateCounts `json:"templateCounts,omitempty"`
@@ -131,6 +134,13 @@ type Network struct {
 // builtinNetwork reports one of the three networks every Docker daemon has.
 func builtinNetwork(name string) bool {
 	return name == "bridge" || name == "host" || name == "none"
+}
+
+// UserScript is one entry of the User Scripts plugin. Schedule is the line the
+// plugin's customSchedule.cron gives it, empty when it has none there.
+type UserScript struct {
+	Name     string `json:"name"`
+	Schedule string `json:"schedule,omitempty"`
 }
 
 // ParityCheckSchedule is the [parity] section of dynamix.cfg, kept as Unraid

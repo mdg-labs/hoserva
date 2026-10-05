@@ -774,6 +774,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// disk mount units and snapraid.conf, which nothing here has.
 		RegenerateArray: func(context.Context) error { return nil },
 	}
+	migrationSvc.ChecklistRecords = api.ChecklistSources(jobStore, notifySvc, scheduleSvc, arrayStore.MigrationFinishedAt)
 	if scenario == "fresh-install" {
 		prepareContractBareMetal(t, db, h.Backup, dbPath)
 	}
@@ -867,6 +868,8 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	registry.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {
 		return appdataSvc.RunPreview(ctx, id, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
 	}))
+	contractDBs.Store(h, db)
+	t.Cleanup(func() { contractDBs.Delete(h) })
 	return h
 }
 
@@ -1016,4 +1019,33 @@ func (s *scriptedCatalogRefresher) Last() (template.CheckResult, bool) {
 		return template.CheckResult{}, false
 	}
 	return *s.last, true
+}
+
+// contractDBs is each production handler's database, so a case can end a
+// migration through the store's own step.
+var contractDBs sync.Map
+
+// contractFinishMigration gives whichever side h is the record the checklist
+// reads as a finished migration: production's array record is taken through its
+// point of no return's last step (store.ArrayStore.FinishMigration), which this
+// rig's no-op jobs never run, and the mock records the stamp its own point of no
+// return writes.
+func contractFinishMigration(ctx context.Context, h apiv1.Handler) error {
+	switch s := h.(type) {
+	case *api.Handler:
+		raw, ok := contractDBs.Load(s)
+		if !ok {
+			return fmt.Errorf("contractFinishMigration: no database for the production handler")
+		}
+		if _, err := raw.(*sql.DB).ExecContext(ctx, `UPDATE array_settings SET migration_recorded = '[]'`); err != nil {
+			return err
+		}
+		return s.ArrayStore.FinishMigration(ctx)
+	case *handler:
+		s.migration.mu.Lock()
+		defer s.migration.mu.Unlock()
+		s.migration.finishedAt = time.Now().UTC().Truncate(time.Second)
+		return nil
+	}
+	return fmt.Errorf("contractFinishMigration: unknown handler %T", h)
 }

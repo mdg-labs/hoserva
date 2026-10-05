@@ -15,6 +15,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
@@ -4643,6 +4644,84 @@ var contractCases = []contractCase{
 				return err
 			}
 			_, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	// --- The checklist: it applies once the array record is stamped finished,
+	// and only the two items no record can show are acknowledged by hand. ---
+	{
+		op:   "GetMigrationChecklist",
+		name: "valid_before_the_migration_finished",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			c, err := h.GetMigrationChecklist(ctx)
+			if err == nil && (c.Finished || len(c.Items) != 0) {
+				return fmt.Errorf("an unfinished migration answered %+v", c)
+			}
+			return err
+		},
+	},
+	{
+		op:   "GetMigrationChecklist",
+		name: "valid_after_the_migration_finished",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractFinishMigration(ctx, h); err != nil {
+				return err
+			}
+			c, err := h.GetMigrationChecklist(ctx)
+			if err == nil && (!c.Finished || len(c.Items) != len(migrate.ChecklistItemIDs)) {
+				return fmt.Errorf("a finished migration answered %+v", c)
+			}
+			return err
+		},
+	},
+	{
+		op:   "AcknowledgeMigrationChecklistItem",
+		name: "refused_before_the_migration_finished",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AcknowledgeMigrationChecklistItem(ctx, apiv1.AcknowledgeMigrationChecklistItemParams{Item: apiv1.MigrationChecklistItemIdUserScripts})
+			return err
+		},
+	},
+	{
+		op:   "AcknowledgeMigrationChecklistItem",
+		name: "valid_user_scripts_after_the_migration_finished",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractFinishMigration(ctx, h); err != nil {
+				return err
+			}
+			it, err := h.AcknowledgeMigrationChecklistItem(ctx, apiv1.AcknowledgeMigrationChecklistItemParams{Item: apiv1.MigrationChecklistItemIdUserScripts})
+			if err == nil && (it.Status != apiv1.MigrationChecklistItemStatusDone || it.AcknowledgedBy.Or("") == "") {
+				return fmt.Errorf("an acknowledged item answered %+v", it)
+			}
+			return err
+		},
+	},
+	{
+		op:   "AcknowledgeMigrationChecklistItem",
+		name: "valid_restore_drill_twice_keeps_the_first",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractFinishMigration(ctx, h); err != nil {
+				return err
+			}
+			first, err := h.AcknowledgeMigrationChecklistItem(ctx, apiv1.AcknowledgeMigrationChecklistItemParams{Item: apiv1.MigrationChecklistItemIdRestoreDrill})
+			if err != nil {
+				return err
+			}
+			again, err := h.AcknowledgeMigrationChecklistItem(ctx, apiv1.AcknowledgeMigrationChecklistItemParams{Item: apiv1.MigrationChecklistItemIdRestoreDrill})
+			if err == nil && !again.AcknowledgedAt.Or(time.Time{}).Equal(first.AcknowledgedAt.Or(time.Time{})) {
+				return fmt.Errorf("a second acknowledgement replaced the first: %+v then %+v", first, again)
+			}
+			return err
+		},
+	},
+	{
+		op:   "AcknowledgeMigrationChecklistItem",
+		name: "an_item_derived_from_a_record_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractFinishMigration(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.AcknowledgeMigrationChecklistItem(ctx, apiv1.AcknowledgeMigrationChecklistItemParams{Item: apiv1.MigrationChecklistItemIdInitialSync})
 			return err
 		},
 	},

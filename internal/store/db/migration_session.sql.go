@@ -9,8 +9,21 @@ import (
 	"context"
 )
 
+const clearMigrationSession = `-- name: ClearMigrationSession :exec
+UPDATE migration_session SET
+    source_file = '', source_size = 0, source_received_at = '', report = '',
+    scan_file = '', scan_size = 0, scan_received_at = '', scan_unverified_layout = 0,
+    scan_error = '', scan_full_checksums = 0, verify = ''
+WHERE id = 1
+`
+
+func (q *Queries) ClearMigrationSession(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearMigrationSession)
+	return err
+}
+
 const deleteMigrationSession = `-- name: DeleteMigrationSession :exec
-DELETE FROM migration_session WHERE id = 1
+DELETE FROM migration_session WHERE id = 1 AND checklist = ''
 `
 
 func (q *Queries) DeleteMigrationSession(ctx context.Context) error {
@@ -21,7 +34,7 @@ func (q *Queries) DeleteMigrationSession(ctx context.Context) error {
 const getMigrationSession = `-- name: GetMigrationSession :one
 
 SELECT source_file, source_size, source_received_at, report,
-       scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums, verify
+       scan_file, scan_size, scan_received_at, scan_unverified_layout, scan_error, scan_full_checksums, verify, checklist
 FROM migration_session
 WHERE id = 1
 `
@@ -38,6 +51,7 @@ type GetMigrationSessionRow struct {
 	ScanError            string `json:"scan_error"`
 	ScanFullChecksums    int64  `json:"scan_full_checksums"`
 	Verify               string `json:"verify"`
+	Checklist            string `json:"checklist"`
 }
 
 // sqlc input (#75): the one Unraid migration session, generated into
@@ -57,8 +71,19 @@ func (q *Queries) GetMigrationSession(ctx context.Context) (*GetMigrationSession
 		&i.ScanError,
 		&i.ScanFullChecksums,
 		&i.Verify,
+		&i.Checklist,
 	)
 	return &i, err
+}
+
+const setMigrationSessionChecklist = `-- name: SetMigrationSessionChecklist :exec
+INSERT INTO migration_session (id, checklist) VALUES (1, ?)
+ON CONFLICT (id) DO UPDATE SET checklist = excluded.checklist
+`
+
+func (q *Queries) SetMigrationSessionChecklist(ctx context.Context, checklist string) error {
+	_, err := q.db.ExecContext(ctx, setMigrationSessionChecklist, checklist)
+	return err
 }
 
 const upsertMigrationSession = `-- name: UpsertMigrationSession :exec

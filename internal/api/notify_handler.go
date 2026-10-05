@@ -75,6 +75,8 @@ func (h *Handler) SendTestNotification(ctx context.Context, params apiv1.SendTes
 	out := &apiv1.NotificationTestResult{Success: result.Success}
 	if !result.Success {
 		out.Error = apiv1.NewOptNilString(result.Error)
+	} else {
+		h.recordChannelTest(ctx, params.ChannelId.String())
 	}
 	return out, nil
 }

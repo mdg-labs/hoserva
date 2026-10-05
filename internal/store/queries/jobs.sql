@@ -75,3 +75,14 @@ ORDER BY created_at ASC;
 
 -- name: SetJobCancellable :exec
 UPDATE jobs SET cancellable = ? WHERE id = ?;
+
+-- name: ListSucceededJobsOfType :many
+SELECT
+    id, "type", class, "status", progress, resumable, cancellable,
+    resource_ids, checkpoint, error_code, error_message,
+    created_at, started_at, finished_at, params
+FROM jobs
+WHERE "type" = ? AND "status" = 'succeeded'
+ORDER BY created_at ASC, id ASC
+LIMIT ? OFFSET ?;
+

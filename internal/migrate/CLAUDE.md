@@ -184,3 +184,23 @@ implementation of this package loses a user's data.
   check reads one entry of each bind mount under `/mnt/user` and `/mnt/cache`, only
   when asked: nothing on a timer walks a data disk, and an error reading a path is
   `unreadable`, never `ok`.
+- **The post-migration checklist claims only what a record shows.** `checklist.go`
+  derives each item of Phase D's closing steps from a record: the migration counts
+  as finished exactly when the array record carries `migration_finished_at`, which
+  `FinishMigration` writes in the statement that ends the point of no return and
+  nothing else writes (a pending, part-way or undone migration has none, so the
+  checklist is empty and an acknowledgement is refused with 409; no job's status
+  or time decides it), the initial sync is the first real sync that succeeded
+  after that time, the full
+  scrub is a 100 percent all-blocks scrub (`-o 0`; a default one skips blocks
+  synced in the last days and checks nothing right after a sync) that started
+  after that sync ended, appdata is a succeeded relocation of the `appdata` share
+  to the cache, and a notification channel counts only while it is enabled and its
+  test, truncated to the second, is after the second it last changed in. A source with no cache makes the appdata item not applicable only when
+  the scan read the capture's disk roles and none was a cache. Only the User
+  Scripts inventory and the restore drill, which nothing records, are
+  acknowledged by hand; every other item refuses an acknowledgement, which stores
+  who made it and when. The record (acknowledgements and channel tests) is the
+  session row's `checklist` column: `Put` never writes it and `Delete` keeps it, so
+  forgetting the session does not undo an acknowledgement. `BuildChecklist` does no
+  IO, so `cmd/mockapi` answers with the same code.

@@ -9982,6 +9982,585 @@ func (s *MigrationCheckStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/MigrationChecklist
+type MigrationChecklist struct {
+	// Whether the array record carries the time its migration's point of no return finished, which nothing
+	// but that step writes. False for a migration that is pending, part-way through, or was undone; then
+	// the checklist does not apply and `items` is empty.
+	Finished bool `json:"finished"`
+	// That time; present exactly when `finished` is true.
+	FinishedAt OptDateTime `json:"finishedAt"`
+	// In the order of doc 05 §4's steps.
+	Items []MigrationChecklistItem `json:"items"`
+}
+
+// GetFinished returns the value of Finished.
+func (s *MigrationChecklist) GetFinished() bool {
+	return s.Finished
+}
+
+// GetFinishedAt returns the value of FinishedAt.
+func (s *MigrationChecklist) GetFinishedAt() OptDateTime {
+	return s.FinishedAt
+}
+
+// GetItems returns the value of Items.
+func (s *MigrationChecklist) GetItems() []MigrationChecklistItem {
+	return s.Items
+}
+
+// SetFinished sets the value of Finished.
+func (s *MigrationChecklist) SetFinished(val bool) {
+	s.Finished = val
+}
+
+// SetFinishedAt sets the value of FinishedAt.
+func (s *MigrationChecklist) SetFinishedAt(val OptDateTime) {
+	s.FinishedAt = val
+}
+
+// SetItems sets the value of Items.
+func (s *MigrationChecklist) SetItems(val []MigrationChecklistItem) {
+	s.Items = val
+}
+
+// Ref: #/components/schemas/MigrationChecklistItem
+type MigrationChecklistItem struct {
+	ID     MigrationChecklistItemId     `json:"id"`
+	Status MigrationChecklistItemStatus `json:"status"`
+	// True only for `user_scripts` and `restore_drill` while they are not acknowledged. An item with a
+	// record is never acknowledgeable.
+	Acknowledgeable bool `json:"acknowledgeable"`
+	// When the record says it was done, or when it was acknowledged.
+	DoneAt OptDateTime `json:"doneAt"`
+	// The job the item derives from. For `restore_drill`, the latest succeeded `fix` job, which an
+	// acknowledgement records.
+	JobId OptString `json:"jobId"`
+	// Who acknowledged it, `local` for the daemon's own socket.
+	AcknowledgedBy OptString                          `json:"acknowledgedBy"`
+	AcknowledgedAt OptDateTime                        `json:"acknowledgedAt"`
+	Notifications  OptMigrationChecklistNotifications `json:"notifications"`
+	Schedules      OptMigrationChecklistSchedules     `json:"schedules"`
+	// The User Scripts the scan found, on `user_scripts` only. Empty when the scan found none or could not
+	// say; the report's User Scripts row tells which.
+	Scripts []MigrationChecklistScript `json:"scripts"`
+}
+
+// GetID returns the value of ID.
+func (s *MigrationChecklistItem) GetID() MigrationChecklistItemId {
+	return s.ID
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationChecklistItem) GetStatus() MigrationChecklistItemStatus {
+	return s.Status
+}
+
+// GetAcknowledgeable returns the value of Acknowledgeable.
+func (s *MigrationChecklistItem) GetAcknowledgeable() bool {
+	return s.Acknowledgeable
+}
+
+// GetDoneAt returns the value of DoneAt.
+func (s *MigrationChecklistItem) GetDoneAt() OptDateTime {
+	return s.DoneAt
+}
+
+// GetJobId returns the value of JobId.
+func (s *MigrationChecklistItem) GetJobId() OptString {
+	return s.JobId
+}
+
+// GetAcknowledgedBy returns the value of AcknowledgedBy.
+func (s *MigrationChecklistItem) GetAcknowledgedBy() OptString {
+	return s.AcknowledgedBy
+}
+
+// GetAcknowledgedAt returns the value of AcknowledgedAt.
+func (s *MigrationChecklistItem) GetAcknowledgedAt() OptDateTime {
+	return s.AcknowledgedAt
+}
+
+// GetNotifications returns the value of Notifications.
+func (s *MigrationChecklistItem) GetNotifications() OptMigrationChecklistNotifications {
+	return s.Notifications
+}
+
+// GetSchedules returns the value of Schedules.
+func (s *MigrationChecklistItem) GetSchedules() OptMigrationChecklistSchedules {
+	return s.Schedules
+}
+
+// GetScripts returns the value of Scripts.
+func (s *MigrationChecklistItem) GetScripts() []MigrationChecklistScript {
+	return s.Scripts
+}
+
+// SetID sets the value of ID.
+func (s *MigrationChecklistItem) SetID(val MigrationChecklistItemId) {
+	s.ID = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationChecklistItem) SetStatus(val MigrationChecklistItemStatus) {
+	s.Status = val
+}
+
+// SetAcknowledgeable sets the value of Acknowledgeable.
+func (s *MigrationChecklistItem) SetAcknowledgeable(val bool) {
+	s.Acknowledgeable = val
+}
+
+// SetDoneAt sets the value of DoneAt.
+func (s *MigrationChecklistItem) SetDoneAt(val OptDateTime) {
+	s.DoneAt = val
+}
+
+// SetJobId sets the value of JobId.
+func (s *MigrationChecklistItem) SetJobId(val OptString) {
+	s.JobId = val
+}
+
+// SetAcknowledgedBy sets the value of AcknowledgedBy.
+func (s *MigrationChecklistItem) SetAcknowledgedBy(val OptString) {
+	s.AcknowledgedBy = val
+}
+
+// SetAcknowledgedAt sets the value of AcknowledgedAt.
+func (s *MigrationChecklistItem) SetAcknowledgedAt(val OptDateTime) {
+	s.AcknowledgedAt = val
+}
+
+// SetNotifications sets the value of Notifications.
+func (s *MigrationChecklistItem) SetNotifications(val OptMigrationChecklistNotifications) {
+	s.Notifications = val
+}
+
+// SetSchedules sets the value of Schedules.
+func (s *MigrationChecklistItem) SetSchedules(val OptMigrationChecklistSchedules) {
+	s.Schedules = val
+}
+
+// SetScripts sets the value of Scripts.
+func (s *MigrationChecklistItem) SetScripts(val []MigrationChecklistScript) {
+	s.Scripts = val
+}
+
+// Ref: #/components/schemas/MigrationChecklistItemId
+type MigrationChecklistItemId string
+
+const (
+	MigrationChecklistItemIdAppdataCache  MigrationChecklistItemId = "appdata_cache"
+	MigrationChecklistItemIdInitialSync   MigrationChecklistItemId = "initial_sync"
+	MigrationChecklistItemIdFullScrub     MigrationChecklistItemId = "full_scrub"
+	MigrationChecklistItemIdNotifications MigrationChecklistItemId = "notifications"
+	MigrationChecklistItemIdSchedules     MigrationChecklistItemId = "schedules"
+	MigrationChecklistItemIdUserScripts   MigrationChecklistItemId = "user_scripts"
+	MigrationChecklistItemIdRestoreDrill  MigrationChecklistItemId = "restore_drill"
+)
+
+// AllValues returns all MigrationChecklistItemId values.
+func (MigrationChecklistItemId) AllValues() []MigrationChecklistItemId {
+	return []MigrationChecklistItemId{
+		MigrationChecklistItemIdAppdataCache,
+		MigrationChecklistItemIdInitialSync,
+		MigrationChecklistItemIdFullScrub,
+		MigrationChecklistItemIdNotifications,
+		MigrationChecklistItemIdSchedules,
+		MigrationChecklistItemIdUserScripts,
+		MigrationChecklistItemIdRestoreDrill,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationChecklistItemId) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationChecklistItemIdAppdataCache:
+		return []byte(s), nil
+	case MigrationChecklistItemIdInitialSync:
+		return []byte(s), nil
+	case MigrationChecklistItemIdFullScrub:
+		return []byte(s), nil
+	case MigrationChecklistItemIdNotifications:
+		return []byte(s), nil
+	case MigrationChecklistItemIdSchedules:
+		return []byte(s), nil
+	case MigrationChecklistItemIdUserScripts:
+		return []byte(s), nil
+	case MigrationChecklistItemIdRestoreDrill:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationChecklistItemId) UnmarshalText(data []byte) error {
+	switch MigrationChecklistItemId(data) {
+	case MigrationChecklistItemIdAppdataCache:
+		*s = MigrationChecklistItemIdAppdataCache
+		return nil
+	case MigrationChecklistItemIdInitialSync:
+		*s = MigrationChecklistItemIdInitialSync
+		return nil
+	case MigrationChecklistItemIdFullScrub:
+		*s = MigrationChecklistItemIdFullScrub
+		return nil
+	case MigrationChecklistItemIdNotifications:
+		*s = MigrationChecklistItemIdNotifications
+		return nil
+	case MigrationChecklistItemIdSchedules:
+		*s = MigrationChecklistItemIdSchedules
+		return nil
+	case MigrationChecklistItemIdUserScripts:
+		*s = MigrationChecklistItemIdUserScripts
+		return nil
+	case MigrationChecklistItemIdRestoreDrill:
+		*s = MigrationChecklistItemIdRestoreDrill
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type MigrationChecklistItemStatus string
+
+const (
+	MigrationChecklistItemStatusTodo          MigrationChecklistItemStatus = "todo"
+	MigrationChecklistItemStatusDone          MigrationChecklistItemStatus = "done"
+	MigrationChecklistItemStatusNotApplicable MigrationChecklistItemStatus = "not_applicable"
+)
+
+// AllValues returns all MigrationChecklistItemStatus values.
+func (MigrationChecklistItemStatus) AllValues() []MigrationChecklistItemStatus {
+	return []MigrationChecklistItemStatus{
+		MigrationChecklistItemStatusTodo,
+		MigrationChecklistItemStatusDone,
+		MigrationChecklistItemStatusNotApplicable,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationChecklistItemStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationChecklistItemStatusTodo:
+		return []byte(s), nil
+	case MigrationChecklistItemStatusDone:
+		return []byte(s), nil
+	case MigrationChecklistItemStatusNotApplicable:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationChecklistItemStatus) UnmarshalText(data []byte) error {
+	switch MigrationChecklistItemStatus(data) {
+	case MigrationChecklistItemStatusTodo:
+		*s = MigrationChecklistItemStatusTodo
+		return nil
+	case MigrationChecklistItemStatusDone:
+		*s = MigrationChecklistItemStatusDone
+		return nil
+	case MigrationChecklistItemStatusNotApplicable:
+		*s = MigrationChecklistItemStatusNotApplicable
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationChecklistNotifications
+type MigrationChecklistNotifications struct {
+	// How many notification channels exist.
+	Channels int32 `json:"channels"`
+	// How many are enabled and have a test that succeeded since they last changed.
+	Tested int32 `json:"tested"`
+	// The names of the Unraid notification agents the scan found, never anything inside them: recreate
+	// each as a channel.
+	Agents []string `json:"agents"`
+}
+
+// GetChannels returns the value of Channels.
+func (s *MigrationChecklistNotifications) GetChannels() int32 {
+	return s.Channels
+}
+
+// GetTested returns the value of Tested.
+func (s *MigrationChecklistNotifications) GetTested() int32 {
+	return s.Tested
+}
+
+// GetAgents returns the value of Agents.
+func (s *MigrationChecklistNotifications) GetAgents() []string {
+	return s.Agents
+}
+
+// SetChannels sets the value of Channels.
+func (s *MigrationChecklistNotifications) SetChannels(val int32) {
+	s.Channels = val
+}
+
+// SetTested sets the value of Tested.
+func (s *MigrationChecklistNotifications) SetTested(val int32) {
+	s.Tested = val
+}
+
+// SetAgents sets the value of Agents.
+func (s *MigrationChecklistNotifications) SetAgents(val []string) {
+	s.Agents = val
+}
+
+// Values read from Unraid's configuration that the schedules item offers to carry over. A value the
+// flash did not have is absent, never an "off".
+// Ref: #/components/schemas/MigrationChecklistOffers
+type MigrationChecklistOffers struct {
+	// Unraid's mover schedule, as written.
+	MoverCron OptString `json:"moverCron"`
+	// `HH:MM` when the mover schedule is a daily line, offered as the nightly chain's start time.
+	MoverTime   OptString                        `json:"moverTime"`
+	ParityCheck OptMigrationChecklistParityCheck `json:"parityCheck"`
+	// True when Unraid's parity check wrote no corrections, which maps to a scrub that only reports.
+	ScrubReportOnly OptBool `json:"scrubReportOnly"`
+	// Unraid's global spin-down delay, offered as the default.
+	SpindownDelay OptString `json:"spindownDelay"`
+}
+
+// GetMoverCron returns the value of MoverCron.
+func (s *MigrationChecklistOffers) GetMoverCron() OptString {
+	return s.MoverCron
+}
+
+// GetMoverTime returns the value of MoverTime.
+func (s *MigrationChecklistOffers) GetMoverTime() OptString {
+	return s.MoverTime
+}
+
+// GetParityCheck returns the value of ParityCheck.
+func (s *MigrationChecklistOffers) GetParityCheck() OptMigrationChecklistParityCheck {
+	return s.ParityCheck
+}
+
+// GetScrubReportOnly returns the value of ScrubReportOnly.
+func (s *MigrationChecklistOffers) GetScrubReportOnly() OptBool {
+	return s.ScrubReportOnly
+}
+
+// GetSpindownDelay returns the value of SpindownDelay.
+func (s *MigrationChecklistOffers) GetSpindownDelay() OptString {
+	return s.SpindownDelay
+}
+
+// SetMoverCron sets the value of MoverCron.
+func (s *MigrationChecklistOffers) SetMoverCron(val OptString) {
+	s.MoverCron = val
+}
+
+// SetMoverTime sets the value of MoverTime.
+func (s *MigrationChecklistOffers) SetMoverTime(val OptString) {
+	s.MoverTime = val
+}
+
+// SetParityCheck sets the value of ParityCheck.
+func (s *MigrationChecklistOffers) SetParityCheck(val OptMigrationChecklistParityCheck) {
+	s.ParityCheck = val
+}
+
+// SetScrubReportOnly sets the value of ScrubReportOnly.
+func (s *MigrationChecklistOffers) SetScrubReportOnly(val OptBool) {
+	s.ScrubReportOnly = val
+}
+
+// SetSpindownDelay sets the value of SpindownDelay.
+func (s *MigrationChecklistOffers) SetSpindownDelay(val OptString) {
+	s.SpindownDelay = val
+}
+
+// Unraid's parity-check schedule as `dynamix.cfg` wrote it, offered as the scrub schedule.
+// Ref: #/components/schemas/MigrationChecklistParityCheck
+type MigrationChecklistParityCheck struct {
+	Mode       OptString `json:"mode"`
+	Hour       OptString `json:"hour"`
+	DayOfMonth OptString `json:"dayOfMonth"`
+	Day        OptString `json:"day"`
+	Month      OptString `json:"month"`
+	Frequency  OptString `json:"frequency"`
+	Correcting bool      `json:"correcting"`
+}
+
+// GetMode returns the value of Mode.
+func (s *MigrationChecklistParityCheck) GetMode() OptString {
+	return s.Mode
+}
+
+// GetHour returns the value of Hour.
+func (s *MigrationChecklistParityCheck) GetHour() OptString {
+	return s.Hour
+}
+
+// GetDayOfMonth returns the value of DayOfMonth.
+func (s *MigrationChecklistParityCheck) GetDayOfMonth() OptString {
+	return s.DayOfMonth
+}
+
+// GetDay returns the value of Day.
+func (s *MigrationChecklistParityCheck) GetDay() OptString {
+	return s.Day
+}
+
+// GetMonth returns the value of Month.
+func (s *MigrationChecklistParityCheck) GetMonth() OptString {
+	return s.Month
+}
+
+// GetFrequency returns the value of Frequency.
+func (s *MigrationChecklistParityCheck) GetFrequency() OptString {
+	return s.Frequency
+}
+
+// GetCorrecting returns the value of Correcting.
+func (s *MigrationChecklistParityCheck) GetCorrecting() bool {
+	return s.Correcting
+}
+
+// SetMode sets the value of Mode.
+func (s *MigrationChecklistParityCheck) SetMode(val OptString) {
+	s.Mode = val
+}
+
+// SetHour sets the value of Hour.
+func (s *MigrationChecklistParityCheck) SetHour(val OptString) {
+	s.Hour = val
+}
+
+// SetDayOfMonth sets the value of DayOfMonth.
+func (s *MigrationChecklistParityCheck) SetDayOfMonth(val OptString) {
+	s.DayOfMonth = val
+}
+
+// SetDay sets the value of Day.
+func (s *MigrationChecklistParityCheck) SetDay(val OptString) {
+	s.Day = val
+}
+
+// SetMonth sets the value of Month.
+func (s *MigrationChecklistParityCheck) SetMonth(val OptString) {
+	s.Month = val
+}
+
+// SetFrequency sets the value of Frequency.
+func (s *MigrationChecklistParityCheck) SetFrequency(val OptString) {
+	s.Frequency = val
+}
+
+// SetCorrecting sets the value of Correcting.
+func (s *MigrationChecklistParityCheck) SetCorrecting(val bool) {
+	s.Correcting = val
+}
+
+// Ref: #/components/schemas/MigrationChecklistSchedules
+type MigrationChecklistSchedules struct {
+	// Whether the nightly chain's mover step is enabled.
+	Mover bool `json:"mover"`
+	// Whether the nightly chain's sync step is enabled. Unraid has no sync schedule to carry over, so the
+	// user chooses one.
+	Sync bool `json:"sync"`
+	// Whether the nightly chain's scrub step is enabled.
+	Scrub bool `json:"scrub"`
+	// Local time the chain starts, `HH:MM`.
+	ChainStartTime string                   `json:"chainStartTime"`
+	WeeklyScrubDay Weekday                  `json:"weeklyScrubDay"`
+	Offers         MigrationChecklistOffers `json:"offers"`
+}
+
+// GetMover returns the value of Mover.
+func (s *MigrationChecklistSchedules) GetMover() bool {
+	return s.Mover
+}
+
+// GetSync returns the value of Sync.
+func (s *MigrationChecklistSchedules) GetSync() bool {
+	return s.Sync
+}
+
+// GetScrub returns the value of Scrub.
+func (s *MigrationChecklistSchedules) GetScrub() bool {
+	return s.Scrub
+}
+
+// GetChainStartTime returns the value of ChainStartTime.
+func (s *MigrationChecklistSchedules) GetChainStartTime() string {
+	return s.ChainStartTime
+}
+
+// GetWeeklyScrubDay returns the value of WeeklyScrubDay.
+func (s *MigrationChecklistSchedules) GetWeeklyScrubDay() Weekday {
+	return s.WeeklyScrubDay
+}
+
+// GetOffers returns the value of Offers.
+func (s *MigrationChecklistSchedules) GetOffers() MigrationChecklistOffers {
+	return s.Offers
+}
+
+// SetMover sets the value of Mover.
+func (s *MigrationChecklistSchedules) SetMover(val bool) {
+	s.Mover = val
+}
+
+// SetSync sets the value of Sync.
+func (s *MigrationChecklistSchedules) SetSync(val bool) {
+	s.Sync = val
+}
+
+// SetScrub sets the value of Scrub.
+func (s *MigrationChecklistSchedules) SetScrub(val bool) {
+	s.Scrub = val
+}
+
+// SetChainStartTime sets the value of ChainStartTime.
+func (s *MigrationChecklistSchedules) SetChainStartTime(val string) {
+	s.ChainStartTime = val
+}
+
+// SetWeeklyScrubDay sets the value of WeeklyScrubDay.
+func (s *MigrationChecklistSchedules) SetWeeklyScrubDay(val Weekday) {
+	s.WeeklyScrubDay = val
+}
+
+// SetOffers sets the value of Offers.
+func (s *MigrationChecklistSchedules) SetOffers(val MigrationChecklistOffers) {
+	s.Offers = val
+}
+
+// Ref: #/components/schemas/MigrationChecklistScript
+type MigrationChecklistScript struct {
+	Name string `json:"name"`
+	// The schedule the plugin's `customSchedule.cron` gives it, absent when it has none there.
+	Schedule OptString `json:"schedule"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationChecklistScript) GetName() string {
+	return s.Name
+}
+
+// GetSchedule returns the value of Schedule.
+func (s *MigrationChecklistScript) GetSchedule() OptString {
+	return s.Schedule
+}
+
+// SetName sets the value of Name.
+func (s *MigrationChecklistScript) SetName(val string) {
+	s.Name = val
+}
+
+// SetSchedule sets the value of Schedule.
+func (s *MigrationChecklistScript) SetSchedule(val OptString) {
+	s.Schedule = val
+}
+
 // Ref: #/components/schemas/MigrationComposeProjectSummary
 type MigrationComposeProjectSummary struct {
 	// The project's name, which `getMigrationTemplate` takes.
@@ -16159,6 +16738,144 @@ func (o OptMigrationBootMode) Get() (v MigrationBootMode, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptMigrationBootMode) Or(d MigrationBootMode) MigrationBootMode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationChecklistNotifications returns new OptMigrationChecklistNotifications with value set to v.
+func NewOptMigrationChecklistNotifications(v MigrationChecklistNotifications) OptMigrationChecklistNotifications {
+	return OptMigrationChecklistNotifications{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationChecklistNotifications is optional MigrationChecklistNotifications.
+type OptMigrationChecklistNotifications struct {
+	Value MigrationChecklistNotifications
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationChecklistNotifications was set.
+func (o OptMigrationChecklistNotifications) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationChecklistNotifications) Reset() {
+	var v MigrationChecklistNotifications
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationChecklistNotifications) SetTo(v MigrationChecklistNotifications) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationChecklistNotifications) Get() (v MigrationChecklistNotifications, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationChecklistNotifications) Or(d MigrationChecklistNotifications) MigrationChecklistNotifications {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationChecklistParityCheck returns new OptMigrationChecklistParityCheck with value set to v.
+func NewOptMigrationChecklistParityCheck(v MigrationChecklistParityCheck) OptMigrationChecklistParityCheck {
+	return OptMigrationChecklistParityCheck{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationChecklistParityCheck is optional MigrationChecklistParityCheck.
+type OptMigrationChecklistParityCheck struct {
+	Value MigrationChecklistParityCheck
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationChecklistParityCheck was set.
+func (o OptMigrationChecklistParityCheck) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationChecklistParityCheck) Reset() {
+	var v MigrationChecklistParityCheck
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationChecklistParityCheck) SetTo(v MigrationChecklistParityCheck) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationChecklistParityCheck) Get() (v MigrationChecklistParityCheck, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationChecklistParityCheck) Or(d MigrationChecklistParityCheck) MigrationChecklistParityCheck {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationChecklistSchedules returns new OptMigrationChecklistSchedules with value set to v.
+func NewOptMigrationChecklistSchedules(v MigrationChecklistSchedules) OptMigrationChecklistSchedules {
+	return OptMigrationChecklistSchedules{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationChecklistSchedules is optional MigrationChecklistSchedules.
+type OptMigrationChecklistSchedules struct {
+	Value MigrationChecklistSchedules
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationChecklistSchedules was set.
+func (o OptMigrationChecklistSchedules) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationChecklistSchedules) Reset() {
+	var v MigrationChecklistSchedules
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationChecklistSchedules) SetTo(v MigrationChecklistSchedules) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationChecklistSchedules) Get() (v MigrationChecklistSchedules, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationChecklistSchedules) Or(d MigrationChecklistSchedules) MigrationChecklistSchedules {
 	if v, ok := o.Get(); ok {
 		return v
 	}

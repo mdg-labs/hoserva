@@ -340,7 +340,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test notification through a channel
-         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested notification config is the same as no notification config").
+         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested notification config is the same as no notification config"). A test that succeeds is also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is enabled and its latest successful test is not older than its last change; a test that fails is not recorded.
          */
         post: operations["sendTestNotification"];
         delete?: never;
@@ -2085,6 +2085,52 @@ export interface paths {
          * @description Records that the user read the data check and the started stack sees its data, which offers the next stack. Refused with 409 `container_not_started` for a stack that was not started, 409 `data_check_required` until `checkMigrationContainer` has run since the latest start, 409 `data_check_failed` when that check found a path that is missing, empty or unreadable unless `acceptFailedCheck` is true (a container whose data directory is meant to be empty), and 409 `container_not_running` when none of the stack's containers is running (stop the container instead, to go on without it). Confirming a confirmed stack changes nothing. 409 `parity_not_initialized` and 404 `migrated_stack_not_found` as `startMigrationContainer` does.
          */
         post: operations["confirmMigrationContainer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/checklist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The post-migration checklist
+         * @description Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken from a record where one exists, so it cannot say something was done when it was not. The migration counts as finished exactly when the array record carries the time the point of no return finished (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way through its point of no return, or was undone has none, and so has an array created by hand or one that finished before this record existed; then `finished` is false, `finishedAt` is absent and `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+         *
+         *     `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing right after a sync and never counts. `notifications` is done once an enabled channel's test (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in; the Unraid notification agents the scan found are named so the user knows what to recreate, and no secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub` steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a non-correcting check maps to a scrub that only reports) and its spin-down delay as the default. Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over: nothing is offered for `sync` and the user chooses one.
+         *
+         *     `user_scripts` and `restore_drill` have no record to derive from and are done by `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and schedule (a script is never executed or translated, Q83); the second shows the latest succeeded `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+         */
+        get: operations["getMigrationChecklist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/migrate/checklist/{item}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item: components["schemas"]["MigrationChecklistItemId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acknowledge a checklist item no record can show
+         * @description Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill` (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when; the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409 `checklist_item_has_record` for every other item, whose state comes from a record and is never set by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept. Returns the item as it stands.
+         */
+        post: operations["acknowledgeMigrationChecklistItem"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5999,6 +6045,94 @@ export interface components {
             /** @description Confirm although the data check found a path that is missing, empty or unreadable. */
             acceptFailedCheck?: boolean;
         };
+        /** @enum {string} */
+        MigrationChecklistItemId: "appdata_cache" | "initial_sync" | "full_scrub" | "notifications" | "schedules" | "user_scripts" | "restore_drill";
+        MigrationChecklist: {
+            /** @description Whether the array record carries the time its migration's point of no return finished, which nothing but that step writes. False for a migration that is pending, part-way through, or was undone; then the checklist does not apply and `items` is empty. */
+            finished: boolean;
+            /**
+             * Format: date-time
+             * @description That time; present exactly when `finished` is true.
+             */
+            finishedAt?: string;
+            /** @description In the order of doc 05 §4's steps. */
+            items: components["schemas"]["MigrationChecklistItem"][];
+        };
+        MigrationChecklistItem: {
+            id: components["schemas"]["MigrationChecklistItemId"];
+            /** @enum {string} */
+            status: "todo" | "done" | "not_applicable";
+            /** @description True only for `user_scripts` and `restore_drill` while they are not acknowledged. An item with a record is never acknowledgeable. */
+            acknowledgeable: boolean;
+            /**
+             * Format: date-time
+             * @description When the record says it was done, or when it was acknowledged.
+             */
+            doneAt?: string;
+            /** @description The job the item derives from. For `restore_drill`, the latest succeeded `fix` job, which an acknowledgement records. */
+            jobId?: string;
+            /** @description Who acknowledged it, `local` for the daemon's own socket. */
+            acknowledgedBy?: string;
+            /** Format: date-time */
+            acknowledgedAt?: string;
+            notifications?: components["schemas"]["MigrationChecklistNotifications"];
+            schedules?: components["schemas"]["MigrationChecklistSchedules"];
+            /** @description The User Scripts the scan found, on `user_scripts` only. Empty when the scan found none or could not say; the report's User Scripts row tells which. */
+            scripts?: components["schemas"]["MigrationChecklistScript"][];
+        };
+        MigrationChecklistNotifications: {
+            /**
+             * Format: int32
+             * @description How many notification channels exist.
+             */
+            channels: number;
+            /**
+             * Format: int32
+             * @description How many are enabled and have a test that succeeded since they last changed.
+             */
+            tested: number;
+            /** @description The names of the Unraid notification agents the scan found, never anything inside them: recreate each as a channel. */
+            agents: string[];
+        };
+        MigrationChecklistSchedules: {
+            /** @description Whether the nightly chain's mover step is enabled. */
+            mover: boolean;
+            /** @description Whether the nightly chain's sync step is enabled. Unraid has no sync schedule to carry over, so the user chooses one. */
+            sync: boolean;
+            /** @description Whether the nightly chain's scrub step is enabled. */
+            scrub: boolean;
+            /** @description Local time the chain starts, `HH:MM`. */
+            chainStartTime: string;
+            weeklyScrubDay: components["schemas"]["Weekday"];
+            offers: components["schemas"]["MigrationChecklistOffers"];
+        };
+        /** @description Values read from Unraid's configuration that the schedules item offers to carry over. A value the flash did not have is absent, never an "off". */
+        MigrationChecklistOffers: {
+            /** @description Unraid's mover schedule, as written. */
+            moverCron?: string;
+            /** @description `HH:MM` when the mover schedule is a daily line, offered as the nightly chain's start time. */
+            moverTime?: string;
+            parityCheck?: components["schemas"]["MigrationChecklistParityCheck"];
+            /** @description True when Unraid's parity check wrote no corrections, which maps to a scrub that only reports. */
+            scrubReportOnly?: boolean;
+            /** @description Unraid's global spin-down delay, offered as the default. */
+            spindownDelay?: string;
+        };
+        /** @description Unraid's parity-check schedule as `dynamix.cfg` wrote it, offered as the scrub schedule. */
+        MigrationChecklistParityCheck: {
+            mode?: string;
+            hour?: string;
+            dayOfMonth?: string;
+            day?: string;
+            month?: string;
+            frequency?: string;
+            correcting: boolean;
+        };
+        MigrationChecklistScript: {
+            name: string;
+            /** @description The schedule the plugin's `customSchedule.cron` gives it, absent when it has none there. */
+            schedule?: string;
+        };
         AppdataBackupContainer: {
             name: string;
             /** @description The container's image repository, without its tag. */
@@ -9094,6 +9228,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MigrationContainerStack"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMigrationChecklist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The checklist. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationChecklist"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    acknowledgeMigrationChecklistItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item: components["schemas"]["MigrationChecklistItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The item, acknowledged. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationChecklistItem"];
                 };
             };
             default: components["responses"]["Error"];

@@ -28,6 +28,31 @@ func newMigrationSessionTestStore(t *testing.T) *MigrationSessionStore {
 	return NewMigrationSessionStore(db)
 }
 
+// applyMigrationFiles runs the migration files whose name is at least from and
+// below before, in order ("" leaves that side open), straight on db, so a test
+// can stop the schema where an older database stood and write rows before the
+// next migration runs.
+func applyMigrationFiles(t *testing.T, db *sql.DB, from, before string) {
+	t.Helper()
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if filepath.Ext(name) != ".sql" || name < from || (before != "" && name >= before) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(context.Background(), string(raw)); err != nil {
+			t.Fatalf("applying %s: %v", name, err)
+		}
+	}
+}
+
 func TestMigrationSessionStore_PutGetDelete(t *testing.T) {
 	ctx := context.Background()
 	st := newMigrationSessionTestStore(t)
@@ -131,6 +156,7 @@ func TestMigrationSessionMigration_ScanFullChecksumsKeepsAnExistingRow(t *testin
 		t.Fatal(err)
 	}
 	defer closeQuietly(db)
+	applyMigrationFiles(t, db, "", "20261002202210_add_migration_session.sql")
 	if _, err := db.ExecContext(ctx, read("20261002202210_add_migration_session.sql")); err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +168,9 @@ func TestMigrationSessionMigration_ScanFullChecksumsKeepsAnExistingRow(t *testin
 	}
 	// The store reads every column of the current schema.
 	if _, err := db.ExecContext(ctx, read("20261004084035_add_migration_session_verify.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, read("20261005085001_add_migration_session_checklist.sql")); err != nil {
 		t.Fatal(err)
 	}
 	got, found, err := NewMigrationSessionStore(db).Get(ctx)
@@ -162,6 +191,7 @@ func TestMigrationSessionMigration_VerifyKeepsAnExistingRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeQuietly(db)
+	applyMigrationFiles(t, db, "", "20261002202210_add_migration_session.sql")
 	for _, name := range []string{"20261002202210_add_migration_session.sql", "20261003114757_add_migration_scan_full_checksums.sql"} {
 		raw, err := os.ReadFile(filepath.Join("migrations", name))
 		if err != nil {
@@ -174,7 +204,47 @@ func TestMigrationSessionMigration_VerifyKeepsAnExistingRow(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO migration_session (id, source_file, report, scan_full_checksums) VALUES (1, 'upload-a.zip', '{"verdict":"go"}', 1)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join("migrations", "20261004084035_add_migration_session_verify.sql"))
+	for _, name := range []string{"20261004084035_add_migration_session_verify.sql", "20261005085001_add_migration_session_checklist.sql"} {
+		raw, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, found, err := NewMigrationSessionStore(db).Get(ctx)
+	if err != nil || !found {
+		t.Fatalf("Get = %v, %v", found, err)
+	}
+	if got.SourceFile != "upload-a.zip" || string(got.Report) != `{"verdict":"go"}` || !got.ScanFullChecksums || got.Verify != nil {
+		t.Errorf("the row after the migration = %+v", got)
+	}
+}
+
+// Adding checklist keeps a session row the table already held, and it reads as
+// one with no checklist record (D16).
+func TestMigrationSessionMigration_ChecklistKeepsAnExistingRow(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeQuietly(db)
+	applyMigrationFiles(t, db, "", "20261002202210_add_migration_session.sql")
+	for _, name := range []string{"20261002202210_add_migration_session.sql", "20261003114757_add_migration_scan_full_checksums.sql", "20261004084035_add_migration_session_verify.sql"} {
+		raw, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO migration_session (id, source_file, report, verify) VALUES (1, 'upload-a.zip', '{"verdict":"go"}', '{"status":"passed"}')`); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join("migrations", "20261005085001_add_migration_session_checklist.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +255,53 @@ func TestMigrationSessionMigration_VerifyKeepsAnExistingRow(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("Get = %v, %v", found, err)
 	}
-	if got.SourceFile != "upload-a.zip" || string(got.Report) != `{"verdict":"go"}` || !got.ScanFullChecksums || got.Verify != nil {
+	if got.SourceFile != "upload-a.zip" || string(got.Report) != `{"verdict":"go"}` || string(got.Verify) != `{"status":"passed"}` || got.Checklist != nil {
 		t.Errorf("the row after the migration = %+v", got)
+	}
+}
+
+func TestMigrationSessionStore_ChecklistIsKeptByPutAndDeleteAndReplacedOnlyBySetChecklist(t *testing.T) {
+	ctx := context.Background()
+	st := newMigrationSessionTestStore(t)
+
+	if err := st.SetChecklist(ctx, []byte(`{"acks":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := st.Get(ctx)
+	if err != nil || !found || string(got.Checklist) != `{"acks":{}}` || got.SourceFile != "" {
+		t.Fatalf("a checklist alone = %+v %v %v", got, found, err)
+	}
+
+	if err := st.Put(ctx, MigrationSession{SourceFile: "upload-a.zip", Report: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = st.Get(ctx)
+	if got.SourceFile != "upload-a.zip" || string(got.Checklist) != `{"acks":{}}` {
+		t.Fatalf("after a Put = %+v, want the session written and the checklist kept", got)
+	}
+	if err := st.SetChecklist(ctx, []byte(`{"channelTests":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = st.Get(ctx)
+	if got.SourceFile != "upload-a.zip" || string(got.Report) != `{}` || string(got.Checklist) != `{"channelTests":{}}` {
+		t.Fatalf("after SetChecklist = %+v, want the session untouched", got)
+	}
+
+	if err := st.Delete(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err = st.Get(ctx)
+	if err != nil || !found || got.SourceFile != "" || got.Report != nil || got.ScanFile != "" || got.Verify != nil || string(got.Checklist) != `{"channelTests":{}}` {
+		t.Fatalf("after Delete = %+v %v %v, want only the checklist left", got, found, err)
+	}
+
+	if err := st.SetChecklist(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Delete(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := st.Get(ctx); found {
+		t.Fatal("a session with no checklist survived Delete")
 	}
 }

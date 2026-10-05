@@ -85,6 +85,9 @@ type session struct {
 	Report *Report
 	Scan   *scanRecord
 	Verify *VerifyResult
+	// checklist is the post-migration checklist's record as stored. save never
+	// writes it: checklist.go replaces it on its own.
+	checklist []byte
 }
 
 // State is the session as the API shows it. Source is what the Report was made
@@ -159,6 +162,11 @@ type Service struct {
 	// Stacks is the Compose stack layer the migrated containers are created
 	// through. Nil means this daemon creates none.
 	Stacks StackLayer
+	// ChecklistRecords are where the post-migration checklist reads its records
+	// (checklist.go). Zero means this daemon cannot build it.
+	ChecklistRecords ChecklistSources
+	// Now returns the current time; nil means the system clock.
+	Now func() time.Time
 	// DataRoots are the host paths a migrated container's data lives under,
 	// which the data check reads; nil means /mnt/user and /mnt/cache.
 	DataRoots []string
@@ -167,6 +175,9 @@ type Service struct {
 	// created stacks, decide, and then act (create, start, confirm). It is taken
 	// before mu, never after.
 	flowMu sync.Mutex
+	// checklistMu serialises the read-modify-write of the checklist's record.
+	// It is taken before mu, never after.
+	checklistMu sync.Mutex
 	// stickMu serialises the one private mountpoint a flash device is read at.
 	// It is taken after mu, never before.
 	stickMu sync.Mutex
@@ -193,6 +204,7 @@ func (s *Service) load(ctx context.Context) (*session, error) {
 	if !found {
 		return sess, nil
 	}
+	sess.checklist = row.Checklist
 	if row.SourceFile != "" {
 		sess.Source = &SourceInfo{File: row.SourceFile, Size: row.SourceSize, ReceivedAt: row.SourceReceivedAt}
 	}

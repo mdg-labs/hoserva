@@ -138,7 +138,7 @@ func (q *Queries) GetArrayDataDiskByMountpoint(ctx context.Context, mountpoint s
 }
 
 const getArraySettings = `-- name: GetArraySettings :one
-SELECT id, create_policy, min_free_space, created_at, migration_pending, migration_recorded, initial_sync_owed
+SELECT id, create_policy, min_free_space, created_at, migration_pending, migration_recorded, initial_sync_owed, migration_finished_at
 FROM array_settings WHERE id = 1
 `
 
@@ -153,6 +153,7 @@ func (q *Queries) GetArraySettings(ctx context.Context) (*ArraySetting, error) {
 		&i.MigrationPending,
 		&i.MigrationRecorded,
 		&i.InitialSyncOwed,
+		&i.MigrationFinishedAt,
 	)
 	return &i, err
 }

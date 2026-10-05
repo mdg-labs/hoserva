@@ -647,6 +647,11 @@ func run(cfg config) error {
 	} else if err := wireMigrationContainers(handler, arrayStore); err != nil {
 		log.Printf("hoservad: the Unraid migration's containers are not available: %v", err)
 	}
+	if handler.Migration != nil {
+		if err := wireMigrationChecklist(handler, jobStore, arrayStore); err != nil {
+			log.Printf("hoservad: the Unraid migration's checklist is not available: %v", err)
+		}
+	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,

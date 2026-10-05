@@ -169,6 +169,7 @@ func (h *handler) SendTestNotification(ctx context.Context, params apiv1.SendTes
 	if !ok {
 		return nil, errNotificationChannelNotFound(params.ChannelId)
 	}
+	h.migration.checklist.recordChannelTest(params.ChannelId.String())
 	return &apiv1.NotificationTestResult{Success: true}, nil
 }
 

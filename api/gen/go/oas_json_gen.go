@@ -20857,6 +20857,1256 @@ func (s *MigrationCheckStatus) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *MigrationChecklist) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklist) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("finished")
+		e.Bool(s.Finished)
+	}
+	{
+		if s.FinishedAt.Set {
+			e.FieldStart("finishedAt")
+			s.FinishedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		e.FieldStart("items")
+		e.ArrStart()
+		for _, elem := range s.Items {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklist = [3]string{
+	0: "finished",
+	1: "finishedAt",
+	2: "items",
+}
+
+// Decode decodes MigrationChecklist from json.
+func (s *MigrationChecklist) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklist to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "finished":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Finished = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"finished\"")
+			}
+		case "finishedAt":
+			if err := func() error {
+				s.FinishedAt.Reset()
+				if err := s.FinishedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"finishedAt\"")
+			}
+		case "items":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				s.Items = make([]MigrationChecklistItem, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MigrationChecklistItem
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Items = append(s.Items, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"items\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklist")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000101,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationChecklist) {
+					name = jsonFieldsNameOfMigrationChecklist[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklist) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklist) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationChecklistItem) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklistItem) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("id")
+		s.ID.Encode(e)
+	}
+	{
+		e.FieldStart("status")
+		s.Status.Encode(e)
+	}
+	{
+		e.FieldStart("acknowledgeable")
+		e.Bool(s.Acknowledgeable)
+	}
+	{
+		if s.DoneAt.Set {
+			e.FieldStart("doneAt")
+			s.DoneAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		if s.JobId.Set {
+			e.FieldStart("jobId")
+			s.JobId.Encode(e)
+		}
+	}
+	{
+		if s.AcknowledgedBy.Set {
+			e.FieldStart("acknowledgedBy")
+			s.AcknowledgedBy.Encode(e)
+		}
+	}
+	{
+		if s.AcknowledgedAt.Set {
+			e.FieldStart("acknowledgedAt")
+			s.AcknowledgedAt.Encode(e, json.EncodeDateTime)
+		}
+	}
+	{
+		if s.Notifications.Set {
+			e.FieldStart("notifications")
+			s.Notifications.Encode(e)
+		}
+	}
+	{
+		if s.Schedules.Set {
+			e.FieldStart("schedules")
+			s.Schedules.Encode(e)
+		}
+	}
+	{
+		if s.Scripts != nil {
+			e.FieldStart("scripts")
+			e.ArrStart()
+			for _, elem := range s.Scripts {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklistItem = [10]string{
+	0: "id",
+	1: "status",
+	2: "acknowledgeable",
+	3: "doneAt",
+	4: "jobId",
+	5: "acknowledgedBy",
+	6: "acknowledgedAt",
+	7: "notifications",
+	8: "schedules",
+	9: "scripts",
+}
+
+// Decode decodes MigrationChecklistItem from json.
+func (s *MigrationChecklistItem) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistItem to nil")
+	}
+	var requiredBitSet [2]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "id":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.ID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"id\"")
+			}
+		case "status":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Status.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"status\"")
+			}
+		case "acknowledgeable":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Bool()
+				s.Acknowledgeable = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"acknowledgeable\"")
+			}
+		case "doneAt":
+			if err := func() error {
+				s.DoneAt.Reset()
+				if err := s.DoneAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"doneAt\"")
+			}
+		case "jobId":
+			if err := func() error {
+				s.JobId.Reset()
+				if err := s.JobId.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"jobId\"")
+			}
+		case "acknowledgedBy":
+			if err := func() error {
+				s.AcknowledgedBy.Reset()
+				if err := s.AcknowledgedBy.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"acknowledgedBy\"")
+			}
+		case "acknowledgedAt":
+			if err := func() error {
+				s.AcknowledgedAt.Reset()
+				if err := s.AcknowledgedAt.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"acknowledgedAt\"")
+			}
+		case "notifications":
+			if err := func() error {
+				s.Notifications.Reset()
+				if err := s.Notifications.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"notifications\"")
+			}
+		case "schedules":
+			if err := func() error {
+				s.Schedules.Reset()
+				if err := s.Schedules.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"schedules\"")
+			}
+		case "scripts":
+			if err := func() error {
+				s.Scripts = make([]MigrationChecklistScript, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MigrationChecklistScript
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Scripts = append(s.Scripts, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scripts\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklistItem")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [2]uint8{
+		0b00000111,
+		0b00000000,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationChecklistItem) {
+					name = jsonFieldsNameOfMigrationChecklistItem[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklistItem) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistItem) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MigrationChecklistItemId as json.
+func (s MigrationChecklistItemId) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes MigrationChecklistItemId from json.
+func (s *MigrationChecklistItemId) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistItemId to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch MigrationChecklistItemId(v) {
+	case MigrationChecklistItemIdAppdataCache:
+		*s = MigrationChecklistItemIdAppdataCache
+	case MigrationChecklistItemIdInitialSync:
+		*s = MigrationChecklistItemIdInitialSync
+	case MigrationChecklistItemIdFullScrub:
+		*s = MigrationChecklistItemIdFullScrub
+	case MigrationChecklistItemIdNotifications:
+		*s = MigrationChecklistItemIdNotifications
+	case MigrationChecklistItemIdSchedules:
+		*s = MigrationChecklistItemIdSchedules
+	case MigrationChecklistItemIdUserScripts:
+		*s = MigrationChecklistItemIdUserScripts
+	case MigrationChecklistItemIdRestoreDrill:
+		*s = MigrationChecklistItemIdRestoreDrill
+	default:
+		*s = MigrationChecklistItemId(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s MigrationChecklistItemId) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistItemId) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MigrationChecklistItemStatus as json.
+func (s MigrationChecklistItemStatus) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes MigrationChecklistItemStatus from json.
+func (s *MigrationChecklistItemStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistItemStatus to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch MigrationChecklistItemStatus(v) {
+	case MigrationChecklistItemStatusTodo:
+		*s = MigrationChecklistItemStatusTodo
+	case MigrationChecklistItemStatusDone:
+		*s = MigrationChecklistItemStatusDone
+	case MigrationChecklistItemStatusNotApplicable:
+		*s = MigrationChecklistItemStatusNotApplicable
+	default:
+		*s = MigrationChecklistItemStatus(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s MigrationChecklistItemStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistItemStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationChecklistNotifications) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklistNotifications) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("channels")
+		e.Int32(s.Channels)
+	}
+	{
+		e.FieldStart("tested")
+		e.Int32(s.Tested)
+	}
+	{
+		e.FieldStart("agents")
+		e.ArrStart()
+		for _, elem := range s.Agents {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklistNotifications = [3]string{
+	0: "channels",
+	1: "tested",
+	2: "agents",
+}
+
+// Decode decodes MigrationChecklistNotifications from json.
+func (s *MigrationChecklistNotifications) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistNotifications to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "channels":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Int32()
+				s.Channels = int32(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"channels\"")
+			}
+		case "tested":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int32()
+				s.Tested = int32(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"tested\"")
+			}
+		case "agents":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				s.Agents = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Agents = append(s.Agents, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"agents\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklistNotifications")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationChecklistNotifications) {
+					name = jsonFieldsNameOfMigrationChecklistNotifications[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklistNotifications) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistNotifications) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationChecklistOffers) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklistOffers) encodeFields(e *jx.Encoder) {
+	{
+		if s.MoverCron.Set {
+			e.FieldStart("moverCron")
+			s.MoverCron.Encode(e)
+		}
+	}
+	{
+		if s.MoverTime.Set {
+			e.FieldStart("moverTime")
+			s.MoverTime.Encode(e)
+		}
+	}
+	{
+		if s.ParityCheck.Set {
+			e.FieldStart("parityCheck")
+			s.ParityCheck.Encode(e)
+		}
+	}
+	{
+		if s.ScrubReportOnly.Set {
+			e.FieldStart("scrubReportOnly")
+			s.ScrubReportOnly.Encode(e)
+		}
+	}
+	{
+		if s.SpindownDelay.Set {
+			e.FieldStart("spindownDelay")
+			s.SpindownDelay.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklistOffers = [5]string{
+	0: "moverCron",
+	1: "moverTime",
+	2: "parityCheck",
+	3: "scrubReportOnly",
+	4: "spindownDelay",
+}
+
+// Decode decodes MigrationChecklistOffers from json.
+func (s *MigrationChecklistOffers) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistOffers to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "moverCron":
+			if err := func() error {
+				s.MoverCron.Reset()
+				if err := s.MoverCron.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"moverCron\"")
+			}
+		case "moverTime":
+			if err := func() error {
+				s.MoverTime.Reset()
+				if err := s.MoverTime.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"moverTime\"")
+			}
+		case "parityCheck":
+			if err := func() error {
+				s.ParityCheck.Reset()
+				if err := s.ParityCheck.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"parityCheck\"")
+			}
+		case "scrubReportOnly":
+			if err := func() error {
+				s.ScrubReportOnly.Reset()
+				if err := s.ScrubReportOnly.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scrubReportOnly\"")
+			}
+		case "spindownDelay":
+			if err := func() error {
+				s.SpindownDelay.Reset()
+				if err := s.SpindownDelay.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"spindownDelay\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklistOffers")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklistOffers) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistOffers) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationChecklistParityCheck) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklistParityCheck) encodeFields(e *jx.Encoder) {
+	{
+		if s.Mode.Set {
+			e.FieldStart("mode")
+			s.Mode.Encode(e)
+		}
+	}
+	{
+		if s.Hour.Set {
+			e.FieldStart("hour")
+			s.Hour.Encode(e)
+		}
+	}
+	{
+		if s.DayOfMonth.Set {
+			e.FieldStart("dayOfMonth")
+			s.DayOfMonth.Encode(e)
+		}
+	}
+	{
+		if s.Day.Set {
+			e.FieldStart("day")
+			s.Day.Encode(e)
+		}
+	}
+	{
+		if s.Month.Set {
+			e.FieldStart("month")
+			s.Month.Encode(e)
+		}
+	}
+	{
+		if s.Frequency.Set {
+			e.FieldStart("frequency")
+			s.Frequency.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("correcting")
+		e.Bool(s.Correcting)
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklistParityCheck = [7]string{
+	0: "mode",
+	1: "hour",
+	2: "dayOfMonth",
+	3: "day",
+	4: "month",
+	5: "frequency",
+	6: "correcting",
+}
+
+// Decode decodes MigrationChecklistParityCheck from json.
+func (s *MigrationChecklistParityCheck) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistParityCheck to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "mode":
+			if err := func() error {
+				s.Mode.Reset()
+				if err := s.Mode.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mode\"")
+			}
+		case "hour":
+			if err := func() error {
+				s.Hour.Reset()
+				if err := s.Hour.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hour\"")
+			}
+		case "dayOfMonth":
+			if err := func() error {
+				s.DayOfMonth.Reset()
+				if err := s.DayOfMonth.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"dayOfMonth\"")
+			}
+		case "day":
+			if err := func() error {
+				s.Day.Reset()
+				if err := s.Day.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"day\"")
+			}
+		case "month":
+			if err := func() error {
+				s.Month.Reset()
+				if err := s.Month.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"month\"")
+			}
+		case "frequency":
+			if err := func() error {
+				s.Frequency.Reset()
+				if err := s.Frequency.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"frequency\"")
+			}
+		case "correcting":
+			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				v, err := d.Bool()
+				s.Correcting = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"correcting\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklistParityCheck")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b01000000,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationChecklistParityCheck) {
+					name = jsonFieldsNameOfMigrationChecklistParityCheck[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklistParityCheck) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistParityCheck) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationChecklistSchedules) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklistSchedules) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("mover")
+		e.Bool(s.Mover)
+	}
+	{
+		e.FieldStart("sync")
+		e.Bool(s.Sync)
+	}
+	{
+		e.FieldStart("scrub")
+		e.Bool(s.Scrub)
+	}
+	{
+		e.FieldStart("chainStartTime")
+		e.Str(s.ChainStartTime)
+	}
+	{
+		e.FieldStart("weeklyScrubDay")
+		s.WeeklyScrubDay.Encode(e)
+	}
+	{
+		e.FieldStart("offers")
+		s.Offers.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklistSchedules = [6]string{
+	0: "mover",
+	1: "sync",
+	2: "scrub",
+	3: "chainStartTime",
+	4: "weeklyScrubDay",
+	5: "offers",
+}
+
+// Decode decodes MigrationChecklistSchedules from json.
+func (s *MigrationChecklistSchedules) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistSchedules to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "mover":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Mover = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mover\"")
+			}
+		case "sync":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Sync = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"sync\"")
+			}
+		case "scrub":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Bool()
+				s.Scrub = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"scrub\"")
+			}
+		case "chainStartTime":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.ChainStartTime = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"chainStartTime\"")
+			}
+		case "weeklyScrubDay":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.WeeklyScrubDay.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"weeklyScrubDay\"")
+			}
+		case "offers":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				if err := s.Offers.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"offers\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklistSchedules")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00111111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationChecklistSchedules) {
+					name = jsonFieldsNameOfMigrationChecklistSchedules[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklistSchedules) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistSchedules) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MigrationChecklistScript) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MigrationChecklistScript) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		if s.Schedule.Set {
+			e.FieldStart("schedule")
+			s.Schedule.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfMigrationChecklistScript = [2]string{
+	0: "name",
+	1: "schedule",
+}
+
+// Decode decodes MigrationChecklistScript from json.
+func (s *MigrationChecklistScript) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MigrationChecklistScript to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "name":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "schedule":
+			if err := func() error {
+				s.Schedule.Reset()
+				if err := s.Schedule.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"schedule\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MigrationChecklistScript")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMigrationChecklistScript) {
+					name = jsonFieldsNameOfMigrationChecklistScript[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MigrationChecklistScript) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MigrationChecklistScript) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *MigrationComposeProjectSummary) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -30997,6 +32247,105 @@ func (s OptMigrationBootMode) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptMigrationBootMode) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MigrationChecklistNotifications as json.
+func (o OptMigrationChecklistNotifications) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes MigrationChecklistNotifications from json.
+func (o *OptMigrationChecklistNotifications) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptMigrationChecklistNotifications to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptMigrationChecklistNotifications) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptMigrationChecklistNotifications) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MigrationChecklistParityCheck as json.
+func (o OptMigrationChecklistParityCheck) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes MigrationChecklistParityCheck from json.
+func (o *OptMigrationChecklistParityCheck) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptMigrationChecklistParityCheck to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptMigrationChecklistParityCheck) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptMigrationChecklistParityCheck) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MigrationChecklistSchedules as json.
+func (o OptMigrationChecklistSchedules) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes MigrationChecklistSchedules from json.
+func (o *OptMigrationChecklistSchedules) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptMigrationChecklistSchedules to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptMigrationChecklistSchedules) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptMigrationChecklistSchedules) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

@@ -28,6 +28,19 @@ func encodeAcknowledgeDegradedArrayResponse(response *SystemStatus, w http.Respo
 	return nil
 }
 
+func encodeAcknowledgeMigrationChecklistItemResponse(response *MigrationChecklistItem, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeAddCatalogSourceResponse(response *CatalogSource, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -1027,6 +1040,19 @@ func encodeGetMetricsResponse(response *MetricSeries, w http.ResponseWriter, spa
 }
 
 func encodeGetMigrationResponse(response *Migration, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeGetMigrationChecklistResponse(response *MigrationChecklist, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

@@ -58,6 +58,11 @@ type mockMigration struct {
 	// formatted the former parity and cache disks and finished.
 	roles       []disk.AdoptionAssignment
 	initialized bool
+	// finishedAt is production's array_settings.migration_finished_at: set in the
+	// same step that sets initialized, never by anything else, and zero for a
+	// migration that is pending, part-way through, or was undone. The checklist
+	// reads "finished" only from it.
+	finishedAt time.Time
 	// stopParityInit makes the point of no return stop after the former parity and
 	// cache disks are recorded, as a run that failed there does in production; the
 	// session then reports initializing until the same call is made again with
@@ -71,6 +76,11 @@ type mockMigration struct {
 	// outlives a new scan as production's does.
 	flowMu     sync.Mutex
 	containers []mockMigratedStack
+
+	// checklist is the post-migration checklist's record, and checklistMu
+	// serialises an acknowledgement's read and write as production's does.
+	checklist   mockChecklist
+	checklistMu sync.Mutex
 }
 
 // unfinished is whether the migration is still pending in production's sense,
@@ -129,6 +139,12 @@ func mockMigrateError(err error) error {
 		return errMigrationRefusal("no_import_pending", 409, err)
 	case errors.Is(err, migrate.ErrVerifyRequired):
 		return errMigrationRefusal("verify_required", 409, err)
+	case errors.Is(err, migrate.ErrMigrationNotFinished):
+		return errMigrationRefusal("migration_not_finished", 409, err)
+	case errors.Is(err, migrate.ErrChecklistItemNotFound):
+		return errMigrationRefusal("checklist_item_not_found", 404, err)
+	case errors.Is(err, migrate.ErrChecklistItemHasRecord):
+		return errMigrationRefusal("checklist_item_has_record", 409, err)
 	case errors.Is(err, disk.ErrUnraidStick):
 		return errMigrationRefusal("unraid_stick", 409, err)
 	case errors.Is(err, job.ErrAdoptionLayout), migrate.IsImportRoleError(err):
@@ -310,6 +326,13 @@ func mockMigrationImport() migrate.Import {
 			{Name: "media", Allocator: "highwater", CreatePolicy: pool.BalanceAcrossDisks, UseCache: "no", CacheMode: pool.ArrayOnly, Export: "e", Security: "private", SplitLevel: "2", Floor: "50000000", ReadList: []string{"bob"}, WriteList: []string{"alice"}},
 		},
 		Users: []string{"alice", "bob"},
+		Schedules: migrate.Schedules{
+			MoverCron:     "40 3 * * *",
+			ParityCheck:   migrate.ParityCheckSchedule{Found: true, Mode: "1", Hour: "0 3", Correcting: false},
+			SpindownDelay: "30",
+			NotifyAgents:  []string{"Pushover", "Slack"},
+		},
+		UserScripts: []migrate.UserScript{{Name: "nightly-report", Schedule: "30 2 * * *"}, {Name: "Weekly cleanup"}},
 	}
 }
 
@@ -667,7 +690,7 @@ func (h *handler) InitializeMigrationParity(ctx context.Context, req *apiv1.Migr
 	if stop {
 		h.migration.finishing.Store(true)
 	} else {
-		h.migration.initialized = true
+		h.migration.initialized, h.migration.finishedAt = true, time.Now().UTC().Truncate(time.Second)
 	}
 	h.migration.mu.Unlock()
 	h.migration.imported.Store(false)
@@ -691,7 +714,7 @@ func (h *handler) finishMigrationParity(req *apiv1.MigrationInitializeParityRequ
 		return nil, err
 	}
 	h.migration.mu.Lock()
-	h.migration.initialized = true
+	h.migration.initialized, h.migration.finishedAt = true, time.Now().UTC().Truncate(time.Second)
 	h.migration.mu.Unlock()
 	h.migration.finishing.Store(false)
 	h.endMockParityJob(j.ID, nil)
