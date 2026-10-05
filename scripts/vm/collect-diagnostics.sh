@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# nightly-l3.yml's failure-artifact step (#222): pulls the guest's own
-# hoservad journal and `hoserva doctor` output into a directory the
-# workflow uploads as an artifact, so a red nightly is diagnosable from
+# The failure-artifact step of nightly-l3.yml (#222) and nightly-migration.yml,
+# and of run-migration-suite.sh itself: pulls the guest's own hoservad journal
+# and `hoserva doctor` output into a directory the workflow uploads as an
+# artifact, so a red nightly is diagnosable from
 # the run alone instead of an agent re-deriving it from the vm-suite
 # step's client-side symptom (this issue's own starting point — a bare
 # "do request: ... EOF" with no server-side evidence attached).

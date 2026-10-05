@@ -1,0 +1,55 @@
+# hoserva unraid fixture manifest, version 1
+# variant: unraid-7x-xfs-single-parity
+# columns: sha256, size, mode, owner, disk, path (tab separated; the path is relative to the disk root)
+# disk disk1 files=14 bytes=67960975
+# disk disk2 files=11 bytes=1241098
+# disk disk3 files=6 bytes=1490000
+# disk cache files=9 bytes=378589
+# share .Trash-99 files=2 bytes=32
+# share appdata files=9 bytes=67602412
+# share backup files=2 bytes=1000000
+# share documents files=13 bytes=285163
+# share domains files=1 bytes=8000
+# share isos files=1 bytes=700000
+# share media files=10 bytes=1411000
+# share system files=2 bytes=64055
+83e3137a88b6d1dbb68b207954bad1a2c01275ba0d3852dea108914a47a057b5	1500	666	99:100	cache	appdata/gateway/proxy.conf
+32a8458e0f8f279ae012be11ed9b1cc7e6feaf3cc9048c17a9e1fe4ae05f4e2a	100000	666	99:100	cache	appdata/mediaserver/transcode-cache.bin
+63a6cc8d01962016a1713eb7fef921f2c9d3c779ebdc5dc17c4d5e89bc1237f1	70000	666	99:100	cache	appdata/notes/data/v3/index.db
+7115bd7d9b26553218a0c14b99cc3c3c02a272d885a12ed131f6f7e811885d47	90000	666	99:100	cache	appdata/photos/thumbs.db
+79330461508cf8ba89a80914dc21dad845e32d8cccabed355e6575e4b033e5aa	45000	666	99:100	cache	documents/new-scan.bin
+0d596dbdbbbe7523b5ef39eae6665007e0d5c9c1b3515f07de150b01442da752	34	666	99:100	cache	documents/todo.txt
+ae109f9703897f1b557107f0e9f6a8bc46089ef48aa6b2d53b4bcea669e598b2	8000	666	99:100	cache	domains/vm-notes/readme.bin
+3b283c38d80c0e176285163bb006563c28cb2149c7be799d0ad84e92ecf2ae71	64000	666	99:100	cache	system/docker/dockerdir/layer-index.bin
+aaf285e10c0a6853f5ecddb59ba68ee41e253f12379993c1dc91b8768636d515	55	666	99:100	cache	system/libvirt/README.txt
+25faabb1d8cc0e72d74817e8dd7c7726ec76104d2bc647516e7085c8e141d601	50000	666	99:100	disk1	appdata/mediaserver/Metadata/index.bin
+b905f809764e0ececfb5da560fdc5da1770eb2caf47e534dd2fd5540c64ba293	120000	666	99:100	disk1	appdata/mediaserver/library.db
+e33b5da9c761e1331ed3a369f10f6baa832ddf964174317e09119f63924a499f	2048	666	99:100	disk1	appdata/notes/config.json
+560e5bb7cc0d56ae7c0c551fd62a2b905dfd3e4c85f57e190f9076bae817bfa9	60000	666	99:100	disk1	appdata/notes/data/v1/index.db
+46d4b6191ad609da13228276c7db127e27fa58a4839ca30b671d6707d5bff36a	67108864	666	99:100	disk1	appdata/notes/db/sparse.img
+b553e24930a1d8db821caf7aa16c891cb5f6b7bfe2dac28d457d379116896164	16	666	99:100	disk1	documents/Reports/Q3.txt
+8c677a0dc571d4976d45cc97f230916faafc2bef32b6e7b0213673677d36aa38	16	666	99:100	disk1	documents/Reports/q3.txt
+3b55e3447a3f12f7a10bf020c1ce6d820cd0cff782a4cce9d7ba2f472810d8cb	31	666	99:100	disk1	documents/notes 
+0fdd9b71e8434859a8212cd105366e8fc98dbaf3e683cdb2b5b664f8b35e6a55	30000	666	99:100	disk1	documents/scan-0001.bin
+64f8e6f4f5ebc6076c939f35ba21ee3111e63d0cfe06bb194da3ac64bf3e0ed2	30000	666	99:100	disk1	documents/scan-0002.bin
+01464aeb3a0e9fbbde2c6d123eb893c1057aa0684f4660cf8f10addb0b98bbd2	90000	666	99:100	disk1	documents/tax-2025.bin
+977cde4e9bfe59ad6f4f68e782f503667a3079861fc592fe818360c6413cc589	300000	666	99:100	disk1	media/movies/apollo-landing.bin
+32db5d53f972a288537c620991a321dfcd7d2b1a0862dccf60498336f00be5e6	20000	666	99:100	disk1	media/movies/duplicate.bin
+57a515f95c9651dfdc11d7b8cbf3fc16731aace2469cb5d062f62d6b0804b67b	150000	666	99:100	disk1	media/tv/season01/e01.bin
+fbed069dd6a0b5689f8589a7eb964d83ba6c97858add6df49bf98597fe97cf50	19	666	99:100	disk2	.Trash-99/files/removed-note.txt
+5a7311a9a560aba34098b05b4d933f68599ed1e01abb8934f7e01aed28d54947	13	666	99:100	disk2	.Trash-99/info/removed-note.txt.trashinfo
+a60ffbc83bbffe5565edf55d06ee815fca99e46601807bf48bce0cf0b3477196	14	666	99:100	disk2	documents/Café menu.txt
+645ae39883e21167460c1c99f4f017e6a02b9ff5399b5640323348d879012edd	32	666	99:100	disk2	documents/manual.txt
+1b7204c29bdceb28289670d7c9adbdf8298979e5edaa02c1ff52efb53bcd85d3	16	666	99:100	disk2	documents/naïve résumé.txt
+5e7026c14dc227ed9c46ef56ecc9b20c79ea2f793a1001f474e0f07e62f92427	90000	666	99:100	disk2	documents/tax-2026.bin
+4bd57b9d2dcfa83efc6bb8326daf5e663224b35290bf1ef1c2ee5382570851b1	4	666	99:100	disk2	documents/日本語/メモ.txt
+6424db1791e2e97a052715a01f2f7eebe647b1574c866a8998dd007aee4ba0f7	700000	666	99:100	disk2	isos/installer-netinst.bin
+4440832193b13d2b5582260a485b7bf5e5e8c2485c69bccd33a0d5a9805d0d71	21000	666	99:100	disk2	media/movies/duplicate.bin
+8c108f8296f29646de121a445b4743cf78b5aa25ebb6944c292c7c6c75d47237	280000	666	99:100	disk2	media/movies/orbit-study.bin
+f49177ea85730e1e178d48aa4ac5c12c43f704d5249c392cfd6f437b82de1a50	150000	666	99:100	disk2	media/tv/season01/e02.bin
+a96fd3322868155572fe7fc11ecb4e32a9de83bd1521d23ba37728e720c17aa2	500000	666	99:100	disk3	backup/weekly-2026-09-01.bin
+aa2ca9eb94f05be02a12a43f341943162830c3acb60cab34bccc82db7c358747	500000	666	99:100	disk3	backup/weekly-2026-09-08.bin
+b1c1018d10aeddec06a9dddaf6f05caa3c679d6dd205c184fab3976e8b375aca	260000	666	99:100	disk3	media/movies/lunar-night.bin
+de9f5194aa4a1c1b996566aef5c37f48d85692756b3431c61e0042a17421f554	40000	666	99:100	disk3	media/photos/2026/summer-01.bin
+5686c080c6db3409e8ac6425c48cc55536a192d211402c180fddebde14f76dac	40000	666	99:100	disk3	media/photos/2026/summer-02.bin
+f5cde935c287e1e06993b363be2611f083c837e6f7feeafd45561db937ecef48	150000	666	99:100	disk3	media/tv/season01/e03.bin

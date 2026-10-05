@@ -1,0 +1,258 @@
+{
+  "flashDevices": [],
+  "phase": "scanned",
+  "report": {
+    "review": {
+      "boot": {
+        "mode": "usb"
+      },
+      "capture": {
+        "capturedAt": "2026-10-03T09:56:48Z",
+        "state": "present"
+      },
+      "disks": [
+        {
+          "byId": "virtio-parity1-hoserva-80-a",
+          "device": "/dev/vdb",
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "proposedRole": "parity",
+          "refused": false,
+          "serial": "parity1-hoserva-80-a",
+          "size": 402653184,
+          "slot": "parity",
+          "unraidId": "FIXTURE_parity1-hoserva-80-a",
+          "unraidRole": "parity",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk1-hoserva-80-a1",
+          "device": "/dev/vdc",
+          "diskNumber": 1,
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "proposedRole": "data",
+          "refused": false,
+          "serial": "disk1-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk1",
+          "unraidId": "FIXTURE_disk1-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk2-hoserva-80-a1",
+          "device": "/dev/vdd",
+          "diskNumber": 2,
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "refusal": "disk2 is not adopted: its read-only xfs check failed (exit status 1: Phase 1 - find and verify superblock... Phase 2 - using internal log - zero log... - scan filesystem freespace and inode maps... Metadata CRC error detected at 0x5563d5ee82ad, xfs_bnobt block 0x8/0x1000 btree block 0/1 is suspect, error -74 bad magic # 0 in btbno block 0/1 - found root inode chunk Phase 3 - for each AG... - scan (but don't clear) agi unlinked lists... - process know...). Computing parity over a damaged filesystem would keep the damage.",
+          "refusalCode": "integrity_check",
+          "refused": true,
+          "serial": "disk2-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk2",
+          "unraidId": "FIXTURE_disk2-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk3-hoserva-80-a1",
+          "device": "/dev/vde",
+          "diskNumber": 3,
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "proposedRole": "data",
+          "refused": false,
+          "serial": "disk3-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk3",
+          "unraidId": "FIXTURE_disk3-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-cache-hoserva-80-a1",
+          "device": "/dev/vdh",
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "proposedRole": "cache",
+          "refused": false,
+          "serial": "cache-hoserva-80-a1",
+          "size": 268435456,
+          "slot": "pool cache",
+          "unraidId": "FIXTURE_cache-hoserva-80-a1",
+          "unraidRole": "cache",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk4-hoserva-80-a1",
+          "device": "/dev/vdf",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk4-hoserva-80-a1",
+          "size": 4398046511104,
+          "unraidRole": "unassigned",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk5-hoserva-80-a1",
+          "device": "/dev/vdg",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk5-hoserva-80-a1",
+          "size": 4398046511104,
+          "unraidRole": "unassigned",
+          "weakIdentity": false
+        }
+      ],
+      "shares": [
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "appdata",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "fillup",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "backup",
+          "warningCount": 0
+        },
+        {
+          "allocationMethod": "mostfree",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "documents",
+          "warningCount": 0
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "domains",
+          "warningCount": 2
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "isos",
+          "warningCount": 2
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "media",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "mostfree",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "oldstuff",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "system",
+          "warningCount": 2
+        }
+      ]
+    },
+    "rows": [
+      {
+        "check": "data_disks",
+        "detail": "A parity slot: /dev/vdb is never mounted or checked, and its role comes from its slot, never from its filesystem. Its device reports xfs: a parity disk's bytes are an XOR of the data disks', which can leave a valid-looking superblock.",
+        "status": "info",
+        "subject": "parity"
+      },
+      {
+        "check": "data_disks",
+        "detail": "xfs on /dev/vdc, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk1"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only xfs check of /dev/vdc is clean.",
+        "status": "pass",
+        "subject": "disk1"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "disk2 is not adopted: its read-only xfs check failed (exit status 1: Phase 1 - find and verify superblock... Phase 2 - using internal log - zero log... - scan filesystem freespace and inode maps... Metadata CRC error detected at 0x5563d5ee82ad, xfs_bnobt block 0x8/0x1000 btree block 0/1 is suspect, error -74 bad magic # 0 in btbno block 0/1 - found root inode chunk Phase 3 - for each AG... - scan (but don't clear) agi unlinked lists... - process know...). Computing parity over a damaged filesystem would keep the damage.",
+        "status": "refuse",
+        "subject": "disk2"
+      },
+      {
+        "check": "data_disks",
+        "detail": "xfs on /dev/vde, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk3"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only xfs check of /dev/vde is clean.",
+        "status": "pass",
+        "subject": "disk3"
+      },
+      {
+        "check": "baseline",
+        "detail": "Recorded for the verify phase, with the session. Content hashes: every file of 1.0 MiB or less is hashed, plus a deterministic 1 in 100 (at least 200) of the larger files on each disk, chosen by a stable hash of the path. Every file's size, every symlink with its target and every special file by type is recorded as well.",
+        "status": "info"
+      },
+      {
+        "check": "baseline",
+        "detail": "14 files (64.8 MiB), 3 symlinks and 3 special files; 14 files (64.8 MiB) hashed.",
+        "status": "info",
+        "subject": "disk1"
+      },
+      {
+        "check": "baseline",
+        "detail": "6 files (1.4 MiB), 0 symlinks and 0 special files; 6 files (1.4 MiB) hashed.",
+        "status": "info",
+        "subject": "disk3"
+      },
+      {
+        "check": "baseline",
+        "detail": "5 files (64.2 MiB), 3 symlinks and 3 special files, on disk1.",
+        "status": "info",
+        "subject": "appdata"
+      },
+      {
+        "check": "baseline",
+        "detail": "2 files (976.6 KiB), 0 symlinks and 0 special files, on disk3.",
+        "status": "info",
+        "subject": "backup"
+      },
+      {
+        "check": "baseline",
+        "detail": "6 files (146.5 KiB), 0 symlinks and 0 special files, on disk1.",
+        "status": "info",
+        "subject": "documents"
+      },
+      {
+        "check": "baseline",
+        "detail": "7 files (937.5 KiB), 0 symlinks and 0 special files, on disk1, disk3.",
+        "status": "info",
+        "subject": "media"
+      }
+    ],
+    "verdict": "no_go"
+  },
+  "zipOnly": false
+}

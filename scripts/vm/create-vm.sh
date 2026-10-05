@@ -22,6 +22,12 @@
 # added once the guest is up: the base image grows root to fill the disk on
 # its first boot, so the harness grows the disk live (virsh blockresize) and
 # appends the partition into the new space with the guest's own sfdisk.
+#
+# With VARIANT, a disk the variant's spec targets and the shared-nvme topology
+# lacks (disk3, disk4, disk5, cache) is attached as well, because the Unraid
+# fixture builder needs every disk of its spec. The migration suite
+# (run-migration-suite.sh) then detaches the fixture's own cache disk, which this
+# layout replaces with the spare partition.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,7 +79,8 @@ fi
 # same partitions as the L2 one. A disk no spec line targets keeps the size
 # above. Everything is resolved here, before the first image is fetched or
 # created: a missing variant, a spec line without a size or target, or a target
-# this topology has no disk for refuses the whole run.
+# this topology has no disk for refuses the whole run. The shared-nvme topology
+# attaches the spec's disks it lacks, as the header says.
 VARIANT="${VARIANT:-}"
 if [[ -n "$VARIANT" ]]; then
   # shellcheck source=scripts/vm/unraid-lib.sh
@@ -89,8 +96,19 @@ if [[ -n "$VARIANT" ]]; then
         matched=1
       fi
     done
+    if ((!matched)) && [[ "$TOPOLOGY" == shared-nvme && " parity1 disk1 disk2 disk3 disk4 disk5 cache " == *" $spec_target "* ]]; then
+      ARRAY_DISK_SPECS+=("$spec_target:$spec_bytes")
+      matched=1
+    fi
     ((matched)) || die "variant '$VARIANT' targets disk '$spec_target', which topology '$TOPOLOGY' does not create"
   done <<<"$spec_sizes"
+fi
+
+# HOSERVA_VM_PLAN_DISKS=1 prints the resolved name:size of every array disk and
+# stops, before any image is fetched or created (unraid-sizing-check.sh).
+if [[ -n "${HOSERVA_VM_PLAN_DISKS:-}" ]]; then
+  printf '%s\n' "${ARRAY_DISK_SPECS[@]}"
+  exit 0
 fi
 
 if vm_domain_exists "$VM_DOMAIN"; then

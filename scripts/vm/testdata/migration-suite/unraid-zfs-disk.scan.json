@@ -1,0 +1,287 @@
+{
+  "flashDevices": [],
+  "phase": "scanned",
+  "report": {
+    "review": {
+      "boot": {
+        "mode": "usb"
+      },
+      "capture": {
+        "capturedAt": "2026-10-03T09:56:14Z",
+        "state": "present"
+      },
+      "disks": [
+        {
+          "byId": "virtio-parity1-hoserva-80-a",
+          "device": "/dev/vdb",
+          "filesystem": "zfs_member",
+          "hostBoot": false,
+          "proposedRole": "parity",
+          "refused": false,
+          "serial": "parity1-hoserva-80-a",
+          "size": 402653184,
+          "slot": "parity",
+          "unraidId": "FIXTURE_parity1-hoserva-80-a",
+          "unraidRole": "parity",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk1-hoserva-80-a1",
+          "device": "/dev/vdc",
+          "diskNumber": 1,
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "proposedRole": "data",
+          "refused": false,
+          "serial": "disk1-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk1",
+          "unraidId": "FIXTURE_disk1-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk2-hoserva-80-a1",
+          "device": "/dev/vdd",
+          "diskNumber": 2,
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "proposedRole": "data",
+          "refused": false,
+          "serial": "disk2-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk2",
+          "unraidId": "FIXTURE_disk2-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk3-hoserva-80-a1",
+          "device": "/dev/vde",
+          "diskNumber": 3,
+          "filesystem": "zfs_member",
+          "hostBoot": false,
+          "refusal": "disk3 is not adopted: it is a ZFS disk (the flash says zfs, the device says zfs_member). Hoserva cannot read ZFS without OpenZFS and does not adopt it (Q23)",
+          "refusalCode": "zfs",
+          "refused": true,
+          "serial": "disk3-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk3",
+          "unraidId": "FIXTURE_disk3-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk4-hoserva-80-a1",
+          "device": "/dev/vdf",
+          "diskNumber": 4,
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "refusal": "disk4 is not adopted: its filesystem UUID is also on /dev/vdg, another data disk, and two data disks with one UUID cannot both be adopted (Unraid mounts XFS with nouuid, so this can happen there)",
+          "refusalCode": "duplicate_uuid",
+          "refused": true,
+          "serial": "disk4-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk4",
+          "unraidId": "FIXTURE_disk4-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk5-hoserva-80-a1",
+          "device": "/dev/vdg",
+          "diskNumber": 5,
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "refusal": "disk5 is not adopted: its filesystem UUID is also on /dev/vdf, another data disk, and two data disks with one UUID cannot both be adopted (Unraid mounts XFS with nouuid, so this can happen there)",
+          "refusalCode": "duplicate_uuid",
+          "refused": true,
+          "serial": "disk5-hoserva-80-a1",
+          "size": 335544320,
+          "slot": "disk5",
+          "unraidId": "FIXTURE_disk5-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-cache-hoserva-80-a1",
+          "device": "/dev/vdh",
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "proposedRole": "cache",
+          "refused": false,
+          "serial": "cache-hoserva-80-a1",
+          "size": 268435456,
+          "slot": "pool cache",
+          "unraidId": "FIXTURE_cache-hoserva-80-a1",
+          "unraidRole": "cache",
+          "weakIdentity": false
+        }
+      ],
+      "shares": [
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "appdata",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "fillup",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "backup",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "mostfree",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "documents",
+          "warningCount": 0
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "domains",
+          "warningCount": 2
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "isos",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "media",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "mostfree",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "oldstuff",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "system",
+          "warningCount": 2
+        }
+      ]
+    },
+    "rows": [
+      {
+        "check": "data_disks",
+        "detail": "A parity slot: /dev/vdb is never mounted or checked, and its role comes from its slot, never from its filesystem. Its device reports zfs_member: a parity disk's bytes are an XOR of the data disks', which can leave a valid-looking superblock.",
+        "status": "info",
+        "subject": "parity"
+      },
+      {
+        "check": "data_disks",
+        "detail": "disk3 is not adopted: it is a ZFS disk (the flash says zfs, the device says zfs_member). Hoserva cannot read ZFS without OpenZFS and does not adopt it (Q23)",
+        "status": "refuse",
+        "subject": "disk3"
+      },
+      {
+        "check": "data_disks",
+        "detail": "disk4 is not adopted: its filesystem UUID is also on /dev/vdg, another data disk, and two data disks with one UUID cannot both be adopted (Unraid mounts XFS with nouuid, so this can happen there)",
+        "status": "refuse",
+        "subject": "disk4"
+      },
+      {
+        "check": "data_disks",
+        "detail": "disk5 is not adopted: its filesystem UUID is also on /dev/vdf, another data disk, and two data disks with one UUID cannot both be adopted (Unraid mounts XFS with nouuid, so this can happen there)",
+        "status": "refuse",
+        "subject": "disk5"
+      },
+      {
+        "check": "data_disks",
+        "detail": "xfs on /dev/vdc, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk1"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only xfs check of /dev/vdc is clean.",
+        "status": "pass",
+        "subject": "disk1"
+      },
+      {
+        "check": "data_disks",
+        "detail": "xfs on /dev/vdd, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk2"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only xfs check of /dev/vdd is clean.",
+        "status": "pass",
+        "subject": "disk2"
+      },
+      {
+        "check": "baseline",
+        "detail": "Recorded for the verify phase, with the session. Content hashes: every file of 1.0 MiB or less is hashed, plus a deterministic 1 in 100 (at least 200) of the larger files on each disk, chosen by a stable hash of the path. Every file's size, every symlink with its target and every special file by type is recorded as well.",
+        "status": "info"
+      },
+      {
+        "check": "baseline",
+        "detail": "14 files (64.8 MiB), 3 symlinks and 3 special files; 14 files (64.8 MiB) hashed.",
+        "status": "info",
+        "subject": "disk1"
+      },
+      {
+        "check": "baseline",
+        "detail": "9 files (1.2 MiB), 0 symlinks and 0 special files; 9 files (1.2 MiB) hashed. Hidden top-level directories are not shares and are left out: .Trash-99.",
+        "status": "info",
+        "subject": "disk2"
+      },
+      {
+        "check": "baseline",
+        "detail": "5 files (64.2 MiB), 3 symlinks and 3 special files, on disk1.",
+        "status": "info",
+        "subject": "appdata"
+      },
+      {
+        "check": "baseline",
+        "detail": "11 files (234.5 KiB), 0 symlinks and 0 special files, on disk1, disk2.",
+        "status": "info",
+        "subject": "documents"
+      },
+      {
+        "check": "baseline",
+        "detail": "1 file (683.6 KiB), 0 symlinks and 0 special files, on disk2.",
+        "status": "info",
+        "subject": "isos"
+      },
+      {
+        "check": "baseline",
+        "detail": "6 files (899.4 KiB), 0 symlinks and 0 special files, on disk1, disk2.",
+        "status": "info",
+        "subject": "media"
+      },
+      {
+        "check": "baseline",
+        "detail": "1 path exists on more than one disk, and the pool shows only one copy of each (mergerfs, as Unraid's user shares do): media/movies/duplicate.bin (on disk1, disk2). Decide which copy to keep before relying on the pool.",
+        "status": "flag"
+      }
+    ],
+    "verdict": "no_go"
+  },
+  "zipOnly": false
+}

@@ -100,6 +100,21 @@ refuse "a target no disk of the topology has" "targets disk 'disk9'" unraid-far
 refuse "a target beyond the shared-nvme topology" "targets disk 'disk9'" unraid-far HOSERVA_VM_TOPOLOGY=shared-nvme
 refuse "a spec with no disk lines" "has no disk lines" unraid-empty
 cp -a -- "$real_root/testdata/unraid-fixtures/unraid-7x-xfs-single-parity" "$fixtures/"
-refuse "a variant whose disk 3 the shared-nvme topology lacks" "targets disk 'disk3'" unraid-7x-xfs-single-parity HOSERVA_VM_TOPOLOGY=shared-nvme
+
+# The shared-nvme topology has only parity1, disk1 and disk2; a variant that
+# targets more gets the rest attached, at its spec sizes, for the fixture
+# builder. A target no topology has is still refused (above).
+plan=$(HOSERVA_VM_PLAN_DISKS=1 HOSERVA_VM_TOPOLOGY=shared-nvme VARIANT=unraid-7x-xfs-single-parity "$script_dir/create-vm.sh" 2>&1) || plan="create-vm.sh failed: $plan"
+if [[ $plan == $'parity1:2576980377600\ndisk1:335544320\ndisk2:335544320\ndisk3:2469606195200\ncache:268435456' ]]; then
+  ok "a variant that targets disk 3 and the cache gets them attached beside the shared-nvme topology's three disks"
+else
+  bad "the shared-nvme plan of the 7.x variant was: $plan"
+fi
+plan=$(HOSERVA_VM_PLAN_DISKS=1 VARIANT=unraid-7x-xfs-single-parity "$script_dir/create-vm.sh" 2>&1) || plan="create-vm.sh failed: $plan"
+if [[ $plan == $'parity1:2576980377600\ndisk1:335544320\ndisk2:335544320\ndisk3:2469606195200\ndisk4:4T\ndisk5:4T\ncache:268435456' ]]; then
+  ok "the separate topology keeps its seven disks and sizes the spec's"
+else
+  bad "the separate plan of the 7.x variant was: $plan"
+fi
 
 exit "$fail"

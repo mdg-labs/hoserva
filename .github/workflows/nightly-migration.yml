@@ -1,0 +1,203 @@
+name: Nightly migration suite
+
+# The Unraid migration test procedure of doc 06 §5 (issue #80, Q79): for each
+# fixture variant, in an L3 VM of its own, restore the fixture snapshot, install
+# the .deb, scan, import, verify, cross the point of no return, relocate appdata,
+# start the containers one at a time, scrub and restore a deleted file with
+# `hoserva fix` — or, for a refusal variant, assert the exact refusal and that no
+# source disk was written. scripts/vm/run-migration-suite.sh runs it
+# (`make vm-migration-suite VARIANT=<variant>`); every step records PASS or FAIL
+# and any FAIL turns the variant's job red.
+#
+# Runs on a GitHub-hosted runner, like every other workflow here (Q42, D20): S9
+# confirmed a single, non-nested QEMU/KVM guest on the pinned ubuntu-24.04
+# runner (doc 06 §7, doc 08 §9), which is all this suite needs — the VMs of the
+# `unraid-with-vms` variant need nested KVM and are #97's. The runner setup is
+# nightly-l3.yml's: the kvm udev rule, a per-user libvirtd for qemu:///session
+# (never qemu:///system, D20), the .deb build toolchain.
+#
+# The `Migration suite` job at the end is the one name the release checklist
+# (doc 06 §7, issue #107) requires: it is green only when every variant's job
+# is. workflow_dispatch runs the whole matrix on demand, which is the pre-release
+# run Q79 asks for. Never on `pull_request`: this is the privileged, slow job
+# class Q42 keeps off untrusted PR code. A workflow file only runs once it is on
+# the default branch, so its first run follows the promotion that brings it to
+# `main`.
+#
+# The matrix below is held to scripts/vm/run-migration-suite.sh's MIGRATION_RUNS
+# and the committed fixtures by scripts/vm/migration-suite-coverage-check.sh,
+# which the `coverage` job runs first.
+
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Migration suite coverage
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check every fixture variant has a run and the matrix runs exactly the script's runs
+        run: scripts/vm/migration-suite-coverage-check.sh
+
+  migration:
+    name: Migration suite (${{ matrix.variant }}${{ matrix.layout == 'shared-nvme' && ', shared NVMe' || '' }})
+    needs: coverage
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: u612
+            variant: unraid-6.12-xfs-single-parity
+            layout: separate
+          - id: u7x
+            variant: unraid-7x-xfs-single-parity
+            layout: separate
+          - id: u7xnvme
+            variant: unraid-7x-xfs-single-parity
+            layout: shared-nvme
+          - id: udual
+            variant: unraid-dual-parity
+            layout: separate
+          - id: ubtrext
+            variant: unraid-btrfs-and-ext4-disks
+            layout: separate
+          - id: ucorrupt
+            variant: unraid-corrupt-xfs
+            layout: separate
+          - id: upools
+            variant: unraid-named-pools
+            layout: separate
+          - id: unocache
+            variant: unraid-no-cache
+            layout: separate
+          - id: uenc
+            variant: unraid-encrypted
+            layout: separate
+          - id: uzfs
+            variant: unraid-zfs-disk
+            layout: separate
+          - id: uiboot
+            variant: unraid-internal-boot
+            layout: separate
+          - id: uibootsh
+            variant: unraid-internal-boot-shared
+            layout: separate
+    # The variants that need OpenZFS build it with DKMS in the guest (several
+    # minutes), and a full run installs Docker and walks every step: the
+    # suite step's own bound, plus the runner setup and teardown around it.
+    timeout-minutes: 120
+    steps:
+      # fetch-depth: 0 so the tag lookup run-migration-suite.sh makes finds a
+      # release tag once one exists (the default checkout fetches no tags).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Distinct per matrix entry: two variants running at once must never share
+      # a domain name, disk image or forwarded port.
+      - name: Derive this run's lab id
+        id: lab
+        run: echo "id=mig-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply the kvm udev rule and settle
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-hoserva-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          ls -l /dev/kvm
+
+      - name: Install libvirt and qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libvirt-daemon-system libvirt-clients qemu-system-x86 qemu-utils xorriso
+          sudo adduser "$(id -un)" libvirt
+          sudo adduser "$(id -un)" kvm
+
+      - name: Start this user's own session libvirtd
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          virsh -c qemu:///session list --all
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Install the .deb build toolchain
+        run: sudo apt-get install -y -qq --no-install-recommends debhelper dpkg-dev fakeroot build-essential
+
+      - name: Run the migration suite
+        id: suite
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+          VARIANT: ${{ matrix.variant }}
+          LAYOUT: ${{ matrix.layout }}
+          MIGRATION_ARTIFACT_DIR: ${{ github.workspace }}/.migration-artifacts
+        # The suite builds the .deb against the placeholder tag while no release
+        # tag exists (run-migration-suite.sh), as nightly-l3.yml's own step does.
+        timeout-minutes: 100
+        run: make vm-migration-suite
+
+      # The suite collects the guest's diagnostics itself before it destroys the
+      # VM, but a step timeout or a cancellation can end it before it does. The
+      # VM then still exists here. When the suite already collected and
+      # destroyed the VM this finds none, and it must not fail the job.
+      - name: Collect hoservad diagnostics
+        if: failure() || cancelled()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+          VARIANT_DIR: ${{ matrix.layout == 'separate' && matrix.variant || format('{0}-{1}', matrix.variant, matrix.layout) }}
+        run: scripts/vm/collect-diagnostics.sh "$GITHUB_WORKSPACE/.migration-artifacts/$VARIANT_DIR/diagnostics" || true
+
+      # What every step compared, kept whether the suite passed or not: each
+      # scan's report and the step record, and, for a variant that failed, the
+      # guest's hoservad journal and `hoserva doctor` output under
+      # <variant>/diagnostics.
+      - name: Upload the scan reports, the step record and the diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: migration-reports-${{ matrix.id }}
+          path: .migration-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: vm-destroy
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make vm-destroy
+
+  # The one required check: green only when the coverage check and every
+  # variant's job are.
+  migration-suite:
+    name: Migration suite
+    needs: [coverage, migration]
+    if: ${{ always() && github.repository == 'mdg-labs/hoserva' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every migration variant passed
+        env:
+          COVERAGE: ${{ needs.coverage.result }}
+          MIGRATION: ${{ needs.migration.result }}
+        run: |
+          echo "coverage: $COVERAGE, migration matrix: $MIGRATION"
+          [ "$COVERAGE" = success ] && [ "$MIGRATION" = success ]
