@@ -337,6 +337,101 @@ func TestMounter_Mount_UpdatesLiveMountWithMatchingFSName(t *testing.T) {
 	}
 }
 
+// TestMounter_Mount_LeavesLiveValuesThatAlreadyMatch is #621: the kernel
+// refuses a setxattr on a read-only mount whatever the value, so a live pool
+// that already has the wanted options must not be written to. mergerfs reads
+// minfreespace back in bytes, whatever size suffix it was given.
+func TestMounter_Mount_LeavesLiveValuesThatAlreadyMatch(t *testing.T) {
+	where := testWhere(t)
+	if err := os.MkdirAll(where, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	r := disk.NewFakeRunner()
+	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte("hoserva-pool\n"), nil)
+
+	m := Mount{Where: where, What: "/mnt/disk1=RO:/mnt/disk2=RO", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: Options{MinFreeSpace: "20G"}}
+	live := map[string]string{
+		"user.mergerfs.branches":        m.What,
+		"user.mergerfs.category.create": string(DefaultCreatePolicy),
+		"user.mergerfs.minfreespace":    "21474836480",
+	}
+	set := map[string]string{}
+	mounter := Mounter{
+		Runner:       r,
+		IsMountpoint: func(string) (bool, error) { return true, nil },
+		GetXattr: func(path, attr string) ([]byte, error) {
+			if path != filepath.Join(where, ".mergerfs") {
+				t.Errorf("GetXattr on %q, want the mount's .mergerfs control file", path)
+			}
+			return []byte(live[attr]), nil
+		},
+		SetXattr: func(_, attr string, value []byte) error {
+			set[attr] = string(value)
+			return syscall.EROFS
+		},
+	}
+	if err := mounter.Mount(context.Background(), m); err != nil {
+		t.Fatalf("Mount with every live value already the wanted one: got %v, want nil", err)
+	}
+	if len(set) != 0 {
+		t.Fatalf("Mount wrote %v to a live mount whose values already matched", set)
+	}
+
+	for _, change := range []struct {
+		attr string
+		to   func(*Mount)
+	}{
+		{"user.mergerfs.branches", func(m *Mount) { m.What = "/mnt/disk1=RO:/mnt/disk2=RO:/mnt/disk3=RO" }},
+		{"user.mergerfs.category.create", func(m *Mount) { m.CreatePolicy = FillDisksInOrder }},
+		{"user.mergerfs.minfreespace", func(m *Mount) { m.Options.MinFreeSpace = "30G" }},
+	} {
+		changed := m
+		change.to(&changed)
+		clear(set)
+		err := mounter.Mount(context.Background(), changed)
+		if !errors.Is(err, syscall.EROFS) {
+			t.Fatalf("Mount with a changed %s: got %v, want the control file's EROFS", change.attr, err)
+		}
+		if _, ok := set[change.attr]; !ok || len(set) != 1 {
+			t.Fatalf("Mount with a changed %s wrote %v, want only that key", change.attr, set)
+		}
+	}
+}
+
+// TestMounter_Mount_UnreadableLiveValueIsWritten: a live value that cannot be
+// read or compared is never taken to match, so the value is still applied.
+func TestMounter_Mount_UnreadableLiveValueIsWritten(t *testing.T) {
+	where := testWhere(t)
+	if err := os.MkdirAll(where, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	r := disk.NewFakeRunner()
+	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte("hoserva-pool\n"), nil)
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: Options{MinFreeSpace: "20G"}}
+	for name, get := range map[string]func(string, string) ([]byte, error){
+		"read error":        func(string, string) ([]byte, error) { return nil, syscall.ENODATA },
+		"unparsable size":   func(_, attr string) ([]byte, error) { return []byte("not-a-size"), nil },
+		"empty live values": func(string, string) ([]byte, error) { return nil, nil },
+	} {
+		set := map[string]string{}
+		mounter := Mounter{
+			Runner:       r,
+			IsMountpoint: func(string) (bool, error) { return true, nil },
+			GetXattr:     get,
+			SetXattr: func(_, attr string, value []byte) error {
+				set[attr] = string(value)
+				return nil
+			},
+		}
+		if err := mounter.Mount(context.Background(), m); err != nil {
+			t.Fatalf("%s: Mount: %v", name, err)
+		}
+		if len(set) != 3 {
+			t.Fatalf("%s: wrote %v, want all three runtime keys applied", name, set)
+		}
+	}
+}
+
 // TestMounter_Mount_LiveUpdateFailureIsReported: a live mount that refuses
 // the new branch list must fail the call, never report a share update as
 // applied while the mount keeps its old branches.

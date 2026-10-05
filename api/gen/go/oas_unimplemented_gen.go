@@ -40,6 +40,22 @@ func (UnimplementedHandler) AcknowledgeDegradedArray(ctx context.Context) (r *Sy
 	return r, ht.ErrNotImplemented
 }
 
+// AcknowledgeMigrationChecklistItem implements acknowledgeMigrationChecklistItem operation.
+//
+// Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
+// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
+// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
+// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
+// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
+// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
+// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
+// Returns the item as it stands.
+//
+// POST /migrate/checklist/{item}/acknowledge
+func (UnimplementedHandler) AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (r *MigrationChecklistItem, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // AddCatalogSource implements addCatalogSource operation.
 //
 // Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
@@ -862,6 +878,44 @@ func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsPar
 //
 // GET /migrate
 func (UnimplementedHandler) GetMigration(ctx context.Context) (r *Migration, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetMigrationChecklist implements getMigrationChecklist operation.
+//
+// Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken
+// from a record where one exists, so it cannot say something was done when it was not. The migration
+// counts as finished exactly when the array record carries the time the point of no return finished
+// (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing
+// else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way
+// through its point of no return, or was undone has none, and so has an array created by hand or one
+// that finished before this record existed; then `finished` is false, `finishedAt` is absent and
+// `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+//
+// `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache
+// (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the
+// source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and
+// was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and
+// `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is
+// done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing
+// right after a sync and never counts. `notifications` is done once an enabled channel's test
+// (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in;
+// the Unraid notification agents the scan found are named so the user knows what to recreate, and no
+// secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub`
+// steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from
+// Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a
+// non-correcting check maps to a scrub that only reports) and its spin-down delay as the default.
+// Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over:
+// nothing is offered for `sync` and the user chooses one.
+//
+// `user_scripts` and `restore_drill` have no record to derive from and are done by
+// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
+// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
+// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
+// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+//
+// GET /migrate/checklist
+func (UnimplementedHandler) GetMigrationChecklist(ctx context.Context) (r *MigrationChecklist, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -2136,7 +2190,10 @@ func (UnimplementedHandler) RunParityDiff(ctx context.Context) (r *ParityDiffRes
 // Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
 // the channel's own configuration, not a routed event, so it reports success or the delivery error
 // directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
-// notification config is the same as no notification config").
+// notification config is the same as no notification config"). A test that succeeds is also recorded
+// for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
+// enabled and its latest successful test ran in a later second than the one the channel last changed
+// in; a test that fails is not recorded.
 //
 // POST /notifications/channels/{channelId}/test
 func (UnimplementedHandler) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (r *NotificationTestResult, _ error) {
@@ -2482,7 +2539,8 @@ func (UnimplementedHandler) StartRestoreDrill(ctx context.Context) (r *Job, _ er
 
 // StartScrub implements startScrub operation.
 //
-// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
+// `allBlocks` scrubs every block.
 //
 // POST /parity/scrub
 func (UnimplementedHandler) StartScrub(ctx context.Context, req *StartScrubRequest) (r *Job, _ error) {

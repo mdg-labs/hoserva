@@ -401,12 +401,12 @@ func (s *ArrayStore) RecordParityInit(ctx context.Context, disks []ArrayDisk) er
 
 // FinishMigration drops the record of the former parity and cache disks, the
 // last step of the point of no return, and in the same statement records that
-// the initial sync is owed (InitialSyncOwed): the migration reads finished from
-// then on, so a stop before the sync is queued must leave a durable record of
-// it. It refuses (ErrMigrationNotFinishing) unless RecordParityInit has run and
-// this has not.
+// the initial sync is owed (InitialSyncOwed) and when the migration finished
+// (MigrationFinishedAt): the migration reads finished from then on, so a stop
+// before the sync is queued must leave a durable record of it. It refuses
+// (ErrMigrationNotFinishing) unless RecordParityInit has run and this has not.
 func (s *ArrayStore) FinishMigration(ctx context.Context) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE array_settings SET migration_recorded = '', initial_sync_owed = 1 WHERE migration_pending = 0 AND migration_recorded != ''`)
+	res, err := s.db.ExecContext(ctx, `UPDATE array_settings SET migration_recorded = '', initial_sync_owed = 1, migration_finished_at = ? WHERE migration_pending = 0 AND migration_recorded != ''`, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("store: finishing the migration: %w", err)
 	}
@@ -416,6 +416,28 @@ func (s *ArrayStore) FinishMigration(ctx context.Context) error {
 		return ErrMigrationNotFinishing
 	}
 	return nil
+}
+
+// MigrationFinishedAt is when FinishMigration ran, and false for an array it
+// never ran on: no array, one created by hand, a pending adoption, or one whose
+// adoption was undone, which deletes the record. A stamp that cannot be read is
+// an error, never a finished migration.
+func (s *ArrayStore) MigrationFinishedAt(ctx context.Context) (time.Time, bool, error) {
+	row, err := s.q.GetArraySettings(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("store: reading when the migration finished: %w", err)
+	}
+	if row.MigrationFinishedAt == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, row.MigrationFinishedAt)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("store: reading when the migration finished: %w", err)
+	}
+	return at, true, nil
 }
 
 // InitialSyncOwed reports whether a finished migration's initial sync has not

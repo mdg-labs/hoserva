@@ -14,11 +14,12 @@ import (
 type recordingParity struct {
 	*parity.FakeEngine
 
-	mu          sync.Mutex
-	lastSync    parity.SyncOpts
-	wroteParity bool
-	lastScrub   int
-	lastFix     parity.FixOpts
+	mu           sync.Mutex
+	lastSync     parity.SyncOpts
+	wroteParity  bool
+	lastScrub    int
+	lastScrubAge int
+	lastFix      parity.FixOpts
 }
 
 func newRecordingParity() *recordingParity {
@@ -43,6 +44,7 @@ func (r *recordingParity) Sync(ctx context.Context, opts parity.SyncOpts) (<-cha
 func (r *recordingParity) Scrub(ctx context.Context, pct, olderThanDays int) (<-chan parity.Progress, error) {
 	r.mu.Lock()
 	r.lastScrub = pct
+	r.lastScrubAge = olderThanDays
 	r.mu.Unlock()
 	return r.FakeEngine.Scrub(ctx, pct, olderThanDays)
 }
@@ -204,6 +206,56 @@ func TestHandler_StartScrub_OmittedPercentUsesDefault(t *testing.T) {
 	_, _, pct, _ := eng.snapshot()
 	if pct != job.DefaultScrubPercent {
 		t.Fatalf("Scrub percent = %d, want default %d", pct, job.DefaultScrubPercent)
+	}
+}
+
+func TestHandler_StartScrub_AllBlocksReachesEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  func() *apiv1.StartScrubRequest
+		want int
+	}{
+		{"omitted", func() *apiv1.StartScrubRequest { return &apiv1.StartScrubRequest{} }, parity.DefaultScrubOlderThanDays},
+		{"false", func() *apiv1.StartScrubRequest {
+			req := &apiv1.StartScrubRequest{}
+			req.SetAllBlocks(apiv1.NewOptBool(false))
+			return req
+		}, parity.DefaultScrubOlderThanDays},
+		{"true", func() *apiv1.StartScrubRequest {
+			req := &apiv1.StartScrubRequest{}
+			req.SetPercent(apiv1.NewOptInt32(100))
+			req.SetAllBlocks(apiv1.NewOptBool(true))
+			return req
+		}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			h, s, r := newTestHandler(t)
+			eng := newRecordingParity()
+			r.Register(job.TypeScrub, false, job.RunScrub(eng))
+
+			got, err := h.StartScrub(ctx, tc.req())
+			if err != nil {
+				t.Fatalf("StartScrub: %v", err)
+			}
+			finished := awaitJob(t, s, got.ID.String())
+			if finished.Status != job.StatusSucceeded {
+				t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+			}
+			eng.mu.Lock()
+			age := eng.lastScrubAge
+			eng.mu.Unlock()
+			if age != tc.want {
+				t.Fatalf("Scrub olderThanDays = %d, want %d", age, tc.want)
+			}
+			all, err := job.ScrubAllBlocksFromParams(finished.Params)
+			if err != nil {
+				t.Fatalf("ScrubAllBlocksFromParams(%s): %v", finished.Params, err)
+			}
+			if all != (tc.want == 0) {
+				t.Fatalf("persisted params %s read allBlocks = %v", finished.Params, all)
+			}
+		})
 	}
 }
 

@@ -10,7 +10,7 @@ INSERT INTO array_settings (id, create_policy, min_free_space, created_at, migra
 VALUES (1, ?, ?, ?, ?, ?);
 
 -- name: GetArraySettings :one
-SELECT id, create_policy, min_free_space, created_at, migration_pending, migration_recorded, initial_sync_owed
+SELECT id, create_policy, min_free_space, created_at, migration_pending, migration_recorded, initial_sync_owed, migration_finished_at
 FROM array_settings WHERE id = 1;
 
 -- name: CountArraySettings :one

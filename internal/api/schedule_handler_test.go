@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -39,6 +40,83 @@ func TestHandlerGetSchedulesSeedsDefaults(t *testing.T) {
 	}
 	if len(got.OtherJobs) != 4 {
 		t.Fatalf("len(otherJobs) = %d, want 4", len(got.OtherJobs))
+	}
+}
+
+// The nextRun the API reports and the moment ClaimDueChain first claims the
+// chain agree for a chain whose settings are created after its start time.
+func TestClaimDueChain_NeverRunChainClaimsAtTheNextRunGetSchedulesReports(t *testing.T) {
+	h, svc := newScheduleHandler(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	svc.Now = func() time.Time { return clock }
+
+	got, err := h.GetSchedules(ctx)
+	if err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+	next := got.Chain.NextRun
+	if want := time.Date(2026, 6, 16, 2, 0, 0, 0, time.UTC); !next.Equal(want) {
+		t.Fatalf("chain.nextRun = %v, want %v", next, want)
+	}
+
+	clock = clock.Add(20 * time.Second)
+	if claimed, err := svc.ClaimDueChain(ctx, time.Time{}); err != nil || claimed != nil {
+		t.Fatalf("ClaimDueChain seconds after setup = %v, %v; want nil, nil", claimed, err)
+	}
+	clock = next.Add(-time.Second)
+	if claimed, err := svc.ClaimDueChain(ctx, time.Time{}); err != nil || claimed != nil {
+		t.Fatalf("ClaimDueChain just before nextRun = %v, %v; want nil, nil", claimed, err)
+	}
+	clock = next
+	claimed, err := svc.ClaimDueChain(ctx, time.Time{})
+	if err != nil || claimed == nil {
+		t.Fatalf("ClaimDueChain at nextRun = %v, %v; want a claimed window", claimed, err)
+	}
+	if claimed, err := svc.ClaimDueChain(ctx, time.Time{}); err != nil || claimed != nil {
+		t.Fatalf("second ClaimDueChain in the same window = %v, %v; want nil, nil", claimed, err)
+	}
+}
+
+// A chain whose settings were created long before the caller could first run
+// it is armed by the later instant: windows that passed in between are not
+// owed, and the first window is the one nextRun reports when it becomes
+// runnable. A chain that has run is not delayed by runnableSince.
+func TestClaimDueChain_RunnableSinceHoldsBackWindowsThatPassedEarlier(t *testing.T) {
+	h, svc := newScheduleHandler(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 6, 13, 15, 0, 0, 0, time.UTC)
+	svc.Now = func() time.Time { return clock }
+	if _, err := h.GetSchedules(ctx); err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+
+	clock = time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	runnableSince := clock
+	got, err := h.GetSchedules(ctx)
+	if err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+	next := got.Chain.NextRun
+	if want := time.Date(2026, 6, 16, 2, 0, 0, 0, time.UTC); !next.Equal(want) {
+		t.Fatalf("chain.nextRun = %v, want %v", next, want)
+	}
+
+	clock = clock.Add(20 * time.Second)
+	if claimed, err := svc.ClaimDueChain(ctx, runnableSince); err != nil || claimed != nil {
+		t.Fatalf("ClaimDueChain seconds after becoming runnable = %v, %v; want nil, nil", claimed, err)
+	}
+	clock = next
+	claimed, err := svc.ClaimDueChain(ctx, runnableSince)
+	if err != nil || claimed == nil {
+		t.Fatalf("ClaimDueChain at nextRun = %v, %v; want a claimed window", claimed, err)
+	}
+
+	clock = time.Date(2026, 6, 17, 2, 0, 0, 0, time.UTC)
+	later := clock.Add(24 * time.Hour)
+	claimed, err = svc.ClaimDueChain(ctx, later)
+	if err != nil || claimed == nil {
+		t.Fatalf("ClaimDueChain of a chain that has run = %v, %v; want its window to open regardless of runnableSince", claimed, err)
 	}
 }
 

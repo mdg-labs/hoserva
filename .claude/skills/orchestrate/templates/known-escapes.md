@@ -109,9 +109,10 @@ existing line by adding its PR number.
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
 - **doc-drift** — a command example in a skill or prompt drops a required operand (`issue-edit --body-file` with no issue number or file), so an agent following it literally fails — PR 412
-- **doc-drift** — a design doc states an external source's conditions more broadly than the source does (an advisory's exploit trigger), so a reader misjudges the exposure — PR 433
+- **doc-drift** — a design doc or template comment states an external source's conditions more broadly than the source does (an advisory's exploit trigger, which databases an image's settings support, a default said to send all traffic through a VPN that covers IPv4 only), so a reader misjudges the exposure — PR 433, catalog PR 81
 - **doc-drift** — a dispatch prompt tells an agent to do what its agent definition forbids (run scripts outside its workspace), so the agent cannot obey both — PR 491, 546
 - **doc-drift** — a skill adopts another skill's rule (hold back a commit on a fresh `blockedBy`) without the check that makes it hold (`git log origin/dev..dev` before every push), so the next push publishes what was held — PR 546
+- **doc-drift** — one operation's description states a boundary rule more loosely than the code applies it ("not older than" where the check is strictly a later second), while another operation states it correctly — PR 644
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **doc-drift** — a design doc's command table lists only one of a command's alternative forms (`--flash-backup` without `--flash-device`) — PR 575
@@ -130,12 +131,13 @@ existing line by adding its PR number.
 - **security** — destructive CLI command that sends `confirm: true` itself — PR 193, 201
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
 - **security** — a CI job that runs pull-request code checks out with the default `persist-credentials`, leaving `GITHUB_TOKEN` in `.git/config` for the code under test to read — PR 546
-- **security** — user or state values written into a config format without escaping control characters — PR 254
+- **security** — user or state values written into a config format or a generated script without escaping (control characters; a typed password inside a string literal of a database init script) — PR 254, catalog PR 81
 - **security** — a file the CLI saves for the user that names accounts, shares or containers is left world-readable (0644) where the daemon keeps the same data 0600 — PR 575
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic, a fixture key spelled differently from the one the parser reads so the scenario is never built) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589, 592
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic, a fixture key spelled differently from the one the parser reads so the scenario is never built, two omitted optional values compared through the same zero fallback) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589, 592, 644
 - **tests** — a short real deadline also bounds setup I/O ahead of the code under test (the SQLite write entering maintenance), so on a loaded runner the error comes from the setup step and an `errors.Is` check still passes; trip the deadline once the step under test is reached and assert its own error text — PR 433
+- **tests** — an end-to-end suite drives the API directly where its issue names a CLI command (`hoserva scrub --all-blocks`), so the CLI flag added for it is never exercised and a flag that stops reaching the request leaves the suite green — PR 644
 - **tests** — an end-to-end failure detector defined as "any banner but this list of informational ones", not extended when the change adds a new informational note, so the expected note fails the journey — PR 474
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
@@ -150,6 +152,12 @@ existing line by adding its PR number.
 - **tests** — a test swaps process-global state (the `log` output) and its cleanup restores a hard-coded default rather than the value it saved, clobbering whatever an earlier caller set — PR 527
 - **docs** — a design doc or spike verdict says a behaviour is verified (by fixtures, the lab or the scan) when the check that would verify it has not been built yet — PR 562
 - **docs** — a fixture or spec comment states a property only one build tier produces (an L2-only partition layout) as if every build had it — PR 568
+
+## Catalog templates
+- **template** — an image option that prints credentials (peer configuration QR codes) to the container log left switched on, when the image also saves them in the app's folder — catalog PR 81
+- **template** — an importer or library manager given separate download and library mounts instead of the shared `/data` layout, so moves become copies and hardlinks fail — catalog PR 81
+- **template** — a port published without `/udp` where the application's upstream says it uses that port over TCP and UDP — catalog PR 81
+- **template** — a login served over plain HTTP with no note that it stays on the local network or behind an HTTPS proxy or tunnel — catalog PR 81
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156

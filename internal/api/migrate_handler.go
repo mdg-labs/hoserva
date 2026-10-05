@@ -71,8 +71,14 @@ func migrateError(err error) error {
 		return errMigrationNotConfigured()
 	case errors.Is(err, migrate.ErrVerifyRequired):
 		return &apiError{code: "verify_required", statusCode: 409, message: err.Error()}
-	case errors.Is(err, migrate.ErrContainersNotConfigured):
+	case errors.Is(err, migrate.ErrContainersNotConfigured), errors.Is(err, migrate.ErrChecklistNotConfigured):
 		return errMigrationNotConfigured()
+	case errors.Is(err, migrate.ErrMigrationNotFinished):
+		return &apiError{code: "migration_not_finished", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrChecklistItemNotFound):
+		return &apiError{code: "checklist_item_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, migrate.ErrChecklistItemHasRecord):
+		return &apiError{code: "checklist_item_has_record", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrParityNotInitialized):
 		return &apiError{code: "parity_not_initialized", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrInvalidSelection):

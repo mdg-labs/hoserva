@@ -865,3 +865,102 @@ func TestArrayStore_AnOrdinaryArrayOwesNoInitialSync(t *testing.T) {
 		t.Errorf("InitialSyncOwed of an ordinary array = %v, %v, want false", owed, err)
 	}
 }
+
+// Only FinishMigration writes the stamp the post-migration checklist reads as
+// "the migration finished": an array with no migration, a pending adoption, one
+// part-way through its point of no return, and one whose adoption was undone and
+// replaced by a new array have none.
+func TestArrayStore_MigrationFinishedAtIsWrittenOnlyByFinishMigration(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	notFinished := func(when string) {
+		t.Helper()
+		if at, finished, err := st.MigrationFinishedAt(ctx); err != nil || finished || !at.IsZero() {
+			t.Fatalf("MigrationFinishedAt %s = %v %v %v, want none", when, at, finished, err)
+		}
+	}
+	notFinished("with no array")
+
+	disks, recorded := pendingArrayRows()
+	settings := ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}
+	if err := st.PutPendingArray(ctx, settings, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	notFinished("while the adoption is pending")
+	if deleted, err := st.DeletePendingArray(ctx); err != nil || !deleted {
+		t.Fatalf("DeletePendingArray = %v, %v", deleted, err)
+	}
+	notFinished("after the adoption was undone")
+	if err := st.PutArray(ctx, settings, []ArrayDisk{{Role: ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"}}); err != nil {
+		t.Fatal(err)
+	}
+	notFinished("for an array created by hand after the undo")
+	if err := st.FinishMigration(ctx); !errors.Is(err, ErrMigrationNotFinishing) {
+		t.Fatalf("FinishMigration on an ordinary array = %v", err)
+	}
+	notFinished("after a refused FinishMigration")
+
+	st = migratedArrayDB(t)
+	if err := st.PutPendingArray(ctx, settings, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordParityInit(ctx, parityInitRows()); err != nil {
+		t.Fatal(err)
+	}
+	notFinished("part-way through the point of no return")
+
+	before := time.Now().UTC().Truncate(time.Second)
+	if err := st.FinishMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	at, finished, err := st.MigrationFinishedAt(ctx)
+	if err != nil || !finished || at.Before(before) || at.After(time.Now()) || at.Location() != time.UTC {
+		t.Fatalf("MigrationFinishedAt after FinishMigration = %v %v %v, want a UTC time since %v", at, finished, err, before)
+	}
+	if err := st.FinishMigration(ctx); !errors.Is(err, ErrMigrationNotFinishing) {
+		t.Fatalf("a second FinishMigration = %v", err)
+	}
+	if again, _, _ := st.MigrationFinishedAt(ctx); !again.Equal(at) {
+		t.Errorf("a refused second FinishMigration moved the stamp from %v to %v", at, again)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE array_settings SET migration_finished_at = 'yesterday'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, finished, err := st.MigrationFinishedAt(ctx); err == nil || finished {
+		t.Errorf("MigrationFinishedAt of an unreadable stamp = %v, %v, want an error and never finished", finished, err)
+	}
+}
+
+// Adding migration_finished_at keeps an array_settings row the table already
+// held, every value intact, and it reads as a migration that never finished
+// (D16): an array that finished its migration before the column existed has no
+// stamp, so its checklist does not apply.
+func TestArraySettingsMigration_FinishedAtKeepsAnExistingRow(t *testing.T) {
+	ctx := context.Background()
+	const newest = "20261005085001_add_migration_session_checklist.sql"
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeQuietly(db)
+	applyMigrationFiles(t, db, "", newest)
+	const recorded = `[{"role":"parity","roleIndex":1,"device":"/dev/sdb","size":1000}]`
+	if _, err := db.ExecContext(ctx, `INSERT INTO array_settings (id, create_policy, min_free_space, created_at, migration_pending, migration_recorded, initial_sync_owed)
+		VALUES (1, 'lfs', '75G', '2026-10-01T08:00:00Z', 0, ?, 1)`, recorded); err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationFiles(t, db, newest, "")
+
+	var policy, minFree, createdAt, rec, finishedAt string
+	var pending, owed int
+	if err := db.QueryRowContext(ctx, `SELECT create_policy, min_free_space, created_at, migration_pending, migration_recorded, initial_sync_owed, migration_finished_at FROM array_settings WHERE id = 1`).
+		Scan(&policy, &minFree, &createdAt, &pending, &rec, &owed, &finishedAt); err != nil {
+		t.Fatalf("reading the row after the migration: %v", err)
+	}
+	if policy != "lfs" || minFree != "75G" || createdAt != "2026-10-01T08:00:00Z" || pending != 0 || rec != recorded || owed != 1 || finishedAt != "" {
+		t.Errorf("the row after the migration = %q %q %q %d %q %d %q, want every value kept and an empty migration_finished_at", policy, minFree, createdAt, pending, rec, owed, finishedAt)
+	}
+	if _, finished, err := NewArrayStore(db).MigrationFinishedAt(ctx); err != nil || finished {
+		t.Errorf("MigrationFinishedAt of the migrated row = %v, %v, want not finished", finished, err)
+	}
+}

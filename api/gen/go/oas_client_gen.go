@@ -53,6 +53,19 @@ type Invoker interface {
 	//
 	// POST /array/degraded/acknowledge
 	AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error)
+	// AcknowledgeMigrationChecklistItem invokes acknowledgeMigrationChecklistItem operation.
+	//
+	// Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
+	// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
+	// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
+	// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
+	// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
+	// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
+	// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
+	// Returns the item as it stands.
+	//
+	// POST /migrate/checklist/{item}/acknowledge
+	AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (*MigrationChecklistItem, error)
 	// AddCatalogSource invokes addCatalogSource operation.
 	//
 	// Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
@@ -698,6 +711,41 @@ type Invoker interface {
 	//
 	// GET /migrate
 	GetMigration(ctx context.Context) (*Migration, error)
+	// GetMigrationChecklist invokes getMigrationChecklist operation.
+	//
+	// Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken
+	// from a record where one exists, so it cannot say something was done when it was not. The migration
+	// counts as finished exactly when the array record carries the time the point of no return finished
+	// (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing
+	// else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way
+	// through its point of no return, or was undone has none, and so has an array created by hand or one
+	// that finished before this record existed; then `finished` is false, `finishedAt` is absent and
+	// `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+	//
+	// `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache
+	// (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the
+	// source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and
+	// was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and
+	// `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is
+	// done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing
+	// right after a sync and never counts. `notifications` is done once an enabled channel's test
+	// (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in;
+	// the Unraid notification agents the scan found are named so the user knows what to recreate, and no
+	// secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub`
+	// steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from
+	// Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a
+	// non-correcting check maps to a scrub that only reports) and its spin-down delay as the default.
+	// Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over:
+	// nothing is offered for `sync` and the user chooses one.
+	//
+	// `user_scripts` and `restore_drill` have no record to derive from and are done by
+	// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
+	// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
+	// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
+	// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+	//
+	// GET /migrate/checklist
+	GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error)
 	// GetMigrationReport invokes getMigrationReport operation.
 	//
 	// The latest scan's report as a Markdown document: the verdict, then every check with its status,
@@ -1726,7 +1774,10 @@ type Invoker interface {
 	// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
 	// the channel's own configuration, not a routed event, so it reports success or the delivery error
 	// directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
-	// notification config is the same as no notification config").
+	// notification config is the same as no notification config"). A test that succeeds is also recorded
+	// for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
+	// enabled and its latest successful test ran in a later second than the one the channel last changed
+	// in; a test that fails is not recorded.
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
@@ -2018,7 +2069,8 @@ type Invoker interface {
 	StartRestoreDrill(ctx context.Context) (*Job, error)
 	// StartScrub invokes startScrub operation.
 	//
-	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+	// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
+	// `allBlocks` scrubs every block.
 	//
 	// POST /parity/scrub
 	StartScrub(ctx context.Context, request *StartScrubRequest) (*Job, error)
@@ -2479,6 +2531,157 @@ func (c *Client) sendAcknowledgeDegradedArray(ctx context.Context) (res *SystemS
 
 	stage = "DecodeResponse"
 	result, err := decodeAcknowledgeDegradedArrayResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// AcknowledgeMigrationChecklistItem invokes acknowledgeMigrationChecklistItem operation.
+//
+// Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
+// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
+// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
+// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
+// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
+// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
+// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
+// Returns the item as it stands.
+//
+// POST /migrate/checklist/{item}/acknowledge
+func (c *Client) AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (*MigrationChecklistItem, error) {
+	res, err := c.sendAcknowledgeMigrationChecklistItem(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendAcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (res *MigrationChecklistItem, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("acknowledgeMigrationChecklistItem"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/checklist/{item}/acknowledge"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, AcknowledgeMigrationChecklistItemOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/migrate/checklist/"
+	{
+		// Encode "item" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "item",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(string(params.Item)))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/acknowledge"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, AcknowledgeMigrationChecklistItemOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, AcknowledgeMigrationChecklistItemOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeAcknowledgeMigrationChecklistItemResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -10962,6 +11165,160 @@ func (c *Client) sendGetMigration(ctx context.Context) (res *Migration, err erro
 
 	stage = "DecodeResponse"
 	result, err := decodeGetMigrationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetMigrationChecklist invokes getMigrationChecklist operation.
+//
+// Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken
+// from a record where one exists, so it cannot say something was done when it was not. The migration
+// counts as finished exactly when the array record carries the time the point of no return finished
+// (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing
+// else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way
+// through its point of no return, or was undone has none, and so has an array created by hand or one
+// that finished before this record existed; then `finished` is false, `finishedAt` is absent and
+// `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+//
+// `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache
+// (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the
+// source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and
+// was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and
+// `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is
+// done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing
+// right after a sync and never counts. `notifications` is done once an enabled channel's test
+// (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in;
+// the Unraid notification agents the scan found are named so the user knows what to recreate, and no
+// secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub`
+// steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from
+// Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a
+// non-correcting check maps to a scrub that only reports) and its spin-down delay as the default.
+// Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over:
+// nothing is offered for `sync` and the user chooses one.
+//
+// `user_scripts` and `restore_drill` have no record to derive from and are done by
+// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
+// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
+// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
+// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+//
+// GET /migrate/checklist
+func (c *Client) GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error) {
+	res, err := c.sendGetMigrationChecklist(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetMigrationChecklist(ctx context.Context) (res *MigrationChecklist, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMigrationChecklist"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/migrate/checklist"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetMigrationChecklistOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/checklist"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetMigrationChecklistOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetMigrationChecklistOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetMigrationChecklistResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -22157,7 +22514,10 @@ func (c *Client) sendRunParityDiff(ctx context.Context) (res *ParityDiffResult, 
 // Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
 // the channel's own configuration, not a routed event, so it reports success or the delivery error
 // directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
-// notification config is the same as no notification config").
+// notification config is the same as no notification config"). A test that succeeds is also recorded
+// for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
+// enabled and its latest successful test ran in a later second than the one the channel last changed
+// in; a test that fails is not recorded.
 //
 // POST /notifications/channels/{channelId}/test
 func (c *Client) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error) {
@@ -24756,7 +25116,8 @@ func (c *Client) sendStartRestoreDrill(ctx context.Context) (res *Job, err error
 
 // StartScrub invokes startScrub operation.
 //
-// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
+// `allBlocks` scrubs every block.
 //
 // POST /parity/scrub
 func (c *Client) StartScrub(ctx context.Context, request *StartScrubRequest) (*Job, error) {

@@ -381,6 +381,7 @@ func (h *Handler) StartScrub(ctx context.Context, req *apiv1.StartScrubRequest) 
 		pct := int(v)
 		p.Percent = &pct
 	}
+	p.AllBlocks = req.AllBlocks.Or(false)
 	params, err := json.Marshal(p)
 	if err != nil {
 		return nil, fmt.Errorf("encoding scrub params: %w", err)

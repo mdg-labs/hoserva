@@ -272,7 +272,27 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+# VARIANT and LAYOUT — `make vm-migration-suite VARIANT=unraid-7x-xfs-single-parity
+# LAYOUT=shared-nvme` — the same guard as every other command-line-supplied
+# variable above (a `$(shell ...)` in a value would otherwise run when Make
+# exports it). scripts/vm/run-migration-suite.sh compares both with its own list
+# of runs and refuses any other value before a VM exists. An empty LAYOUT (the
+# default) is the separate cache-disk layout.
+VARIANT ?=
+unexport VARIANT
+ifneq ($(findstring $$,$(value VARIANT)),)
+$(error invalid VARIANT: must not contain '$$' — no Make or shell expansion syntax is accepted in a fixture variant name)
+endif
+export VARIANT
+
+LAYOUT ?=
+unexport LAYOUT
+ifneq ($(findstring $$,$(value LAYOUT)),)
+$(error invalid LAYOUT: must not contain '$$' — no Make or shell expansion syntax is accepted in a layout name)
+endif
+export LAYOUT
+
+.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak vm-migration-suite hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -412,6 +432,8 @@ packaging-test:
 test-unraid-tools:
 	tools/unraid/test-prepare-migration.sh
 	scripts/vm/unraid-sizing-check.sh
+	scripts/vm/migration-suite-coverage-check.sh
+	scripts/vm/migration-suite-check.sh
 
 # The agent workflow's GitHub client (issue #410): scripts/gh-rest.sh's own
 # contract tests against a fake `gh`, plus the fake-gh tests for the
@@ -467,6 +489,7 @@ lint-gh:
 SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh \
 	scripts/vm/unraid-fixture.sh scripts/vm/unraid-capture.sh scripts/vm/unraid-capture-guest.sh scripts/vm/unraid-lib.sh \
 	scripts/vm/create-vm.sh scripts/vm/unraid-sizing-check.sh \
+	scripts/vm/run-migration-suite.sh scripts/vm/migration-suite-guest.sh scripts/vm/usb-image.sh scripts/vm/migration-suite-coverage-check.sh scripts/vm/migration-suite-check.sh \
 	tools/unraid/prepare-migration.sh tools/unraid/test-prepare-migration.sh \
 	scripts/release/stamp-prepare-script.sh scripts/release/test-stamp-prepare-script.sh \
 	scripts/release/test-publish-release.sh \
@@ -872,6 +895,20 @@ vm-suite:
 vm-suite-plan:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-suite-plan)" >&2; exit 1; }
 	L3_PLAN=1 scripts/vm/run-l3-suite.sh
+
+# The migration test procedure of doc 06 §5 (issue #80) against the synthetic
+# Unraid fixtures, in this lab's own L3 VM: restore the fixture snapshot (built
+# first when this lab has none), install the .deb, scan, import, verify, the point
+# of no return, appdata, containers, scrub and fix, each step recorded PASS or
+# FAIL; a refusal variant asserts the refusal and that no source disk changed.
+# VARIANT=<variant> runs one, VARIANT=all every one of them (and the shared-NVMe
+# layout of unraid-7x-xfs-single-parity); LAYOUT=shared-nvme with that variant
+# runs the shared-NVMe layout alone. Requires HOSERVA_LAB_ID and tears the VM down
+# on exit. nightly-migration.yml runs it as a matrix over the variants.
+vm-migration-suite:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-migration-suite VARIANT=unraid-7x-xfs-single-parity)" >&2; exit 1; }
+	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make vm-migration-suite VARIANT=unraid-7x-xfs-single-parity, or VARIANT=all)" >&2; exit 1; }
+	scripts/vm/run-migration-suite.sh "$$VARIANT"
 
 # Phase 1's L3 soak (doc 06 §6, Q16): 30 nightly chains back to back over
 # seeded churn, with injected failures. Time-compressed; does not wait

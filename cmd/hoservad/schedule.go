@@ -28,21 +28,45 @@ const scheduleTickInterval = time.Minute
 // own goroutine reads it on every tick, the same concurrency shape
 // Handler.SetArray/CurrentArray already established for Handler.Array
 // (#263).
+//
+// It also remembers the instant the guard was first set — the moment
+// parity became runnable in this process. The chain cannot run before
+// then (tickChain returns while the guard is nil), so a window that opened
+// earlier must not stay owed until it is wired: a never-run chain's first
+// window is the next start time after this instant.
 type diffGuardHolder struct {
 	mu    sync.RWMutex
 	guard job.DiffGuard
+	setAt time.Time
+	// now is the clock set reads; nil means time.Now.
+	now func() time.Time
 }
 
 func (g *diffGuardHolder) set(guard job.DiffGuard) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.guard = guard
+	if g.setAt.IsZero() {
+		clock := g.now
+		if clock == nil {
+			clock = time.Now
+		}
+		g.setAt = clock()
+	}
 }
 
 func (g *diffGuardHolder) get() job.DiffGuard {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.guard
+}
+
+// current returns the guard and the instant it was first set, read
+// together so a tick never pairs a guard with an earlier tick's instant.
+func (g *diffGuardHolder) current() (job.DiffGuard, time.Time) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.guard, g.setAt
 }
 
 type scheduleRunner struct {
@@ -135,11 +159,11 @@ func (r *scheduleRunner) tickChain(ctx context.Context) error {
 	if r == nil || r.Schedules == nil || r.Scheduler == nil || r.Guard == nil {
 		return nil
 	}
-	guard := r.Guard.get()
+	guard, runnableSince := r.Guard.current()
 	if guard == nil {
 		return nil
 	}
-	claimed, err := r.Schedules.ClaimDueChain(ctx)
+	claimed, err := r.Schedules.ClaimDueChain(ctx, runnableSince)
 	if err != nil {
 		return err
 	}

@@ -204,3 +204,50 @@ func TestStore_ParamsRoundTrip(t *testing.T) {
 		t.Fatalf("Params = %s, want %s", got.Params, want)
 	}
 }
+
+func TestStore_ListSucceededOfTypeIsOldestFirstPagedAndOnlySucceededOfThatType(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(newTestDB(t))
+	base := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+	for i, j := range []struct {
+		id     string
+		typ    Type
+		status Status
+	}{
+		{"scrub-ok", TypeScrub, StatusSucceeded},
+		{"sync-failed", TypeSync, StatusFailed},
+		{"sync-b", TypeSync, StatusSucceeded},
+		{"sync-queued", TypeSync, StatusQueued},
+		{"sync-a", TypeSync, StatusSucceeded},
+		{"sync-c", TypeSync, StatusSucceeded},
+	} {
+		created := base.Add(time.Duration(i) * time.Minute)
+		if j.id == "sync-a" {
+			created = base.Add(-time.Hour)
+		}
+		if err := s.Create(ctx, &Job{ID: j.id, Type: j.typ, Class: classOf[j.typ], Status: j.status, CreatedAt: created}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := func(limit, offset int) []string {
+		t.Helper()
+		jobs, err := s.ListSucceededOfType(ctx, TypeSync, limit, offset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, j := range jobs {
+			out = append(out, j.ID)
+		}
+		return out
+	}
+	if got := ids(10, 0); len(got) != 3 || got[0] != "sync-a" || got[1] != "sync-b" || got[2] != "sync-c" {
+		t.Fatalf("all = %v, want sync-a, sync-b, sync-c", got)
+	}
+	if got := ids(2, 1); len(got) != 2 || got[0] != "sync-b" || got[1] != "sync-c" {
+		t.Errorf("page = %v, want sync-b, sync-c", got)
+	}
+	if got := ids(2, 3); len(got) != 0 {
+		t.Errorf("past the end = %v", got)
+	}
+}

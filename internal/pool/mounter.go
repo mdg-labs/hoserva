@@ -52,6 +52,24 @@ type Mounter struct {
 	// SetXattr writes one key of a live mount's runtime control file.
 	// Nil means syscall.Setxattr; a test injects a recorder.
 	SetXattr func(path, attr string, value []byte) error
+
+	// GetXattr reads one key of a live mount's runtime control file. Nil
+	// means syscall.Getxattr; a test injects a scripted value.
+	GetXattr func(path, attr string) ([]byte, error)
+}
+
+func (m Mounter) getXattr() func(string, string) ([]byte, error) {
+	if m.GetXattr != nil {
+		return m.GetXattr
+	}
+	return func(path, attr string) ([]byte, error) {
+		buf := make([]byte, 64<<10)
+		n, err := syscall.Getxattr(path, attr, buf)
+		if err != nil {
+			return nil, err
+		}
+		return buf[:n], nil
+	}
 }
 
 func (m Mounter) setXattr() func(string, string, []byte) error {
@@ -121,9 +139,10 @@ func systemdStopShouldRetry(err error) bool {
 // mnt's branches, create policy and minfreespace are applied to the live
 // mount through mergerfs's runtime control file (mergerfs(1) "RUNTIME
 // CONFIG", 2.40.2) — a share update or an added disk takes effect at
-// once, without unmounting a path Samba or NFS may be serving, and
-// re-applying unchanged values is harmless. The existing mount is only
-// trusted as mnt's own when
+// once, without unmounting a path Samba or NFS may be serving. A value
+// already live is not written again, because a read-only mount refuses
+// even a no-op setxattr (see applyRuntime, #621). The existing mount is
+// only trusted as mnt's own when
 // findmnt reports its SOURCE as mnt.FSName — the same fsname doc 02 §1's
 // table says is "recognisable in df and mount listings" precisely so it
 // can be told apart this way — because a wrong mount masquerading as
@@ -157,19 +176,43 @@ func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 
 // applyRuntime sets mnt's runtime-configurable options on the live mount
 // at mnt.Where. Values use the same syntax as the command line.
+//
+// A key whose live value already is the wanted one is not written: the kernel
+// refuses setxattr on a read-only mount (EROFS) whatever the value, and the
+// pool of a pending Unraid migration is read-only and may already be up with
+// exactly these options (#621). A value that does differ is written, so a
+// read-only mount that would have to change still fails, loudly, and is left
+// as it is.
 func (m Mounter) applyRuntime(mnt Mount) error {
 	ctl := filepath.Join(mnt.Where, ".mergerfs")
-	set := m.setXattr()
+	get, set := m.getXattr(), m.setXattr()
 	for _, kv := range [][2]string{
 		{"user.mergerfs.branches", mnt.What},
 		{"user.mergerfs.category.create", string(mnt.CreatePolicy)},
 		{"user.mergerfs.minfreespace", mnt.Options.minFreeSpace()},
 	} {
+		if live, err := get(ctl, kv[0]); err == nil && sameRuntimeValue(kv[0], kv[1], string(live)) {
+			continue
+		}
 		if err := set(ctl, kv[0], []byte(kv[1])); err != nil {
 			return fmt.Errorf("pool: updating %s on the live mount at %s: %w", kv[0], mnt.Where, err)
 		}
 	}
 	return nil
+}
+
+// sameRuntimeValue reports whether the live value of a runtime key is the one
+// wanted. mergerfs reports minfreespace in bytes however it was given ("50M"
+// reads back as 52428800), so those are compared as sizes; the rest are
+// compared as written. A value that cannot be told apart is never "the same".
+func sameRuntimeValue(attr, want, live string) bool {
+	live = strings.TrimRight(live, "\x00\n")
+	if attr == "user.mergerfs.minfreespace" {
+		w, werr := ParseMinFreeSpace(want)
+		l, lerr := ParseMinFreeSpace(live)
+		return werr == nil && lerr == nil && w == l
+	}
+	return live == want
 }
 
 // Unmount tears down the mergerfs mount at where with fusermount -u —

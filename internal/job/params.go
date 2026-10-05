@@ -23,9 +23,12 @@ type SyncParams struct {
 }
 
 // ScrubParams is startScrub's persisted request payload. Percent nil
-// means the engine's existing default (DefaultScrubPercent).
+// means the engine's existing default (DefaultScrubPercent). AllBlocks
+// scrubs blocks of every age (snapraid -o 0) instead of only those older
+// than parity.DefaultScrubOlderThanDays; absent, it is false.
 type ScrubParams struct {
-	Percent *int `json:"percent,omitempty"`
+	Percent   *int `json:"percent,omitempty"`
+	AllBlocks bool `json:"allBlocks,omitempty"`
 }
 
 // FixParams is startFix's persisted request payload. Disk is the SnapRAID
@@ -311,6 +314,17 @@ func ScrubPercentFromParams(params []byte) (int, error) {
 		return DefaultScrubPercent, nil
 	}
 	return *p.Percent, nil
+}
+
+// ScrubAllBlocksFromParams reports whether persisted startScrub params ask
+// for a scrub of blocks of every age. Params without the field, including
+// every scheduled scrub's, read as false.
+func ScrubAllBlocksFromParams(params []byte) (bool, error) {
+	p, err := decodeScrubParams(bytes.TrimSpace(params))
+	if err != nil {
+		return false, err
+	}
+	return p.AllBlocks, nil
 }
 
 // FixOptsFromParams maps persisted startFix params onto FixOpts. Disk

@@ -100,14 +100,16 @@ func TestChainIsDue_UsesInstallationTimezone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLocation: %v", err)
 	}
+	// Configured on the 13th, so the chain has been waiting for a window.
+	configured := time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
 	// 01:30 UTC is 03:30 CEST on 2026-06-15 — after 02:00 Berlin.
 	after := time.Date(2026, 6, 15, 1, 30, 0, 0, time.UTC)
-	if !ChainIsDue(after, loc, "02:00", nil) {
+	if !ChainIsDue(after, loc, "02:00", nil, configured) {
 		t.Fatal("ChainIsDue = false at 03:30 Berlin; today's 02:00 window should be due")
 	}
 	// 23:30 UTC on the 14th is 01:30 CEST on the 15th — before 02:00 Berlin.
 	before := time.Date(2026, 6, 14, 23, 30, 0, 0, time.UTC)
-	if ChainIsDue(before, loc, "02:00", nil) {
+	if ChainIsDue(before, loc, "02:00", nil, configured) {
 		t.Fatal("ChainIsDue = true at 01:30 Berlin; today's 02:00 window is not due yet")
 	}
 }
@@ -115,13 +117,74 @@ func TestChainIsDue_UsesInstallationTimezone(t *testing.T) {
 func TestChainIsDue_LastRunConsumesTodaysWindow(t *testing.T) {
 	loc := time.UTC
 	now := time.Date(2026, 6, 15, 3, 0, 0, 0, loc)
+	configured := time.Date(2026, 6, 1, 0, 0, 0, 0, loc)
 	claimed := time.Date(2026, 6, 15, 2, 0, 1, 0, loc)
-	if ChainIsDue(now, loc, "02:00", &claimed) {
+	if ChainIsDue(now, loc, "02:00", &claimed, configured) {
 		t.Fatal("ChainIsDue = true after last-run claimed today's window")
 	}
 	yesterday := time.Date(2026, 6, 14, 2, 0, 1, 0, loc)
-	if !ChainIsDue(now, loc, "02:00", &yesterday) {
+	if !ChainIsDue(now, loc, "02:00", &yesterday, configured) {
 		t.Fatal("ChainIsDue = false with last-run yesterday; today's window is still open")
+	}
+}
+
+// A chain that has run keeps its own last-run as the claim: saving its
+// settings after today's start time does not forfeit a window it still owes.
+func TestChainIsDue_LastRunOutranksLaterConfiguredAt(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 6, 15, 5, 0, 0, 0, loc)
+	yesterday := time.Date(2026, 6, 14, 2, 0, 1, 0, loc)
+	savedToday := time.Date(2026, 6, 15, 3, 0, 0, 0, loc)
+	if !ChainIsDue(now, loc, "02:00", &yesterday, savedToday) {
+		t.Fatal("ChainIsDue = false; a settings save must not consume the window of a chain that has run before")
+	}
+}
+
+func TestChainIsDue_NeverRunConfiguredAfterStartWaitsForTomorrow(t *testing.T) {
+	loc := time.UTC
+	configured := time.Date(2026, 6, 15, 10, 0, 0, 0, loc)
+	now := configured.Add(20 * time.Second)
+	if ChainIsDue(now, loc, "02:00", nil, configured) {
+		t.Fatal("ChainIsDue = true seconds after a chain set up at 10:00 with a 02:00 start; it is next due tomorrow")
+	}
+	if got, want := NextChainRun(now, loc, "02:00"), time.Date(2026, 6, 16, 2, 0, 0, 0, loc); !got.Equal(want) {
+		t.Fatalf("NextChainRun = %v, want %v", got, want)
+	}
+	lateTonight := time.Date(2026, 6, 15, 23, 59, 0, 0, loc)
+	if ChainIsDue(lateTonight, loc, "02:00", nil, configured) {
+		t.Fatal("ChainIsDue = true later the same day; today's window opened before the chain was set up")
+	}
+	tomorrow := time.Date(2026, 6, 16, 2, 0, 0, 0, loc)
+	if !ChainIsDue(tomorrow, loc, "02:00", nil, configured) {
+		t.Fatal("ChainIsDue = false at tomorrow's 02:00; the first window after setup must open")
+	}
+}
+
+func TestChainIsDue_NeverRunConfiguredBeforeStartIsDueTodayAtStart(t *testing.T) {
+	loc := time.UTC
+	configured := time.Date(2026, 6, 15, 1, 0, 0, 0, loc)
+	if ChainIsDue(time.Date(2026, 6, 15, 1, 59, 0, 0, loc), loc, "02:00", nil, configured) {
+		t.Fatal("ChainIsDue = true before today's start time")
+	}
+	if !ChainIsDue(time.Date(2026, 6, 15, 2, 0, 0, 0, loc), loc, "02:00", nil, configured) {
+		t.Fatal("ChainIsDue = false at today's start time; a chain set up at 01:00 runs at 02:00 today")
+	}
+}
+
+// Moving the start time of a never-run chain saves its settings, which
+// restarts the wait: the new time is due today only if it is still ahead.
+func TestChainIsDue_NeverRunStartTimeChangeFollowsNextRun(t *testing.T) {
+	loc := time.UTC
+	saved := time.Date(2026, 6, 15, 10, 0, 0, 0, loc)
+	now := saved.Add(time.Minute)
+	if ChainIsDue(now, loc, "08:00", nil, saved) {
+		t.Fatal("ChainIsDue = true after moving the start earlier than the save time; it is next due tomorrow")
+	}
+	if ChainIsDue(now, loc, "12:00", nil, saved) {
+		t.Fatal("ChainIsDue = true before the later start time")
+	}
+	if !ChainIsDue(time.Date(2026, 6, 15, 12, 0, 0, 0, loc), loc, "12:00", nil, saved) {
+		t.Fatal("ChainIsDue = false at the later start time today")
 	}
 }
 

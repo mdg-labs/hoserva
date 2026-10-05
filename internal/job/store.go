@@ -100,6 +100,20 @@ func (s *Store) ListPending(ctx context.Context, t Type) ([]*Job, error) {
 	return fromRows(rows)
 }
 
+// ListSucceededOfType returns the succeeded jobs of type t, oldest first, limit
+// of them after skipping offset: a caller that needs every one pages with it.
+func (s *Store) ListSucceededOfType(ctx context.Context, t Type, limit, offset int) ([]*Job, error) {
+	rows, err := s.q.ListSucceededJobsOfType(ctx, storedb.ListSucceededJobsOfTypeParams{
+		Type:   string(t),
+		Limit:  int64(limit),
+		Offset: int64(offset),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return fromRows(rows)
+}
+
 // SetCancellable persists whether the job with id accepts a cancel.
 func (s *Store) SetCancellable(ctx context.Context, id string, cancellable bool) error {
 	return s.q.SetJobCancellable(ctx, storedb.SetJobCancellableParams{

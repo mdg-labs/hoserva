@@ -62,7 +62,30 @@ type scheduleHarness struct {
 	registry  *job.Registry
 }
 
+// newScheduleHarness builds a harness whose nightly chain was configured, and
+// whose parity guard was wired, two days before now, and which has never run,
+// so the first window at or after now's start time is genuinely owed. Tests
+// of a chain configured or wired at now use newUnseededScheduleHarness.
 func newScheduleHarness(t *testing.T, now func() time.Time, guard job.DiffGuard) *scheduleHarness {
+	t.Helper()
+	h := newUnseededScheduleHarness(t, now, guard)
+	err := h.schedules.Schedules.UpsertChain(context.Background(), api.ScheduleChainRow{
+		StartTime:           "02:00",
+		MoverEnabled:        true,
+		DiffGuardEnabled:    true,
+		SyncEnabled:         true,
+		ScrubEnabled:        true,
+		ConfigBackupEnabled: true,
+		UpdatedAt:           now().Add(-48 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("seeding the chain two days before now: %v", err)
+	}
+	h.runner.Guard = &diffGuardHolder{guard: guard, setAt: now().Add(-48 * time.Hour), now: now}
+	return h
+}
+
+func newUnseededScheduleHarness(t *testing.T, now func() time.Time, guard job.DiffGuard) *scheduleHarness {
 	t.Helper()
 	migrations, err := store.Load()
 	if err != nil {
@@ -85,6 +108,10 @@ func newScheduleHarness(t *testing.T, now func() time.Time, guard job.DiffGuard)
 	settingsStore := api.NewSettingsStore(db)
 	scheduleService := api.NewScheduleService(api.NewScheduleStore(db), settingsStore)
 	scheduleService.Now = now
+	holder := &diffGuardHolder{now: now}
+	if guard != nil {
+		holder.set(guard)
+	}
 
 	return &scheduleHarness{
 		db:        db,
@@ -95,7 +122,7 @@ func newScheduleHarness(t *testing.T, now func() time.Time, guard job.DiffGuard)
 		runner: &scheduleRunner{
 			Schedules: scheduleService,
 			Scheduler: scheduler,
-			Guard:     &diffGuardHolder{guard: guard},
+			Guard:     holder,
 		},
 	}
 }
@@ -224,14 +251,16 @@ func TestScheduleRunner_UnregisteredMoverIsSkipped(t *testing.T) {
 }
 
 func TestScheduleRunner_DisabledMoverIsSkipped(t *testing.T) {
-	now := time.Date(2026, 6, 15, 2, 1, 0, 0, time.UTC)
+	// Saved at 01:00, before the 02:00 window: a save restarts a never-run
+	// chain's wait, so the window must still lie ahead of it.
+	clock := time.Date(2026, 6, 15, 1, 0, 0, 0, time.UTC)
 	eng := newRecordingEngine()
 	eng.SetDiff(parity.DiffReport{Removed: 1, PerDisk: map[string]parity.DiskDiff{
 		"/mnt/disk1": {FilesBefore: 1000, FilesAfter: 999},
 	}})
 	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
 
-	h := newScheduleHarness(t, utcClock(now), job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	h := newScheduleHarness(t, func() time.Time { return clock }, job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
 	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
 	moverCalls := 0
 	h.registry.Register(job.TypeMover, false, func(context.Context, *job.RunContext) error {
@@ -244,6 +273,7 @@ func TestScheduleRunner_DisabledMoverIsSkipped(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateChain: %v", err)
 	}
+	clock = time.Date(2026, 6, 15, 2, 1, 0, 0, time.UTC)
 
 	if err := h.runner.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -273,6 +303,185 @@ func TestScheduleRunner_NotYetDueChainIsNotSubmitted(t *testing.T) {
 	syncCalls, wrote := eng.snapshot()
 	if syncCalls != 0 || wrote {
 		t.Fatalf("not-yet-due chain called Sync (calls=%d wrote=%v)", syncCalls, wrote)
+	}
+}
+
+// The migration-suite scenario: the daemon sets up after the chain's start
+// time and the first tick must not run the mover, a sync or a config backup.
+// The same chain is due at its next start time, once, and a restart after
+// that window is claimed does not run it again.
+func TestScheduleRunner_NeverRunChainSetUpAfterStartWaitsForNextStartTime(t *testing.T) {
+	clock := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	eng := newRecordingEngine()
+	eng.SetDiff(parity.DiffReport{Removed: 1, PerDisk: map[string]parity.DiskDiff{
+		"/mnt/disk1": {FilesBefore: 1000, FilesAfter: 999},
+	}})
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+
+	h := newUnseededScheduleHarness(t, func() time.Time { return clock }, job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	clock = clock.Add(20 * time.Second)
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if types := h.jobTypes(t); len(types) != 0 {
+		t.Fatalf("a chain set up at 10:00 with a 02:00 start submitted %v on its first ticks", types)
+	}
+	if syncCalls, wrote := eng.snapshot(); syncCalls != 0 || wrote {
+		t.Fatalf("first ticks called Sync (calls=%d wrote=%v)", syncCalls, wrote)
+	}
+
+	clock = time.Date(2026, 6, 16, 2, 0, 30, 0, time.UTC)
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tomorrow's tick: %v", err)
+	}
+	if !containsType(h.jobTypes(t), job.TypeSync) {
+		t.Fatal("the chain did not run at its next start time, 02:00 tomorrow")
+	}
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tick inside the claimed window: %v", err)
+	}
+	syncs := 0
+	for _, typ := range h.jobTypes(t) {
+		if typ == job.TypeSync {
+			syncs++
+		}
+	}
+	if syncs != 1 {
+		t.Fatalf("TypeSync jobs after the first window = %d, want 1", syncs)
+	}
+}
+
+// A never-run chain does not catch up a window that passed before this
+// daemon process could run it: after a restart past today's start time its
+// first window is tomorrow's start, because the guard is wired anew then.
+func TestScheduleRunner_RestartAfterStartDoesNotRunNeverRunChain(t *testing.T) {
+	clock := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+	guard := job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}}
+	now := func() time.Time { return clock }
+	h := newScheduleHarness(t, now, guard)
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+
+	restarted := &diffGuardHolder{now: now}
+	restarted.set(guard)
+	h.runner.Guard = restarted
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tick after restart: %v", err)
+	}
+	clock = clock.Add(time.Minute)
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("second tick after restart: %v", err)
+	}
+	if types := h.jobTypes(t); len(types) != 0 {
+		t.Fatalf("a restart after the start time ran the never-run chain: %v", types)
+	}
+
+	clock = time.Date(2026, 6, 16, 2, 0, 30, 0, time.UTC)
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tomorrow's tick: %v", err)
+	}
+	if !containsType(h.jobTypes(t), job.TypeSync) {
+		t.Fatal("the chain did not run at the next start time after the restart")
+	}
+}
+
+// The daemon is up from day 1 with no array, so the chain guard stays unset
+// and no window can be claimed. When parity becomes runnable on day 3 at
+// 10:00 (the migration's point of no return), the windows that passed in
+// between are not owed: the first run is the next start time, day 4 02:00,
+// which is also what nextRun reports then.
+func TestScheduleRunner_GuardWiredOnALaterDayWaitsForTheNextStartTime(t *testing.T) {
+	clock := time.Date(2026, 6, 13, 15, 0, 0, 0, time.UTC)
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+	h := newUnseededScheduleHarness(t, func() time.Time { return clock }, nil)
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+	h.runner.OtherJobs = map[string]func(context.Context) error{
+		"container_update_check": func(context.Context) error { return nil },
+	}
+	tick := func(at time.Time) {
+		t.Helper()
+		clock = at
+		if err := h.runner.tick(context.Background()); err != nil {
+			t.Fatalf("tick at %v: %v", at, err)
+		}
+	}
+
+	tick(clock)
+	tick(time.Date(2026, 6, 14, 2, 0, 30, 0, time.UTC))
+	tick(time.Date(2026, 6, 15, 2, 0, 30, 0, time.UTC))
+	if types := h.jobTypes(t); len(types) != 0 {
+		t.Fatalf("jobs before parity was wired: %v", types)
+	}
+
+	ponr := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	clock = ponr
+	h.runner.Guard.set(job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	firstRun := time.Date(2026, 6, 16, 2, 0, 0, 0, time.UTC)
+	if next := job.NextChainRun(ponr, time.UTC, "02:00"); !next.Equal(firstRun) {
+		t.Fatalf("nextRun at the point of no return = %v, want %v", next, firstRun)
+	}
+	tick(ponr.Add(20 * time.Second))
+	tick(ponr.Add(time.Minute))
+	tick(firstRun.Add(-time.Minute))
+	if types := h.jobTypes(t); len(types) != 0 {
+		t.Fatalf("jobs after parity was wired but before nextRun %v: %v", firstRun, types)
+	}
+	if syncCalls, wrote := eng.snapshot(); syncCalls != 0 || wrote {
+		t.Fatalf("Sync called before nextRun (calls=%d wrote=%v)", syncCalls, wrote)
+	}
+
+	tick(firstRun.Add(30 * time.Second))
+	if !containsType(h.jobTypes(t), job.TypeSync) {
+		t.Fatalf("the chain did not run at nextRun %v", firstRun)
+	}
+}
+
+// A fresh install: the daemon starts on day 1 before the chain's start time
+// and onboarding creates the array on day 2 after it, in the installation's
+// timezone. Onboarding never saves the chain settings, so only the moment
+// parity was wired can hold the first run back until day 3's start.
+func TestScheduleRunner_ArrayCreatedOnALaterDayAfterTheStartTimeWaits(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	clock := time.Date(2026, 6, 15, 1, 0, 0, 0, loc)
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+	h := newUnseededScheduleHarness(t, func() time.Time { return clock }, nil)
+	h.setTimezone(t, "Europe/Berlin")
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+	h.runner.OtherJobs = map[string]func(context.Context) error{
+		"container_update_check": func(context.Context) error { return nil },
+	}
+	tick := func(at time.Time) {
+		t.Helper()
+		clock = at
+		if err := h.runner.tick(context.Background()); err != nil {
+			t.Fatalf("tick at %v: %v", at, err)
+		}
+	}
+
+	tick(clock)
+	onboarded := time.Date(2026, 6, 16, 3, 0, 0, 0, loc)
+	clock = onboarded
+	h.runner.Guard.set(job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	tick(onboarded.Add(20 * time.Second))
+	tick(onboarded.Add(time.Minute))
+	if types := h.jobTypes(t); len(types) != 0 {
+		t.Fatalf("the chain ran right after the array was created: %v", types)
+	}
+
+	tick(time.Date(2026, 6, 17, 2, 0, 30, 0, loc))
+	if !containsType(h.jobTypes(t), job.TypeSync) {
+		t.Fatal("the chain did not run at the next start time after the array was created")
 	}
 }
 

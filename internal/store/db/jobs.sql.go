@@ -292,6 +292,62 @@ func (q *Queries) ListPendingJobsOfType(ctx context.Context, type_ string) ([]*J
 	return items, nil
 }
 
+const listSucceededJobsOfType = `-- name: ListSucceededJobsOfType :many
+SELECT
+    id, "type", class, "status", progress, resumable, cancellable,
+    resource_ids, checkpoint, error_code, error_message,
+    created_at, started_at, finished_at, params
+FROM jobs
+WHERE "type" = ? AND "status" = 'succeeded'
+ORDER BY created_at ASC, id ASC
+LIMIT ? OFFSET ?
+`
+
+type ListSucceededJobsOfTypeParams struct {
+	Type   string `json:"type"`
+	Limit  int64  `json:"limit"`
+	Offset int64  `json:"offset"`
+}
+
+func (q *Queries) ListSucceededJobsOfType(ctx context.Context, arg ListSucceededJobsOfTypeParams) ([]*Job, error) {
+	rows, err := q.db.QueryContext(ctx, listSucceededJobsOfType, arg.Type, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Class,
+			&i.Status,
+			&i.Progress,
+			&i.Resumable,
+			&i.Cancellable,
+			&i.ResourceIds,
+			&i.Checkpoint,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Params,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveJobCheckpoint = `-- name: SaveJobCheckpoint :exec
 UPDATE jobs SET checkpoint = ? WHERE id = ?
 `

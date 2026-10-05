@@ -61,13 +61,14 @@ type ArrayMaintenance struct {
 }
 
 type ArraySetting struct {
-	ID                int64  `json:"id"`
-	CreatePolicy      string `json:"create_policy"`
-	MinFreeSpace      string `json:"min_free_space"`
-	CreatedAt         string `json:"created_at"`
-	MigrationPending  int64  `json:"migration_pending"`
-	MigrationRecorded string `json:"migration_recorded"`
-	InitialSyncOwed   int64  `json:"initial_sync_owed"`
+	ID                  int64  `json:"id"`
+	CreatePolicy        string `json:"create_policy"`
+	MinFreeSpace        string `json:"min_free_space"`
+	CreatedAt           string `json:"created_at"`
+	MigrationPending    int64  `json:"migration_pending"`
+	MigrationRecorded   string `json:"migration_recorded"`
+	InitialSyncOwed     int64  `json:"initial_sync_owed"`
+	MigrationFinishedAt string `json:"migration_finished_at"`
 }
 
 type AuditLog struct {
@@ -216,6 +217,7 @@ type MigrationSession struct {
 	ScanError            string `json:"scan_error"`
 	ScanFullChecksums    int64  `json:"scan_full_checksums"`
 	Verify               string `json:"verify"`
+	Checklist            string `json:"checklist"`
 }
 
 type MoverRunResult struct {

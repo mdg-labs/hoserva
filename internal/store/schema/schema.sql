@@ -369,6 +369,11 @@ CREATE TABLE backup_recipient (
 -- (written in the same statement that clears migration_recorded) until the
 -- initial sync has been queued: a daemon that stopped in between queues it at
 -- its next start, so the array never stays without parity unnoticed (doc 05 §5).
+-- migration_finished_at is the RFC3339 UTC instant that same statement ran, ''
+-- for every array whose migration has not finished: one created by hand, a
+-- pending adoption, and one whose adoption was undone (that deletes the row).
+-- Nothing else writes it, so it is the post-migration checklist's one durable
+-- fact that the migration finished.
 CREATE TABLE array_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     create_policy TEXT NOT NULL,
@@ -376,7 +381,8 @@ CREATE TABLE array_settings (
     created_at TEXT NOT NULL,
     migration_pending INTEGER NOT NULL DEFAULT 0 CHECK (migration_pending IN (0, 1)),
     migration_recorded TEXT NOT NULL DEFAULT '',
-    initial_sync_owed INTEGER NOT NULL DEFAULT 0 CHECK (initial_sync_owed IN (0, 1))
+    initial_sync_owed INTEGER NOT NULL DEFAULT 0 CHECK (initial_sync_owed IN (0, 1)),
+    migration_finished_at TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 -- One assigned disk per row. role_index is 1-based for the documented
@@ -931,9 +937,12 @@ CREATE TABLE registry_credentials (
 -- scan_full_checksums are the options it was started with, scan_error is empty
 -- while it runs and says why it stopped otherwise. verify is the result of the
 -- verify phase against the scan's baseline, as JSON, which the migrate package
--- owns. Every column is empty ('' or 0) when it
--- does not apply. The zip itself is never in the database or in a config
--- archive: it holds secrets.
+-- owns. checklist is the post-migration checklist's own record, as JSON the
+-- migrate package owns: who acknowledged which item and when, and when a
+-- notification channel's test last succeeded. It outlives the scan: forgetting
+-- the session clears every other column and keeps this one. Every column is
+-- empty ('' or 0) when it does not apply. The zip itself is never in the
+-- database or in a config archive: it holds secrets.
 CREATE TABLE migration_session (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     source_file TEXT NOT NULL DEFAULT '',
@@ -946,5 +955,6 @@ CREATE TABLE migration_session (
     scan_unverified_layout INTEGER NOT NULL DEFAULT 0 CHECK (scan_unverified_layout IN (0, 1)),
     scan_error TEXT NOT NULL DEFAULT '',
     scan_full_checksums INTEGER NOT NULL DEFAULT 0 CHECK (scan_full_checksums IN (0, 1)),
-    verify TEXT NOT NULL DEFAULT ''
+    verify TEXT NOT NULL DEFAULT '',
+    checklist TEXT NOT NULL DEFAULT ''
 ) STRICT;

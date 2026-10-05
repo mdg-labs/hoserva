@@ -244,6 +244,9 @@ func (h *handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:          uuid.New(),

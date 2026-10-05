@@ -285,6 +285,9 @@ func (h *handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 	if h.maintenance {
 		return nil, errMaintenanceMode()
 	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:        uuid.New(),
@@ -376,6 +379,9 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	// TypeDiskUpgradeData while maintenance mode is active (Q70).
 	if h.maintenance {
 		return nil, errMaintenanceMode()
+	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
 	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
@@ -548,12 +554,16 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 		h.mu.Lock()
 		pendingID, pending := h.pendingDiskUpgradeLocked()
 		stopped := h.maintenance
+		migrating := h.migration.unfinished()
 		h.mu.Unlock()
 		if pending {
 			return nil, errDiskUpgradePending(pendingID)
 		}
 		if !stopped {
 			return nil, errArrayNotStopped()
+		}
+		if migrating {
+			return nil, errMigrationInProgress()
 		}
 		jobType = apiv1.JobTypeDiskUpgradeData
 	case store.ArrayRoleParity:
@@ -573,9 +583,13 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 		// other than a data-disk upgrade (doc 02 §4 E8).
 		h.mu.Lock()
 		inMaintenance := h.maintenance
+		migrating := h.migration.unfinished()
 		h.mu.Unlock()
 		if inMaintenance {
 			return nil, errMaintenanceMode()
+		}
+		if migrating {
+			return nil, errMigrationInProgress()
 		}
 		jobType = apiv1.JobTypeDiskUpgradeParity
 	}
@@ -631,6 +645,9 @@ func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRe
 	// TypeDiskUpgradeData while maintenance mode is active (Q70).
 	if h.maintenance {
 		return nil, errMaintenanceMode()
+	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
 	}
 	j := apiv1.Job{
 		ID:        uuid.New(),

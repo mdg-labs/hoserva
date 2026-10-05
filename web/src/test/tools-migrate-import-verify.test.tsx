@@ -653,6 +653,24 @@ describe("the migration Import and Verify steps", () => {
       expect(button("Done")).toBeDisabled();
     });
 
+    it("ends the window when a later sync succeeds while the page stays open after the first one failed", async () => {
+      backend.syncJobs = jobsOf(
+        job("sync", "failed", { createdAt: T1, error: { code: "job_failed", message: "snapraid exited 2" } }),
+      );
+      renderPage(migrationPending, job("migration_parity", "succeeded"));
+      expect(await screen.findByText("The first sync did not complete")).toBeInTheDocument();
+      expect(button("Done")).toBeDisabled();
+
+      backend.syncJobs = jobsOf(
+        job("sync", "succeeded", { createdAt: "2026-10-04T12:00:00Z" }),
+        job("sync", "failed", { createdAt: T1, error: { code: "job_failed", message: "snapraid exited 2" } }),
+      );
+
+      expect(await screen.findByText("The first sync is complete", {}, { timeout: 6000 })).toBeInTheDocument();
+      expect(screen.queryByText("The unprotected window")).not.toBeInTheDocument();
+      expect(button("Done")).toBeEnabled();
+    });
+
     it("ends the window at a later sync that succeeded after the first one failed", async () => {
       backend.syncJobs = jobsOf(
         job("sync", "succeeded", { createdAt: "2026-10-04T12:00:00Z" }),

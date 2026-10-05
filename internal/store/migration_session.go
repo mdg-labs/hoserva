@@ -30,6 +30,11 @@ type MigrationSession struct {
 	// Verify is the verify phase's result as JSON, which the migrate package
 	// owns. Empty when no verify has run against the current baseline.
 	Verify []byte
+
+	// Checklist is the post-migration checklist's record as JSON, which the
+	// migrate package owns. Put never writes it and Delete keeps it: it is
+	// replaced only by SetChecklist.
+	Checklist []byte
 }
 
 // MigrationSessionStore persists the one migration session in the central
@@ -85,6 +90,9 @@ func (s *MigrationSessionStore) Get(ctx context.Context) (MigrationSession, bool
 	if row.Verify != "" {
 		m.Verify = []byte(row.Verify)
 	}
+	if row.Checklist != "" {
+		m.Checklist = []byte(row.Checklist)
+	}
 	return m, true, nil
 }
 
@@ -109,8 +117,22 @@ func (s *MigrationSessionStore) Put(ctx context.Context, m MigrationSession) err
 	return nil
 }
 
-// Delete removes the session. Deleting nothing succeeds.
+// SetChecklist replaces the checklist's record, creating the row when there is
+// none, and leaves every other column as it is.
+func (s *MigrationSessionStore) SetChecklist(ctx context.Context, data []byte) error {
+	if err := s.q.SetMigrationSessionChecklist(ctx, string(data)); err != nil {
+		return fmt.Errorf("store: saving the migration checklist: %w", err)
+	}
+	return nil
+}
+
+// Delete removes the session: the scan, its source, the report and the verify
+// result. The checklist's record is kept, and the row with it when there is
+// one. Deleting nothing succeeds.
 func (s *MigrationSessionStore) Delete(ctx context.Context) error {
+	if err := s.q.ClearMigrationSession(ctx); err != nil {
+		return fmt.Errorf("store: clearing the migration session: %w", err)
+	}
 	if err := s.q.DeleteMigrationSession(ctx); err != nil {
 		return fmt.Errorf("store: deleting the migration session: %w", err)
 	}

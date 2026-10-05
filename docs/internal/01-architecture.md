@@ -114,7 +114,7 @@ hoserva pool rebalance [--dry-run]      # doc 09 §3
 hoserva disk resume <job-id>            # resume a checkpointed relocation (Q29)
 
 hoserva sync [--dry-run] [--force]      # SnapRAID sync through the threshold guard; dry-run prints the diff
-hoserva scrub [--percent 8]
+hoserva scrub [--percent 8] [--all-blocks]   # --all-blocks scrubs blocks of every age, not only those older than 10 days (doc 02 §2)
 hoserva fix --disk 3
 hoserva mover run                       # doc 09 §2
 
@@ -143,8 +143,16 @@ hoserva migrate status                          # the session's phase and the re
 hoserva migrate report [-o <file>]              # the go / no-go report as a document
 hoserva migrate templates [<name>]               # the scan's template conversion preview: the list with counts, or one template's preview
 hoserva migrate forget                          # delete the session and the stored zip
-hoserva migrate import
+hoserva migrate import [--role <serial>=<role> ...] [--cache-partition <by-id>:<partuuid>] --yes   # adopt the data disks read-only, writing nothing to them (doc 05 §4 steps 14-16)
 hoserva migrate verify                          # compare the adopted disks with the scan's baseline before parity (doc 05 §4 step 16); exits non-zero on a mismatch
+hoserva migrate initialize-parity [--confirm '<string>']   # step 17, the point of no return: format the former parity and cache disks and queue the initial sync; without --confirm it prints what it would erase and formats nothing (doc 05 §4)
+hoserva migrate undo-import --yes               # take back an import that is still before its point of no return
+hoserva migrate containers                      # Phase D (doc 05 §4 steps 19-20): list what the scan offers and what has been created
+hoserva migrate containers create [<name>...] [--acknowledge <name>]... --yes   # create stopped stacks from templates and Compose Manager projects, after printing their Compose and warnings
+hoserva migrate containers start <name>         # start one created stack as a job and wait for it
+hoserva migrate containers check <name>         # whether the started stack's bind mounts under /mnt/user or /mnt/cache exist and are not empty
+hoserva migrate containers confirm <name> [--accept-failed-check]   # confirm the started stack sees its data, which offers the next
+hoserva migrate checklist [ack <item>]          # what is left after the migration; ack records user_scripts or restore_drill, the two items nothing else records
 hoserva migrate vm-scan                         # Unraid VM definitions from the adopted pool (doc 14 §5)
 hoserva migrate vm-import <domain-name>
 

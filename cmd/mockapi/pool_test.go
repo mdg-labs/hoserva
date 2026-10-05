@@ -127,3 +127,30 @@ func TestMockSharedNVMe_FreshInstallOffersTheSparePartitionAsACache(t *testing.T
 		t.Fatalf("CreateArray(cache on the root partition) = %v, want unmanaged_device", err)
 	}
 }
+
+func TestMockStartScrub_AcceptsAllBlocksAndRefusesWhatProductionRefuses(t *testing.T) {
+	ctx := context.Background()
+	req := &apiv1.StartScrubRequest{Percent: apiv1.NewOptInt32(100), AllBlocks: apiv1.NewOptBool(true)}
+
+	h, client := newTestHandlerClient(t, "healthy")
+	j, err := client.StartScrub(ctx, req)
+	if err != nil {
+		t.Fatalf("StartScrub with allBlocks: %v", err)
+	}
+	if j.Type != apiv1.JobTypeScrub || j.Class != apiv1.JobClassParity {
+		t.Fatalf("job = %+v, want a parity-class scrub", j)
+	}
+
+	h.migration.imported.Store(true)
+	if _, err := client.StartScrub(ctx, req); errorCode(t, err) != "migration_in_progress" {
+		t.Fatalf("StartScrub with allBlocks while the migration is pending = %v, want migration_in_progress", err)
+	}
+	h.migration.imported.Store(false)
+
+	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	if _, err := client.StartScrub(ctx, req); errorCode(t, err) != "maintenance_mode" {
+		t.Fatalf("StartScrub with allBlocks in maintenance mode = %v, want maintenance_mode", err)
+	}
+}

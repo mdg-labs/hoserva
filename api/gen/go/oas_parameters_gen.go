@@ -16,6 +16,79 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
+// AcknowledgeMigrationChecklistItemParams is parameters of acknowledgeMigrationChecklistItem operation.
+type AcknowledgeMigrationChecklistItemParams struct {
+	Item MigrationChecklistItemId
+}
+
+func unpackAcknowledgeMigrationChecklistItemParams(packed middleware.Parameters) (params AcknowledgeMigrationChecklistItemParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "item",
+			In:   "path",
+		}
+		params.Item = packed[key].(MigrationChecklistItemId)
+	}
+	return params
+}
+
+func decodeAcknowledgeMigrationChecklistItemParams(args [1]string, argsEscaped bool, r *http.Request) (params AcknowledgeMigrationChecklistItemParams, _ error) {
+	// Decode path: item.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "item",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Item = MigrationChecklistItemId(c)
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.Item.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "item",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // BrowseShareParams is parameters of browseShare operation.
 type BrowseShareParams struct {
 	// Directory relative to the share root. Empty is the share root.

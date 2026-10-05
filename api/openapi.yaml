@@ -665,7 +665,11 @@ paths:
         not a routed event, so it reports success or the delivery error
         directly rather than being retried and logged like a routed
         notification (doc 03 §8.3: "untested notification config is the
-        same as no notification config").
+        same as no notification config"). A test that succeeds is also
+        recorded for the migration checklist (`getMigrationChecklist`), which
+        counts a channel only while it is enabled and its latest successful
+        test ran in a later second than the one the channel last changed in;
+        a test that fails is not recorded.
       tags: [notifications]
       x-hoserva-role: admin
       responses:
@@ -2665,7 +2669,7 @@ paths:
     post:
       operationId: startScrub
       summary: Start a SnapRAID scrub
-      description: Queues a scrub job (`hoserva scrub`, doc 01 §3).
+      description: Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days; `allBlocks` scrubs every block.
       tags: [parity]
       x-hoserva-role: admin
       requestBody:
@@ -3967,6 +3971,99 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MigrationContainerStack'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /migrate/checklist:
+    get:
+      operationId: getMigrationChecklist
+      summary: The post-migration checklist
+      description: >-
+        Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a
+        checklist, each item's state taken from a record where one exists, so
+        it cannot say something was done when it was not. The migration counts
+        as finished exactly when the array record carries the time the point of
+        no return finished (`initializeMigrationParity`), which is written in
+        the same statement that ends it and by nothing else: `finished` is
+        true and `finishedAt` is that time. A migration that is pending,
+        part-way through its point of no return, or was undone has none, and
+        so has an array created by hand or one that finished before this
+        record existed; then `finished` is false, `finishedAt` is absent and
+        `items` is empty: the checklist does not apply. `getMigration` keeps no
+        "complete" phase.
+
+
+        `appdata_cache` is done by a succeeded `share_relocation` job for the
+        `appdata` share to the cache (`startShareRelocation`), and
+        `not_applicable` when the scan read the capture's disk roles and the
+        source had no cache. `initial_sync` is done by the first succeeded
+        `sync` that is not a dry run and was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with
+        `percent` 100 and `allBlocks` true that started after that sync ended,
+        and stays `todo` until the initial sync is done. A scrub without
+        `allBlocks` skips blocks synced within the last days, so it checks
+        nothing right after a sync and never counts. `notifications` is done
+        once an enabled channel's test (`sendTestNotification`) has succeeded
+        in a later second than the one the channel last changed in; the Unraid notification agents the scan found are named
+        so the user knows what to recreate, and no secret is carried over.
+        `schedules` is done once the nightly chain's `mover`, `sync` and
+        `scrub` steps are all enabled (`updateMaintenanceChainSchedule`); it
+        offers the values the scan read from Unraid: its mover schedule as the
+        mover schedule, its parity-check schedule as the scrub schedule (a
+        non-correcting check maps to a scrub that only reports) and its
+        spin-down delay as the default. Unraid's parity is updated as files are
+        written, so there is no Unraid sync schedule to carry over: nothing is
+        offered for `sync` and the user chooses one.
+
+
+        `user_scripts` and `restore_drill` have no record to derive from and
+        are done by `acknowledgeMigrationChecklistItem`: the first lists the
+        User Scripts the scan found, by name and schedule (a script is never
+        executed or translated, Q83); the second shows the latest succeeded
+        `fix` job, which an acknowledgement records. Only those two are ever
+        `acknowledgeable`. The checklist needs no scan: without a report the
+        offers, the agents and the scripts are empty.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The checklist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationChecklist'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /migrate/checklist/{item}/acknowledge:
+    parameters:
+      - name: item
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/MigrationChecklistItemId'
+    post:
+      operationId: acknowledgeMigrationChecklistItem
+      summary: Acknowledge a checklist item no record can show
+      description: >-
+        Records that the user did `user_scripts` (worked through the scan's
+        inventory) or `restore_drill` (deleted a file and recovered it with
+        `snapraid fix`), with who made the acknowledgement and when; the
+        restore drill's also records the latest succeeded `fix` job, when there
+        is one. It is kept in the database and outlives `forgetMigration`.
+        Refused with 409 `migration_not_finished` while the checklist does
+        not apply (`getMigrationChecklist` answers `finished` false), and with 409 `checklist_item_has_record` for every
+        other item, whose state comes from a record and is never set by hand.
+        Acknowledging an acknowledged item changes nothing: the first
+        acknowledgement is kept. Returns the item as it stands.
+      tags: [migrate]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The item, acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationChecklistItem'
         default:
           $ref: '#/components/responses/Error'
 
@@ -10112,6 +10209,16 @@ components:
           minimum: 1
           maximum: 100
           description: Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
+        allBlocks:
+          type: boolean
+          description: >-
+            Scrub blocks of every age (`hoserva scrub --all-blocks`, SnapRAID
+            `-o 0`). By default a scrub skips blocks scrubbed or synced within
+            the last 10 days (doc 02 §2), so a scrub right after a sync can
+            find nothing to check and still succeed. Set true when every
+            block must be verified, such as the full scrub after the initial
+            sync (doc 05 §4 step 22). Omitted means false. The scheduled scrub never
+            sets it.
 
     StartFixRequest:
       type: object
@@ -11978,6 +12085,176 @@ components:
         acceptFailedCheck:
           type: boolean
           description: Confirm although the data check found a path that is missing, empty or unreadable.
+
+    MigrationChecklistItemId:
+      type: string
+      enum: [appdata_cache, initial_sync, full_scrub, notifications, schedules, user_scripts, restore_drill]
+
+    MigrationChecklist:
+      type: object
+      required: [finished, items]
+      properties:
+        finished:
+          type: boolean
+          description: >-
+            Whether the array record carries the time its migration's point of
+            no return finished, which nothing but that step writes. False for a
+            migration that is pending, part-way through, or was undone; then
+            the checklist does not apply and `items` is empty.
+        finishedAt:
+          type: string
+          format: date-time
+          description: That time; present exactly when `finished` is true.
+        items:
+          type: array
+          description: In the order of doc 05 §4's steps.
+          items:
+            $ref: '#/components/schemas/MigrationChecklistItem'
+
+    MigrationChecklistItem:
+      type: object
+      required: [id, status, acknowledgeable]
+      properties:
+        id:
+          $ref: '#/components/schemas/MigrationChecklistItemId'
+        status:
+          type: string
+          enum: [todo, done, not_applicable]
+        acknowledgeable:
+          type: boolean
+          description: >-
+            True only for `user_scripts` and `restore_drill` while they are not
+            acknowledged. An item with a record is never acknowledgeable.
+        doneAt:
+          type: string
+          format: date-time
+          description: When the record says it was done, or when it was acknowledged.
+        jobId:
+          type: string
+          description: >-
+            The job the item derives from. For `restore_drill`, the latest
+            succeeded `fix` job, which an acknowledgement records.
+        acknowledgedBy:
+          type: string
+          description: Who acknowledged it, `local` for the daemon's own socket.
+        acknowledgedAt:
+          type: string
+          format: date-time
+        notifications:
+          $ref: '#/components/schemas/MigrationChecklistNotifications'
+        schedules:
+          $ref: '#/components/schemas/MigrationChecklistSchedules'
+        scripts:
+          type: array
+          description: >-
+            The User Scripts the scan found, on `user_scripts` only. Empty when
+            the scan found none or could not say; the report's User Scripts row
+            tells which.
+          items:
+            $ref: '#/components/schemas/MigrationChecklistScript'
+
+    MigrationChecklistNotifications:
+      type: object
+      required: [channels, tested, agents]
+      properties:
+        channels:
+          type: integer
+          format: int32
+          description: How many notification channels exist.
+        tested:
+          type: integer
+          format: int32
+          description: >-
+            How many are enabled and have a test that succeeded since they last
+            changed.
+        agents:
+          type: array
+          description: >-
+            The names of the Unraid notification agents the scan found, never
+            anything inside them: recreate each as a channel.
+          items:
+            type: string
+
+    MigrationChecklistSchedules:
+      type: object
+      required: [mover, sync, scrub, chainStartTime, weeklyScrubDay, offers]
+      properties:
+        mover:
+          type: boolean
+          description: Whether the nightly chain's mover step is enabled.
+        sync:
+          type: boolean
+          description: >-
+            Whether the nightly chain's sync step is enabled. Unraid has no
+            sync schedule to carry over, so the user chooses one.
+        scrub:
+          type: boolean
+          description: Whether the nightly chain's scrub step is enabled.
+        chainStartTime:
+          type: string
+          description: Local time the chain starts, `HH:MM`.
+        weeklyScrubDay:
+          $ref: '#/components/schemas/Weekday'
+        offers:
+          $ref: '#/components/schemas/MigrationChecklistOffers'
+
+    MigrationChecklistOffers:
+      type: object
+      description: >-
+        Values read from Unraid's configuration that the schedules item offers
+        to carry over. A value the flash did not have is absent, never an
+        "off".
+      properties:
+        moverCron:
+          type: string
+          description: Unraid's mover schedule, as written.
+        moverTime:
+          type: string
+          description: >-
+            `HH:MM` when the mover schedule is a daily line, offered as the
+            nightly chain's start time.
+        parityCheck:
+          $ref: '#/components/schemas/MigrationChecklistParityCheck'
+        scrubReportOnly:
+          type: boolean
+          description: >-
+            True when Unraid's parity check wrote no corrections, which maps to
+            a scrub that only reports.
+        spindownDelay:
+          type: string
+          description: Unraid's global spin-down delay, offered as the default.
+
+    MigrationChecklistParityCheck:
+      type: object
+      required: [correcting]
+      description: >-
+        Unraid's parity-check schedule as `dynamix.cfg` wrote it, offered as the
+        scrub schedule.
+      properties:
+        mode:
+          type: string
+        hour:
+          type: string
+        dayOfMonth:
+          type: string
+        day:
+          type: string
+        month:
+          type: string
+        frequency:
+          type: string
+        correcting:
+          type: boolean
+
+    MigrationChecklistScript:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        schedule:
+          type: string
+          description: The schedule the plugin's `customSchedule.cron` gives it, absent when it has none there.
 
     AppdataBackupContainer:
       type: object

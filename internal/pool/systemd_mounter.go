@@ -30,6 +30,7 @@ type SystemdMounter struct {
 	Sleep        disk.Sleeper
 	IsMountpoint func(where string) (bool, error)
 	SetXattr     func(path, attr string, value []byte) error
+	GetXattr     func(path, attr string) ([]byte, error)
 }
 
 func (m SystemdMounter) asDirect() Mounter {

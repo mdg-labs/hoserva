@@ -771,7 +771,7 @@ type userScript struct {
 	name string
 }
 
-func checkUserScripts(r *Report, src FlashSource) error {
+func checkUserScripts(r *Report, src FlashSource, imp *Import) error {
 	cronData, haveCron, err := readOptional(src, userScriptsCron)
 	if err != nil {
 		return err
@@ -820,6 +820,7 @@ func checkUserScripts(r *Report, src FlashSource) error {
 		r.add(CheckUserScripts, StatusInfo, "", "%d User Scripts %s found. They are listed, never executed or translated (Q83): recreate what is still wanted as a cron job or systemd timer (doc 05 §4 step 24).", len(scripts), plural(len(scripts), "entry", "entries"))
 	}
 	for _, s := range scripts {
+		imp.UserScripts = append(imp.UserScripts, UserScript{Name: s.name, Schedule: cron[s.dir]})
 		if sched, ok := cron[s.dir]; ok {
 			r.add(CheckUserScripts, StatusInfo, s.name, "Scheduled in customSchedule.cron (%s), so it runs while enabled.", sched)
 		} else {
@@ -1054,7 +1055,7 @@ func (s *Scanner) inventory(ctx context.Context, r *Report, src FlashSource, f *
 		},
 		func() error { return checkUsers(r, src, &r.Import) },
 		func() error { return checkDocker(r, src, f, &r.Import) },
-		func() error { return checkUserScripts(r, src) },
+		func() error { return checkUserScripts(r, src, &r.Import) },
 		func() error { return checkParityHistory(r, src, now) },
 		func() error { return checkPlugins(r, src) },
 		func() error { return checkCustomConfig(r, src) },

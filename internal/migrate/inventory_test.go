@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -597,6 +598,23 @@ func TestUserScripts_AreReportedByNameScheduleAndStateAndNeverRead(t *testing.T)
 	md := r.Markdown()
 	if strings.Contains(md, "SECRET-SCRIPT-BODY") {
 		t.Error("a script's content is in the report")
+	}
+}
+
+func TestUserScripts_ImportKeepsEachScriptsNameAndScheduleForTheChecklist(t *testing.T) {
+	files, spec := flashTree(t, inventoryVariant)
+	files["config/plugins/user.scripts/scripts/unscheduled/script"] = []byte("#!/bin/bash\necho SECRET-SCRIPT-BODY\n")
+	files["config/plugins/user.scripts/scripts/unscheduled/name"] = []byte("Weekly cleanup\n")
+	r, err := scanner(fixtureDisks(spec)).Scan(context.Background(), openZipBytes(t, zipOf(t, files, false)), ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []UserScript{{Name: "nightly-report", Schedule: "30 2 * * *"}, {Name: "Weekly cleanup"}}
+	if !reflect.DeepEqual(r.Import.UserScripts, want) {
+		t.Errorf("Import.UserScripts = %+v, want %+v", r.Import.UserScripts, want)
+	}
+	if data, _ := json.Marshal(r.Import.UserScripts); strings.Contains(string(data), "SECRET-SCRIPT-BODY") {
+		t.Error("a script's content is in the import record")
 	}
 }
 

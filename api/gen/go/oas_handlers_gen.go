@@ -255,6 +255,232 @@ func (s *Server) handleAcknowledgeDegradedArrayRequest(args [0]string, argsEscap
 	}
 }
 
+// handleAcknowledgeMigrationChecklistItemRequest handles acknowledgeMigrationChecklistItem operation.
+//
+// Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
+// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
+// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
+// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
+// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
+// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
+// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
+// Returns the item as it stands.
+//
+// POST /migrate/checklist/{item}/acknowledge
+func (s *Server) handleAcknowledgeMigrationChecklistItemRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("acknowledgeMigrationChecklistItem"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/migrate/checklist/{item}/acknowledge"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), AcknowledgeMigrationChecklistItemOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: AcknowledgeMigrationChecklistItemOperation,
+			ID:   "acknowledgeMigrationChecklistItem",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, AcknowledgeMigrationChecklistItemOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, AcknowledgeMigrationChecklistItemOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+	params, err := decodeAcknowledgeMigrationChecklistItemParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response *MigrationChecklistItem
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    AcknowledgeMigrationChecklistItemOperation,
+			OperationSummary: "Acknowledge a checklist item no record can show",
+			OperationID:      "acknowledgeMigrationChecklistItem",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "item",
+					In:   "path",
+				}: params.Item,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = AcknowledgeMigrationChecklistItemParams
+			Response = *MigrationChecklistItem
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackAcknowledgeMigrationChecklistItemParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.AcknowledgeMigrationChecklistItem(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.AcknowledgeMigrationChecklistItem(ctx, params)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeAcknowledgeMigrationChecklistItemResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleAddCatalogSourceRequest handles addCatalogSource operation.
 //
 // Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
@@ -13538,6 +13764,239 @@ func (s *Server) handleGetMigrationRequest(args [0]string, argsEscaped bool, w h
 	}
 
 	if err := encodeGetMigrationResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleGetMigrationChecklistRequest handles getMigrationChecklist operation.
+//
+// Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken
+// from a record where one exists, so it cannot say something was done when it was not. The migration
+// counts as finished exactly when the array record carries the time the point of no return finished
+// (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing
+// else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way
+// through its point of no return, or was undone has none, and so has an array created by hand or one
+// that finished before this record existed; then `finished` is false, `finishedAt` is absent and
+// `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+//
+// `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache
+// (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the
+// source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and
+// was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and
+// `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is
+// done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing
+// right after a sync and never counts. `notifications` is done once an enabled channel's test
+// (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in;
+// the Unraid notification agents the scan found are named so the user knows what to recreate, and no
+// secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub`
+// steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from
+// Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a
+// non-correcting check maps to a scrub that only reports) and its spin-down delay as the default.
+// Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over:
+// nothing is offered for `sync` and the user chooses one.
+//
+// `user_scripts` and `restore_drill` have no record to derive from and are done by
+// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
+// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
+// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
+// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+//
+// GET /migrate/checklist
+func (s *Server) handleGetMigrationChecklistRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getMigrationChecklist"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.HTTPRouteKey.String("/migrate/checklist"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), GetMigrationChecklistOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: GetMigrationChecklistOperation,
+			ID:   "getMigrationChecklist",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, GetMigrationChecklistOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, GetMigrationChecklistOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response *MigrationChecklist
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    GetMigrationChecklistOperation,
+			OperationSummary: "The post-migration checklist",
+			OperationID:      "getMigrationChecklist",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = *MigrationChecklist
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.GetMigrationChecklist(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.GetMigrationChecklist(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeGetMigrationChecklistResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -31154,7 +31613,10 @@ func (s *Server) handleRunParityDiffRequest(args [0]string, argsEscaped bool, w 
 // Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
 // the channel's own configuration, not a routed event, so it reports success or the delivery error
 // directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
-// notification config is the same as no notification config").
+// notification config is the same as no notification config"). A test that succeeds is also recorded
+// for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
+// enabled and its latest successful test ran in a later second than the one the channel last changed
+// in; a test that fails is not recorded.
 //
 // POST /notifications/channels/{channelId}/test
 func (s *Server) handleSendTestNotificationRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -35280,7 +35742,8 @@ func (s *Server) handleStartRestoreDrillRequest(args [0]string, argsEscaped bool
 
 // handleStartScrubRequest handles startScrub operation.
 //
-// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
+// `allBlocks` scrubs every block.
 //
 // POST /parity/scrub
 func (s *Server) handleStartScrubRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

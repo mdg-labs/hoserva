@@ -307,6 +307,8 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.StartMigrationContainerOperation,
 		apiv1.CheckMigrationContainerOperation,
 		apiv1.ConfirmMigrationContainerOperation,
+		apiv1.GetMigrationChecklistOperation,
+		apiv1.AcknowledgeMigrationChecklistItemOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 
