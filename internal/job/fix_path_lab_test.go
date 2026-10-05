@@ -324,3 +324,58 @@ func TestLabFixPath_UnrecoverableFileIsNotSuccess(t *testing.T) {
 		t.Errorf("the partial copy %s is missing (%v): the test did not reach SnapRAID's unrecoverable case", leftover, err)
 	}
 }
+
+// TestLabFix_UnrecoverableBlocksAreNotSuccess is #646: a fix without a path,
+// whole-array or of one disk, that SnapRAID cannot finish exits 1 with
+// unrecoverable blocks and used to end succeeded. The array is the one
+// TestLabFixPath_UnrecoverableFileIsNotSuccess builds (B deleted from disk 3, a
+// file at the same parity position on disk 1 rewritten after the sync), built
+// fresh for each variant because a fix leaves its own partial copies behind.
+// The job must fail, say that blocks were not restored and name the partial
+// copy; as in that test, a B that comes back with its synced bytes means the
+// premise is gone, not that the product is wrong.
+func TestLabFix_UnrecoverableBlocksAreNotSuccess(t *testing.T) {
+	lab := labDir(t)
+	for name, params := range map[string]FixParams{
+		"whole array": {Confirm: true},
+		"one disk":    {Confirm: true, Disk: intPtr(3)},
+	} {
+		engine, mounts := labFixEngineAt(t, lab, "snapraid-unrec-all", "fix-unrec-all")
+		s := newTestScheduler(t)
+		s.registry.Register(TypeFix, false, RunFix(engine))
+
+		pathB := filepath.Join(mounts[2], "pr/unrec.bin")
+		pathOther := filepath.Join(mounts[0], "pr/other.bin")
+		const otherSize = 2_000_000
+		originalB := writeRandomLabFile(t, pathB, 250_000)
+		writeRandomLabFile(t, pathOther, otherSize)
+
+		ch, err := engine.Sync(context.Background(), parity.SyncOpts{})
+		if err != nil {
+			t.Fatalf("%s: Sync: %v", name, err)
+		}
+		if final := drainRealProgress(t, ch); final.Err != nil {
+			t.Fatalf("%s: Sync failed: %v", name, final.Err)
+		}
+		if err := os.Remove(pathB); err != nil {
+			t.Fatalf("%s: removing %s: %v", name, pathB, err)
+		}
+		writeRandomLabFile(t, pathOther, otherSize)
+
+		finished := awaitFix(t, s, params)
+		if finished.Status == StatusSucceeded {
+			if gotB, err := os.ReadFile(pathB); err == nil && bytes.Equal(gotB, originalB) {
+				t.Fatalf("%s: precondition lost: %s was rebuilt from parity, so the file rewritten on disk 1 no longer shares its parity position; this is not a product failure", name, pathB)
+			}
+			t.Fatalf("%s: fix %+v succeeded although parity could not rebuild every block", name, params)
+		}
+		for _, want := range []string{"unrecoverable block", "last sync", "pr/unrec.bin.unrecoverable on disk d3"} {
+			if !strings.Contains(finished.ErrorMessage, want) {
+				t.Errorf("%s: fix failed with %q, want it to contain %q", name, finished.ErrorMessage, want)
+			}
+		}
+		if _, err := os.Stat(pathB + ".unrecoverable"); err != nil {
+			t.Errorf("%s: the partial copy %s.unrecoverable is missing (%v): the test did not reach SnapRAID's unrecoverable case", name, pathB, err)
+		}
+	}
+}

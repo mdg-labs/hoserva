@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -344,6 +345,57 @@ func TestRunDiskReplace_FixFailureLeavesTopologyAlreadySwitched(t *testing.T) {
 	}
 	if got.Device != "/dev/sdz" {
 		t.Fatalf("disk1 device = %q after a failed fix, want /dev/sdz (already switched over)", got.Device)
+	}
+}
+
+// TestRunDiskReplace_UnrecoverableFixFailsTheJobAndKeepsTheSwitch is #646 for
+// the disk replacement's own fix: a fix that restored only part of the disk
+// must not end the replacement succeeded, and the job's error carries what the
+// engine reported.
+func TestRunDiskReplace_UnrecoverableFixFailsTheJobAndKeepsTheSwitch(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	mounter := disk.NewFakeMounter()
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+	r := disk.NewFakeRunner()
+	scriptFilesystemUUID(r, "/dev/sdz", "uuid-new")
+	scriptMountedUUID(r, "/mnt/disk1", "uuid-new")
+	seedTwoDataDiskArray(t, st)
+
+	eng := newRecordingEngine()
+	eng.SetStatus(parity.ParityStatus{DataMounts: map[string]string{"d1": "/mnt/disk1", "d2": "/mnt/disk2"}})
+	eng.ScriptFix([]parity.Progress{{Percent: 100, Err: fmt.Errorf("%w: 3 unrecoverable block(s) were not restored", parity.ErrFixUnrecoverable)}}, nil)
+
+	registerDiskReplace(t, s, p, r, st, t.TempDir(), mounter, eng)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+	params := DiskReplaceParams{
+		Confirmation: SingleDiskConfirmation(replacement),
+		Mountpoint:   "/mnt/disk1",
+		Disk:         replacement,
+		Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdc": 4 * disk.TB, "/dev/sdz": 4 * disk.TB},
+	}
+	j, err := s.Submit(ctx, TypeDiskReplace, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, parity.ErrFixUnrecoverable.Error()) || !strings.Contains(finished.ErrorMessage, "3 unrecoverable block(s)") {
+		t.Fatalf("error message = %q, want the engine's unrecoverable report", finished.ErrorMessage)
+	}
+	got, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint: %v", err)
+	}
+	if got.Device != "/dev/sdz" {
+		t.Fatalf("disk1 device = %q, want /dev/sdz (already switched over)", got.Device)
 	}
 }
 

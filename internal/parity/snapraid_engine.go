@@ -524,16 +524,18 @@ func (e *SnapraidEngine) Scrub(ctx context.Context, pct, olderThanDays int) (<-c
 	})
 }
 
-// Fix runs a real fix (doc 02 §2, §4). Reporting some unrecoverable
-// blocks is fix's own honest result (doc 02 §4's "reconstruction can only
-// restore data present at the last successful sync"), not a failure of
-// the fix run itself — RunSummary.Unrecoverable carries that count for
-// the caller. Only a process that didn't run to completion is an error
-// here, with one exception: a fix of one path (opts.Path) is an error when
-// SnapRAID reported an unrecoverable block (ErrFixUnrecoverable) or recovered
-// no file (ErrFixRestoredNothing, the exit-0 "Nothing to do" of a path that
-// matches nothing or an intact file). A restore of one file that left it
-// unrebuilt or untouched must never read as done.
+// Fix runs a real fix (doc 02 §2, §4). A fix that SnapRAID reports blocks it
+// could not rebuild for (summary:error_unrecoverable above zero, exit 1) is
+// an error, whether it covered the whole array, one disk (opts.Disk) or one
+// path (opts.Path): some data was not restored, and a caller that read the
+// run as done would let the next sync record the loss in parity (doc 02 §4,
+// "reconstruction can only restore data present at the last successful
+// sync"). The error wraps ErrFixUnrecoverable and names the partial copies
+// SnapRAID left. Any other non-zero exit is an error too, and so is a
+// process that did not run to completion. One more outcome is an error for a
+// fix of one path only: a run that recovered no file (ErrFixRestoredNothing,
+// the exit-0 "Nothing to do" of a path that matches nothing or an intact
+// file). A fix without a path that finds nothing to restore still succeeds.
 func (e *SnapraidEngine) Fix(ctx context.Context, opts FixOpts) (<-chan Progress, error) {
 	logPath, cleanup, err := e.newLog("fix")
 	if err != nil {
@@ -541,39 +543,63 @@ func (e *SnapraidEngine) Fix(ctx context.Context, opts FixOpts) (<-chan Progress
 	}
 	return e.runStream(ctx, logPath, fixArgv(opts), func(s RunSummary, waitErr error) error {
 		defer cleanup()
-		if completedNormally(waitErr) {
-			if opts.Path != "" {
-				if s.Unrecoverable > 0 {
-					return fixUnrecoverableErr(opts.Path, s)
-				}
-				if len(s.RecoveredFiles) == 0 {
-					return fmt.Errorf("%w: %s", ErrFixRestoredNothing, opts.Path)
-				}
-			}
-			return nil
+		if !completedNormally(waitErr) {
+			return fmt.Errorf("parity: snapraid fix: exit %q: %w", s.Exit, waitErr)
 		}
-		return fmt.Errorf("parity: snapraid fix: exit %q: %w", s.Exit, waitErr)
+		if s.Unrecoverable > 0 {
+			return fixUnrecoverableErr(opts.Path, s)
+		}
+		if waitErr != nil {
+			return fmt.Errorf("parity: snapraid fix: exit %q, %d error(s), %d recovered: %w", s.Exit, s.Errors, s.Recovered, waitErr)
+		}
+		if opts.Path != "" && len(s.RecoveredFiles) == 0 {
+			return fmt.Errorf("%w: %s", ErrFixRestoredNothing, opts.Path)
+		}
+		return nil
 	})
 }
 
-// fixUnrecoverableErr names the partial copies SnapRAID left for a path-scoped
-// fix that reported unrecoverable blocks: each `status:unrecoverable:<disk>:<path>`
-// line gives the disk and the array-relative file, and the copy is that file
-// with `.unrecoverable` appended.
-func fixUnrecoverableErr(path string, s RunSummary) error {
-	if len(s.UnrecoveredFiles) == 0 {
-		return fmt.Errorf("%w: %s has %d unrecoverable block(s); SnapRAID leaves what it could rebuild as <name>.unrecoverable beside the file", ErrFixUnrecoverable, path, s.Unrecoverable)
-	}
-	leftovers := make([]string, len(s.UnrecoveredFiles))
-	for i, f := range s.UnrecoveredFiles {
+// maxNamedLeftovers bounds how many partial copies a fix's error names: a
+// failed disk can leave thousands, and the job's error is one line.
+const maxNamedLeftovers = 10
+
+// unrecoveredLeftovers names the partial copies SnapRAID left: each
+// `status:unrecoverable:<disk>:<path>` line gives the disk and the
+// array-relative file, and the copy is that file with `.unrecoverable`
+// appended. It names at most maxNamedLeftovers and counts the rest.
+func unrecoveredLeftovers(files []string) []string {
+	named := files[:min(len(files), maxNamedLeftovers)]
+	leftovers := make([]string, 0, len(named)+1)
+	for _, f := range named {
 		disk, rel, ok := strings.Cut(f, ":")
 		if !ok {
-			leftovers[i] = f + ".unrecoverable"
+			leftovers = append(leftovers, f+".unrecoverable")
 			continue
 		}
-		leftovers[i] = rel + ".unrecoverable on disk " + disk
+		leftovers = append(leftovers, rel+".unrecoverable on disk "+disk)
 	}
-	return fmt.Errorf("%w: %s has %d unrecoverable block(s), for example because another file that shares its parity positions changed after the last sync; SnapRAID left the partial copy as %s", ErrFixUnrecoverable, path, s.Unrecoverable, strings.Join(leftovers, ", "))
+	if more := len(files) - len(named); more > 0 {
+		leftovers = append(leftovers, fmt.Sprintf("and %d more", more))
+	}
+	return leftovers
+}
+
+// fixUnrecoverableErr reports a fix that left unrecoverable blocks, naming the
+// partial copies SnapRAID left. path is the fix's own path, empty for a fix of
+// the whole array or one disk.
+func fixUnrecoverableErr(path string, s RunSummary) error {
+	leftovers := unrecoveredLeftovers(s.UnrecoveredFiles)
+	if path != "" {
+		if len(leftovers) == 0 {
+			return fmt.Errorf("%w: %s has %d unrecoverable block(s); SnapRAID leaves what it could rebuild as <name>.unrecoverable beside the file", ErrFixUnrecoverable, path, s.Unrecoverable)
+		}
+		return fmt.Errorf("%w: %s has %d unrecoverable block(s), for example because another file that shares its parity positions changed after the last sync; SnapRAID left the partial copy as %s", ErrFixUnrecoverable, path, s.Unrecoverable, strings.Join(leftovers, ", "))
+	}
+	const why = "SnapRAID can only rebuild data that parity held at the last sync, and no more failed blocks than parity covers"
+	if len(leftovers) == 0 {
+		return fmt.Errorf("%w: %d unrecoverable block(s) were not restored; %s; SnapRAID leaves what it could rebuild as <name>.unrecoverable beside each file", ErrFixUnrecoverable, s.Unrecoverable, why)
+	}
+	return fmt.Errorf("%w: %d unrecoverable block(s) were not restored; %s; SnapRAID left the partial copies as %s", ErrFixUnrecoverable, s.Unrecoverable, why, strings.Join(leftovers, ", "))
 }
 
 // Check runs a real check (doc 02 §2). Like Scrub, finding a mismatch is

@@ -166,12 +166,15 @@ type Progress struct {
 // the file it names is intact and needs no restoring.
 var ErrFixRestoredNothing = errors.New("parity: the fix restored nothing: the path is not in parity (misspelt, wrong case, not a file, created after the last sync, or only on the cache) or the file is intact and needs no restoring")
 
-// ErrFixUnrecoverable is a path-scoped fix after which SnapRAID reported
-// unrecoverable blocks: the path is in parity, but the file cannot be rebuilt
-// from it, for example because another file that shares its parity positions
-// changed after the last sync. SnapRAID exits 1 and leaves what it could
-// rebuild beside the file as `<name>.unrecoverable`.
-var ErrFixUnrecoverable = errors.New("parity: the fix could not rebuild the file from parity")
+// ErrFixUnrecoverable is a fix after which SnapRAID reported unrecoverable
+// blocks: some data was not restored. SnapRAID exits 1 and leaves what it could
+// rebuild beside each affected file as `<name>.unrecoverable`. For a fix of one
+// path the path is in parity but the file cannot be rebuilt from it, for
+// example because another file that shares its parity positions changed after
+// the last sync; for a fix of the whole array or one disk, parity cannot cover
+// every block, because it held an older state or fewer parity disks than
+// failures.
+var ErrFixUnrecoverable = errors.New("parity: the fix left blocks it could not rebuild from parity")
 
 // FixOpts selects what Fix reconstructs from parity (doc 02 §2, §4):
 // exactly one of Disk (a whole failed disk, "Replacing a failed disk"

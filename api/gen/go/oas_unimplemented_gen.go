@@ -2316,15 +2316,18 @@ func (UnimplementedHandler) StartArray(ctx context.Context) (r *SystemStatus, _ 
 // parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file
 // changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2).
 // Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under
-// `/mnt/user` or is sent together with `disk`. A fix with `path` that does not restore the file ends
-// `failed`, never `succeeded`, in two cases. When SnapRAID exits 0 with "Nothing to do" the path
-// matched nothing in parity (misspelt, the wrong case, a directory, a file made after the last sync, a
-// file only on the cache) or the file is intact and needs no restoring, and the job reports that
-// nothing was restored. When SnapRAID reports unrecoverable blocks and exits 1 the path is in parity
-// but the file cannot be rebuilt from it, for example because another file that shares its parity
-// positions changed after the last sync, and the job reports that and names the partial copy SnapRAID
-// left as `<name>.unrecoverable` on its disk. A fix without `path` reports unrecoverable blocks in its
-// summary and still ends `succeeded`.
+// `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for,
+// with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error
+// gives the number of unrecoverable blocks and names the partial copies it left as
+// `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log
+// names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID
+// can only rebuild what parity held at the last sync, and no more failed blocks than parity covers.
+// With `path`, the error names the file and, when the log names the partial copy, gives one example
+// cause: another file that shares its parity positions changed after the last sync. Any other non-zero
+// exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to
+// do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after
+// the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job
+// reports that nothing was restored.
 //
 // POST /parity/fix
 func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) (r *Job, _ error) {
