@@ -559,6 +559,20 @@ assert_scan() {
     fi
   done
 
+  # each disk's size, the one the spec builds it at in the guest; a pool or boot
+  # disk has no slot without the capture, so every disk is found by its serial
+  local -A spec_bytes=()
+  local target bytes
+  while read -r target bytes; do spec_bytes[$target]=$bytes; done < <(unraid_spec_sizes)
+  for s in "${D_SLOTS[@]}"; do
+    row=$(jq -c --arg serial "$(serial_of "$s")" '.report.review.disks[]? | select(.serial == $serial)' <<<"$SCAN_JSON" | head -n 1)
+    [[ -n "$row" ]] || continue
+    bytes=${spec_bytes[${D_TARGET[$s]}]:-}
+    if [[ -n "$bytes" && "$(jq -r '.size // empty' <<<"$row")" != "$bytes" ]]; then
+      out+="$s: the report says size '$(jq -r '.size // "none"' <<<"$row")', the fixture says $bytes bytes"$'\n'
+    fi
+  done
+
   # the capture and the config source, where the expect file says so
   if [[ -f "$EXPECT_FILE" ]] && grep -qx 'warn capture-missing' "$EXPECT_FILE"; then
     [[ "$(jq -r '.report.review.capture.state // empty' <<<"$SCAN_JSON")" == missing ]] || out+="the capture state is '$(jq -r '.report.review.capture.state // "none"' <<<"$SCAN_JSON")', the fixture has none"$'\n'

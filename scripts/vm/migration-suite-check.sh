@@ -131,18 +131,26 @@ scan_fails "$v: a baseline row of disk4 missing" '.report.rows |= map(select(.su
 scan_fails "$v: another filesystem for the ext4 disk" '(.report.review.disks[] | select(.slot == "disk4") | .filesystem) = "xfs"' "disk4: the report says filesystem"
 scan_fails "$v: another filesystem for the btrfs disk" '(.report.review.disks[] | select(.slot == "disk3") | .filesystem) = "xfs"' "disk3: the report says filesystem"
 scan_fails "$v: no proposed role for the btrfs disk" 'del(.report.review.disks[] | select(.slot == "disk3") | .proposedRole)' "disk3: the proposed role"
+scan_fails "$v: another size for the first data disk" '(.report.review.disks[] | select(.slot == "disk1") | .size) = 335544320' "disk1: the report says size"
+scan_fails "$v: another size for the cache" '(.report.review.disks[] | select(.slot == "pool cache") | .size) = 1073741824' "cache: the report says size"
 
 # --- a spec that says capture=none: the scan names no data disk and records no
-# baseline. No committed fixture is built so; the report is one captured from a
-# fixture of the same disks without its config/hoserva/.
+# baseline. No committed fixture is built so; the report is one captured from
+# unraid-btrfs-and-ext4-disks without its config/hoserva/, before its guest disks
+# grew, so this spec has the sizes of that run's disks.
 real_root=$VM_REPO_ROOT
 VM_REPO_ROOT="$work/repo"
 v=unraid-no-capture
 mkdir -p -- "$VM_REPO_ROOT/testdata/unraid-fixtures/$v"
-{
-  printf 'capture=none\n'
-  grep '^disk ' -- "$real_root/testdata/unraid-fixtures/unraid-btrfs-and-ext4-disks/spec"
-} >"$VM_REPO_ROOT/testdata/unraid-fixtures/$v/spec"
+cat >"$VM_REPO_ROOT/testdata/unraid-fixtures/$v/spec" <<'EOF'
+capture=none
+disk parity kind=parity fs=none  size=384M target=parity1
+disk disk1  kind=data   fs=xfs   size=320M target=disk1
+disk disk2  kind=data   fs=xfs   size=320M target=disk2
+disk disk3  kind=data   fs=btrfs size=320M target=disk3
+disk disk4  kind=data   fs=ext4  size=320M target=disk4
+disk cache  kind=pool   fs=btrfs size=64G  target=cache pool=cache
+EOF
 printf 'disk parity parity\ndisk disk1 adopt\ndisk disk2 adopt\ndisk disk3 adopt\ndisk disk4 adopt\ndisk cache recreated\nwarn capture-missing\n' >"$VM_REPO_ROOT/testdata/unraid-fixtures/$v/expect"
 use_variant "$v"
 if assert_scan; then ok "the $v report matches its fixture"; else bad "the $v report does not match its fixture: $ASSERT_OUT"; fi
@@ -150,6 +158,7 @@ scan_fails "$v: a baseline row" '.report.rows += [{"check": "baseline", "status"
 scan_fails "$v: a disk of the fixture missing from the table" 'del(.report.review.disks[] | select(.serial == "disk3-hoserva-80-a1"))' "no row for disk3"
 scan_fails "$v: another filesystem for the btrfs disk" '(.report.review.disks[] | select(.serial == "disk3-hoserva-80-a1") | .filesystem) = "xfs"' "disk3: the report says filesystem"
 scan_fails "$v: a capture that is not missing" '.report.review.capture.state = "present"' "the capture state is"
+scan_fails "$v: another size for the cache" '(.report.review.disks[] | select(.serial == "cache-hoserva-80-a1") | .size) = 60129542144' "cache: the report says size"
 VM_REPO_ROOT=$real_root
 
 # --- the guest helper on a scratch tree
