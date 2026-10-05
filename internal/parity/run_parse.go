@@ -32,6 +32,10 @@ type RunSummary struct {
 	// RecoveredFiles is fix's own `status:recovered:<disk>:<path>` lines,
 	// one per file fix actually rewrote from parity.
 	RecoveredFiles []string
+	// UnrecoveredFiles is fix's own `status:unrecoverable:<disk>:<path>`
+	// lines, one per file fix could not rebuild from parity; SnapRAID leaves
+	// what it could rebuild of each as `<path>.unrecoverable` on that disk.
+	UnrecoveredFiles []string
 }
 
 // ParseRunSummary parses a sync, scrub, fix or check run's structured
@@ -56,8 +60,14 @@ func ParseRunSummary(log []byte) (RunSummary, error) {
 			parseRunSummaryField(&s, rest)
 		case "status":
 			kind, tail, ok := strings.Cut(rest, ":")
-			if ok && kind == "recovered" {
+			if !ok {
+				continue
+			}
+			switch kind {
+			case "recovered":
 				s.RecoveredFiles = append(s.RecoveredFiles, tail)
+			case "unrecoverable":
+				s.UnrecoveredFiles = append(s.UnrecoveredFiles, tail)
 			}
 		}
 	}

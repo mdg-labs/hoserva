@@ -428,6 +428,8 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "job_not_interrupted", statusCode: 409, message: fmt.Sprintf("job %s can only be resumed while interrupted", id)}
 	case errors.Is(err, job.ErrJobNotRunning):
 		return &apiError{code: "job_not_running", statusCode: 409, message: fmt.Sprintf("job %s is not queued or running", id)}
+	case errors.Is(err, job.ErrInvalidFixPath):
+		return &apiError{code: "invalid_fix_path", statusCode: 400, message: err.Error()}
 	case errors.Is(err, job.ErrMaintenanceMode):
 		return &apiError{code: "maintenance_mode", statusCode: 409, message: "maintenance mode is active — no new jobs are accepted"}
 	case errors.Is(err, job.ErrMigrationInProgress):

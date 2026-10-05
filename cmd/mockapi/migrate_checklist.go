@@ -38,8 +38,8 @@ func optNilTime(o apiv1.OptNilDateTime) time.Time {
 }
 
 // mockChecklistSources reads the records this mock keeps: its jobs, which carry
-// no parameters (so none is a full scrub or the appdata relocation, and none is
-// a dry run), when its migration finished, its notification channels and its
+// no parameters but a fix job's path (so none is a full scrub or the appdata
+// relocation, and none is a dry run), when its migration finished, its notification channels and its
 // schedule.
 func (h *handler) mockChecklistSources() migrate.ChecklistSources {
 	return migrate.ChecklistSources{
@@ -53,7 +53,7 @@ func (h *handler) mockChecklistSources() migrate.ChecklistSources {
 			var recs []migrate.JobRecord
 			for _, j := range h.jobs {
 				if string(j.Type) == jobType && j.Status == apiv1.JobStatusSucceeded {
-					recs = append(recs, migrate.JobRecord{ID: j.ID.String(), CreatedAt: j.CreatedAt, StartedAt: optNilTime(j.StartedAt), FinishedAt: optNilTime(j.FinishedAt)})
+					recs = append(recs, migrate.JobRecord{ID: j.ID.String(), CreatedAt: j.CreatedAt, StartedAt: optNilTime(j.StartedAt), FinishedAt: optNilTime(j.FinishedAt), Path: h.fixPaths[j.ID]})
 				}
 			}
 			h.mu.Unlock()

@@ -2032,6 +2032,64 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartFix",
+		name: "valid_one_file",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/tax.pdf", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_outside_the_pool",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/disk1/documents/tax.pdf", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_with_dot_dot",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/../../etc/shadow", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_with_a_pattern",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/*", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_is_a_directory",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_with_a_disk",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/tax.pdf", 1))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_and_missing_confirm",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := fixPathRequest("/mnt/user/documents/tax.pdf", 0)
+			req.Confirm = false
+			_, err := h.StartFix(ctx, req)
+			return err
+		},
+	},
+	{
 		op:   "StartMover",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -5260,4 +5318,13 @@ func contractCreateMigrationStack(ctx context.Context, h apiv1.Handler, template
 		return fmt.Errorf("creating %s: %+v", template, res.Results)
 	}
 	return nil
+}
+
+func fixPathRequest(path string, disk int32) *apiv1.StartFixRequest {
+	req := &apiv1.StartFixRequest{Confirm: true}
+	req.SetPath(apiv1.NewOptString(path))
+	if disk != 0 {
+		req.SetDisk(apiv1.NewOptInt32(disk))
+	}
+	return req
 }

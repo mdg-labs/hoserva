@@ -270,6 +270,90 @@ func TestHandler_StartFix_RequiresConfirm(t *testing.T) {
 	}
 }
 
+func TestHandler_StartFix_PathReachesEngineAndIsStoredInTheJob(t *testing.T) {
+	ctx := context.Background()
+	h, s, r := newTestHandler(t)
+	eng := newRecordingParity()
+	r.Register(job.TypeFix, false, job.RunFix(eng))
+
+	req := &apiv1.StartFixRequest{Confirm: true}
+	req.SetPath(apiv1.NewOptString("/mnt/user/documents/tax return.pdf"))
+	got, err := h.StartFix(ctx, req)
+	if err != nil {
+		t.Fatalf("StartFix: %v", err)
+	}
+	finished := awaitJob(t, s, got.ID.String())
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	_, _, _, lastFix := eng.snapshot()
+	if lastFix.Path != "/documents/tax return.pdf" || lastFix.Disk != "" {
+		t.Fatalf("FixOpts = %+v, want Path /documents/tax return.pdf and no Disk", lastFix)
+	}
+	stored, err := job.FixPathFromParams(finished.Params)
+	if err != nil || stored != "/mnt/user/documents/tax return.pdf" {
+		t.Fatalf("persisted params %s read path %q, %v", finished.Params, stored, err)
+	}
+}
+
+func TestHandler_StartFix_WithoutPathStaysUnfiltered(t *testing.T) {
+	ctx := context.Background()
+	h, s, r := newTestHandler(t)
+	eng := newRecordingParity()
+	r.Register(job.TypeFix, false, job.RunFix(eng))
+
+	got, err := h.StartFix(ctx, &apiv1.StartFixRequest{Confirm: true})
+	if err != nil {
+		t.Fatalf("StartFix: %v", err)
+	}
+	finished := awaitJob(t, s, got.ID.String())
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	if _, _, _, lastFix := eng.snapshot(); lastFix != (parity.FixOpts{}) {
+		t.Fatalf("FixOpts = %+v, want the zero value (a whole-array fix)", lastFix)
+	}
+}
+
+func TestHandler_StartFix_RefusesABadPathWith400AndQueuesNothing(t *testing.T) {
+	ctx := context.Background()
+	h, _, r := newTestHandler(t)
+	eng := newRecordingParity()
+	r.Register(job.TypeFix, false, job.RunFix(eng))
+
+	for name, req := range map[string]*apiv1.StartFixRequest{
+		"empty":            fixRequest("", 0),
+		"outside the pool": fixRequest("/mnt/disk1/documents/tax.pdf", 0),
+		"dot dot":          fixRequest("/mnt/user/documents/../../etc/shadow", 0),
+		"a directory":      fixRequest("/mnt/user/documents/", 0),
+		"nul":              fixRequest("/mnt/user/doc\x00uments/tax.pdf", 0),
+		"a pattern":        fixRequest("/mnt/user/documents/*", 0),
+		"with a disk":      fixRequest("/mnt/user/documents/tax.pdf", 2),
+	} {
+		_, err := h.StartFix(ctx, req)
+		status := apiError(t, h, err)
+		if status.StatusCode != 400 || status.Response.Code != "invalid_fix_path" {
+			t.Errorf("%s: StartFix error = %+v, want 400 invalid_fix_path", name, status)
+		}
+	}
+	jobs, err := h.ListJobs(ctx, apiv1.ListJobsParams{})
+	if err != nil || len(jobs.Jobs) != 0 {
+		t.Fatalf("ListJobs after the refusals = %+v, %v, want no job", jobs, err)
+	}
+	if _, _, _, lastFix := eng.snapshot(); lastFix != (parity.FixOpts{}) {
+		t.Fatalf("a refused request reached the engine: %+v", lastFix)
+	}
+}
+
+func fixRequest(path string, disk int32) *apiv1.StartFixRequest {
+	req := &apiv1.StartFixRequest{Confirm: true}
+	req.SetPath(apiv1.NewOptString(path))
+	if disk != 0 {
+		req.SetDisk(apiv1.NewOptInt32(disk))
+	}
+	return req
+}
+
 func TestHandler_StartFix_DiskReachesEngine(t *testing.T) {
 	ctx := context.Background()
 	h, s, r := newTestHandler(t)

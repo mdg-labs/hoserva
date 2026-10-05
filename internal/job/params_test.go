@@ -386,6 +386,127 @@ func TestRunFix_DiskReachesFixOpts(t *testing.T) {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
+func TestRunFix_PathReachesFixOptsAsAnArrayPath(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	eng := newRecordingEngine()
+	s.registry.Register(TypeFix, false, RunFix(eng))
+
+	j, err := s.Submit(ctx, TypeFix, nil, mustJSON(t, FixParams{Confirm: true, Path: strPtr("/mnt/user/documents/tax return.pdf")}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if finished := await(t, s, j.ID); finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	_, _, _, lastFix := eng.snapshot()
+	if lastFix.Path != "/documents/tax return.pdf" || lastFix.Disk != "" {
+		t.Fatalf("FixOpts = %+v, want Path /documents/tax return.pdf and no Disk", lastFix)
+	}
+}
+
+func TestRunFix_WithoutPathStaysUnfiltered(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	eng := newRecordingEngine()
+	s.registry.Register(TypeFix, false, RunFix(eng))
+
+	j, err := s.Submit(ctx, TypeFix, nil, mustJSON(t, FixParams{Confirm: true}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if finished := await(t, s, j.ID); finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	if _, _, _, lastFix := eng.snapshot(); lastFix != (parity.FixOpts{}) {
+		t.Fatalf("FixOpts = %+v, want the zero value (a whole-array fix)", lastFix)
+	}
+}
+
+func TestFixArrayPath(t *testing.T) {
+	for _, tc := range []struct {
+		path, want string
+	}{
+		{"/mnt/user/documents/tax.pdf", "/documents/tax.pdf"},
+		{"/mnt/user/top.txt", "/top.txt"},
+		{"/mnt/user/a b/c d.bin", "/a b/c d.bin"},
+		{"/mnt/user/media/..hidden", "/media/..hidden"},
+	} {
+		got, err := FixArrayPath(tc.path)
+		if err != nil || got != tc.want {
+			t.Errorf("FixArrayPath(%q) = %q, %v, want %q", tc.path, got, err, tc.want)
+		}
+	}
+	for _, path := range []string{
+		"",
+		"/",
+		"documents/tax.pdf",
+		"/documents/tax.pdf",
+		"/mnt/user",
+		"/mnt/user/",
+		"/mnt/users/documents/tax.pdf",
+		"/mnt/disk1/documents/tax.pdf",
+		"/mnt/user/../disk1/x",
+		"/mnt/user/documents/../../etc/passwd",
+		"/mnt/user/documents/..",
+		"/mnt/user/./x",
+		"/mnt/user//x",
+		"/mnt/user/documents/",
+		"/mnt/user/doc\x00uments/x",
+		"/mnt/user/documents/a\nb",
+		"/mnt/user/documents/*",
+		"/mnt/user/documents/a?.pdf",
+		"/mnt/user/documents/a[1].pdf",
+		"/mnt/user/documents/a\\b",
+	} {
+		got, err := FixArrayPath(path)
+		if !errors.Is(err, ErrInvalidFixPath) || got != "" {
+			t.Errorf("FixArrayPath(%q) = %q, %v, want ErrInvalidFixPath", path, got, err)
+		}
+	}
+}
+
+func TestSubmit_RefusesAFixPathThatIsNotOneFileOrCombinesWithADisk(t *testing.T) {
+	s := newTestScheduler(t)
+	eng := newRecordingEngine()
+	s.registry.Register(TypeFix, false, RunFix(eng))
+	for name, params := range map[string][]byte{
+		"empty path":       mustJSON(t, FixParams{Confirm: true, Path: strPtr("")}),
+		"outside the pool": mustJSON(t, FixParams{Confirm: true, Path: strPtr("/etc/passwd")}),
+		"dot dot":          mustJSON(t, FixParams{Confirm: true, Path: strPtr("/mnt/user/a/../../b")}),
+		"a glob":           mustJSON(t, FixParams{Confirm: true, Path: strPtr("/mnt/user/a/*")}),
+		"path with disk":   mustJSON(t, FixParams{Confirm: true, Disk: intPtr(1), Path: strPtr("/mnt/user/a/b")}),
+	} {
+		_, err := s.Submit(context.Background(), TypeFix, nil, params)
+		if !errors.Is(err, ErrInvalidFixPath) {
+			t.Errorf("%s: Submit = %v, want ErrInvalidFixPath", name, err)
+		}
+	}
+	if _, _, _, lastFix := eng.snapshot(); lastFix != (parity.FixOpts{}) {
+		t.Fatalf("a refused request still reached the engine: %+v", lastFix)
+	}
+}
+
+func TestFixPathFromParams(t *testing.T) {
+	for _, tc := range []struct {
+		params, want string
+	}{
+		{`{"confirm":true}`, ""},
+		{`{"confirm":true,"disk":2}`, ""},
+		{`{"confirm":true,"path":"/mnt/user/a/b"}`, "/mnt/user/a/b"},
+	} {
+		got, err := FixPathFromParams([]byte(tc.params))
+		if err != nil || got != tc.want {
+			t.Errorf("FixPathFromParams(%s) = %q, %v, want %q", tc.params, got, err, tc.want)
+		}
+	}
+	if _, err := FixPathFromParams([]byte(`{"confirm":true,"path":"/etc"}`)); err == nil {
+		t.Error("FixPathFromParams accepted a path outside the pool")
+	}
+}
+
 func TestSubmit_RejectsParamsForTypesThatHaveNone(t *testing.T) {
 	s := newTestScheduler(t)
 	s.registry.Register(TypeMover, false, func(context.Context, *RunContext) error { return nil })

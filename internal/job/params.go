@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
 // DefaultScrubPercent is doc 02 §2's scheduled-scrub default: 8% of the
@@ -33,10 +35,49 @@ type ScrubParams struct {
 
 // FixParams is startFix's persisted request payload. Disk is the SnapRAID
 // disk index (`hoserva fix --disk N`); nil means the engine's whole-array
-// fix.
+// fix. Path is one file under the pool mount (`hoserva fix --path`), which
+// restores only that file; it is a pointer so an empty path stays present
+// and is refused instead of reading as an unfiltered fix. Path and Disk are
+// never both set.
 type FixParams struct {
-	Confirm bool `json:"confirm"`
-	Disk    *int `json:"disk,omitempty"`
+	Confirm bool    `json:"confirm"`
+	Disk    *int    `json:"disk,omitempty"`
+	Path    *string `json:"path,omitempty"`
+}
+
+// ErrInvalidFixPath is the refusal of a startFix request whose path is not
+// one file under the pool mount, or that also names a disk.
+var ErrInvalidFixPath = errors.New("invalid fix path")
+
+// fixPathReserved are the characters SnapRAID's -f reads as pattern syntax,
+// so a path holding one would match more than the one file it names.
+const fixPathReserved = "*?[]\\"
+
+// FixArrayPath maps a startFix path to what SnapRAID's -f takes: the file's
+// path relative to the array, with a leading slash. path must be absolute
+// under pool.CatchAllPath and canonical: no empty, "." or ".." segment, no
+// trailing slash (a directory), no control character, and none of
+// fixPathReserved. Anything else is ErrInvalidFixPath.
+func FixArrayPath(path string) (string, error) {
+	prefix := pool.CatchAllPath + "/"
+	if !strings.HasPrefix(path, prefix) || len(path) == len(prefix) {
+		return "", fmt.Errorf("%w: %q is not a file under %s", ErrInvalidFixPath, path, pool.CatchAllPath)
+	}
+	for _, r := range path {
+		if r < 0x20 || r == 0x7f {
+			return "", fmt.Errorf("%w: the path holds a control character", ErrInvalidFixPath)
+		}
+		if strings.ContainsRune(fixPathReserved, r) {
+			return "", fmt.Errorf("%w: %q holds %q, which SnapRAID reads as a pattern, so the fix could restore more than this one file", ErrInvalidFixPath, path, r)
+		}
+	}
+	rel := path[len(pool.CatchAllPath):]
+	for _, seg := range strings.Split(rel[1:], "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf("%w: %q must name one file, with no empty, . or .. segment and no trailing slash", ErrInvalidFixPath, path)
+		}
+	}
+	return rel, nil
 }
 
 // shareRelocationToArray and shareRelocationToCache are
@@ -338,7 +379,26 @@ func FixOptsFromParams(params []byte) (parity.FixOpts, error) {
 	if p.Disk != nil {
 		opts.Disk = fmt.Sprintf("d%d", *p.Disk)
 	}
+	if p.Path != nil {
+		opts.Path, err = FixArrayPath(*p.Path)
+		if err != nil {
+			return parity.FixOpts{}, err
+		}
+	}
 	return opts, nil
+}
+
+// FixPathFromParams is the pool path a fix job's params restored, empty for
+// a fix of the whole array or of one disk.
+func FixPathFromParams(params []byte) (string, error) {
+	p, err := decodeFixParams(bytes.TrimSpace(params))
+	if err != nil {
+		return "", err
+	}
+	if p.Path == nil {
+		return "", nil
+	}
+	return *p.Path, nil
 }
 
 func decodeSyncParams(params []byte) (SyncParams, error) {
@@ -379,6 +439,14 @@ func decodeFixParams(params []byte) (FixParams, error) {
 	}
 	if p.Disk != nil && *p.Disk < 1 {
 		return FixParams{}, fmt.Errorf("job: fix disk index must be >= 1")
+	}
+	if p.Path != nil {
+		if p.Disk != nil {
+			return FixParams{}, fmt.Errorf("job: %w: a path and a disk cannot be combined", ErrInvalidFixPath)
+		}
+		if _, err := FixArrayPath(*p.Path); err != nil {
+			return FixParams{}, fmt.Errorf("job: %w", err)
+		}
 	}
 	return p, nil
 }

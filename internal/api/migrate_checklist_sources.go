@@ -82,6 +82,12 @@ func checklistJobRecord(j *job.Job) (migrate.JobRecord, error) {
 			return migrate.JobRecord{}, fmt.Errorf("reading the scrub's parameters: %w", err)
 		}
 		rec.ScrubPercent, rec.AllBlocks = percent, allBlocks
+	case job.TypeFix:
+		path, err := job.FixPathFromParams(j.Params)
+		if err != nil {
+			return migrate.JobRecord{}, fmt.Errorf("reading the fix's parameters: %w", err)
+		}
+		rec.Path = path
 	case job.TypeShareRelocation:
 		var p job.ShareRelocationParams
 		if err := json.Unmarshal(j.Params, &p); err != nil {

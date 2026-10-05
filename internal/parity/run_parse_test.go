@@ -176,3 +176,20 @@ func TestFatalMessages_NoneFoundReturnsNil(t *testing.T) {
 		t.Fatalf("fatalMessages = %#v, want nil", got)
 	}
 }
+
+// TestParseRunSummary_FixUnrecoverableFileIsListed covers a real fix log
+// (fixUnrecoverableLog) in which SnapRAID could not rebuild a file: the
+// `status:unrecoverable:<disk>:<path>` line is collected beside the
+// unrecoverable count, and the file is not counted as recovered.
+func TestParseRunSummary_FixUnrecoverableFileIsListed(t *testing.T) {
+	s, err := ParseRunSummary([]byte(fixUnrecoverableLog))
+	if err != nil {
+		t.Fatalf("ParseRunSummary: %v", err)
+	}
+	if want := []string{"d3:pr/unrec.bin"}; !reflect.DeepEqual(s.UnrecoveredFiles, want) {
+		t.Fatalf("UnrecoveredFiles = %#v, want %#v", s.UnrecoveredFiles, want)
+	}
+	if s.Unrecoverable != 1 || len(s.RecoveredFiles) != 0 || s.Exit != "unrecoverable" {
+		t.Fatalf("summary = %+v, want 1 unrecoverable, no recovered file, exit unrecoverable", s)
+	}
+}

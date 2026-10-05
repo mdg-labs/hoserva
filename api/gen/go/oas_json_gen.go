@@ -42007,11 +42007,18 @@ func (s *StartFixRequest) encodeFields(e *jx.Encoder) {
 			s.Disk.Encode(e)
 		}
 	}
+	{
+		if s.Path.Set {
+			e.FieldStart("path")
+			s.Path.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfStartFixRequest = [2]string{
+var jsonFieldsNameOfStartFixRequest = [3]string{
 	0: "confirm",
 	1: "disk",
+	2: "path",
 }
 
 // Decode decodes StartFixRequest from json.
@@ -42044,6 +42051,16 @@ func (s *StartFixRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"disk\"")
+			}
+		case "path":
+			if err := func() error {
+				s.Path.Reset()
+				if err := s.Path.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"path\"")
 			}
 		default:
 			return d.Skip()

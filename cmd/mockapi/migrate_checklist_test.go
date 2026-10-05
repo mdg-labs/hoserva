@@ -130,11 +130,21 @@ func TestMockChecklist_AcknowledgesOnlyTheTwoItemsNoRecordShowsAndKeepsThemAfter
 		}
 	}
 
-	// A fix job that succeeded is shown, and the acknowledgement records it.
+	// A fix of the whole array is not a restore drill and is not shown.
 	now := time.Now().UTC().Truncate(time.Second)
+	whole := apiv1.Job{ID: uuid.New(), Type: apiv1.JobTypeFix, Class: apiv1.JobClassParity, Status: apiv1.JobStatusSucceeded, CreatedAt: now, StartedAt: apiv1.NewOptNilDateTime(now), FinishedAt: apiv1.NewOptNilDateTime(now)}
+	h.mu.Lock()
+	h.jobs[whole.ID] = whole
+	h.mu.Unlock()
+	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdRestoreDrill); got.JobId.IsSet() {
+		t.Errorf("restore drill with only a whole-array fix = %+v, want no job shown", got)
+	}
+
+	// A fix job of one file that succeeded is shown, and the acknowledgement records it.
 	fix := apiv1.Job{ID: uuid.New(), Type: apiv1.JobTypeFix, Class: apiv1.JobClassParity, Status: apiv1.JobStatusSucceeded, CreatedAt: now, StartedAt: apiv1.NewOptNilDateTime(now), FinishedAt: apiv1.NewOptNilDateTime(now)}
 	h.mu.Lock()
 	h.jobs[fix.ID] = fix
+	h.fixPaths[fix.ID] = "/mnt/user/documents/tax.pdf"
 	h.mu.Unlock()
 	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdRestoreDrill); got.JobId.Or("") != fix.ID.String() || got.Status != apiv1.MigrationChecklistItemStatusTodo {
 		t.Errorf("restore drill with a succeeded fix = %+v, want todo showing the job", got)
@@ -152,6 +162,33 @@ func TestMockChecklist_AcknowledgesOnlyTheTwoItemsNoRecordShowsAndKeepsThemAfter
 	}
 	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdUserScripts); len(got.Scripts) != 0 {
 		t.Errorf("user scripts after forgetting the scan = %+v, want none listed", got)
+	}
+}
+
+func TestMockChecklist_RestoreDrillShowsTheFixStartFixQueuedForAPath(t *testing.T) {
+	ctx := context.Background()
+	h := mockCrossedMigration(t)
+
+	whole, err := h.StartFix(ctx, &apiv1.StartFixRequest{Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &apiv1.StartFixRequest{Confirm: true}
+	req.SetPath(apiv1.NewOptString("/mnt/user/documents/tax.pdf"))
+	one, err := h.StartFix(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	h.mu.Lock()
+	for _, id := range []uuid.UUID{whole.ID, one.ID} {
+		j := h.jobs[id]
+		j.Status, j.StartedAt, j.FinishedAt = apiv1.JobStatusSucceeded, apiv1.NewOptNilDateTime(now), apiv1.NewOptNilDateTime(now)
+		h.jobs[id] = j
+	}
+	h.mu.Unlock()
+	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdRestoreDrill); got.JobId.Or("") != one.ID.String() {
+		t.Errorf("restore drill = %+v, want the fix of one file %s, not the whole-array fix %s", got, one.ID, whole.ID)
 	}
 }
 

@@ -56,13 +56,13 @@ type Invoker interface {
 	// AcknowledgeMigrationChecklistItem invokes acknowledgeMigrationChecklistItem operation.
 	//
 	// Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
-	// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
-	// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
-	// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
-	// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
-	// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
-	// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
-	// Returns the item as it stands.
+	// (deleted a file and recovered it with `hoserva fix --path`), with who made the acknowledgement and
+	// when; the restore drill's also records the latest succeeded `fix` job that had a `path`, when there
+	// is one. It is kept in the database and outlives `forgetMigration`. Refused with 409
+	// `migration_not_finished` while the checklist does not apply (`getMigrationChecklist` answers
+	// `finished` false), and with 409 `checklist_item_has_record` for every other item, whose state comes
+	// from a record and is never set by hand. Acknowledging an acknowledged item changes nothing: the
+	// first acknowledgement is kept. Returns the item as it stands.
 	//
 	// POST /migrate/checklist/{item}/acknowledge
 	AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (*MigrationChecklistItem, error)
@@ -741,8 +741,9 @@ type Invoker interface {
 	// `user_scripts` and `restore_drill` have no record to derive from and are done by
 	// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
 	// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
-	// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
-	// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+	// `fix` job that had a `path`, which an acknowledgement records. Only those two are ever
+	// `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the
+	// scripts are empty.
 	//
 	// GET /migrate/checklist
 	GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error)
@@ -1869,7 +1870,18 @@ type Invoker interface {
 	// StartFix invokes startFix operation.
 	//
 	// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
-	// parity.
+	// parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file
+	// changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2).
+	// Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under
+	// `/mnt/user` or is sent together with `disk`. A fix with `path` that does not restore the file ends
+	// `failed`, never `succeeded`, in two cases. When SnapRAID exits 0 with "Nothing to do" the path
+	// matched nothing in parity (misspelt, the wrong case, a directory, a file made after the last sync, a
+	// file only on the cache) or the file is intact and needs no restoring, and the job reports that
+	// nothing was restored. When SnapRAID reports unrecoverable blocks and exits 1 the path is in parity
+	// but the file cannot be rebuilt from it, for example because another file that shares its parity
+	// positions changed after the last sync, and the job reports that and names the partial copy SnapRAID
+	// left as `<name>.unrecoverable` on its disk. A fix without `path` reports unrecoverable blocks in its
+	// summary and still ends `succeeded`.
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, request *StartFixRequest) (*Job, error)
@@ -2541,13 +2553,13 @@ func (c *Client) sendAcknowledgeDegradedArray(ctx context.Context) (res *SystemS
 // AcknowledgeMigrationChecklistItem invokes acknowledgeMigrationChecklistItem operation.
 //
 // Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
-// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
-// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
-// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
-// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
-// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
-// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
-// Returns the item as it stands.
+// (deleted a file and recovered it with `hoserva fix --path`), with who made the acknowledgement and
+// when; the restore drill's also records the latest succeeded `fix` job that had a `path`, when there
+// is one. It is kept in the database and outlives `forgetMigration`. Refused with 409
+// `migration_not_finished` while the checklist does not apply (`getMigrationChecklist` answers
+// `finished` false), and with 409 `checklist_item_has_record` for every other item, whose state comes
+// from a record and is never set by hand. Acknowledging an acknowledged item changes nothing: the
+// first acknowledgement is kept. Returns the item as it stands.
 //
 // POST /migrate/checklist/{item}/acknowledge
 func (c *Client) AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (*MigrationChecklistItem, error) {
@@ -11202,8 +11214,9 @@ func (c *Client) sendGetMigration(ctx context.Context) (res *Migration, err erro
 // `user_scripts` and `restore_drill` have no record to derive from and are done by
 // `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
 // schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
-// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
-// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+// `fix` job that had a `path`, which an acknowledgement records. Only those two are ever
+// `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the
+// scripts are empty.
 //
 // GET /migrate/checklist
 func (c *Client) GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error) {
@@ -23811,7 +23824,18 @@ func (c *Client) sendStartArray(ctx context.Context) (res *SystemStatus, err err
 // StartFix invokes startFix operation.
 //
 // Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
-// parity.
+// parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file
+// changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2).
+// Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under
+// `/mnt/user` or is sent together with `disk`. A fix with `path` that does not restore the file ends
+// `failed`, never `succeeded`, in two cases. When SnapRAID exits 0 with "Nothing to do" the path
+// matched nothing in parity (misspelt, the wrong case, a directory, a file made after the last sync, a
+// file only on the cache) or the file is intact and needs no restoring, and the job reports that
+// nothing was restored. When SnapRAID reports unrecoverable blocks and exits 1 the path is in parity
+// but the file cannot be rebuilt from it, for example because another file that shares its parity
+// positions changed after the last sync, and the job reports that and names the partial copy SnapRAID
+// left as `<name>.unrecoverable` on its disk. A fix without `path` reports unrecoverable blocks in its
+// summary and still ends `succeeded`.
 //
 // POST /parity/fix
 func (c *Client) StartFix(ctx context.Context, request *StartFixRequest) (*Job, error) {

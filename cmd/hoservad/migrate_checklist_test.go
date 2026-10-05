@@ -272,7 +272,13 @@ func TestMigrationChecklistWiring_EachItemIsDerivedFromTheDaemonsRecords(t *test
 	if scripts.Status != apiv1.MigrationChecklistItemStatusTodo || !scripts.Acknowledgeable || len(scripts.Scripts) != 1 || scripts.Scripts[0].Name != "nightly" || scripts.Scripts[0].Schedule.Or("") != "30 2 * * *" {
 		t.Errorf("user scripts = %+v, want todo, acknowledgeable, listing nightly", scripts)
 	}
-	r.addJob(t, "fix-1", job.TypeFix, job.ClassParity, job.FixParams{Confirm: true}, 31, 32)
+	diskOne, restored := 1, "/mnt/user/docs/a.txt"
+	r.addJob(t, "fix-whole", job.TypeFix, job.ClassParity, job.FixParams{Confirm: true}, 29, 30)
+	if got := r.item(t, apiv1.MigrationChecklistItemIdRestoreDrill); got.JobId.IsSet() {
+		t.Errorf("restore drill after a fix of the whole array = %+v, want no job shown", got)
+	}
+	r.addJob(t, "fix-1", job.TypeFix, job.ClassParity, job.FixParams{Confirm: true, Path: &restored}, 31, 32)
+	r.addJob(t, "fix-disk", job.TypeFix, job.ClassParity, job.FixParams{Confirm: true, Disk: &diskOne}, 33, 34)
 	if got := r.item(t, apiv1.MigrationChecklistItemIdRestoreDrill); got.Status != apiv1.MigrationChecklistItemStatusTodo || got.JobId.Or("") != "fix-1" || !got.Acknowledgeable {
 		t.Errorf("restore drill = %+v, want todo showing fix-1", got)
 	}

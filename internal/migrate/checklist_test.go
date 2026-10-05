@@ -361,7 +361,11 @@ func TestChecklist_UserScriptsAndTheRestoreDrillAreTheOnlyItemsAUserAcknowledges
 	report := &Report{}
 	report.Import.UserScripts = []UserScript{{Name: "nightly-report", Schedule: "30 2 * * *"}, {Name: "Weekly cleanup"}}
 	f := finishedRecords()
-	f.jobs[JobTypeFix] = []JobRecord{{ID: "fix-1", FinishedAt: at(8)}, {ID: "fix-2", FinishedAt: at(9)}}
+	f.jobs[JobTypeFix] = []JobRecord{
+		{ID: "fix-1", FinishedAt: at(8), Path: "/mnt/user/a.txt"},
+		{ID: "fix-2", FinishedAt: at(9), Path: "/mnt/user/b.txt"},
+		{ID: "fix-whole", FinishedAt: at(9)},
+	}
 
 	c := buildFrom(t, f, ChecklistRecord{}, report)
 	scripts := itemOf(t, c, ItemUserScripts)
@@ -370,7 +374,7 @@ func TestChecklist_UserScriptsAndTheRestoreDrillAreTheOnlyItemsAUserAcknowledges
 	}
 	drill := itemOf(t, c, ItemRestoreDrill)
 	if drill.Status != ItemTodo || !drill.Acknowledgeable || drill.JobID != "fix-2" || drill.Ack != nil {
-		t.Errorf("restore drill = %+v, want todo, acknowledgeable, showing the latest fix job", drill)
+		t.Errorf("restore drill = %+v, want todo, acknowledgeable, showing the latest fix job of one file, not the later whole-array fix", drill)
 	}
 	for _, it := range c.Items {
 		if it.ID != ItemUserScripts && it.ID != ItemRestoreDrill && it.Acknowledgeable {
@@ -406,11 +410,20 @@ func TestChecklist_UserScriptsAndTheRestoreDrillAreTheOnlyItemsAUserAcknowledges
 		t.Errorf("a second acknowledgement = %+v %v %v, want the first kept", again, isNew, err)
 	}
 
-	f.jobs[JobTypeFix] = nil
-	facts, _ = f.sources().Facts(ctx0)
-	ack, _, err = buildFrom(t, f, ChecklistRecord{}, report).Acknowledge(ItemRestoreDrill, "alice", at(10), facts)
-	if err != nil || ack.JobID != "" {
-		t.Errorf("acknowledging with no fix job = %+v %v, want no job recorded", ack, err)
+	for name, fixes := range map[string][]JobRecord{
+		"no fix job":                  nil,
+		"only a fix of the whole one": {{ID: "fix-whole", FinishedAt: at(9)}},
+	} {
+		f.jobs[JobTypeFix] = fixes
+		facts, _ = f.sources().Facts(ctx0)
+		c = buildFrom(t, f, ChecklistRecord{}, report)
+		if got := itemOf(t, c, ItemRestoreDrill); got.JobID != "" {
+			t.Errorf("restore drill with %s = %+v, want no job shown", name, got)
+		}
+		ack, _, err = c.Acknowledge(ItemRestoreDrill, "alice", at(10), facts)
+		if err != nil || ack.JobID != "" {
+			t.Errorf("acknowledging with %s = %+v %v, want no job recorded", name, ack, err)
+		}
 	}
 }
 
