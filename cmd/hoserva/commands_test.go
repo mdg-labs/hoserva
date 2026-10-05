@@ -45,7 +45,7 @@ func TestRootCmdHasShare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find share: %v", err)
 	}
-	for _, name := range []string{"list", "get", "create", "rm", "rm-data", "browse"} {
+	for _, name := range []string{"list", "get", "create", "relocate", "rm", "rm-data", "browse"} {
 		if _, _, err := share.Find([]string{name}); err != nil {
 			t.Fatalf("find share %s: %v", name, err)
 		}
@@ -649,5 +649,122 @@ func TestFixRefusesAnUnusablePathBeforeCallingTheDaemon(t *testing.T) {
 				t.Fatalf("a refused fix still called the daemon: %v", requests)
 			}
 		})
+	}
+}
+
+func runShareRelocateCLI(t *testing.T, args ...string) (requests []string, bodies []string, runErr error) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var mu sync.Mutex
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		bodies = append(bodies, string(raw))
+		mu.Unlock()
+		j := apiv1.Job{ID: uuid.New(), Type: apiv1.JobTypeShareRelocation, Class: apiv1.JobClassArrayWrite, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
+		out, err := j.MarshalJSON()
+		if err != nil {
+			t.Errorf("encoding the job: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	root := rootCmd()
+	root.SetArgs(append([]string{"--socket", sock, "--json"}, args...))
+	root.SilenceUsage, root.SilenceErrors = true, true
+	runErr = root.Execute()
+	os.Stdout = stdout
+	_ = w.Close()
+	_, _ = io.ReadAll(r)
+	jsonOutput = false
+	mu.Lock()
+	defer mu.Unlock()
+	return requests, bodies, runErr
+}
+
+func TestShareRelocateSendsTheDirectionToTheNamedShare(t *testing.T) {
+	for _, to := range []string{"cache", "array"} {
+		t.Run(to, func(t *testing.T) {
+			requests, bodies, err := runShareRelocateCLI(t, "share", "relocate", "media", "--to", to)
+			if err != nil {
+				t.Fatalf("share relocate --to %s: %v", to, err)
+			}
+			if len(requests) != 1 || requests[0] != "POST /api/v1/shares/media/relocate" {
+				t.Fatalf("requests = %v, want one POST /api/v1/shares/media/relocate", requests)
+			}
+			if want := `{"to":"` + to + `"}`; bodies[0] != want {
+				t.Fatalf("request body = %s, want %s", bodies[0], want)
+			}
+		})
+	}
+}
+
+func TestShareRelocateRefusesAMissingOrUnknownDirectionBeforeCallingTheDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"no direction", []string{"share", "relocate", "media"}},
+		{"empty direction", []string{"share", "relocate", "media", "--to", ""}},
+		{"unknown direction", []string{"share", "relocate", "media", "--to", "tape"}},
+		{"no share", []string{"share", "relocate", "--to", "cache"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests, _, err := runShareRelocateCLI(t, tc.args...)
+			if err == nil {
+				t.Fatalf("%v: no error", tc.args)
+			}
+			if len(requests) != 0 {
+				t.Fatalf("a refused relocation still called the daemon: %v", requests)
+			}
+		})
+	}
+}
+
+func TestShareRelocateReportsTheDaemonsRefusal(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":"not_found","message":"no such share: media"}`))
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "share", "relocate", "media", "--to", "cache"})
+	root.SilenceUsage, root.SilenceErrors = true, true
+	runErr := root.Execute()
+	jsonOutput = false
+	if runErr == nil {
+		t.Fatal("a refused relocation was reported as success")
 	}
 }

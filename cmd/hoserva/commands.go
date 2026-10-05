@@ -641,6 +641,28 @@ func shareCmd() *cobra.Command {
 	rmData.Flags().StringVar(&confirmData, "confirm", "", "Type the share name to confirm deleting its files")
 	cmd.AddCommand(rmData)
 
+	var relocateTo string
+	relocate := &cobra.Command{
+		Use:   "relocate NAME --to cache|array",
+		Short: "Move a share's files between the cache and the array (doc 09 §2)",
+		Long: "Queues a one-shot move of the whole share. To the array it behaves as a mover run limited to this share; to the cache it copies, verifies, " +
+			"syncs and only then deletes the array copies. Stop the containers that use the share first: " +
+			"relocating a live database is the same hazard as moving an open file.",
+		Example: "  hoserva share relocate media --to cache",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			to := apiv1.StartShareRelocationRequestTo(relocateTo)
+			if to != apiv1.StartShareRelocationRequestToCache && to != apiv1.StartShareRelocationRequestToArray {
+				return fmt.Errorf("share relocate requires --to cache or --to array")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.StartShareRelocation(apiCtx(), &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: apiv1.ShareName(args[0])})
+			})(cmd, args)
+		},
+	}
+	relocate.Flags().StringVar(&relocateTo, "to", "", "Direction: cache or array (required)")
+	cmd.AddCommand(relocate)
+
 	cmd.AddCommand(&cobra.Command{
 		Use:   "browse NAME [PATH]",
 		Short: "List a share directory (may wake disks)",
