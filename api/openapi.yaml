@@ -1669,10 +1669,11 @@ paths:
         period; array to cache follows the two-phase copy-verify-sync-
         delete-sync order, through the same threshold guard every other
         sync goes through. There is no second relocation-invocation path.
-        Moving to the cache is refused with 409 `no_cache_disk` before any
-        job is queued while the array has no cache disk, and with 409
-        `no_array` while there is no array; a failure to read the array
-        topology fails the request rather than assuming a cache.
+        A relocation in either direction needs the array's cache disk, so
+        it is refused with 409 `no_cache_disk` before any job is queued
+        while the array has no cache disk, and with 409 `no_array` while
+        there is no array; a failure to read the array topology fails the
+        request rather than assuming a cache.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:

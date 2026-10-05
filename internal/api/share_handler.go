@@ -202,10 +202,8 @@ func (h *Handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	if _, err := h.Shares.Get(ctx, string(params.Name)); err != nil {
 		return nil, mapShareError(err)
 	}
-	if req.To == apiv1.StartShareRelocationRequestToCache {
-		if err := h.requireCacheDisk(ctx); err != nil {
-			return nil, err
-		}
+	if err := h.requireCacheDisk(ctx); err != nil {
+		return nil, err
 	}
 	encoded, err := json.Marshal(job.ShareRelocationParams{
 		Share: string(params.Name),
@@ -221,9 +219,11 @@ func (h *Handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	return jobToAPI(j)
 }
 
-// requireCacheDisk refuses a relocation to the cache before any job is
-// queued when the array has no cache disk. A topology that cannot be read
-// is returned as an error, never taken to mean a cache exists.
+// requireCacheDisk refuses a relocation, in either direction, before any job
+// is queued when the array has no cache disk: the relocation job resolves
+// the share's cache path first and fails without one (cmd/hoservad/
+// share_relocation.go). A topology that cannot be read is returned as an
+// error, never taken to mean a cache exists.
 func (h *Handler) requireCacheDisk(ctx context.Context) error {
 	_, disks, err := h.Shares.Array.GetArray(ctx)
 	if err != nil {
@@ -237,7 +237,7 @@ func (h *Handler) requireCacheDisk(ctx context.Context) error {
 			return nil
 		}
 	}
-	return &apiError{code: "no_cache_disk", statusCode: 409, message: "the array has no cache disk to relocate this share to"}
+	return &apiError{code: "no_cache_disk", statusCode: 409, message: "the array has no cache disk to relocate this share with"}
 }
 
 func (h *Handler) BrowseShare(ctx context.Context, params apiv1.BrowseShareParams) (*apiv1.ShareBrowseResult, error) {
