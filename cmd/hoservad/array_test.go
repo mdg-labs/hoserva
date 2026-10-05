@@ -24,6 +24,15 @@ import (
 
 func newArrayTestEnv(t *testing.T) (context.Context, *api.Handler, *store.ArrayStore, *store.ShareStore, *disk.FakeProvider, *disk.FakeRunner) {
 	t.Helper()
+	ctx, h, arrays, shares, provider, runner, _, _ := newArrayTestEnvWithDB(t)
+	return ctx, h, arrays, shares, provider, runner
+}
+
+// newArrayTestEnvWithDB is newArrayTestEnv that also returns the database and
+// the scheduler's job registry, for a test that registers a job type or writes
+// a row the stores have no setter for.
+func newArrayTestEnvWithDB(t *testing.T) (context.Context, *api.Handler, *store.ArrayStore, *store.ShareStore, *disk.FakeProvider, *disk.FakeRunner, *sql.DB, *job.Registry) {
+	t.Helper()
 
 	migrations, err := store.Load()
 	if err != nil {
@@ -44,9 +53,10 @@ func newArrayTestEnv(t *testing.T) (context.Context, *api.Handler, *store.ArrayS
 	arrays := store.NewArrayStore(db)
 	shares := store.NewShareStore(db)
 	jobStore := job.NewStore(db)
-	scheduler := job.NewScheduler(jobStore, job.NewLogStore(t.TempDir()), job.NewHub(), job.NewRegistry())
+	registry := job.NewRegistry()
+	scheduler := job.NewScheduler(jobStore, job.NewLogStore(t.TempDir()), job.NewHub(), registry)
 	h := &api.Handler{Scheduler: scheduler, Store: jobStore}
-	return context.Background(), h, arrays, shares, disk.NewFakeProvider(), disk.NewFakeRunner()
+	return context.Background(), h, arrays, shares, disk.NewFakeProvider(), disk.NewFakeRunner(), db, registry
 }
 
 func sampleArrayDisks() []store.ArrayDisk {

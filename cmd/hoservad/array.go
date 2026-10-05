@@ -415,7 +415,7 @@ func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetS
 // acknowledged, so any one of this closure's own callers (a share edit, a
 // disk-topology change, a SIGHUP) would undo the user's acknowledgement
 // the moment it ran.
-func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, poolWriteGate job.PoolWriteGate, handler *api.Handler, ack *acknowledgedDegraded, containers job.ArrayService) func(ctx context.Context) error {
+func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, poolWriteGate job.PoolWriteGate, handler *api.Handler, ack *acknowledgedDegraded, containers job.ArrayService, afterStart func(context.Context)) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		ack.seqMu.Lock()
 		defer ack.seqMu.Unlock()
@@ -432,6 +432,9 @@ func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArraySt
 			// re-wire it here or Stop's own coordination with backupService
 			// would silently stop after the very first one.
 			seq.PoolWriteGate = poolWriteGate
+			// Every rebuild is a fresh sequence too, so the hook that queues an
+			// owed initial sync on `array start` is re-wired here as well.
+			seq.AfterStart = afterStart
 			if gate, ok := storageGateOf(seq.Gate); ok {
 				ack.reapply(gate)
 			}

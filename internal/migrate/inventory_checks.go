@@ -695,7 +695,8 @@ func checkContainers(r *Report, src FlashSource, containers []captureContainer, 
 			projects[dir] = &ComposeProject{Name: dir, File: n}
 		}
 	}
-	var noTemplate, byHand []string
+	var noTemplate []string
+	byHand := map[string]string{}
 	counts := map[containerOrigin]int{}
 	for _, c := range containers {
 		counts[c.origin()]++
@@ -711,11 +712,18 @@ func checkContainers(r *Report, src FlashSource, containers []captureContainer, 
 			}
 			projects[p].Containers = append(projects[p].Containers, c.Name)
 		default:
-			byHand = append(byHand, c.Name)
+			byHand[c.Name] = c.Config.Image
 		}
 	}
 	sort.Strings(noTemplate)
-	sort.Strings(byHand)
+	byHandNames := make([]string, 0, len(byHand))
+	for n := range byHand {
+		byHandNames = append(byHandNames, n)
+	}
+	sort.Strings(byHandNames)
+	for _, n := range byHandNames {
+		imp.ByHand = append(imp.ByHand, ByHandContainer{Name: n, Image: byHand[n]})
+	}
 
 	var names []string
 	for n := range projects {
@@ -742,7 +750,7 @@ func checkContainers(r *Report, src FlashSource, containers []captureContainer, 
 	for _, c := range noTemplate {
 		r.add(CheckContainers, StatusFlag, c, "A dockerMan container with no template whose <Name> matches. It cannot be converted: open it on the Docker page, edit it and apply to save its template, then run the prepare script again (doc 05 §4 step 2).")
 	}
-	for _, c := range byHand {
+	for _, c := range byHandNames {
 		r.add(CheckContainers, StatusFlag, c, "Created by hand (docker run), so it has no template to convert. Recreate it from its run command.")
 	}
 	for _, p := range imp.ComposeProjects {

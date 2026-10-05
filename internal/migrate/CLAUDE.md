@@ -172,3 +172,15 @@ implementation of this package loses a user's data.
   `parity_lab_test.go` is the proof that matters: a refusal leaves every source
   disk's whole-device sha256 unchanged, and the happy path formats only the
   confirmed devices and leaves every data file matching the fixture's manifest.
+- **Migrated containers are created and started only past the point of no return,
+  one at a time, and a data check is a read the user asks for.** `containers.go`
+  creates, starts, checks and confirms nothing until `Service.Initialized` says
+  the array record is past step 17, and an unreadable record refuses (it never
+  reads as "initialised"). Everything that can refuse a creation request as a whole
+  is checked before its first stack is made, a stack whose record cannot be written
+  is removed again, and a stack is created stopped from the Compose the preview
+  showed. A start is refused while another started stack is neither confirmed nor
+  stopped, and a stack or job that cannot be read counts as still running. The data
+  check reads one entry of each bind mount under `/mnt/user` and `/mnt/cache`, only
+  when asked: nothing on a timer walks a data disk, and an error reading a path is
+  `unreadable`, never `ok`.

@@ -1124,6 +1124,30 @@ func (s *StackService) ManagingStacks(ctx context.Context, cs []Container) (map[
 	return out, nil
 }
 
+// Containers returns the containers the stack started (ownsContainer), by
+// name. A failed listing is an error and never an empty list: a caller that
+// cannot see the containers must not conclude the stack has none.
+func (s *StackService) Containers(ctx context.Context, name string) ([]Container, error) {
+	if !ValidStackName(name) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidStackName, name)
+	}
+	if s.Provider == nil {
+		return nil, fmt.Errorf("%w: the containers of stack %s cannot be listed", ErrUnavailable, name)
+	}
+	all, err := s.Provider.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing the containers of stack %s: %w", name, err)
+	}
+	var out []Container
+	for _, c := range all {
+		if s.ownsContainer(name, c) {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 // checkProjectOwned refuses unless every container carrying the stack's
 // Compose project name is the stack's own (ownsContainer). It fails closed: a
 // missing Provider or a failed listing means the project cannot be known to

@@ -1,5 +1,5 @@
 import type { components } from "@/lib/api/client";
-import type { ReviewDisk } from "@/routes/tools-migrate/report";
+import type { ImportDisk, ReviewDisk } from "@/routes/tools-migrate/report";
 
 export type MappingRole = components["schemas"]["MigrationProposedRole"];
 
@@ -66,4 +66,64 @@ export function parityProblem(count: number): ParityProblem | null {
     return "none";
   }
   return count > MAX_PARITY_DISKS ? "tooMany" : null;
+}
+
+export interface CachePartition {
+  device: string;
+  byIdName: string;
+  partUuid: string;
+}
+
+export type ImportBlocker = "violations" | "parity" | "noRoles" | "noIdentity" | "needsPartition";
+
+// The mapping the import takes, built as the CLI builds it: a disk is named by
+// WWN, else serial, and a disk left out or ignored is not sent. The cache on the
+// disk this machine boots from is a spare partition of it, named by its by-id
+// link and PARTUUID, never the whole disk.
+export function importRoles(
+  disks: ReviewDisk[],
+  mapping: DiskMapping,
+  partition: CachePartition | null,
+): { roles: ImportDisk[]; blocker: ImportBlocker | null } {
+  const roles: ImportDisk[] = [];
+  let blocker: ImportBlocker | null = null;
+  const block = (next: ImportBlocker): void => {
+    blocker ??= next;
+  };
+  disks.forEach((disk, index) => {
+    const role = mapping[diskKey(disk, index)] ?? null;
+    if (role === null || role === "ignore") {
+      return;
+    }
+    if (diskViolations(disk, role).length > 0) {
+      block("violations");
+      return;
+    }
+    if (role === "cache" && disk.hostBoot === true) {
+      if (partition === null) {
+        block("needsPartition");
+        return;
+      }
+      roles.push({ role, byId: partition.byIdName, partUuid: partition.partUuid });
+      return;
+    }
+    if (disk.wwn) {
+      roles.push({ role, wwn: disk.wwn });
+    } else if (disk.serial) {
+      roles.push({ role, serial: disk.serial });
+    } else {
+      block("noIdentity");
+    }
+  });
+  if (parityProblem(parityCount(disks, mapping)) !== null) {
+    block("parity");
+  }
+  if (roles.length === 0) {
+    block("noRoles");
+  }
+  return { roles, blocker };
+}
+
+export function needsCachePartition(disks: ReviewDisk[], mapping: DiskMapping): ReviewDisk | undefined {
+  return disks.find((disk, index) => mapping[diskKey(disk, index)] === "cache" && disk.hostBoot === true);
 }

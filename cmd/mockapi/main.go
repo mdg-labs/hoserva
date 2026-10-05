@@ -29,15 +29,16 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8090", "loopback listen address (hoservad's own TCP API listens on :8008)")
 	scenario := flag.String("scenario", "healthy", "fixture scenario to serve: "+strings.Join(fixtures.Scenarios, ", "))
+	stopParityInit := flag.Bool("migration-stop-parity-init", false, "make the migration's point of no return stop after the former parity and cache disks are recorded, so the migration reports initializing until it is finished with FINISH PARITY INITIALISATION")
 	flag.Parse()
 
-	if err := run(*addr, *scenario); err != nil {
+	if err := run(*addr, *scenario, *stopParityInit); err != nil {
 		fmt.Fprintln(os.Stderr, "mockapi:", err)
 		os.Exit(1)
 	}
 }
 
-func run(addr, scenario string) error {
+func run(addr, scenario string, stopParityInit bool) error {
 	if !fixtures.Valid(scenario) {
 		return fmt.Errorf("unknown --scenario %q, want one of: %s", scenario, strings.Join(fixtures.Scenarios, ", "))
 	}
@@ -49,6 +50,7 @@ func run(addr, scenario string) error {
 	if err != nil {
 		return fmt.Errorf("load scenario %q: %w", scenario, err)
 	}
+	apiHandler.migration.stopParityInit = stopParityInit
 	eventsH, err := newEventsHandler(scenario)
 	if err != nil {
 		return fmt.Errorf("load scenario %q events: %w", scenario, err)

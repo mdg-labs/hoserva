@@ -415,7 +415,11 @@ func (d MigrationParityDeps) finish(ctx context.Context, out io.Writer) error {
 	}
 	id, err := d.QueueSync(ctx)
 	if err != nil {
-		return fmt.Errorf("the parity initialisation is finished, but the initial sync could not be queued: %w: start it yourself, the array has no parity until it has run", err)
+		return fmt.Errorf("the parity initialisation is finished, but the initial sync could not be queued: %w: the daemon queues it again when it next starts; start it yourself sooner, the array has no parity until it has run", err)
+	}
+	if err := d.Store.ClearInitialSyncOwed(context.WithoutCancel(ctx)); err != nil {
+		_, _ = fmt.Fprintf(out, "the initial sync is queued (job %s), but recording that it is no longer owed failed (%v): the daemon queues another when it next starts\n", id, err)
+		return nil
 	}
 	_, _ = fmt.Fprintf(out, "the initial sync is queued (job %s): until it completes the array has no redundancy\n", id)
 	return nil
@@ -441,6 +445,73 @@ func (d MigrationParityDeps) confirmWritableMount(ctx context.Context, u disk.Mo
 		return fmt.Errorf("%s is still mounted read-only", u.Where)
 	}
 	return nil
+}
+
+// initialSyncHistoryLimit bounds how many succeeded parity jobs
+// QueueOwedInitialSync reads to find a sync that already built parity.
+const initialSyncHistoryLimit = 1000
+
+// QueueOwedInitialSync is the start of the daemon finishing what step 17 owed:
+// a migration that finished (store.ArrayStore.FinishMigration) records that the
+// initial sync is owed until it is queued, so a stop between the two leaves the
+// array without parity and with a record of it. When the sync is owed it is
+// queued through the same scheduler path as the job's own (QueueInitialSync): an
+// ordinary sync, admitted by the scheduler and run through the engine's
+// threshold guard, which no argument skips. It returns the queued job's id, or
+// "" when nothing was owed or a real sync has already succeeded, which builds
+// the parity the initial sync was for and ends what is owed without another.
+//
+// A read of the record that fails is an error, never "nothing owed". A sync the
+// scheduler refuses leaves what is owed in place for the next start; the owed
+// record is cleared only after the scheduler has accepted the sync.
+func QueueOwedInitialSync(ctx context.Context, arrays *store.ArrayStore, s *Scheduler) (string, error) {
+	owed, err := arrays.InitialSyncOwed(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !owed {
+		return "", nil
+	}
+	built, err := s.realSyncSucceeded(ctx)
+	if err != nil {
+		return "", err
+	}
+	if built {
+		if err := arrays.ClearInitialSyncOwed(ctx); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	id, err := QueueInitialSync(s)(ctx)
+	if err != nil {
+		return "", fmt.Errorf("queueing the initial sync the migration owes: %w", err)
+	}
+	if err := arrays.ClearInitialSyncOwed(ctx); err != nil {
+		return id, fmt.Errorf("the initial sync is queued (job %s), but recording that it is no longer owed failed: %w", id, err)
+	}
+	return id, nil
+}
+
+// realSyncSucceeded reports whether a sync that is not a dry run has succeeded.
+func (s *Scheduler) realSyncSucceeded(ctx context.Context) (bool, error) {
+	class, status := ClassParity, StatusSucceeded
+	jobs, err := s.store.List(ctx, ListFilter{Class: &class, Status: &status, Limit: initialSyncHistoryLimit})
+	if err != nil {
+		return false, fmt.Errorf("listing the succeeded syncs: %w", err)
+	}
+	for _, j := range jobs {
+		if j.Type != TypeSync {
+			continue
+		}
+		opts, err := SyncOptsFromParams(j.Params)
+		if err != nil {
+			return false, fmt.Errorf("reading the params of sync job %s: %w", j.ID, err)
+		}
+		if !opts.DryRun {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // QueueInitialSync is MigrationParityDeps.QueueSync over a scheduler: an

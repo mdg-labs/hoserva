@@ -159,6 +159,20 @@ type Invoker interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// CheckMigrationContainer invokes checkMigrationContainer operation.
+	//
+	// The data check of step 20 (doc 05 §4): for each bind mount of the stack's containers whose host
+	// path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory
+	// counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is
+	// `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when
+	// asked and never on a timer, and records that a check ran since the latest start, which
+	// `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check
+	// and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409
+	// `no_container` while the stack has no container (its start has not created one), 409
+	// `parity_not_initialized` and 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+	//
+	// POST /migrate/containers/{name}/check
+	CheckMigrationContainer(ctx context.Context, params CheckMigrationContainerParams) (*MigrationContainerCheck, error)
 	// ConfigureLetsEncrypt invokes configureLetsEncrypt operation.
 	//
 	// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
@@ -170,6 +184,19 @@ type Invoker interface {
 	//
 	// POST /settings/network/lets-encrypt
 	ConfigureLetsEncrypt(ctx context.Context, request *ConfigureLetsEncryptRequest) (*Job, error)
+	// ConfirmMigrationContainer invokes confirmMigrationContainer operation.
+	//
+	// Records that the user read the data check and the started stack sees its data, which offers the next
+	// stack. Refused with 409 `container_not_started` for a stack that was not started, 409
+	// `data_check_required` until `checkMigrationContainer` has run since the latest start, 409
+	// `data_check_failed` when that check found a path that is missing, empty or unreadable unless
+	// `acceptFailedCheck` is true (a container whose data directory is meant to be empty), and 409
+	// `container_not_running` when none of the stack's containers is running (stop the container instead,
+	// to go on without it). Confirming a confirmed stack changes nothing. 409 `parity_not_initialized` and
+	// 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+	//
+	// POST /migrate/containers/{name}/confirm
+	ConfirmMigrationContainer(ctx context.Context, request OptMigrationContainerConfirmRequest, params ConfirmMigrationContainerParams) (*MigrationContainerStack, error)
 	// ConfirmNetworkSettings invokes confirmNetworkSettings operation.
 	//
 	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
@@ -252,6 +279,33 @@ type Invoker interface {
 	//
 	// POST /setup/admin
 	CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error)
+	// CreateMigrationStacks invokes createMigrationStacks operation.
+	//
+	// Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped, through the stack layer
+	// (`createStack`) for each selected template or Compose Manager project of the scan, from the
+	// generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`.
+	// Nothing is started and nothing is written outside the stacks directory. A stack is named after the
+	// template's `<Name>` (or the project's name), lowercased with every character a stack name may not
+	// hold turned into `-`.
+	//
+	// Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is
+	// past its point of no return (the initialisation has finished: an array exists and no import is
+	// pending or part-way through step 17); 400 `invalid_selection` for an empty selection, a name given
+	// twice or two selections that would create one stack name; 404 `template_not_found`,
+	// `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash
+	// Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read;
+	// and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual
+	// action (Q36) unless its selection says `acknowledged`. After that each stack is created on its own
+	// and the answer has one result per selection, in the order they are made (Unraid's autostart order
+	// first): a stack that could not be created says why in `error`, with the code `createStack` gives
+	// (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A
+	// selection whose stack already exists from this migration is `already_created`, so the same request
+	// can be sent again: that includes a stack this request made for the selection whose record was never
+	// written (the daemon stopped between the two), which is recorded now and never made again or deleted.
+	// A stack of that name the migration did not make is `stack_exists`.
+	//
+	// POST /migrate/containers
+	CreateMigrationStacks(ctx context.Context, request *MigrationStacksRequest) (*MigrationStacksCreated, error)
 	// CreateNotificationChannel invokes createNotificationChannel operation.
 	//
 	// A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the
@@ -463,6 +517,7 @@ type Invoker interface {
 	// from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
 	// runs, and with 409 `migration_in_progress` while an import is pending its point of no return
 	// (`startMigrationImport`): the scan's baseline is what the adopted disks are verified against.
+	// `startMigrationImport` with `undo` takes a pending import back, after which this succeeds.
 	//
 	// DELETE /migrate
 	ForgetMigration(ctx context.Context) error
@@ -1074,6 +1129,28 @@ type Invoker interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// ListMigrationContainers invokes listMigrationContainers operation.
+	//
+	// Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the latest scan. `templates`
+	// are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in
+	// Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a
+	// creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so
+	// with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are
+	// the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers
+	// created with `docker run` and their image, which nothing is generated for: they are recreated by
+	// hand. The preview of each (the generated Compose, every warning including the writable-layer
+	// warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are
+	// the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's
+	// autostart order first), each with its `state`; `awaiting` names the started stack that must be
+	// confirmed or stopped before another is started, and `next` the first stack not started yet; a stack
+	// that was started, stopped and never confirmed is offered as `next` only when none of those is left.
+	// `parityInitialized` is false until the migration is past its point of no return
+	// (`initializeMigrationParity`); the operations that create or start something refuse until then. This
+	// reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview`
+	// for a report made before scans converted templates.
+	//
+	// GET /migrate/containers
+	ListMigrationContainers(ctx context.Context) (*MigrationContainers, error)
 	// ListMigrationTemplates invokes listMigrationTemplates operation.
 	//
 	// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
@@ -1745,6 +1822,27 @@ type Invoker interface {
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, request *StartFixRequest) (*Job, error)
+	// StartMigrationContainer invokes startMigrationContainer operation.
+	//
+	// Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack
+	// `createMigrationStacks` created, and records that it was started: the start is recorded before the
+	// job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and
+	// whose job is then not recorded leaves the stack recorded as started with no job. Containers are
+	// started one at a time: this is refused with 409 `container_unconfirmed` while another migrated stack
+	// that was started is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one
+	// whose start job is still running or whose containers are running, and one recorded as started with
+	// no job. When the state of another started stack cannot be read (its start job or its containers),
+	// nothing is queued and the read failure is returned as it is, not as `container_unconfirmed`: 503
+	// `docker_unavailable` when the Docker Engine cannot be reached, 500 otherwise. A failure to record
+	// the start is a 500. Refused before anything is queued with 409 `parity_not_initialized` until the
+	// migration is past its point of no return, 404 `migrated_stack_not_found` for a name the migration
+	// did not create, 409 `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when
+	// the stack was removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack`
+	// answers. The stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a
+	// suggestion. Run `checkMigrationContainer` once the job has succeeded.
+	//
+	// POST /migrate/containers/{name}/start
+	StartMigrationContainer(ctx context.Context, params StartMigrationContainerParams) (*Job, error)
 	// StartMigrationDeviceScan invokes startMigrationDeviceScan operation.
 	//
 	// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
@@ -1788,16 +1886,37 @@ type Invoker interface {
 	// disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
 	// cache only by a spare partition of it; parity is one or two disks, each at least as large as the
 	// largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
-	// is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`.
-	// Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404
-	// `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one
-	// failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report
-	// made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and
-	// 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only
-	// filesystem check immediately before mounting; a disk that changed since the request, or now fails,
-	// is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted,
-	// deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
-	// Nothing is read from the Unraid flash: the import uses the report the scan stored.
+	// is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the
+	// point of no return, which is the same check that step makes: Q18's content-file copies (the parity
+	// disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache
+	// that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that
+	// falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data
+	// disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused
+	// with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm`
+	// is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the
+	// latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for
+	// a report made before the disk table existed, 409 `array_exists` when the array is not a pending
+	// import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its
+	// read-only filesystem check immediately before mounting; a disk that changed since the request, or
+	// now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what
+	// was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded
+	// import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+	//
+	// With `undo` true the request takes back an import that is pending its point of no return instead
+	// (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a
+	// `migration_import` job (topology class) that unmounts the read-only pool and the adopted data disks,
+	// forgets the verify result, deletes the recorded array and removes the generated mount units. `roles`
+	// is then omitted. Nothing is written to any adopted disk, and the former parity and cache disks,
+	// which the import never touched, are untouched. A mount that cannot be released keeps the record and
+	// fails the job, so the request can be made again. The shares and accounts the import created are kept
+	// (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's
+	// report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused,
+	// and the disks can be imported again with a mapping that works. It is the way out of an import whose
+	// layout the point of no return would refuse (Q18). Refused before anything is queued with 409
+	// `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given,
+	// and 409 `no_import_pending` unless an import is pending its point of no return: an array that has
+	// been through it is never touched. Without `undo`, `roles` is required and an empty one is refused
+	// with 400 `invalid_import_roles`.
 	//
 	// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
 	// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its
@@ -3624,6 +3743,158 @@ func (c *Client) sendCheckForUpdate(ctx context.Context) (res *UpdateStatus, err
 	return result, nil
 }
 
+// CheckMigrationContainer invokes checkMigrationContainer operation.
+//
+// The data check of step 20 (doc 05 §4): for each bind mount of the stack's containers whose host
+// path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory
+// counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is
+// `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when
+// asked and never on a timer, and records that a check ran since the latest start, which
+// `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check
+// and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409
+// `no_container` while the stack has no container (its start has not created one), 409
+// `parity_not_initialized` and 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+//
+// POST /migrate/containers/{name}/check
+func (c *Client) CheckMigrationContainer(ctx context.Context, params CheckMigrationContainerParams) (*MigrationContainerCheck, error) {
+	res, err := c.sendCheckMigrationContainer(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendCheckMigrationContainer(ctx context.Context, params CheckMigrationContainerParams) (res *MigrationContainerCheck, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("checkMigrationContainer"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/containers/{name}/check"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CheckMigrationContainerOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/migrate/containers/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/check"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CheckMigrationContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CheckMigrationContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCheckMigrationContainerResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ConfigureLetsEncrypt invokes configureLetsEncrypt operation.
 //
 // Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
@@ -3750,6 +4021,160 @@ func (c *Client) sendConfigureLetsEncrypt(ctx context.Context, request *Configur
 
 	stage = "DecodeResponse"
 	result, err := decodeConfigureLetsEncryptResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConfirmMigrationContainer invokes confirmMigrationContainer operation.
+//
+// Records that the user read the data check and the started stack sees its data, which offers the next
+// stack. Refused with 409 `container_not_started` for a stack that was not started, 409
+// `data_check_required` until `checkMigrationContainer` has run since the latest start, 409
+// `data_check_failed` when that check found a path that is missing, empty or unreadable unless
+// `acceptFailedCheck` is true (a container whose data directory is meant to be empty), and 409
+// `container_not_running` when none of the stack's containers is running (stop the container instead,
+// to go on without it). Confirming a confirmed stack changes nothing. 409 `parity_not_initialized` and
+// 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+//
+// POST /migrate/containers/{name}/confirm
+func (c *Client) ConfirmMigrationContainer(ctx context.Context, request OptMigrationContainerConfirmRequest, params ConfirmMigrationContainerParams) (*MigrationContainerStack, error) {
+	res, err := c.sendConfirmMigrationContainer(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendConfirmMigrationContainer(ctx context.Context, request OptMigrationContainerConfirmRequest, params ConfirmMigrationContainerParams) (res *MigrationContainerStack, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("confirmMigrationContainer"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/containers/{name}/confirm"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ConfirmMigrationContainerOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/migrate/containers/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/confirm"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConfirmMigrationContainerRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ConfirmMigrationContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ConfirmMigrationContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeConfirmMigrationContainerResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -4657,6 +5082,155 @@ func (c *Client) sendCreateFirstAdmin(ctx context.Context, request *CreateFirstA
 
 	stage = "DecodeResponse"
 	result, err := decodeCreateFirstAdminResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CreateMigrationStacks invokes createMigrationStacks operation.
+//
+// Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped, through the stack layer
+// (`createStack`) for each selected template or Compose Manager project of the scan, from the
+// generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`.
+// Nothing is started and nothing is written outside the stacks directory. A stack is named after the
+// template's `<Name>` (or the project's name), lowercased with every character a stack name may not
+// hold turned into `-`.
+//
+// Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is
+// past its point of no return (the initialisation has finished: an array exists and no import is
+// pending or part-way through step 17); 400 `invalid_selection` for an empty selection, a name given
+// twice or two selections that would create one stack name; 404 `template_not_found`,
+// `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash
+// Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read;
+// and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual
+// action (Q36) unless its selection says `acknowledged`. After that each stack is created on its own
+// and the answer has one result per selection, in the order they are made (Unraid's autostart order
+// first): a stack that could not be created says why in `error`, with the code `createStack` gives
+// (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A
+// selection whose stack already exists from this migration is `already_created`, so the same request
+// can be sent again: that includes a stack this request made for the selection whose record was never
+// written (the daemon stopped between the two), which is recorded now and never made again or deleted.
+// A stack of that name the migration did not make is `stack_exists`.
+//
+// POST /migrate/containers
+func (c *Client) CreateMigrationStacks(ctx context.Context, request *MigrationStacksRequest) (*MigrationStacksCreated, error) {
+	res, err := c.sendCreateMigrationStacks(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendCreateMigrationStacks(ctx context.Context, request *MigrationStacksRequest) (res *MigrationStacksCreated, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createMigrationStacks"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/containers"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateMigrationStacksOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/containers"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateMigrationStacksRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CreateMigrationStacksOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CreateMigrationStacksOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateMigrationStacksResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -7502,6 +8076,7 @@ func (c *Client) sendFinishDiskRemoval(ctx context.Context, request *FinishDiskR
 // from it. Succeeds when there is nothing to delete. Refused with 409 `scan_in_progress` while a scan
 // runs, and with 409 `migration_in_progress` while an import is pending its point of no return
 // (`startMigrationImport`): the scan's baseline is what the adopted disks are verified against.
+// `startMigrationImport` with `undo` takes a pending import back, after which this succeeds.
 //
 // DELETE /migrate
 func (c *Client) ForgetMigration(ctx context.Context) error {
@@ -15322,6 +15897,147 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 	return result, nil
 }
 
+// ListMigrationContainers invokes listMigrationContainers operation.
+//
+// Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the latest scan. `templates`
+// are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in
+// Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a
+// creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so
+// with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are
+// the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers
+// created with `docker run` and their image, which nothing is generated for: they are recreated by
+// hand. The preview of each (the generated Compose, every warning including the writable-layer
+// warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are
+// the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's
+// autostart order first), each with its `state`; `awaiting` names the started stack that must be
+// confirmed or stopped before another is started, and `next` the first stack not started yet; a stack
+// that was started, stopped and never confirmed is offered as `next` only when none of those is left.
+// `parityInitialized` is false until the migration is past its point of no return
+// (`initializeMigrationParity`); the operations that create or start something refuse until then. This
+// reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview`
+// for a report made before scans converted templates.
+//
+// GET /migrate/containers
+func (c *Client) ListMigrationContainers(ctx context.Context) (*MigrationContainers, error) {
+	res, err := c.sendListMigrationContainers(ctx)
+	return res, err
+}
+
+func (c *Client) sendListMigrationContainers(ctx context.Context) (res *MigrationContainers, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listMigrationContainers"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/migrate/containers"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListMigrationContainersOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/migrate/containers"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListMigrationContainersOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListMigrationContainersOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListMigrationContainersResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListMigrationTemplates invokes listMigrationTemplates operation.
 //
 // What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
@@ -22861,6 +23577,165 @@ func (c *Client) sendStartFix(ctx context.Context, request *StartFixRequest) (re
 	return result, nil
 }
 
+// StartMigrationContainer invokes startMigrationContainer operation.
+//
+// Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack
+// `createMigrationStacks` created, and records that it was started: the start is recorded before the
+// job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and
+// whose job is then not recorded leaves the stack recorded as started with no job. Containers are
+// started one at a time: this is refused with 409 `container_unconfirmed` while another migrated stack
+// that was started is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one
+// whose start job is still running or whose containers are running, and one recorded as started with
+// no job. When the state of another started stack cannot be read (its start job or its containers),
+// nothing is queued and the read failure is returned as it is, not as `container_unconfirmed`: 503
+// `docker_unavailable` when the Docker Engine cannot be reached, 500 otherwise. A failure to record
+// the start is a 500. Refused before anything is queued with 409 `parity_not_initialized` until the
+// migration is past its point of no return, 404 `migrated_stack_not_found` for a name the migration
+// did not create, 409 `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when
+// the stack was removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack`
+// answers. The stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a
+// suggestion. Run `checkMigrationContainer` once the job has succeeded.
+//
+// POST /migrate/containers/{name}/start
+func (c *Client) StartMigrationContainer(ctx context.Context, params StartMigrationContainerParams) (*Job, error) {
+	res, err := c.sendStartMigrationContainer(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendStartMigrationContainer(ctx context.Context, params StartMigrationContainerParams) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startMigrationContainer"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/migrate/containers/{name}/start"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartMigrationContainerOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/migrate/containers/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/start"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartMigrationContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartMigrationContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartMigrationContainerResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // StartMigrationDeviceScan invokes startMigrationDeviceScan operation.
 //
 // The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
@@ -23026,16 +23901,37 @@ func (c *Client) sendStartMigrationDeviceScan(ctx context.Context, request *Star
 // disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
 // cache only by a spare partition of it; parity is one or two disks, each at least as large as the
 // largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
-// is not another data disk's. The Unraid USB stick in any role is refused with 409 `unraid_stick`.
-// Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404
-// `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one
-// failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report
-// made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and
-// 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only
-// filesystem check immediately before mounting; a disk that changed since the request, or now fails,
-// is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted,
-// deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again.
-// Nothing is read from the Unraid flash: the import uses the report the scan stored.
+// is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the
+// point of no return, which is the same check that step makes: Q18's content-file copies (the parity
+// disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache
+// that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that
+// falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data
+// disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused
+// with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm`
+// is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the
+// latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for
+// a report made before the disk table existed, 409 `array_exists` when the array is not a pending
+// import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its
+// read-only filesystem check immediately before mounting; a disk that changed since the request, or
+// now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what
+// was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded
+// import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+//
+// With `undo` true the request takes back an import that is pending its point of no return instead
+// (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a
+// `migration_import` job (topology class) that unmounts the read-only pool and the adopted data disks,
+// forgets the verify result, deletes the recorded array and removes the generated mount units. `roles`
+// is then omitted. Nothing is written to any adopted disk, and the former parity and cache disks,
+// which the import never touched, are untouched. A mount that cannot be released keeps the record and
+// fails the job, so the request can be made again. The shares and accounts the import created are kept
+// (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's
+// report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused,
+// and the disks can be imported again with a mapping that works. It is the way out of an import whose
+// layout the point of no return would refuse (Q18). Refused before anything is queued with 409
+// `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given,
+// and 409 `no_import_pending` unless an import is pending its point of no return: an array that has
+// been through it is never touched. Without `undo`, `roles` is required and an empty one is refused
+// with 400 `invalid_import_roles`.
 //
 // Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
 // 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its

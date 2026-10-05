@@ -365,13 +365,18 @@ CREATE TABLE backup_recipient (
 -- not array_disks rows because that table holds a mounted filesystem's UUID,
 -- unique across the array, and a parity disk of a one-data-disk array carries
 -- a copy of the data disk's.
+-- initial_sync_owed is 1 from the moment the point of no return finishes
+-- (written in the same statement that clears migration_recorded) until the
+-- initial sync has been queued: a daemon that stopped in between queues it at
+-- its next start, so the array never stays without parity unnoticed (doc 05 §5).
 CREATE TABLE array_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     create_policy TEXT NOT NULL,
     min_free_space TEXT NOT NULL,
     created_at TEXT NOT NULL,
     migration_pending INTEGER NOT NULL DEFAULT 0 CHECK (migration_pending IN (0, 1)),
-    migration_recorded TEXT NOT NULL DEFAULT ''
+    migration_recorded TEXT NOT NULL DEFAULT '',
+    initial_sync_owed INTEGER NOT NULL DEFAULT 0 CHECK (initial_sync_owed IN (0, 1))
 ) STRICT;
 
 -- One assigned disk per row. role_index is 1-based for the documented

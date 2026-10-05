@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
 	"sort"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
+	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -198,6 +200,88 @@ func wireMigrationParity(handler *api.Handler, registry *job.Registry, scheduler
 		QueueSync: job.QueueInitialSync(scheduler),
 	}))
 	return nil
+}
+
+// wireMigrationContainers is what main.go calls, after wireMigrationParity, to
+// make Phase D's container steps reachable (doc 05 §4 steps 19 and 20): the
+// migrator creates the user's stacks, starts them one at a time and checks that
+// each sees its data through the Compose stack layer wireStacks gave the
+// handler, and only once the migration is past its point of no return. The stack
+// start itself is the stack_start job wireStacks registered. It fails when
+// wireMigration or wireStacks has not run, so a missing piece is an error
+// instead of operations that answer 501.
+func wireMigrationContainers(handler *api.Handler, arrays *store.ArrayStore) error {
+	if handler.Migration == nil {
+		return errors.New("the migration session is not wired")
+	}
+	if handler.Stacks == nil {
+		return errors.New("the Compose stack layer is not wired")
+	}
+	if handler.ArrayStore != arrays {
+		return errors.New("the handler's array store is not the one the migration records the array in")
+	}
+	handler.Migration.Stacks = handler.Stacks
+	handler.Migration.Initialized = migrationInitialized(arrays)
+	return nil
+}
+
+// migrationInitialized is whether the parity initialisation has been confirmed:
+// an array exists and no migration is pending or part-way through its point of
+// no return (store.ArrayStore.MigrationUnfinished), the same question the
+// scheduler asks before it admits a parity, array-write or topology job. A
+// record that cannot be read is an error, not an answer.
+func migrationInitialized(arrays *store.ArrayStore) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		if _, _, err := arrays.GetArray(ctx); err != nil {
+			if errors.Is(err, store.ErrNoArray) {
+				return false, nil
+			}
+			return false, fmt.Errorf("reading the array: %w", err)
+		}
+		unfinished, err := arrays.MigrationUnfinished(ctx)
+		if err != nil {
+			return false, err
+		}
+		return !unfinished, nil
+	}
+}
+
+// eventPublisher is the notification service's one publisher this file uses.
+type eventPublisher interface {
+	Publish(ctx context.Context, event notify.EventType, title, message string) error
+}
+
+// queueOwedInitialSync is what main.go calls once the parity engine is wired,
+// and what every successful array start calls again: a migration that finished
+// its point of no return but stopped before the initial sync was queued owes
+// that sync (store.ArrayStore.InitialSyncOwed), and the array has no parity
+// until it has run (doc 05 §5). The sync goes through the scheduler like any
+// other and runs through the engine's threshold guard. A sync that cannot be
+// queued (a persisted `array stop` at daemon start, the sync job not registered)
+// is logged and published as an alert, and stays owed for the array start or
+// daemon start after; it never stops the daemon starting.
+func queueOwedInitialSync(ctx context.Context, arrays *store.ArrayStore, scheduler *job.Scheduler, notifier eventPublisher) {
+	id, err := job.QueueOwedInitialSync(ctx, arrays, scheduler)
+	if err != nil {
+		log.Printf("hoservad: the initial sync the Unraid migration owes was not queued: %v", err)
+		if perr := notifier.Publish(ctx, notify.EventSyncFailed, "The first parity sync could not be started",
+			fmt.Sprintf("The migration finished, but the first sync that builds parity could not be queued (%v). The array has no parity until a sync has run: it is queued again when the array is started or Hoserva restarts, or start one yourself.", err)); perr != nil {
+			log.Printf("hoservad: publishing the alert for the owed initial sync: %v", perr)
+		}
+		return
+	}
+	if id != "" {
+		log.Printf("hoservad: queued the initial sync the Unraid migration owed (job %s)", id)
+	}
+}
+
+// owedInitialSyncAfterStart is the ArraySequence.AfterStart hook of every
+// sequence the daemon builds: an array started after the daemon came up with a
+// persisted `array stop` queues the initial sync that start could not.
+func owedInitialSyncAfterStart(arrays *store.ArrayStore, scheduler *job.Scheduler, notifier eventPublisher) func(context.Context) {
+	return func(ctx context.Context) {
+		queueOwedInitialSync(ctx, arrays, scheduler, notifier)
+	}
 }
 
 // completeMigrationShares applies what the import deferred through the share

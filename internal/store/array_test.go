@@ -807,3 +807,61 @@ func TestArrayStore_RecordParityInit_NeverTouchesAnArrayThatIsNotAPendingMigrati
 		t.Errorf("MigrationUnfinished of an ordinary array = %v, %v", unfinished, err)
 	}
 }
+
+// The initial sync a finished migration owes is recorded by the statement that
+// finishes it, so no stop between the two can leave a finished migration with
+// nothing owed; it is not owed before, on an ordinary array, or with no array,
+// and it stays owed until it is cleared.
+func TestArrayStore_FinishMigrationRecordsTheInitialSyncOwedInTheSameStatement(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	if owed, err := st.InitialSyncOwed(ctx); err != nil || owed {
+		t.Fatalf("InitialSyncOwed with no array = %v, %v, want false", owed, err)
+	}
+	if err := st.ClearInitialSyncOwed(ctx); err != nil {
+		t.Fatalf("ClearInitialSyncOwed with no array: %v", err)
+	}
+	disks, recorded := pendingArrayRows()
+	if err := st.PutPendingArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordParityInit(ctx, parityInitRows()); err != nil {
+		t.Fatal(err)
+	}
+	if owed, err := st.InitialSyncOwed(ctx); err != nil || owed {
+		t.Fatalf("InitialSyncOwed before FinishMigration = %v, %v, want false", owed, err)
+	}
+
+	if err := st.FinishMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if owed, err := st.InitialSyncOwed(ctx); err != nil || !owed {
+		t.Fatalf("InitialSyncOwed after FinishMigration = %v, %v, want true", owed, err)
+	}
+	if err := st.FinishMigration(ctx); !errors.Is(err, ErrMigrationNotFinishing) {
+		t.Fatalf("a second FinishMigration = %v", err)
+	}
+	if owed, _ := st.InitialSyncOwed(ctx); !owed {
+		t.Error("a refused second FinishMigration cleared the owed sync")
+	}
+
+	if err := st.ClearInitialSyncOwed(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if owed, err := st.InitialSyncOwed(ctx); err != nil || owed {
+		t.Errorf("InitialSyncOwed after ClearInitialSyncOwed = %v, %v, want false", owed, err)
+	}
+}
+
+func TestArrayStore_AnOrdinaryArrayOwesNoInitialSync(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	if err := st.PutArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, []ArrayDisk{
+		{Role: ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "u", Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if owed, err := st.InitialSyncOwed(ctx); err != nil || owed {
+		t.Errorf("InitialSyncOwed of an ordinary array = %v, %v, want false", owed, err)
+	}
+}

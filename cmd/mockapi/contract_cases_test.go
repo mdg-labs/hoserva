@@ -4228,6 +4228,38 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartMigrationImport",
+		name: "an_undo_with_nothing_pending",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "an_undo_without_confirmation",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Undo: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "an_undo_that_carries_a_mapping",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true), Roles: []apiv1.MigrationImportDisk{{Role: apiv1.MigrationImportRoleData, Serial: apiv1.NewOptString("X")}}})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationImport",
+		name: "no_mapping",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true})
+			return err
+		},
+	},
+	{
 		op:   "StartMigrationVerify",
 		name: "refused_before_an_import",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -4393,6 +4425,277 @@ var contractCases = []contractCase{
 		name: "no_report_before_a_scan",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-photos.xml"})
+			return err
+		},
+	},
+	// --- Phase D: the stacks of the migration's containers. The rig's
+	// production side reads the same array record hoservad does, so a scenario
+	// with an array is past the point of no return and fresh-install is not. ---
+	{
+		op:   "ListMigrationContainers",
+		name: "valid_after_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.ListMigrationContainers(ctx)
+			return err
+		},
+	},
+	{
+		op:   "ListMigrationContainers",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListMigrationContainers(ctx)
+			return err
+		},
+	},
+	{
+		op:       "CreateMigrationStacks",
+		name:     "refused_before_the_parity_initialisation",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection("my-photos.xml"))
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "valid_creates_a_clean_template",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			res, err := h.CreateMigrationStacks(ctx, contractStackSelection("my-photos.xml"))
+			if err != nil {
+				return err
+			}
+			if len(res.Results) != 1 || res.Results[0].Status != apiv1.MigrationStackResultStatusCreated {
+				return fmt.Errorf("results = %+v, want the one stack created", res.Results)
+			}
+			return nil
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "an_empty_selection",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection())
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "the_same_template_twice",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection("my-photos.xml", "my-photos.xml"))
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection("my-photos.xml"))
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "unknown_template_after_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection("nothing.xml"))
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "warnings_that_are_not_acknowledged",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection("my-photos.xml", "my-gateway.xml"))
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "valid_creates_a_template_with_acknowledged_warnings",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			req := contractStackSelection("my-gateway.xml")
+			req.Items[0].Acknowledged = apiv1.NewOptBool(true)
+			_, err := h.CreateMigrationStacks(ctx, req)
+			return err
+		},
+	},
+	{
+		op:   "CreateMigrationStacks",
+		name: "source_unavailable_after_a_scan_of_the_stick",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StartMigrationDeviceScan(ctx, &apiv1.StartMigrationDeviceScanReq{Device: mockFlashDevice}); err != nil {
+				return err
+			}
+			if err := contractAwaitScanned(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.CreateMigrationStacks(ctx, contractStackSelection("my-photos.xml"))
+			return err
+		},
+	},
+	{
+		op:       "StartMigrationContainer",
+		name:     "refused_before_the_parity_initialisation",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationContainer",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationContainer",
+		name: "a_stack_the_migration_did_not_create",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "nothing"})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationContainer",
+		name: "valid_starts_a_created_stack",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractCreateMigrationStack(ctx, h, "my-photos.xml"); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "StartMigrationContainer",
+		name: "refused_while_another_started_stack_is_unconfirmed",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			req := contractStackSelection("my-photos.xml", "my-gateway.xml")
+			req.Items[1].Acknowledged = apiv1.NewOptBool(true)
+			if _, err := h.CreateMigrationStacks(ctx, req); err != nil {
+				return err
+			}
+			if _, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"}); err != nil {
+				return err
+			}
+			_, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "gateway"})
+			return err
+		},
+	},
+	{
+		op:       "CheckMigrationContainer",
+		name:     "refused_before_the_parity_initialisation",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "CheckMigrationContainer",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "CheckMigrationContainer",
+		name: "a_stack_the_migration_did_not_create",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "nothing"})
+			return err
+		},
+	},
+	{
+		op:   "CheckMigrationContainer",
+		name: "a_stack_that_was_not_started",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractCreateMigrationStack(ctx, h, "my-photos.xml"); err != nil {
+				return err
+			}
+			_, err := h.CheckMigrationContainer(ctx, apiv1.CheckMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:       "ConfirmMigrationContainer",
+		name:     "refused_before_the_parity_initialisation",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "ConfirmMigrationContainer",
+		name: "no_report_before_a_scan",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "ConfirmMigrationContainer",
+		name: "a_stack_the_migration_did_not_create",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractScanMigrationTemplates(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "nothing"})
+			return err
+		},
+	},
+	{
+		op:   "ConfirmMigrationContainer",
+		name: "a_stack_that_was_not_started",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractCreateMigrationStack(ctx, h, "my-photos.xml"); err != nil {
+				return err
+			}
+			_, err := h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
+			return err
+		},
+	},
+	{
+		op:   "ConfirmMigrationContainer",
+		name: "a_stack_with_no_data_check",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if err := contractCreateMigrationStack(ctx, h, "my-photos.xml"); err != nil {
+				return err
+			}
+			if _, err := h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "photos"}); err != nil {
+				return err
+			}
+			_, err := h.ConfirmMigrationContainer(ctx, apiv1.OptMigrationContainerConfirmRequest{}, apiv1.ConfirmMigrationContainerParams{Name: "photos"})
 			return err
 		},
 	},
@@ -4837,4 +5140,41 @@ func contractPreviewBareMetal(ctx context.Context, h apiv1.Handler, extra ...str
 		return nil, fmt.Errorf("building the archive: %w", err)
 	}
 	return h.PreviewConfigImport(ctx, &apiv1.PreviewConfigImportReq{Archive: ht.MultipartFile{File: bytes.NewReader(archive)}})
+}
+
+func contractStackSelection(names ...string) *apiv1.MigrationStacksRequest {
+	req := &apiv1.MigrationStacksRequest{Items: []apiv1.MigrationStackSelection{}}
+	for _, n := range names {
+		req.Items = append(req.Items, apiv1.MigrationStackSelection{Name: n})
+	}
+	return req
+}
+
+// contractScanMigrationTemplates scans a Flash Backup whose templates are the
+// mock's own: photos converts cleanly and gateway, on a custom network, with a
+// warning.
+func contractScanMigrationTemplates(ctx context.Context, h apiv1.Handler) error {
+	zipData := contractFlashZip("7.3.2", func(f map[string]string) {
+		f["config/plugins/dockerMan/templates-user/my-photos.xml"] = `<Container version="2"><Name>photos</Name><Repository>example/photos:latest</Repository></Container>`
+		f["config/plugins/dockerMan/templates-user/my-gateway.xml"] = `<Container version="2"><Name>gateway</Name><Repository>example/gateway:latest</Repository><Network>br0</Network></Container>`
+	})
+	if _, err := h.StartMigrationScan(ctx, contractScanRequest(zipData, false)); err != nil {
+		return err
+	}
+	return contractAwaitScanned(ctx, h)
+}
+
+// contractCreateMigrationStack scans and creates the stack of one template.
+func contractCreateMigrationStack(ctx context.Context, h apiv1.Handler, template string) error {
+	if err := contractScanMigrationTemplates(ctx, h); err != nil {
+		return err
+	}
+	res, err := h.CreateMigrationStacks(ctx, contractStackSelection(template))
+	if err != nil {
+		return err
+	}
+	if len(res.Results) != 1 || res.Results[0].Status != apiv1.MigrationStackResultStatusCreated {
+		return fmt.Errorf("creating %s: %+v", template, res.Results)
+	}
+	return nil
 }

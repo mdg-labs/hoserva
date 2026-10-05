@@ -57,6 +57,8 @@ type parityHarness struct {
 	syncErr   error
 	engine    *parity.FakeEngine
 	syncJobs  []string
+	// queueProbe, when set, runs just before the sync is queued.
+	queueProbe func(ctx context.Context)
 }
 
 // loggingProvider is the fake provider that notes each accepted format in the
@@ -285,6 +287,9 @@ func (h *parityHarness) deps() MigrationParityDeps {
 		},
 		QueueSync: func(ctx context.Context) (string, error) {
 			h.note("queue-sync")
+			if h.queueProbe != nil {
+				h.queueProbe(ctx)
+			}
 			if h.syncErr != nil {
 				return "", h.syncErr
 			}
@@ -753,4 +758,216 @@ func TestMigrationParity_ALayoutThatCannotBeRenderedIsRefusedBeforeAnythingIsEra
 		t.Fatalf("job ended %s: %q", done.Status, done.ErrorMessage)
 	}
 	h.assertNoFormat("a layout that cannot be rendered")
+}
+
+// restart is the daemon after a stop: a scheduler with nothing in memory over
+// the same array record, with the sync job registered as main.go registers it
+// once snapraid.conf exists and the migration gate set.
+func (h *parityHarness) restart() *Scheduler {
+	h.t.Helper()
+	s := newTestScheduler(h.t)
+	if err := s.RecoverFromRestart(context.Background()); err != nil {
+		h.t.Fatal(err)
+	}
+	s.SetMigrationPending(h.st.MigrationUnfinished)
+	s.registry.Register(TypeSync, false, RunSync(h.engine))
+	h.t.Cleanup(func() {
+		jobs, _ := s.store.List(context.Background(), ListFilter{})
+		for _, j := range jobs {
+			_, _ = s.Await(context.Background(), j.ID)
+		}
+	})
+	return s
+}
+
+func (h *parityHarness) assertOwed(when string, want bool) {
+	h.t.Helper()
+	if owed, err := h.st.InitialSyncOwed(context.Background()); err != nil || owed != want {
+		h.t.Errorf("%s: InitialSyncOwed = %v, %v, want %v", when, owed, err, want)
+	}
+}
+
+// The initial sync is owed from the moment the migration reads finished until it
+// is queued, and the job that queues it clears what is owed.
+func TestMigrationParity_TheInitialSyncIsOwedUntilItIsQueued(t *testing.T) {
+	h := newParityHarness(t)
+	var owedWhenQueued bool
+	h.queueProbe = func(ctx context.Context) {
+		owed, err := h.st.InitialSyncOwed(ctx)
+		owedWhenQueued = err == nil && owed
+	}
+	h.assertOwed("before the point of no return", false)
+	if done := h.run(h.confirmation()); done.Status != StatusSucceeded {
+		t.Fatalf("job ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	if !owedWhenQueued {
+		t.Error("the sync was queued while nothing recorded it as owed: a stop right there would lose it")
+	}
+	h.assertOwed("after the sync was queued", false)
+}
+
+// A stop between FinishMigration and the queued sync (an error from the queue
+// leaves exactly the state a stopped daemon would, as nothing after
+// FinishMigration writes the record) leaves the array without a sync queued and
+// the migration finished, so the migration gate no longer holds anything back.
+// The next start queues the initial sync: an ordinary sync that runs through the
+// engine's threshold guard.
+func TestMigrationParity_AStopBeforeTheSyncIsQueuedIsFinishedByTheNextStart(t *testing.T) {
+	h := newParityHarness(t)
+	h.syncErr = errors.New("injected: the daemon stopped before the sync was queued")
+	if done := h.run(h.confirmation()); done.Status != StatusFailed {
+		t.Fatalf("job ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	ctx := context.Background()
+	if unfinished, _ := h.st.MigrationUnfinished(ctx); unfinished {
+		t.Fatal("the migration is unfinished: the scenario is a finished migration with no sync queued")
+	}
+	if len(h.syncJobs) != 0 {
+		t.Fatalf("a sync was queued: %v", h.syncJobs)
+	}
+	h.assertOwed("after the stop", true)
+
+	s := h.restart()
+	h.engine.ScriptGuardBlock(parity.GuardResult{Blocked: true, Triggers: []parity.GuardTrigger{parity.TriggerZeroFiles}})
+	id, err := QueueOwedInitialSync(ctx, h.st, s)
+	if err != nil || id == "" {
+		t.Fatalf("QueueOwedInitialSync = %q, %v, want the sync queued", id, err)
+	}
+	h.assertOwed("after the next start queued it", false)
+	sj, err := s.Await(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sj.Type != TypeSync {
+		t.Fatalf("queued a %s, want a sync", sj.Type)
+	}
+	if opts, err := SyncOptsFromParams(sj.Params); err != nil || opts.Confirm || opts.DryRun {
+		t.Errorf("sync params = %+v, %v, want a real sync that confirms no guard block", opts, err)
+	}
+	if sj.Status != StatusFailed || !strings.Contains(sj.ErrorMessage, "threshold guard blocked the sync") {
+		t.Errorf("the sync ended %s: %q, want it stopped by the threshold guard, never run around it", sj.Status, sj.ErrorMessage)
+	}
+
+	if again, err := QueueOwedInitialSync(ctx, h.st, s); err != nil || again != "" {
+		t.Errorf("a second start queued %q, %v: nothing is owed any more", again, err)
+	}
+}
+
+// When the guard lets the sync through, the one the next start queued is a real
+// sync of the engine.
+func TestMigrationParity_TheSyncTheNextStartQueuesRunsTheEngine(t *testing.T) {
+	h := newParityHarness(t)
+	h.syncErr = errors.New("injected: stopped")
+	h.run(h.confirmation())
+	s := h.restart()
+	ctx := context.Background()
+	id, err := QueueOwedInitialSync(ctx, h.st, s)
+	if err != nil || id == "" {
+		t.Fatalf("QueueOwedInitialSync = %q, %v", id, err)
+	}
+	if sj, err := s.Await(ctx, id); err != nil || sj.Status != StatusSucceeded {
+		t.Fatalf("the sync = %+v, %v", sj, err)
+	}
+}
+
+// A start that cannot queue the sync keeps what is owed, says so, and a later
+// start queues it.
+func TestMigrationParity_AStartThatCannotQueueTheSyncKeepsItOwed(t *testing.T) {
+	h := newParityHarness(t)
+	h.syncErr = errors.New("injected: stopped")
+	h.run(h.confirmation())
+	ctx := context.Background()
+
+	bare := newTestScheduler(t)
+	id, err := QueueOwedInitialSync(ctx, h.st, bare)
+	if err == nil || id != "" || !errors.Is(err, ErrJobTypeNotRegistered) {
+		t.Fatalf("QueueOwedInitialSync with no sync job registered = %q, %v, want ErrJobTypeNotRegistered", id, err)
+	}
+	h.assertOwed("after a refused queue", true)
+
+	s := h.restart()
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := QueueOwedInitialSync(ctx, h.st, s); !errors.Is(err, ErrMaintenanceMode) || id != "" {
+		t.Fatalf("QueueOwedInitialSync in maintenance mode = %q, %v, want ErrMaintenanceMode", id, err)
+	}
+	h.assertOwed("after a start in maintenance mode", true)
+	s.ExitMaintenance()
+
+	id, err = QueueOwedInitialSync(ctx, h.st, s)
+	if err != nil || id == "" {
+		t.Fatalf("the next start: %q, %v", id, err)
+	}
+	h.assertOwed("after the retry", false)
+}
+
+// A record that cannot be read is not an array that owes nothing.
+func TestMigrationParity_AnUnreadableRecordIsNotNothingOwed(t *testing.T) {
+	h := newParityHarness(t)
+	db := newTestDB(t)
+	st := store.NewArrayStore(db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s := h.restart()
+	if id, err := QueueOwedInitialSync(context.Background(), st, s); err == nil || id != "" {
+		t.Errorf("QueueOwedInitialSync over a closed database = %q, %v, want an error and no sync", id, err)
+	}
+}
+
+// Parity built another way ends what is owed with no second sync: a person who
+// started the sync themselves after a failed queue is not given another by a
+// later restart. A dry run, and a sync that did not succeed, build nothing.
+func TestMigrationParity_ASyncAPersonRanEndsWhatIsOwed(t *testing.T) {
+	ctx := context.Background()
+	submit := func(s *Scheduler, p SyncParams) *Job {
+		t.Helper()
+		body, _ := json.Marshal(p)
+		j, err := s.Submit(ctx, TypeSync, nil, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done, err := s.Await(ctx, j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return done
+	}
+	owed := func(t *testing.T) (*parityHarness, *Scheduler) {
+		h := newParityHarness(t)
+		h.syncErr = errors.New("injected: stopped")
+		h.run(h.confirmation())
+		return h, h.restart()
+	}
+
+	t.Run("a succeeded sync", func(t *testing.T) {
+		h, s := owed(t)
+		if done := submit(s, SyncParams{}); done.Status != StatusSucceeded {
+			t.Fatalf("sync ended %s", done.Status)
+		}
+		if id, err := QueueOwedInitialSync(ctx, h.st, s); err != nil || id != "" {
+			t.Errorf("QueueOwedInitialSync = %q, %v, want no second sync", id, err)
+		}
+		h.assertOwed("after a sync parity was built by", false)
+	})
+	t.Run("a dry run", func(t *testing.T) {
+		h, s := owed(t)
+		if done := submit(s, SyncParams{DryRun: true}); done.Status != StatusSucceeded {
+			t.Fatalf("dry run ended %s", done.Status)
+		}
+		if id, err := QueueOwedInitialSync(ctx, h.st, s); err != nil || id == "" {
+			t.Errorf("QueueOwedInitialSync = %q, %v, want the sync queued: a dry run builds no parity", id, err)
+		}
+	})
+	t.Run("a blocked sync", func(t *testing.T) {
+		h, s := owed(t)
+		h.engine.ScriptGuardBlock(parity.GuardResult{Blocked: true, Triggers: []parity.GuardTrigger{parity.TriggerZeroFiles}})
+		if done := submit(s, SyncParams{}); done.Status != StatusFailed {
+			t.Fatalf("sync ended %s", done.Status)
+		}
+		if id, err := QueueOwedInitialSync(ctx, h.st, s); err != nil || id == "" {
+			t.Errorf("QueueOwedInitialSync = %q, %v, want the sync queued: a sync the guard stopped builds no parity", id, err)
+		}
+	})
 }

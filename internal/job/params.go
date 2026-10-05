@@ -484,10 +484,12 @@ func decodeMigrationScanParams(params []byte) (MigrationScanParams, error) {
 // disk-role mapping the user confirmed, keyed by serial or WWN, and the plan
 // it resolved to when the request was accepted. The job resolves the mapping
 // again from a fresh inventory and refuses when that is not the confirmed
-// plan.
+// plan. Undo asks the job to take a pending adoption back instead
+// (undoMigrationImport); it carries no mapping.
 type MigrationImportParams struct {
-	Assignments []disk.AdoptionAssignment `json:"assignments"`
+	Assignments []disk.AdoptionAssignment `json:"assignments,omitempty"`
 	Plan        disk.AdoptionPlan         `json:"plan"`
+	Undo        bool                      `json:"undo,omitempty"`
 }
 
 func decodeMigrationImportParams(params []byte) (MigrationImportParams, error) {
@@ -497,6 +499,12 @@ func decodeMigrationImportParams(params []byte) (MigrationImportParams, error) {
 	var p MigrationImportParams
 	if err := decodeJSON(params, &p); err != nil {
 		return MigrationImportParams{}, err
+	}
+	if p.Undo {
+		if len(p.Assignments) != 0 {
+			return MigrationImportParams{}, fmt.Errorf("job: migration_import params for an undo carry no disk-role mapping")
+		}
+		return p, nil
 	}
 	if len(p.Assignments) == 0 {
 		return MigrationImportParams{}, fmt.Errorf("job: migration_import params require the disk-role mapping")

@@ -111,6 +111,18 @@ async function goToRoleStep(): Promise<void> {
   await waitFor(() => expect(screen.getByText("Role assignment")).toBeInTheDocument());
 }
 
+async function chooseRole(device: string, label: string): Promise<void> {
+  const row = screen.getByText(device).closest("tr");
+  const trigger = row?.querySelector('[data-slot="select-trigger"]');
+  expect(trigger).not.toBeNull();
+  fireEvent.click(trigger as Element);
+  const option = await screen.findByRole("option", { name: label });
+  fireEvent.pointerDown(option, { pointerType: "mouse" });
+  fireEvent.pointerUp(option, { pointerType: "mouse" });
+  fireEvent.click(option);
+  await waitFor(() => expect(trigger).toHaveTextContent(label.toLowerCase()));
+}
+
 describe("storage setup validation", () => {
   it("refuses more than two parity disks", () => {
     const disks = [DISK_SDB, DISK_SDC, { ...DISK_SMALL, device: "/dev/sdf" }, { ...DISK_SMALL, device: "/dev/sdg" }];
@@ -304,6 +316,25 @@ describe("StorageSetupPage", () => {
 
     expect(screen.getByText("Fix these problems before continuing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("shows the role error under the disk's role picker and marks the picker invalid", async () => {
+    mockFreshInstall([DISK_SMALL, DISK_SDB]);
+    await goToRoleStep();
+    await chooseRole("/dev/sdb", "Data");
+    await chooseRole("/dev/sdd", "Parity");
+
+    const message = "Each parity disk must be at least as large as the largest data disk.";
+    const row = screen.getByText("/dev/sdd").closest("tr");
+    expect(row).not.toBeNull();
+    const errorInRow = row?.querySelector('[data-slot="field-error"]');
+    expect(errorInRow).toHaveTextContent(message);
+    expect(errorInRow).toBeVisible();
+    expect(row?.querySelector('[data-slot="select-trigger"]')).toHaveAttribute("data-invalid");
+
+    const healthyRow = screen.getByText("/dev/sdb").closest("tr");
+    expect(healthyRow?.querySelector('[data-slot="field-error"]')).toBeNull();
+    expect(healthyRow?.querySelector('[data-slot="select-trigger"]')).not.toHaveAttribute("data-invalid");
   });
 
   it("shows the boot disk's spare partition as a cache-only choice", async () => {

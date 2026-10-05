@@ -254,6 +254,9 @@ var contractNoValidCase = map[string]string{
 	"InitializeMigrationParity": "the point of no return is accepted only for an adopted array whose latest verify passed and whose typed confirmation names the disks the plan erases: the rig's production side has no adoption, so no confirmation is valid on both; the refusals before an import are compared, and each side's own gate and confirmation are tested in its own package (internal/migrate, internal/api, cmd/mockapi)",
 	"StartMigrationVerify":      "a verify is accepted only while an adopted array is pending its point of no return: the rig's production side has no adoption (it would need mounted disks and a pool), and the mock's import is a canned one, so none is valid on both",
 
+	"CheckMigrationContainer":   "a data check is accepted only for a started stack with a container, which production reads from the Docker Engine and the rig's fake has none of for a stack it just created (no compose up runs); the refusals are compared, and each side's own check is tested in its own package (internal/migrate, cmd/hoservad, cmd/mockapi)",
+	"ConfirmMigrationContainer": "a confirmation is accepted only after a data check of a started stack's containers, which production reads from the Docker Engine; the refusals before it are compared, and each side's own confirmation is tested in its own package (internal/migrate, cmd/hoservad, cmd/mockapi)",
+
 	"FinishDiskRemoval": "needs an evacuation job to actually run to completion and mark the disk evacuated (job.RunEvacuation); this rig's job types run no-op (job-timing state, out of scope)",
 
 	// GetJobLog's own log file is created by Scheduler.runJob, which

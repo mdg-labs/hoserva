@@ -920,6 +920,18 @@ export function startMigrationDeviceScan(device: string) {
   return hoservaClient.POST("/migrate/scan/device", { body: { device } });
 }
 
+export function startMigrationImport(body: components["schemas"]["MigrationImportRequest"]) {
+  return hoservaClient.POST("/migrate/import", { body });
+}
+
+export function startMigrationVerify() {
+  return hoservaClient.POST("/migrate/verify");
+}
+
+export function initializeMigrationParity(confirmation: string) {
+  return hoservaClient.POST("/migrate/initialize-parity", { body: { confirmation } });
+}
+
 // The report is a Markdown document, not JSON: it is read as text, and an
 // error answer is still parsed as the API's JSON error.
 export function getMigrationReport(signal?: AbortSignal) {

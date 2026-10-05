@@ -20,7 +20,7 @@ export function TypedConfirm({
   items: ReactNode[];
 }): React.ReactElement {
   const { t } = useTranslation();
-  const matches = value === phrase;
+  const mismatched = value.length > 0 && value !== phrase;
 
   return (
     <div className="flex flex-col gap-4">
@@ -33,11 +33,11 @@ export function TypedConfirm({
           <li key={index}>{item}</li>
         ))}
       </ul>
-      <Field>
+      <Field invalid={mismatched}>
         <FieldLabel>{t("typedConfirm.label")}</FieldLabel>
         <Input value={value} onChange={(event) => onChange(event.target.value)} />
         <FieldDescription>{t("typedConfirm.hint", { phrase })}</FieldDescription>
-        {value.length > 0 && !matches ? <FieldError>{t("typedConfirm.mismatch")}</FieldError> : null}
+        <FieldError match={mismatched}>{t("typedConfirm.mismatch")}</FieldError>
       </Field>
     </div>
   );

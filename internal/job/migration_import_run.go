@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
@@ -18,6 +19,34 @@ import (
 // migrationImportUndoTimeout bounds the undo of a failed adoption, which runs
 // without the request's or the job's own cancellation.
 const migrationImportUndoTimeout = 2 * time.Minute
+
+var (
+	// ErrAdoptionLayout is the refusal of an adoption whose layout snapraid.conf
+	// cannot be rendered for (Q18's content-file copies, parity disks + 2, on
+	// distinct devices): the point of no return would refuse it, after the user
+	// has been told the import worked.
+	ErrAdoptionLayout = errors.New("the array cannot be configured for SnapRAID")
+	// ErrMigrationUndoNotPending is returned when the undo of an import is asked
+	// for and the array is not a pending import's adoption: past the point of no
+	// return its parity and cache disks are the array's own.
+	ErrMigrationUndoNotPending = errors.New("there is no pending Unraid import to undo: the array is not an adoption waiting for its point of no return")
+)
+
+// CheckAdoptionLayout refuses plan when the snapraid.conf the point of no
+// return renders for it cannot be rendered. It builds the rows step 17 records
+// (the adopted data disks, then the former parity disks and the cache) and
+// renders them through the same layoutFromStore, so the import and step 17
+// apply one rule.
+func CheckAdoptionLayout(plan disk.AdoptionPlan) error {
+	disks, _ := pendingRows(plan)
+	if _, err := layoutFromStore(append(disks, parityInitRows(plan)...)).Render(); err != nil {
+		if errors.Is(err, parity.ErrContentPlacement) {
+			return fmt.Errorf("%w: %w; add a data disk or a cache device of its own to the import (a cache that is a partition of the boot disk is the boot device's copy, not another)", ErrAdoptionLayout, err)
+		}
+		return fmt.Errorf("%w: %w", ErrAdoptionLayout, err)
+	}
+	return nil
+}
 
 // MigrationImportDeps is everything RunMigrationImport needs. It is the
 // adoption of an Unraid array (doc 05 §4 steps 14-16): the data disks are
@@ -103,11 +132,17 @@ func RunMigrationImport(d MigrationImportDeps) RunFunc {
 			return errors.New("job: migration_import is missing its dependencies")
 		}
 		out := rc.Output()
+		if p.Undo {
+			return d.undoPending(ctx, out)
+		}
 		fresh, err := d.Plan(ctx, p.Assignments)
 		if err != nil {
 			return fmt.Errorf("resolving the confirmed disk-role mapping: %w", err)
 		}
 		if err := p.Plan.Matches(fresh); err != nil {
+			return err
+		}
+		if err := CheckAdoptionLayout(fresh); err != nil {
 			return err
 		}
 		if err := d.InvalidateVerify(ctx); err != nil {
@@ -307,12 +342,56 @@ func confirmAdoptedMount(ctx context.Context, r disk.Runner, u disk.MountUnit) e
 }
 
 // undo reverses a failed adoption this run recorded and returns cause with what
-// the undo did. The pool and the disks are unmounted first; the record, the
-// generated units and the sequence follow only when every mount is gone.
+// the undo did.
 func (d MigrationImportDeps) undo(ctx context.Context, out io.Writer, cause error) error {
+	_, _ = fmt.Fprintf(out, "the adoption failed (%v): undoing it\n", cause)
+	if err := d.takeBack(ctx); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
+}
+
+// undoPending is the user's undo of a pending adoption (undoMigrationImport). It
+// forgets the verify result, which describes mounts that are about to go, and
+// takes the adoption back; it writes to no adopted disk. An array that is not
+// a pending adoption is refused (ErrMigrationUndoNotPending) and left alone; no
+// array at all is already undone. The shares and accounts the import seeded are
+// kept: they hold no data and a new import finds them and leaves them as they are.
+func (d MigrationImportDeps) undoPending(ctx context.Context, out io.Writer) error {
+	exists, err := d.Store.Exists(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		_, _ = fmt.Fprintln(out, "there is no adoption recorded: nothing to undo")
+		return nil
+	}
+	pending, err := d.Store.MigrationPending(ctx)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return ErrMigrationUndoNotPending
+	}
+	if err := d.InvalidateVerify(ctx); err != nil {
+		return fmt.Errorf("forgetting the verify result before the adoption is undone: %w", err)
+	}
+	_, _ = fmt.Fprintln(out, "undoing the pending adoption: nothing is written to the adopted disks")
+	if err := d.takeBack(ctx); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(out, "the pool and the disks are unmounted and the adoption's record and units are removed; the shares and accounts the import created are kept")
+	return nil
+}
+
+// takeBack unmounts the pool and the disks of the recorded adoption, the pool
+// first, and only when every mount is gone deletes the record, removes the
+// generated units and rebuilds the array sequence. It runs without the request's
+// or the job's own cancellation. A mount that cannot be released, or whose state
+// cannot be read, keeps the record.
+func (d MigrationImportDeps) takeBack(ctx context.Context) error {
 	uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), migrationImportUndoTimeout)
 	defer cancel()
-	_, _ = fmt.Fprintf(out, "the adoption failed (%v): undoing it\n", cause)
 
 	var errs []error
 	if seq := d.Array(); seq != nil && seq.CatchAll != nil {
@@ -327,11 +406,11 @@ func (d MigrationImportDeps) undo(ctx context.Context, out io.Writer, cause erro
 	}
 	settings, disks, err := d.Store.GetArray(uctx)
 	if err != nil {
-		return errors.Join(cause, fmt.Errorf("undoing the adoption: reading it back: %w", err))
+		return fmt.Errorf("undoing the adoption: reading it back: %w", err)
 	}
 	units, err := ArrayMountUnits(settings, disks)
 	if err != nil {
-		return errors.Join(cause, fmt.Errorf("undoing the adoption: %w", err))
+		return fmt.Errorf("undoing the adoption: %w", err)
 	}
 	for _, u := range units {
 		mounted, err := d.mounted(u.Where)
@@ -347,10 +426,10 @@ func (d MigrationImportDeps) undo(ctx context.Context, out io.Writer, cause erro
 		}
 	}
 	if len(errs) > 0 {
-		return errors.Join(append([]error{cause, errors.New("the adoption could not be undone: a mount is still up, so the record of it was kept")}, errs...)...)
+		return errors.Join(append([]error{errors.New("the adoption could not be undone: a mount is still up, so the record of it was kept")}, errs...)...)
 	}
 	if _, err := d.Store.DeletePendingArray(uctx); err != nil {
-		return errors.Join(cause, fmt.Errorf("undoing the adoption: deleting its record: %w", err))
+		return fmt.Errorf("undoing the adoption: deleting its record: %w", err)
 	}
 	for _, u := range units {
 		if err := d.Generator.RemoveDiskMount(uctx, u.Where); err != nil {
@@ -365,7 +444,7 @@ func (d MigrationImportDeps) undo(ctx context.Context, out io.Writer, cause erro
 		errs = append(errs, fmt.Errorf("rebuilding the array sequence: %w", err))
 	}
 	if len(errs) > 0 {
-		return errors.Join(append([]error{cause, errors.New("the adoption was undone but its leftovers could not all be removed")}, errs...)...)
+		return errors.Join(append([]error{errors.New("the adoption was undone but its leftovers could not all be removed")}, errs...)...)
 	}
-	return cause
+	return nil
 }

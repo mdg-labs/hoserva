@@ -9804,6 +9804,33 @@ func (s *MigrationBootMode) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/MigrationByHandContainer
+type MigrationByHandContainer struct {
+	Name string `json:"name"`
+	// The image the container was created from. Absent when the capture does not say.
+	Image OptString `json:"image"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationByHandContainer) GetName() string {
+	return s.Name
+}
+
+// GetImage returns the value of Image.
+func (s *MigrationByHandContainer) GetImage() OptString {
+	return s.Image
+}
+
+// SetName sets the value of Name.
+func (s *MigrationByHandContainer) SetName(val string) {
+	s.Name = val
+}
+
+// SetImage sets the value of Image.
+func (s *MigrationByHandContainer) SetImage(val OptString) {
+	s.Image = val
+}
+
 // Ref: #/components/schemas/MigrationCapture
 type MigrationCapture struct {
 	State MigrationCaptureState `json:"state"`
@@ -10004,6 +10031,721 @@ func (s *MigrationComposeProjectSummary) SetStatus(val MigrationTemplateStatus) 
 // SetError sets the value of Error.
 func (s *MigrationComposeProjectSummary) SetError(val OptString) {
 	s.Error = val
+}
+
+// Ref: #/components/schemas/MigrationContainerCheck
+type MigrationContainerCheck struct {
+	Stack string `json:"stack"`
+	// Whether one of the stack's containers is running.
+	Running bool `json:"running"`
+	// Whether every path is `ok`. True when there is no path to check.
+	AllOk bool                `json:"allOk"`
+	Paths []MigrationDataPath `json:"paths"`
+}
+
+// GetStack returns the value of Stack.
+func (s *MigrationContainerCheck) GetStack() string {
+	return s.Stack
+}
+
+// GetRunning returns the value of Running.
+func (s *MigrationContainerCheck) GetRunning() bool {
+	return s.Running
+}
+
+// GetAllOk returns the value of AllOk.
+func (s *MigrationContainerCheck) GetAllOk() bool {
+	return s.AllOk
+}
+
+// GetPaths returns the value of Paths.
+func (s *MigrationContainerCheck) GetPaths() []MigrationDataPath {
+	return s.Paths
+}
+
+// SetStack sets the value of Stack.
+func (s *MigrationContainerCheck) SetStack(val string) {
+	s.Stack = val
+}
+
+// SetRunning sets the value of Running.
+func (s *MigrationContainerCheck) SetRunning(val bool) {
+	s.Running = val
+}
+
+// SetAllOk sets the value of AllOk.
+func (s *MigrationContainerCheck) SetAllOk(val bool) {
+	s.AllOk = val
+}
+
+// SetPaths sets the value of Paths.
+func (s *MigrationContainerCheck) SetPaths(val []MigrationDataPath) {
+	s.Paths = val
+}
+
+// Ref: #/components/schemas/MigrationContainerConfirmRequest
+type MigrationContainerConfirmRequest struct {
+	// Confirm although the data check found a path that is missing, empty or unreadable.
+	AcceptFailedCheck OptBool `json:"acceptFailedCheck"`
+}
+
+// GetAcceptFailedCheck returns the value of AcceptFailedCheck.
+func (s *MigrationContainerConfirmRequest) GetAcceptFailedCheck() OptBool {
+	return s.AcceptFailedCheck
+}
+
+// SetAcceptFailedCheck sets the value of AcceptFailedCheck.
+func (s *MigrationContainerConfirmRequest) SetAcceptFailedCheck(val OptBool) {
+	s.AcceptFailedCheck = val
+}
+
+// Ref: #/components/schemas/MigrationContainerProject
+type MigrationContainerProject struct {
+	// The project's name, which `createMigrationStacks` and `getMigrationTemplate` take.
+	Name string `json:"name"`
+	// The containers the capture shows the project running.
+	Containers []string                `json:"containers"`
+	Status     MigrationTemplateStatus `json:"status"`
+	// Why the project's `compose.yaml` could not be read. Present only when `status` is `failed`.
+	Error OptString `json:"error"`
+	// The name its stack would have. Absent when the project's name cannot make a stack name.
+	Stack OptString `json:"stack"`
+	// False for a project whose `compose.yaml` is missing from the source or could not be read.
+	Creatable bool `json:"creatable"`
+	Created   bool `json:"created"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationContainerProject) GetName() string {
+	return s.Name
+}
+
+// GetContainers returns the value of Containers.
+func (s *MigrationContainerProject) GetContainers() []string {
+	return s.Containers
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationContainerProject) GetStatus() MigrationTemplateStatus {
+	return s.Status
+}
+
+// GetError returns the value of Error.
+func (s *MigrationContainerProject) GetError() OptString {
+	return s.Error
+}
+
+// GetStack returns the value of Stack.
+func (s *MigrationContainerProject) GetStack() OptString {
+	return s.Stack
+}
+
+// GetCreatable returns the value of Creatable.
+func (s *MigrationContainerProject) GetCreatable() bool {
+	return s.Creatable
+}
+
+// GetCreated returns the value of Created.
+func (s *MigrationContainerProject) GetCreated() bool {
+	return s.Created
+}
+
+// SetName sets the value of Name.
+func (s *MigrationContainerProject) SetName(val string) {
+	s.Name = val
+}
+
+// SetContainers sets the value of Containers.
+func (s *MigrationContainerProject) SetContainers(val []string) {
+	s.Containers = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationContainerProject) SetStatus(val MigrationTemplateStatus) {
+	s.Status = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationContainerProject) SetError(val OptString) {
+	s.Error = val
+}
+
+// SetStack sets the value of Stack.
+func (s *MigrationContainerProject) SetStack(val OptString) {
+	s.Stack = val
+}
+
+// SetCreatable sets the value of Creatable.
+func (s *MigrationContainerProject) SetCreatable(val bool) {
+	s.Creatable = val
+}
+
+// SetCreated sets the value of Created.
+func (s *MigrationContainerProject) SetCreated(val bool) {
+	s.Created = val
+}
+
+// Ref: #/components/schemas/MigrationContainerStack
+type MigrationContainerStack struct {
+	// The stack's name, which the start, check and confirm operations take.
+	Name string `json:"name"`
+	// The template file or Compose Manager project it was created from.
+	Source string                      `json:"source"`
+	Kind   MigrationContainerStackKind `json:"kind"`
+	// `created` is a stack that was not started by the migration, `started` one whose start was queued and
+	// that is not confirmed, `confirmed` one the user confirmed sees its data.
+	State MigrationContainerStackState `json:"state"`
+	// The 1-based place on Unraid's autostart list. Absent off the list.
+	AutostartPosition OptInt `json:"autostartPosition"`
+	// The seconds Unraid's autostart list waited after starting it, as a suggestion for the wait before
+	// the next. Absent when it gives none.
+	WaitSeconds OptInt `json:"waitSeconds"`
+	// True for a started stack that is neither confirmed nor known to be stopped; also true when that
+	// cannot be read. Another stack is not started while one is.
+	Awaiting bool `json:"awaiting"`
+	// Whether a data check has run since the latest start.
+	Checked bool `json:"checked"`
+	// Whether that check found a path that is missing, empty or unreadable.
+	CheckFailed bool `json:"checkFailed"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationContainerStack) GetName() string {
+	return s.Name
+}
+
+// GetSource returns the value of Source.
+func (s *MigrationContainerStack) GetSource() string {
+	return s.Source
+}
+
+// GetKind returns the value of Kind.
+func (s *MigrationContainerStack) GetKind() MigrationContainerStackKind {
+	return s.Kind
+}
+
+// GetState returns the value of State.
+func (s *MigrationContainerStack) GetState() MigrationContainerStackState {
+	return s.State
+}
+
+// GetAutostartPosition returns the value of AutostartPosition.
+func (s *MigrationContainerStack) GetAutostartPosition() OptInt {
+	return s.AutostartPosition
+}
+
+// GetWaitSeconds returns the value of WaitSeconds.
+func (s *MigrationContainerStack) GetWaitSeconds() OptInt {
+	return s.WaitSeconds
+}
+
+// GetAwaiting returns the value of Awaiting.
+func (s *MigrationContainerStack) GetAwaiting() bool {
+	return s.Awaiting
+}
+
+// GetChecked returns the value of Checked.
+func (s *MigrationContainerStack) GetChecked() bool {
+	return s.Checked
+}
+
+// GetCheckFailed returns the value of CheckFailed.
+func (s *MigrationContainerStack) GetCheckFailed() bool {
+	return s.CheckFailed
+}
+
+// SetName sets the value of Name.
+func (s *MigrationContainerStack) SetName(val string) {
+	s.Name = val
+}
+
+// SetSource sets the value of Source.
+func (s *MigrationContainerStack) SetSource(val string) {
+	s.Source = val
+}
+
+// SetKind sets the value of Kind.
+func (s *MigrationContainerStack) SetKind(val MigrationContainerStackKind) {
+	s.Kind = val
+}
+
+// SetState sets the value of State.
+func (s *MigrationContainerStack) SetState(val MigrationContainerStackState) {
+	s.State = val
+}
+
+// SetAutostartPosition sets the value of AutostartPosition.
+func (s *MigrationContainerStack) SetAutostartPosition(val OptInt) {
+	s.AutostartPosition = val
+}
+
+// SetWaitSeconds sets the value of WaitSeconds.
+func (s *MigrationContainerStack) SetWaitSeconds(val OptInt) {
+	s.WaitSeconds = val
+}
+
+// SetAwaiting sets the value of Awaiting.
+func (s *MigrationContainerStack) SetAwaiting(val bool) {
+	s.Awaiting = val
+}
+
+// SetChecked sets the value of Checked.
+func (s *MigrationContainerStack) SetChecked(val bool) {
+	s.Checked = val
+}
+
+// SetCheckFailed sets the value of CheckFailed.
+func (s *MigrationContainerStack) SetCheckFailed(val bool) {
+	s.CheckFailed = val
+}
+
+type MigrationContainerStackKind string
+
+const (
+	MigrationContainerStackKindTemplate       MigrationContainerStackKind = "template"
+	MigrationContainerStackKindComposeProject MigrationContainerStackKind = "compose_project"
+)
+
+// AllValues returns all MigrationContainerStackKind values.
+func (MigrationContainerStackKind) AllValues() []MigrationContainerStackKind {
+	return []MigrationContainerStackKind{
+		MigrationContainerStackKindTemplate,
+		MigrationContainerStackKindComposeProject,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationContainerStackKind) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationContainerStackKindTemplate:
+		return []byte(s), nil
+	case MigrationContainerStackKindComposeProject:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationContainerStackKind) UnmarshalText(data []byte) error {
+	switch MigrationContainerStackKind(data) {
+	case MigrationContainerStackKindTemplate:
+		*s = MigrationContainerStackKindTemplate
+		return nil
+	case MigrationContainerStackKindComposeProject:
+		*s = MigrationContainerStackKindComposeProject
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// `created` is a stack that was not started by the migration, `started` one whose start was queued and
+// that is not confirmed, `confirmed` one the user confirmed sees its data.
+type MigrationContainerStackState string
+
+const (
+	MigrationContainerStackStateCreated   MigrationContainerStackState = "created"
+	MigrationContainerStackStateStarted   MigrationContainerStackState = "started"
+	MigrationContainerStackStateConfirmed MigrationContainerStackState = "confirmed"
+)
+
+// AllValues returns all MigrationContainerStackState values.
+func (MigrationContainerStackState) AllValues() []MigrationContainerStackState {
+	return []MigrationContainerStackState{
+		MigrationContainerStackStateCreated,
+		MigrationContainerStackStateStarted,
+		MigrationContainerStackStateConfirmed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationContainerStackState) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationContainerStackStateCreated:
+		return []byte(s), nil
+	case MigrationContainerStackStateStarted:
+		return []byte(s), nil
+	case MigrationContainerStackStateConfirmed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationContainerStackState) UnmarshalText(data []byte) error {
+	switch MigrationContainerStackState(data) {
+	case MigrationContainerStackStateCreated:
+		*s = MigrationContainerStackStateCreated
+		return nil
+	case MigrationContainerStackStateStarted:
+		*s = MigrationContainerStackStateStarted
+		return nil
+	case MigrationContainerStackStateConfirmed:
+		*s = MigrationContainerStackStateConfirmed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationContainerTemplate
+type MigrationContainerTemplate struct {
+	// The template's `<Name>`.
+	Name string `json:"name"`
+	// The template's file name, which `createMigrationStacks` and `getMigrationTemplate` take.
+	File   string                  `json:"file"`
+	Class  MigrationTemplateClass  `json:"class"`
+	Status MigrationTemplateStatus `json:"status"`
+	// The warnings that make a conversion not clean (Q36).
+	WarningCount int `json:"warningCount"`
+	// Why the converter could not read the template. Present only when `status` is `failed`.
+	Error OptString `json:"error"`
+	// The name its stack would have. Absent when the template's name cannot make a stack name.
+	Stack OptString `json:"stack"`
+	// The 1-based place on Unraid's autostart list. Absent off the list.
+	AutostartPosition OptInt `json:"autostartPosition"`
+	// The seconds Unraid's autostart list waits after starting it, as a suggestion. Absent when it gives
+	// none.
+	AutostartWaitSeconds OptInt `json:"autostartWaitSeconds"`
+	// False for a template the converter could not read.
+	Creatable bool `json:"creatable"`
+	// True for a creatable template on Unraid's autostart list whose stack does not exist yet, and for
+	// nothing else.
+	Preselected bool `json:"preselected"`
+	// Whether its stack was created from this migration.
+	Created bool `json:"created"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationContainerTemplate) GetName() string {
+	return s.Name
+}
+
+// GetFile returns the value of File.
+func (s *MigrationContainerTemplate) GetFile() string {
+	return s.File
+}
+
+// GetClass returns the value of Class.
+func (s *MigrationContainerTemplate) GetClass() MigrationTemplateClass {
+	return s.Class
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationContainerTemplate) GetStatus() MigrationTemplateStatus {
+	return s.Status
+}
+
+// GetWarningCount returns the value of WarningCount.
+func (s *MigrationContainerTemplate) GetWarningCount() int {
+	return s.WarningCount
+}
+
+// GetError returns the value of Error.
+func (s *MigrationContainerTemplate) GetError() OptString {
+	return s.Error
+}
+
+// GetStack returns the value of Stack.
+func (s *MigrationContainerTemplate) GetStack() OptString {
+	return s.Stack
+}
+
+// GetAutostartPosition returns the value of AutostartPosition.
+func (s *MigrationContainerTemplate) GetAutostartPosition() OptInt {
+	return s.AutostartPosition
+}
+
+// GetAutostartWaitSeconds returns the value of AutostartWaitSeconds.
+func (s *MigrationContainerTemplate) GetAutostartWaitSeconds() OptInt {
+	return s.AutostartWaitSeconds
+}
+
+// GetCreatable returns the value of Creatable.
+func (s *MigrationContainerTemplate) GetCreatable() bool {
+	return s.Creatable
+}
+
+// GetPreselected returns the value of Preselected.
+func (s *MigrationContainerTemplate) GetPreselected() bool {
+	return s.Preselected
+}
+
+// GetCreated returns the value of Created.
+func (s *MigrationContainerTemplate) GetCreated() bool {
+	return s.Created
+}
+
+// SetName sets the value of Name.
+func (s *MigrationContainerTemplate) SetName(val string) {
+	s.Name = val
+}
+
+// SetFile sets the value of File.
+func (s *MigrationContainerTemplate) SetFile(val string) {
+	s.File = val
+}
+
+// SetClass sets the value of Class.
+func (s *MigrationContainerTemplate) SetClass(val MigrationTemplateClass) {
+	s.Class = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationContainerTemplate) SetStatus(val MigrationTemplateStatus) {
+	s.Status = val
+}
+
+// SetWarningCount sets the value of WarningCount.
+func (s *MigrationContainerTemplate) SetWarningCount(val int) {
+	s.WarningCount = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationContainerTemplate) SetError(val OptString) {
+	s.Error = val
+}
+
+// SetStack sets the value of Stack.
+func (s *MigrationContainerTemplate) SetStack(val OptString) {
+	s.Stack = val
+}
+
+// SetAutostartPosition sets the value of AutostartPosition.
+func (s *MigrationContainerTemplate) SetAutostartPosition(val OptInt) {
+	s.AutostartPosition = val
+}
+
+// SetAutostartWaitSeconds sets the value of AutostartWaitSeconds.
+func (s *MigrationContainerTemplate) SetAutostartWaitSeconds(val OptInt) {
+	s.AutostartWaitSeconds = val
+}
+
+// SetCreatable sets the value of Creatable.
+func (s *MigrationContainerTemplate) SetCreatable(val bool) {
+	s.Creatable = val
+}
+
+// SetPreselected sets the value of Preselected.
+func (s *MigrationContainerTemplate) SetPreselected(val bool) {
+	s.Preselected = val
+}
+
+// SetCreated sets the value of Created.
+func (s *MigrationContainerTemplate) SetCreated(val bool) {
+	s.Created = val
+}
+
+// Ref: #/components/schemas/MigrationContainers
+type MigrationContainers struct {
+	// Whether the migration is past its point of no return. No stack is created or started before.
+	ParityInitialized bool                         `json:"parityInitialized"`
+	Templates         []MigrationContainerTemplate `json:"templates"`
+	ComposeProjects   []MigrationContainerProject  `json:"composeProjects"`
+	// Containers created by hand. No template describes them, so nothing is generated for them: they are
+	// recreated by hand.
+	ByHand []MigrationByHandContainer `json:"byHand"`
+	// The stacks created from the scan, in the order they are offered for starting.
+	Stacks []MigrationContainerStack `json:"stacks"`
+	// The stack to confirm or stop before another is started. Absent when none.
+	Awaiting OptString `json:"awaiting"`
+	// The stack to start now. Absent when one awaits confirmation or all are confirmed.
+	Next OptString `json:"next"`
+}
+
+// GetParityInitialized returns the value of ParityInitialized.
+func (s *MigrationContainers) GetParityInitialized() bool {
+	return s.ParityInitialized
+}
+
+// GetTemplates returns the value of Templates.
+func (s *MigrationContainers) GetTemplates() []MigrationContainerTemplate {
+	return s.Templates
+}
+
+// GetComposeProjects returns the value of ComposeProjects.
+func (s *MigrationContainers) GetComposeProjects() []MigrationContainerProject {
+	return s.ComposeProjects
+}
+
+// GetByHand returns the value of ByHand.
+func (s *MigrationContainers) GetByHand() []MigrationByHandContainer {
+	return s.ByHand
+}
+
+// GetStacks returns the value of Stacks.
+func (s *MigrationContainers) GetStacks() []MigrationContainerStack {
+	return s.Stacks
+}
+
+// GetAwaiting returns the value of Awaiting.
+func (s *MigrationContainers) GetAwaiting() OptString {
+	return s.Awaiting
+}
+
+// GetNext returns the value of Next.
+func (s *MigrationContainers) GetNext() OptString {
+	return s.Next
+}
+
+// SetParityInitialized sets the value of ParityInitialized.
+func (s *MigrationContainers) SetParityInitialized(val bool) {
+	s.ParityInitialized = val
+}
+
+// SetTemplates sets the value of Templates.
+func (s *MigrationContainers) SetTemplates(val []MigrationContainerTemplate) {
+	s.Templates = val
+}
+
+// SetComposeProjects sets the value of ComposeProjects.
+func (s *MigrationContainers) SetComposeProjects(val []MigrationContainerProject) {
+	s.ComposeProjects = val
+}
+
+// SetByHand sets the value of ByHand.
+func (s *MigrationContainers) SetByHand(val []MigrationByHandContainer) {
+	s.ByHand = val
+}
+
+// SetStacks sets the value of Stacks.
+func (s *MigrationContainers) SetStacks(val []MigrationContainerStack) {
+	s.Stacks = val
+}
+
+// SetAwaiting sets the value of Awaiting.
+func (s *MigrationContainers) SetAwaiting(val OptString) {
+	s.Awaiting = val
+}
+
+// SetNext sets the value of Next.
+func (s *MigrationContainers) SetNext(val OptString) {
+	s.Next = val
+}
+
+// Ref: #/components/schemas/MigrationDataPath
+type MigrationDataPath struct {
+	Container string `json:"container"`
+	// The host path of the bind mount.
+	Path string `json:"path"`
+	// Where the container sees it.
+	Destination string `json:"destination"`
+	// `ok` for a path that exists and is not empty; `empty` for a directory with no entry or a file with
+	// no byte; `missing` for a path that does not exist; `unreadable` for one that could not be read,
+	// which is never fine.
+	Status MigrationDataPathStatus `json:"status"`
+	// Why a path is `unreadable`.
+	Error OptString `json:"error"`
+}
+
+// GetContainer returns the value of Container.
+func (s *MigrationDataPath) GetContainer() string {
+	return s.Container
+}
+
+// GetPath returns the value of Path.
+func (s *MigrationDataPath) GetPath() string {
+	return s.Path
+}
+
+// GetDestination returns the value of Destination.
+func (s *MigrationDataPath) GetDestination() string {
+	return s.Destination
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationDataPath) GetStatus() MigrationDataPathStatus {
+	return s.Status
+}
+
+// GetError returns the value of Error.
+func (s *MigrationDataPath) GetError() OptString {
+	return s.Error
+}
+
+// SetContainer sets the value of Container.
+func (s *MigrationDataPath) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetPath sets the value of Path.
+func (s *MigrationDataPath) SetPath(val string) {
+	s.Path = val
+}
+
+// SetDestination sets the value of Destination.
+func (s *MigrationDataPath) SetDestination(val string) {
+	s.Destination = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationDataPath) SetStatus(val MigrationDataPathStatus) {
+	s.Status = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationDataPath) SetError(val OptString) {
+	s.Error = val
+}
+
+// `ok` for a path that exists and is not empty; `empty` for a directory with no entry or a file with
+// no byte; `missing` for a path that does not exist; `unreadable` for one that could not be read,
+// which is never fine.
+type MigrationDataPathStatus string
+
+const (
+	MigrationDataPathStatusOk         MigrationDataPathStatus = "ok"
+	MigrationDataPathStatusEmpty      MigrationDataPathStatus = "empty"
+	MigrationDataPathStatusMissing    MigrationDataPathStatus = "missing"
+	MigrationDataPathStatusUnreadable MigrationDataPathStatus = "unreadable"
+)
+
+// AllValues returns all MigrationDataPathStatus values.
+func (MigrationDataPathStatus) AllValues() []MigrationDataPathStatus {
+	return []MigrationDataPathStatus{
+		MigrationDataPathStatusOk,
+		MigrationDataPathStatusEmpty,
+		MigrationDataPathStatusMissing,
+		MigrationDataPathStatusUnreadable,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationDataPathStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationDataPathStatusOk:
+		return []byte(s), nil
+	case MigrationDataPathStatusEmpty:
+		return []byte(s), nil
+	case MigrationDataPathStatusMissing:
+		return []byte(s), nil
+	case MigrationDataPathStatusUnreadable:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationDataPathStatus) UnmarshalText(data []byte) error {
+	switch MigrationDataPathStatus(data) {
+	case MigrationDataPathStatusOk:
+		*s = MigrationDataPathStatusOk
+		return nil
+	case MigrationDataPathStatusEmpty:
+		*s = MigrationDataPathStatusEmpty
+		return nil
+	case MigrationDataPathStatusMissing:
+		*s = MigrationDataPathStatusMissing
+		return nil
+	case MigrationDataPathStatusUnreadable:
+		*s = MigrationDataPathStatusUnreadable
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // One row of the disk mapping table: a disk the capture names, an Unraid boot device, or a disk of
@@ -10359,9 +11101,12 @@ func (s *MigrationImportDisk) SetPartUuid(val OptString) {
 
 // Ref: #/components/schemas/MigrationImportRequest
 type MigrationImportRequest struct {
+	// The disk-role mapping, at least one disk. Required unless `undo` is true, and omitted then.
 	Roles []MigrationImportDisk `json:"roles"`
 	// Must be true: the user has checked the mapping against the serial table.
 	Confirm bool `json:"confirm"`
+	// Take a pending import back instead of adopting disks.
+	Undo OptBool `json:"undo"`
 }
 
 // GetRoles returns the value of Roles.
@@ -10374,6 +11119,11 @@ func (s *MigrationImportRequest) GetConfirm() bool {
 	return s.Confirm
 }
 
+// GetUndo returns the value of Undo.
+func (s *MigrationImportRequest) GetUndo() OptBool {
+	return s.Undo
+}
+
 // SetRoles sets the value of Roles.
 func (s *MigrationImportRequest) SetRoles(val []MigrationImportDisk) {
 	s.Roles = val
@@ -10382,6 +11132,11 @@ func (s *MigrationImportRequest) SetRoles(val []MigrationImportDisk) {
 // SetConfirm sets the value of Confirm.
 func (s *MigrationImportRequest) SetConfirm(val bool) {
 	s.Confirm = val
+}
+
+// SetUndo sets the value of Undo.
+func (s *MigrationImportRequest) SetUndo(val OptBool) {
+	s.Undo = val
 }
 
 // Ref: #/components/schemas/MigrationImportRole
@@ -11214,6 +11969,164 @@ func (s *MigrationSharePreview) SetExclude(val []string) {
 // SetWarningCount sets the value of WarningCount.
 func (s *MigrationSharePreview) SetWarningCount(val int) {
 	s.WarningCount = val
+}
+
+// Ref: #/components/schemas/MigrationStackResult
+type MigrationStackResult struct {
+	// The selection, as sent.
+	Name string `json:"name"`
+	// The stack's name.
+	Stack  string                     `json:"stack"`
+	Status MigrationStackResultStatus `json:"status"`
+	Error  OptError                   `json:"error"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationStackResult) GetName() string {
+	return s.Name
+}
+
+// GetStack returns the value of Stack.
+func (s *MigrationStackResult) GetStack() string {
+	return s.Stack
+}
+
+// GetStatus returns the value of Status.
+func (s *MigrationStackResult) GetStatus() MigrationStackResultStatus {
+	return s.Status
+}
+
+// GetError returns the value of Error.
+func (s *MigrationStackResult) GetError() OptError {
+	return s.Error
+}
+
+// SetName sets the value of Name.
+func (s *MigrationStackResult) SetName(val string) {
+	s.Name = val
+}
+
+// SetStack sets the value of Stack.
+func (s *MigrationStackResult) SetStack(val string) {
+	s.Stack = val
+}
+
+// SetStatus sets the value of Status.
+func (s *MigrationStackResult) SetStatus(val MigrationStackResultStatus) {
+	s.Status = val
+}
+
+// SetError sets the value of Error.
+func (s *MigrationStackResult) SetError(val OptError) {
+	s.Error = val
+}
+
+type MigrationStackResultStatus string
+
+const (
+	MigrationStackResultStatusCreated        MigrationStackResultStatus = "created"
+	MigrationStackResultStatusAlreadyCreated MigrationStackResultStatus = "already_created"
+	MigrationStackResultStatusFailed         MigrationStackResultStatus = "failed"
+)
+
+// AllValues returns all MigrationStackResultStatus values.
+func (MigrationStackResultStatus) AllValues() []MigrationStackResultStatus {
+	return []MigrationStackResultStatus{
+		MigrationStackResultStatusCreated,
+		MigrationStackResultStatusAlreadyCreated,
+		MigrationStackResultStatusFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MigrationStackResultStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case MigrationStackResultStatusCreated:
+		return []byte(s), nil
+	case MigrationStackResultStatusAlreadyCreated:
+		return []byte(s), nil
+	case MigrationStackResultStatusFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MigrationStackResultStatus) UnmarshalText(data []byte) error {
+	switch MigrationStackResultStatus(data) {
+	case MigrationStackResultStatusCreated:
+		*s = MigrationStackResultStatusCreated
+		return nil
+	case MigrationStackResultStatusAlreadyCreated:
+		*s = MigrationStackResultStatusAlreadyCreated
+		return nil
+	case MigrationStackResultStatusFailed:
+		*s = MigrationStackResultStatusFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MigrationStackSelection
+type MigrationStackSelection struct {
+	// A template's file name or a Compose Manager project's name, as `listMigrationContainers` shows it.
+	Name string `json:"name"`
+	// The user has read this template's warnings (`getMigrationTemplate`) and creates its stack all the
+	// same. Needed for a conversion with a warning that needs manual action; not needed for a clean one or
+	// a project.
+	Acknowledged OptBool `json:"acknowledged"`
+}
+
+// GetName returns the value of Name.
+func (s *MigrationStackSelection) GetName() string {
+	return s.Name
+}
+
+// GetAcknowledged returns the value of Acknowledged.
+func (s *MigrationStackSelection) GetAcknowledged() OptBool {
+	return s.Acknowledged
+}
+
+// SetName sets the value of Name.
+func (s *MigrationStackSelection) SetName(val string) {
+	s.Name = val
+}
+
+// SetAcknowledged sets the value of Acknowledged.
+func (s *MigrationStackSelection) SetAcknowledged(val OptBool) {
+	s.Acknowledged = val
+}
+
+// Ref: #/components/schemas/MigrationStacksCreated
+type MigrationStacksCreated struct {
+	Results []MigrationStackResult `json:"results"`
+}
+
+// GetResults returns the value of Results.
+func (s *MigrationStacksCreated) GetResults() []MigrationStackResult {
+	return s.Results
+}
+
+// SetResults sets the value of Results.
+func (s *MigrationStacksCreated) SetResults(val []MigrationStackResult) {
+	s.Results = val
+}
+
+// Ref: #/components/schemas/MigrationStacksRequest
+type MigrationStacksRequest struct {
+	Items []MigrationStackSelection `json:"items"`
+}
+
+// GetItems returns the value of Items.
+func (s *MigrationStacksRequest) GetItems() []MigrationStackSelection {
+	return s.Items
+}
+
+// SetItems sets the value of Items.
+func (s *MigrationStacksRequest) SetItems(val []MigrationStackSelection) {
+	s.Items = val
 }
 
 // What a dockerMan template stands for in the Phase A capture: `autostart` (on Unraid's autostart
@@ -14746,6 +15659,52 @@ func (o OptDateTime) Or(d time.Time) time.Time {
 	return d
 }
 
+// NewOptError returns new OptError with value set to v.
+func NewOptError(v Error) OptError {
+	return OptError{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptError is optional Error.
+type OptError struct {
+	Value Error
+	Set   bool
+}
+
+// IsSet returns true if OptError was set.
+func (o OptError) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptError) Reset() {
+	var v Error
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptError) SetTo(v Error) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptError) Get() (v Error, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptError) Or(d Error) Error {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptErrorDetails returns new OptErrorDetails with value set to v.
 func NewOptErrorDetails(v ErrorDetails) OptErrorDetails {
 	return OptErrorDetails{
@@ -15200,6 +16159,52 @@ func (o OptMigrationBootMode) Get() (v MigrationBootMode, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptMigrationBootMode) Or(d MigrationBootMode) MigrationBootMode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptMigrationContainerConfirmRequest returns new OptMigrationContainerConfirmRequest with value set to v.
+func NewOptMigrationContainerConfirmRequest(v MigrationContainerConfirmRequest) OptMigrationContainerConfirmRequest {
+	return OptMigrationContainerConfirmRequest{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptMigrationContainerConfirmRequest is optional MigrationContainerConfirmRequest.
+type OptMigrationContainerConfirmRequest struct {
+	Value MigrationContainerConfirmRequest
+	Set   bool
+}
+
+// IsSet returns true if OptMigrationContainerConfirmRequest was set.
+func (o OptMigrationContainerConfirmRequest) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptMigrationContainerConfirmRequest) Reset() {
+	var v MigrationContainerConfirmRequest
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptMigrationContainerConfirmRequest) SetTo(v MigrationContainerConfirmRequest) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptMigrationContainerConfirmRequest) Get() (v MigrationContainerConfirmRequest, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptMigrationContainerConfirmRequest) Or(d MigrationContainerConfirmRequest) MigrationContainerConfirmRequest {
 	if v, ok := o.Get(); ok {
 		return v
 	}

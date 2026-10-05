@@ -367,7 +367,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild(t *testing.T) {
 	// A share create, a disk-topology change or a SIGHUP all funnel
 	// through this exact function (never a hand-copied rebuild) to
 	// re-evaluate disk.StorageGate with DATA1 still the only disk absent.
-	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil, nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuildArraySequence: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild_WrongFilesystem(t *testing.T) 
 	// A share create, a disk-topology change or a SIGHUP all funnel through
 	// this exact function to re-evaluate disk.StorageGate with DATA1 still
 	// the only wrong-filesystem slot.
-	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil, nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuildArraySequence: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestAcknowledgeDegraded_WaitsForAnInFlightRebuild(t *testing.T) {
 	s := newTestStorageTargetSync(t)
 	ack := &acknowledgedDegraded{}
 	wireAcknowledgeDegraded(h, s, ack)
-	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil, nil)
 
 	provider.armed.Store(true)
 	rebuildErr := make(chan error, 1)
@@ -759,7 +759,7 @@ func TestNoBlankProbeOnStartupUpdateOrSighupRebuild(t *testing.T) {
 	}
 
 	ack := &acknowledgedDegraded{}
-	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
+	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil, nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuild (the SIGHUP path): %v", err)
 	}

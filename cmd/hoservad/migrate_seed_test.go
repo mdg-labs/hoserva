@@ -21,7 +21,7 @@ const seedIni = "[\"media\"]\nname=\"media\"\n[\"documents\"]\nname=\"documents\
 // accounts and the disk roles of wireImport's machine.
 func (im *importWiring) scanWithConfig(t *testing.T) {
 	t.Helper()
-	ini := "[\"parity\"]\nidx=\"0\"\nid=\"M_PARSERIAL\"\nsize=\"1000\"\nstatus=\"DISK_OK\"\ntype=\"Parity\"\n[\"disk1\"]\nidx=\"1\"\nid=\"M_DATASERIAL\"\nsize=\"900\"\nstatus=\"DISK_OK\"\ntype=\"Data\"\nfsType=\"xfs\"\n"
+	ini := "[\"parity\"]\nidx=\"0\"\nid=\"M_PARSERIAL\"\nsize=\"1000\"\nstatus=\"DISK_OK\"\ntype=\"Parity\"\n[\"disk1\"]\nidx=\"1\"\nid=\"M_DATASERIAL\"\nsize=\"900\"\nstatus=\"DISK_OK\"\ntype=\"Data\"\nfsType=\"xfs\"\n" + cacheIni
 	data := flashBackupZipWith(t, "7.3.2", map[string]string{
 		"config/hoserva/disks.ini":  ini,
 		"config/hoserva/shares.ini": seedIni,

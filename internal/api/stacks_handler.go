@@ -165,13 +165,21 @@ func (h *Handler) StartStack(ctx context.Context, params apiv1.StartStackParams)
 	if err := h.Stacks.RequireRunning(); err != nil {
 		return nil, mapStackError(params.Name, err, "starting")
 	}
-	body, err := json.Marshal(job.StackStartParams{Name: params.Name})
+	body, err := encodeStackStartParams(params.Name)
 	if err != nil {
-		return nil, fmt.Errorf("encoding stack_start params: %w", err)
+		return nil, err
 	}
 	j, err := h.Scheduler.Submit(ctx, job.TypeStackStart, []string{"stack:" + params.Name}, body)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}
 	return jobToAPI(j)
+}
+
+func encodeStackStartParams(name string) ([]byte, error) {
+	body, err := json.Marshal(job.StackStartParams{Name: name})
+	if err != nil {
+		return nil, fmt.Errorf("encoding stack_start params: %w", err)
+	}
+	return body, nil
 }

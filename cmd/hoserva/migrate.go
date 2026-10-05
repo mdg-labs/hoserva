@@ -20,7 +20,7 @@ import (
 
 func migrateCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "migrate", Short: "Migrate from Unraid (doc 05)"}
-	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateImportCmd(), migrateVerifyCmd(), migrateInitializeParityCmd(), migrateForgetCmd())
+	cmd.AddCommand(migrateScanCmd(), migrateStatusCmd(), migrateReportCmd(), migrateTemplatesCmd(), migrateContainersCmd(), migrateImportCmd(), migrateUndoImportCmd(), migrateVerifyCmd(), migrateInitializeParityCmd(), migrateForgetCmd())
 	return cmd
 }
 
@@ -595,6 +595,57 @@ func migrateImportCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&roles, "role", nil, "A disk's role as <serial>=<role> or wwn:<wwn>=<role> (parity, data, cache or ignore); repeatable. Overrides the scan's proposal")
 	cmd.Flags().StringArrayVar(&cachePartitions, "cache-partition", nil, "A spare partition of the boot disk as the cache, as <by-id name>:<partuuid>")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm the mapping shown (required)")
+	return cmd
+}
+
+func migrateUndoImportCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "undo-import --yes",
+		Short: "Take back an import that is pending its point of no return",
+		Long: "Unmounts the read-only pool and the adopted data disks, forgets the verify result and deletes the recorded import, so " +
+			"the scan can be forgotten or the disks imported again. It writes nothing to any adopted disk, and the former parity and cache " +
+			"disks were never touched. It is refused once the point of no return has been crossed. The shares and accounts the import " +
+			"created are kept. This is the way out of an import whose layout the point of no return would refuse (Q18: the parity disks + 2 " +
+			"content-file copies on distinct devices need enough data disks or a cache device of its own).",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !yes {
+				return fmt.Errorf("migrate undo-import unmounts the read-only pool and the adopted disks (shares and containers lose /mnt/user), forgets the verify result and deletes the recorded import, so the verify has to be run again after a new import; it writes nothing to any adopted disk. Run it again with --yes to go ahead")
+			}
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			j, err := c.StartMigrationImport(apiCtx(), &apiv1.MigrationImportRequest{Confirm: true, Undo: apiv1.NewOptBool(true)})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			done, err := waitForJob(ctx, c, j.ID)
+			if err != nil {
+				return err
+			}
+			switch done.Status {
+			case apiv1.JobStatusSucceeded:
+			case apiv1.JobStatusFailed:
+				if e, ok := done.Error.Get(); ok && e.Message != "" {
+					return fmt.Errorf("undoing the import %s failed: %s", done.ID, e.Message)
+				}
+				return fmt.Errorf("undoing the import %s failed", done.ID)
+			default:
+				return fmt.Errorf("undoing the import %s ended %s", done.ID, done.Status)
+			}
+			if jsonOutput {
+				emit(done)
+				return nil
+			}
+			fmt.Println("The import is undone: the adopted disks are unmounted and nothing was written to them.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm taking the pending import back (required)")
 	return cmd
 }
 

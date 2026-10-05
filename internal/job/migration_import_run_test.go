@@ -113,6 +113,7 @@ type importHarness struct {
 	invalidateErr error
 	dir           string
 	links         []string
+	registered    bool
 }
 
 // newImportHarness builds the import's dependencies over fakes: a plan of two
@@ -162,6 +163,10 @@ func newImportHarness(t *testing.T) *importHarness {
 
 func (h *importHarness) register() {
 	h.t.Helper()
+	if h.registered {
+		return
+	}
+	h.registered = true
 	gen := config.NewGenerator(h.genRoot)
 	h.s.registry.Register(TypeMigrationImport, false, RunMigrationImport(MigrationImportDeps{
 		Plan: func(context.Context, []disk.AdoptionAssignment) (disk.AdoptionPlan, error) {
@@ -813,4 +818,229 @@ func TestMigrationImport_ForgetsTheVerifyResultBeforeItChangesAnything(t *testin
 		}
 		h.assertNothingAdopted("after the refusal")
 	})
+}
+
+// stuckLayout cuts the harness's plan down to a layout Q18 cannot place content
+// files on: nothing the daemon could ever render a snapraid.conf for.
+func (h *importHarness) stuckLayout(cache *disk.RecordedDisk) {
+	h.plan.Data = h.plan.Data[:1]
+	h.plan.Cache = cache
+	h.freshPlan = h.plan
+}
+
+// An adoption whose snapraid.conf step 17 could not render is refused by the
+// import before it records or mounts anything, and before it forgets a verify
+// result, with the shortfall and what to add.
+func TestMigrationImport_RefusesALayoutStepSeventeenCouldNeverInitialise(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cache *disk.RecordedDisk
+		want  string
+	}{
+		{"one data disk and no cache", nil, "only 2 of 3 required copies"},
+		{"one data disk and a cache that is a partition of the boot disk", &disk.RecordedDisk{AssignedDisk: disk.AssignedDisk{Device: "/dev/sda5", Filesystem: disk.XFS, Serial: "BOOT1", ByIDName: "ata-EX_BOOT1-part5"}, Size: 100 << 30}, "only 2 of 3 required copies"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newImportHarness(t)
+			h.stuckLayout(tc.cache)
+			done := h.run()
+			if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, tc.want) || !strings.Contains(done.ErrorMessage, "add a data disk or a cache device") {
+				t.Fatalf("job ended %s: %q, want a refusal naming %q and what to add", done.Status, done.ErrorMessage, tc.want)
+			}
+			if got := h.xfsChecks(); len(got) != 0 {
+				t.Errorf("checks ran on a layout that is refused: %v", got)
+			}
+			if len(h.mounter.mounts) != 0 {
+				t.Errorf("mounted %v", h.mounter.mounts)
+			}
+			if h.invalidated != 0 || h.seeded != 0 {
+				t.Errorf("a refused plan forgot the verify result %d times and seeded %d times", h.invalidated, h.seeded)
+			}
+			if pending, err := h.st.MigrationPending(context.Background()); err != nil || pending {
+				t.Errorf("MigrationPending = %v, %v: a refused import left a pending migration", pending, err)
+			}
+			h.assertNothingAdopted("after the refusal")
+		})
+	}
+}
+
+// The import's check and step 17's are the same rule: for every layout of one
+// parity disk (or two), a cache that is a device of its own, on the boot disk or
+// absent, and one to three data disks, the import admits it exactly when the
+// snapraid.conf step 17 renders from the rows it records can be rendered.
+func TestAdoptionLayout_ImportAndStepSeventeenAgree(t *testing.T) {
+	h := newImportHarness(t)
+	own := &disk.RecordedDisk{AssignedDisk: disk.AssignedDisk{Device: "/dev/nvme0n1", Filesystem: disk.XFS, Serial: "CAC1", ByIDName: "nvme-EX_CAC1"}, Size: 500 << 30}
+	onBoot := &disk.RecordedDisk{AssignedDisk: disk.AssignedDisk{Device: "/dev/sda5", Filesystem: disk.XFS, Serial: "BOOT1", ByIDName: "ata-EX_BOOT1-part5"}, Size: 100 << 30}
+	admitted, refused := 0, 0
+	for parities := 1; parities <= 2; parities++ {
+		for _, cache := range []*disk.RecordedDisk{nil, own, onBoot} {
+			for data := 1; data <= 3; data++ {
+				plan := h.plan
+				plan.Cache = cache
+				plan.Parity = nil
+				for i := 0; i < parities; i++ {
+					p := h.plan.Parity[0]
+					p.Serial = fmt.Sprintf("PAR%d", i+1)
+					p.ByIDName = fmt.Sprintf("ata-EX_PAR%d", i+1)
+					p.Device = fmt.Sprintf("/dev/sdb%d", i+1)
+					plan.Parity = append(plan.Parity, p)
+				}
+				plan.Data = nil
+				for i := 0; i < data; i++ {
+					d := h.plan.Data[0]
+					d.Serial = fmt.Sprintf("DAT%d", i+1)
+					plan.Data = append(plan.Data, d)
+				}
+				disks, _ := pendingRows(plan)
+				_, rendered := layoutFromStore(append(append([]store.ArrayDisk{}, disks...), parityInitRows(plan)...)).Render()
+				got := CheckAdoptionLayout(plan)
+				if (got == nil) != (rendered == nil) {
+					t.Errorf("%d parity, cache %v, %d data: the import check = %v, step 17's render = %v", parities, cache != nil, data, got, rendered)
+				}
+				if got == nil {
+					admitted++
+				} else {
+					refused++
+				}
+			}
+		}
+	}
+	if admitted == 0 || refused == 0 {
+		t.Fatalf("the matrix admitted %d and refused %d layouts: it proves nothing about the boundary", admitted, refused)
+	}
+}
+
+func undoParams() []byte { return []byte(`{"undo":true}`) }
+
+func (h *importHarness) runUndo() *Job {
+	h.t.Helper()
+	h.register()
+	ctx := context.Background()
+	j, err := h.s.Submit(ctx, TypeMigrationImport, []string{"migration"}, undoParams())
+	if err != nil {
+		h.t.Fatalf("Submit: %v", err)
+	}
+	done, err := h.s.Await(ctx, j.ID)
+	if err != nil {
+		h.t.Fatalf("Await: %v", err)
+	}
+	return done
+}
+
+// A pending adoption can be undone by the user: the pool and the disks are
+// unmounted (the pool first), the verify result forgotten, the record and the
+// generated units removed, and no command that could write to a disk is run.
+func TestMigrationImport_AnUndoRequestRemovesAPendingAdoptionAndWritesNothing(t *testing.T) {
+	h := newImportHarness(t)
+	if done := h.run(); done.Status != StatusSucceeded {
+		t.Fatalf("the import ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	before := len(h.runner.Calls())
+	invalidated := h.invalidated
+
+	done := h.runUndo()
+	if done.Status != StatusSucceeded {
+		t.Fatalf("the undo ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	h.assertNothingAdopted("after the undo")
+	if h.invalidated != invalidated+1 {
+		t.Errorf("the verify result was forgotten %d times by the undo, want once", h.invalidated-invalidated)
+	}
+	if pending, err := h.st.MigrationPending(context.Background()); err != nil || pending {
+		t.Errorf("MigrationPending = %v, %v after the undo", pending, err)
+	}
+	if len(h.mounter.unmounts) != 3 || h.mounter.unmounts[0] != impCatchAt {
+		t.Errorf("unmounts = %v, want the pool and then both disks", h.mounter.unmounts)
+	}
+	for _, c := range h.runner.Calls()[before:] {
+		t.Errorf("the undo ran %s %v: it unmounts and removes records, and runs no command", c.Name, c.Args)
+	}
+}
+
+// An adoption an earlier daemon recorded for a layout it can never initialise
+// (one parity disk and one data disk, no cache) is still pending, and the undo
+// is the user's way out of it.
+func TestMigrationImport_AnUndoRequestFreesAStuckPendingMigration(t *testing.T) {
+	ctx := context.Background()
+	h := newImportHarness(t)
+	h.stuckLayout(nil)
+	disks, recorded := pendingRows(h.plan)
+	if err := h.st.PutPendingArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: time.Now()}, disks, recorded); err != nil {
+		t.Fatal(err)
+	}
+	h.mounter.mounted["/mnt/disk1"], h.mounter.mounted[impCatchAt] = true, true
+	h.seq = &ArraySequence{CatchAll: importPool{m: h.mounter}}
+
+	if done := h.runUndo(); done.Status != StatusSucceeded {
+		t.Fatalf("the undo ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	h.assertNothingAdopted("after the undo")
+	if done := h.run(); done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "add a data disk or a cache device") {
+		t.Errorf("an import of the same stuck layout after the undo ended %s: %q", done.Status, done.ErrorMessage)
+	}
+}
+
+// The undo only ever removes a pending adoption: past the point of no return the
+// formatted parity and cache disks are the array's own, and nothing is unmounted
+// or deleted.
+func TestMigrationImport_AnUndoRequestRefusesWhatIsNotPending(t *testing.T) {
+	ctx := context.Background()
+	t.Run("an array past the point of no return", func(t *testing.T) {
+		h := newImportHarness(t)
+		if done := h.run(); done.Status != StatusSucceeded {
+			t.Fatalf("the import ended %s: %s", done.Status, done.ErrorMessage)
+		}
+		rows := parityInitRows(h.plan)
+		for i := range rows {
+			rows[i].FSUUID = fmt.Sprintf("0000000%d-0000-4000-8000-000000000000", i+1)
+		}
+		if err := h.st.RecordParityInit(ctx, rows); err != nil {
+			t.Fatal(err)
+		}
+		invalidated := h.invalidated
+		done := h.runUndo()
+		if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, ErrMigrationUndoNotPending.Error()) {
+			t.Fatalf("the undo ended %s: %q", done.Status, done.ErrorMessage)
+		}
+		if exists, err := h.st.Exists(ctx); err != nil || !exists {
+			t.Errorf("array record exists = %v, %v: the undo deleted an array past the point of no return", exists, err)
+		}
+		if len(h.mounter.unmounts) != 0 || h.invalidated != invalidated {
+			t.Errorf("a refused undo unmounted %v and forgot the verify result %d times", h.mounter.unmounts, h.invalidated-invalidated)
+		}
+	})
+	t.Run("no array at all is already undone", func(t *testing.T) {
+		h := newImportHarness(t)
+		if done := h.runUndo(); done.Status != StatusSucceeded {
+			t.Fatalf("the undo ended %s: %s", done.Status, done.ErrorMessage)
+		}
+		h.assertNothingAdopted("after an undo with nothing to undo")
+	})
+}
+
+// A mount the undo cannot release keeps the record, as the undo of a failed
+// adoption does, and says so.
+func TestMigrationImport_AnUndoRequestThatCannotUnmountKeepsTheRecord(t *testing.T) {
+	h := newImportHarness(t)
+	if done := h.run(); done.Status != StatusSucceeded {
+		t.Fatalf("the import ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	h.mounter.failUnmont = "/mnt/disk1"
+	done := h.runUndo()
+	if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "could not be undone") || !strings.Contains(done.ErrorMessage, "injected: the unmount failed") {
+		t.Fatalf("the undo ended %s: %q", done.Status, done.ErrorMessage)
+	}
+	if pending, err := h.st.MigrationPending(context.Background()); err != nil || !pending {
+		t.Errorf("MigrationPending = %v, %v: the record of a disk that is still mounted was deleted", pending, err)
+	}
+}
+
+func TestMigrationImport_UndoParamsNeedNoMapping(t *testing.T) {
+	if err := ValidateParams(TypeMigrationImport, undoParams()); err != nil {
+		t.Errorf("undo params = %v", err)
+	}
+	if err := ValidateParams(TypeMigrationImport, []byte(`{"undo":false}`)); err == nil {
+		t.Error("an import with no mapping was accepted")
+	}
 }

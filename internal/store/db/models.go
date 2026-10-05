@@ -67,6 +67,7 @@ type ArraySetting struct {
 	CreatedAt         string `json:"created_at"`
 	MigrationPending  int64  `json:"migration_pending"`
 	MigrationRecorded string `json:"migration_recorded"`
+	InitialSyncOwed   int64  `json:"initial_sync_owed"`
 }
 
 type AuditLog struct {

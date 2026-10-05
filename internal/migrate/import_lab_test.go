@@ -441,6 +441,130 @@ func (li *labImport) runImport(assignments []disk.AdoptionAssignment) *job.Job {
 	return done
 }
 
+// runUndo queues the undo of a pending import as the API does and waits for the
+// job.
+func (li *labImport) runUndo() *job.Job {
+	li.t.Helper()
+	ctx := context.Background()
+	body, err := json.Marshal(job.MigrationImportParams{Undo: true})
+	if err != nil {
+		li.t.Fatal(err)
+	}
+	j, err := li.sched.Submit(ctx, job.TypeMigrationImport, []string{JobResource}, body)
+	if err != nil {
+		li.t.Fatalf("Submit: %v", err)
+	}
+	done, err := li.sched.Await(ctx, j.ID)
+	if err != nil {
+		li.t.Fatalf("Await: %v", err)
+	}
+	return done
+}
+
+// assertNoWritingCommand fails for any command the import or its undo ran that
+// could change a disk (writingCommand).
+func (li *labImport) assertNoWritingCommand(when string) {
+	li.t.Helper()
+	for _, c := range li.rr.calls {
+		if why := writingCommand(c); why != "" {
+			li.t.Errorf("%s: %s: %v", when, why, c)
+		}
+	}
+}
+
+// writingCommand says why a command could change a disk, or "" when it cannot:
+// a format, a discard, a partitioning tool, dd, a filesystem check or repair
+// that is not the read-only form (xfs_repair -n, e2fsck -n, btrfs check
+// --readonly, as disk.AdoptCheck runs them), any other btrfs subcommand, or a
+// mount that is not read-only.
+func writingCommand(c []string) string {
+	if len(c) == 0 {
+		return ""
+	}
+	name := filepath.Base(c[0])
+	args := c[1:]
+	switch {
+	case strings.HasPrefix(name, "mkfs"), strings.HasPrefix(name, "mke2fs"):
+		return "a format"
+	case name == "wipefs", name == "blkdiscard", name == "fstrim":
+		return "a command that erases or discards"
+	case name == "sgdisk", name == "parted", name == "fdisk", name == "sfdisk", name == "partprobe", name == "gdisk", name == "cfdisk":
+		return "a partitioning tool"
+	case name == "dd":
+		return "dd"
+	case name == "xfs_repair":
+		if !hasShortFlag(args, 'n') {
+			return "xfs_repair without -n"
+		}
+	case name == "e2fsck", name == "fsck", strings.HasPrefix(name, "fsck."):
+		if !hasShortFlag(args, 'n') || hasShortFlag(args, 'y') || hasShortFlag(args, 'p') || hasShortFlag(args, 'a') {
+			return name + " that is not a read-only check"
+		}
+	case name == "btrfs":
+		if len(args) == 0 || args[0] != "check" {
+			return "a btrfs command other than check"
+		}
+		readonly := false
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(arg, "--repair") || strings.HasPrefix(arg, "--init-") || arg == "--clear-space-cache" || arg == "--clear-ino-cache" {
+				return "btrfs check that repairs"
+			}
+			if arg == "--readonly" {
+				readonly = true
+			}
+		}
+		if !readonly {
+			return "btrfs check without --readonly"
+		}
+	case name == "mount":
+		opts := ""
+		for i, arg := range c {
+			if arg == "-o" && i+1 < len(c) {
+				opts = c[i+1]
+			}
+		}
+		if !hasOpt(opts, "ro") {
+			return "a mount that is not read-only"
+		}
+	}
+	return ""
+}
+
+// hasShortFlag reports whether a single-dash flag cluster among args (such as
+// -n or -fn) holds the flag.
+func hasShortFlag(args []string, flag byte) bool {
+	for _, arg := range args {
+		if len(arg) > 1 && arg[0] == '-' && arg[1] != '-' && strings.IndexByte(arg[1:], flag) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func TestLabWritingCommandFlagsEveryCommandThatCouldChangeADisk(t *testing.T) {
+	for _, c := range [][]string{
+		{"mkfs.xfs", "/dev/x"}, {"mke2fs", "/dev/x"}, {"wipefs", "-a", "/dev/x"}, {"blkdiscard", "/dev/x"},
+		{"sgdisk", "-Z", "/dev/x"}, {"parted", "/dev/x"}, {"fdisk", "/dev/x"}, {"sfdisk", "/dev/x"}, {"dd", "of=/dev/x"},
+		{"xfs_repair", "/dev/x"}, {"xfs_repair", "-L", "/dev/x"},
+		{"e2fsck", "/dev/x"}, {"e2fsck", "-y", "/dev/x"}, {"e2fsck", "-p", "/dev/x"}, {"e2fsck", "-fy", "/dev/x"},
+		{"btrfs", "check", "/dev/x"}, {"btrfs", "check", "--repair", "/dev/x"}, {"btrfs", "rescue", "zero-log", "/dev/x"},
+		{"mount", "/dev/x", "/mnt/x"}, {"mount", "-o", "rw,noatime", "/dev/x", "/mnt/x"},
+	} {
+		if writingCommand(c) == "" {
+			t.Errorf("%v is not flagged as a command that could change a disk", c)
+		}
+	}
+	for _, c := range [][]string{
+		{"xfs_repair", "-n", "/dev/x"}, {"e2fsck", "-n", "/dev/x"}, {"e2fsck", "-fn", "/dev/x"},
+		{"btrfs", "check", "--readonly", "/dev/x"}, {"mount", "-o", "ro,norecovery", "/dev/x", "/mnt/x"},
+		{"umount", "/mnt/x"}, {"blkid", "/dev/x"},
+	} {
+		if why := writingCommand(c); why != "" {
+			t.Errorf("%v is flagged (%s) though it cannot change a disk", c, why)
+		}
+	}
+}
+
 // assertPoolMatchesManifest reads every file through the pool at /mnt/user and
 // compares it to what the fixture's builder recorded on the data disks: each
 // path has the sha256 of one of its copies, and the pool lists no file the
@@ -864,7 +988,8 @@ func zipWith(t *testing.T, path string, replace map[string]string) []byte {
 }
 
 // oneDataDiskArray is #74's primary fixture cut down to a one-data-disk array
-// with single parity, as Unraid lays it out: parity is the bytewise XOR of the
+// with single parity and the fixture's cache (the layout Q18 can place content
+// files on: the boot device, the cache and the data disk), as Unraid lays it out: parity is the bytewise XOR of the
 // data disks' partitions, which for one disk is a copy of it, so the parity
 // partition carries the data disk's XFS superblock and with it its filesystem
 // UUID. The two disks are copies of the fixture's own images; the parity copy
@@ -889,13 +1014,13 @@ func oneDataDiskArray(t *testing.T) (*labArray, []byte) {
 	if out, err := rr.Run(ctx, "cp", "-r", filepath.Join(src, "flash"), scratch); err != nil {
 		t.Fatalf("copying the flash: %v %s", err, out)
 	}
-	for _, slot := range []string{"parity", "disk1"} {
+	for _, slot := range []string{"parity", "disk1", "cache"} {
 		if out, err := rr.Run(ctx, "cp", "--sparse=always", filepath.Join(src, "img", slot+".img"), filepath.Join(scratch, "img", slot+".img")); err != nil {
 			t.Fatalf("copying %s: %v %s", slot, err, out)
 		}
 	}
 	probeA := &labArray{t: t, dir: src}
-	gp, gd := probeA.geometry(&labSlot{slot: "parity"}), probeA.geometry(&labSlot{slot: "disk1"})
+	gp, gd, gc := probeA.geometry(&labSlot{slot: "parity"}), probeA.geometry(&labSlot{slot: "disk1"}), probeA.geometry(&labSlot{slot: "cache"})
 	const window = 64 << 20
 	copyRange(t, filepath.Join(scratch, "img", "disk1.img"), gd[0]*512, filepath.Join(scratch, "img", "parity.img"), gp[0]*512, window)
 
@@ -913,13 +1038,16 @@ func oneDataDiskArray(t *testing.T) (*labArray, []byte) {
 	var ini strings.Builder
 	a := &labArray{t: t, dir: scratch, disks: disk.NewFakeProvider(), runner: rr, flash: f}
 	for _, s := range f.Slots {
-		if s.Name != "parity" && s.Name != "disk1" {
+		if s.Name != "parity" && s.Name != "disk1" && s.Name != "cache" {
 			continue
 		}
 		fmt.Fprintf(&ini, "[\"%s\"]\nidx=\"%d\"\nname=\"%s\"\nid=\"%s\"\nsize=\"%d\"\nstatus=\"DISK_OK\"\ntype=\"%s\"\nfsType=\"%s\"\n", s.Name, s.Index, s.Name, s.ID, s.SizeKiB, s.Type, s.FsType)
 		g := gp
-		if s.Name == "disk1" {
+		switch s.Name {
+		case "disk1":
 			g = gd
+		case "cache":
+			g = gc
 		}
 		img := filepath.Join(scratch, "img", s.Name+".img")
 		st, err := os.Stat(img)
@@ -933,8 +1061,8 @@ func oneDataDiskArray(t *testing.T) (*labArray, []byte) {
 		ls.fs, ls.uuid = props["TYPE"], props["UUID"]
 		a.slots = append(a.slots, ls)
 	}
-	if len(a.slots) != 2 {
-		t.Fatalf("attached %d disks, want the parity disk and disk1", len(a.slots))
+	if len(a.slots) != 3 {
+		t.Fatalf("attached %d disks, want the parity disk, disk1 and the cache", len(a.slots))
 	}
 	if a.slot("parity").uuid == "" || a.slot("parity").uuid != a.slot("disk1").uuid {
 		t.Fatalf("the parity partition's UUID is %q and the data disk's %q: the one-data-disk layout (parity holds a copy of the filesystem) was not built", a.slot("parity").uuid, a.slot("disk1").uuid)
@@ -952,7 +1080,7 @@ func TestLabImport_OneDataDiskNeverMountsItsParityCopy(t *testing.T) {
 	a, zipData := oneDataDiskArray(t)
 	parity, data := a.slot("parity"), a.slot("disk1")
 	before := a.hashes()
-	a.disks = labInventory(t, a, true, "parity", "disk1")
+	a.disks = labInventory(t, a, true, "parity", "disk1", "cache")
 	li := newLabImport(t, a, nil)
 	li.scanZip(zipData)
 	a.assertUnchanged(before, "after the scan")
@@ -1004,6 +1132,130 @@ func TestLabImport_OneDataDiskNeverMountsItsParityCopy(t *testing.T) {
 	a.assertUnchanged(before, "after stopping the array")
 }
 
+// An adoption whose layout the point of no return could never initialise (one
+// parity disk, one data disk, the cache left out) is refused by the import job
+// before it records or mounts anything, and no source disk is written.
+func TestLabImport_ALayoutStepSeventeenCouldNeverInitialiseIsRefusedBeforeAnythingIsMounted(t *testing.T) {
+	ctx := context.Background()
+	a, zipData := oneDataDiskArray(t)
+	before := a.hashes()
+	a.disks = labInventory(t, a, true, "parity", "disk1", "cache")
+	li := newLabImport(t, a, nil)
+	li.scanZip(zipData)
+
+	ip, err := li.svc.PlanImport(ctx, []disk.AdoptionAssignment{
+		{Role: disk.AdoptParity, Serial: a.slot("parity").id},
+		{Role: disk.AdoptData, Serial: a.slot("disk1").id},
+	})
+	if err != nil {
+		t.Fatalf("PlanImport: %v", err)
+	}
+	if err := job.CheckAdoptionLayout(ip.Plan); !errors.Is(err, job.ErrAdoptionLayout) {
+		t.Fatalf("CheckAdoptionLayout = %v, want the layout refusal", err)
+	}
+	body, err := json.Marshal(job.MigrationImportParams{Assignments: ip.Assignments, Plan: ip.Plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := li.sched.Submit(ctx, job.TypeMigrationImport, []string{JobResource}, body)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	done, err := li.sched.Await(ctx, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != job.StatusFailed || !strings.Contains(done.ErrorMessage, "only 2 of 3 required copies") || !strings.Contains(done.ErrorMessage, "add a data disk or a cache device") {
+		t.Fatalf("the import job ended %s: %q, want the Q18 refusal naming the shortfall and what to add", done.Status, done.ErrorMessage)
+	}
+	for _, where := range []string{"/mnt/user", "/mnt/disk1"} {
+		if _, ok := labMountAt(t, where); ok {
+			t.Errorf("%s is mounted after a refused import", where)
+		}
+	}
+	if exists, err := li.arrays.Exists(ctx); err != nil || exists {
+		t.Errorf("array record exists = %v, %v after a refused import", exists, err)
+	}
+	if pending, err := li.arrays.MigrationPending(ctx); err != nil || pending {
+		t.Errorf("MigrationPending = %v, %v: a refused import left a pending migration", pending, err)
+	}
+	for _, c := range li.rr.calls {
+		if c[0] == "mount" {
+			t.Errorf("a refused import ran %v", c)
+		}
+	}
+	a.assertUnchanged(before, "after the refused import")
+}
+
+// A pending import whose recorded layout step 17 would refuse (an earlier daemon
+// recorded it; the record here is cut down to the parity disk alone) is taken
+// back by the undo: the pool and the disk are unmounted, the record and units
+// are gone, the session can be forgotten, the disks can be imported again, and no
+// source disk is written at any point.
+func TestLabImport_UndoFreesAStuckPendingMigrationAndLeavesEverySourceDiskByteIdentical(t *testing.T) {
+	ctx := context.Background()
+	a, zipData := oneDataDiskArray(t)
+	before := a.hashes()
+	a.disks = labInventory(t, a, true, "parity", "disk1", "cache")
+	li := newLabImport(t, a, nil)
+	li.scanZip(zipData)
+	roles := li.proposedRoles()
+	if done := li.runImport(roles); done.Status != job.StatusSucceeded {
+		t.Fatalf("the import job ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	if _, ok := labMountAt(t, "/mnt/disk1"); !ok {
+		t.Fatal("the import left /mnt/disk1 unmounted")
+	}
+	recorded, err := li.arrays.RecordedDisks(ctx)
+	if err != nil || len(recorded) != 2 {
+		t.Fatalf("recorded = %+v, %v", recorded, err)
+	}
+	stuck, err := json.Marshal(recorded[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := li.db.ExecContext(ctx, `UPDATE array_settings SET migration_recorded = ?`, string(stuck)); err != nil {
+		t.Fatal(err)
+	}
+	if err := li.svc.Forget(ctx); !errors.Is(err, ErrImportPending) {
+		t.Fatalf("Forget while pending = %v, want ErrImportPending: it is the undo that frees it", err)
+	}
+	a.assertUnchanged(before, "before the undo")
+
+	done := li.runUndo()
+	if done.Status != job.StatusSucceeded {
+		t.Fatalf("the undo job ended %s: %s", done.Status, done.ErrorMessage)
+	}
+	for _, where := range []string{"/mnt/user", "/mnt/disk1"} {
+		if _, ok := labMountAt(t, where); ok {
+			t.Errorf("%s is still mounted after the undo", where)
+		}
+	}
+	assertNoSourceMounted(t, "after the undo", a.slot("parity").part, a.slot("parity").whole, a.slot("disk1").part, a.slot("cache").part, a.slot("cache").whole)
+	if exists, err := li.arrays.Exists(ctx); err != nil || exists {
+		t.Errorf("array record exists = %v, %v after the undo", exists, err)
+	}
+	if units, _ := filepath.Glob(filepath.Join(li.genRoot, "systemd", "system", "mnt-*.mount")); len(units) != 0 {
+		t.Errorf("the undo left units %v", units)
+	}
+	a.assertUnchanged(before, "after the undo")
+	li.assertNoWritingCommand("through the undo")
+	if st, err := li.svc.State(ctx); err != nil || st.Phase != PhaseScanned {
+		t.Errorf("session phase = %v, %v, want scanned", st.Phase, err)
+	}
+	if err := li.svc.Forget(ctx); err != nil {
+		t.Errorf("Forget after the undo = %v, want it accepted", err)
+	}
+
+	li.scanZip(zipData)
+	if again := li.runImport(roles); again.Status != job.StatusSucceeded {
+		t.Fatalf("importing again after the undo ended %s: %s", again.Status, again.ErrorMessage)
+	}
+	manifest := readManifest(t, labFixture(t, primary))
+	assertPoolMatchesManifest(t, manifest, []string{"disk1"}, 8, "after importing again")
+	a.assertUnchanged(before, "after importing again")
+}
+
 // Without a by-id link nothing but the UUID could tell the data disk from the
 // parity copy, so the scan refuses the data disk and no import is possible; the
 // refusal holds for a mapping built by hand too.
@@ -1011,7 +1263,7 @@ func TestLabImport_OneDataDiskWithoutAnIdentityLinkIsRefused(t *testing.T) {
 	ctx := context.Background()
 	a, zipData := oneDataDiskArray(t)
 	before := a.hashes()
-	a.disks = labInventory(t, a, false, "parity", "disk1")
+	a.disks = labInventory(t, a, false, "parity", "disk1", "cache")
 	li := newLabImport(t, a, nil)
 	li.scanZip(zipData)
 	st, err := li.svc.State(ctx)

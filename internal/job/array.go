@@ -309,6 +309,12 @@ type ArraySequence struct {
 	// calls — every existing caller in this package's own tests predates
 	// the gate and has no config backup to coordinate with.
 	PoolWriteGate PoolWriteGate
+	// AfterStart, when set, runs once Start has succeeded and maintenance
+	// mode is exited, so the scheduler admits what it queues. It cannot fail
+	// the start: the array is already live, and a hook with something to say
+	// reports it itself. cmd/hoservad uses it to queue the initial sync a
+	// finished migration still owes (doc 05 §5).
+	AfterStart func(ctx context.Context)
 }
 
 // Stop runs doc 02 §4's sequence for a user-requested `array stop`: it
@@ -721,6 +727,9 @@ func (s ArraySequence) Start(ctx context.Context) error {
 		if err := s.Scheduler.ExitMaintenanceChecked(); err != nil {
 			return errors.Join(fmt.Errorf("job: exiting maintenance mode: %w", err), s.rollbackToStopped(ctx, 0))
 		}
+	}
+	if s.AfterStart != nil {
+		s.AfterStart(context.WithoutCancel(ctx))
 	}
 	return nil
 }
