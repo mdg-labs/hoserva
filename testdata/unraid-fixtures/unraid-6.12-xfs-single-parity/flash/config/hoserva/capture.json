@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-03T07:02:18Z",
+  "captured_at": "2026-10-05T14:51:20Z",
   "unraid_version": "6.12.15",
   "script_version": "unreleased",
   "boot": {"mode": "usb", "filesystem": "vfat", "devices": [], "mirrored": false, "shared_with_data_pool": false},

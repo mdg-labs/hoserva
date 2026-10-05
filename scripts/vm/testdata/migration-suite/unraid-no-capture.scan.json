@@ -1,0 +1,133 @@
+{
+  "flashDevices": [],
+  "phase": "scanned",
+  "report": {
+    "review": {
+      "boot": {},
+      "capture": {
+        "state": "missing"
+      },
+      "disks": [
+        {
+          "byId": "virtio-cache-hoserva-80-a1",
+          "device": "/dev/vdh",
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "cache-hoserva-80-a1",
+          "size": 68719476736,
+          "slot": "pool cache",
+          "unraidId": "FIXTURE_cache-hoserva-80-a1",
+          "unraidRole": "cache",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-parity1-hoserva-80-a",
+          "device": "/dev/vdb",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "parity1-hoserva-80-a",
+          "size": 402653184,
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk1-hoserva-80-a1",
+          "device": "/dev/vdc",
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk1-hoserva-80-a1",
+          "size": 335544320,
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk2-hoserva-80-a1",
+          "device": "/dev/vdd",
+          "filesystem": "xfs",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk2-hoserva-80-a1",
+          "size": 335544320,
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk3-hoserva-80-a1",
+          "device": "/dev/vde",
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk3-hoserva-80-a1",
+          "size": 335544320,
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk4-hoserva-80-a1",
+          "device": "/dev/vdf",
+          "filesystem": "ext4",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk4-hoserva-80-a1",
+          "size": 335544320,
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-disk5-hoserva-80-a1",
+          "device": "/dev/vdg",
+          "hostBoot": false,
+          "refused": false,
+          "serial": "disk5-hoserva-80-a1",
+          "size": 4398046511104,
+          "weakIdentity": false
+        }
+      ],
+      "shares": [
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "appdata",
+          "warningCount": 2
+        },
+        {
+          "allocationMethod": "mostfree",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "documents",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "domains",
+          "warningCount": 2
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "system",
+          "warningCount": 2
+        }
+      ]
+    },
+    "rows": [
+      {
+        "check": "capture",
+        "detail": "The zip has no capture (config/hoserva/capture.json). Run the prepare script on the Unraid server and take the Flash Backup again.",
+        "status": "warn"
+      },
+      {
+        "check": "data_disks",
+        "detail": "The capture has no usable disks.ini, so no disk is known to be a data disk: no filesystem is checked and no baseline is recorded until you assign the roles at import.",
+        "status": "info"
+      }
+    ],
+    "verdict": "go_with_warnings"
+  },
+  "zipOnly": false
+}

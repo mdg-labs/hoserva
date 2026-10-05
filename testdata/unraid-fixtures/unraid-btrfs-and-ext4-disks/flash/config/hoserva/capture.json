@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-10-05T14:53:54Z",
-  "unraid_version": "7.3.2",
+  "captured_at": "2026-10-05T14:50:04Z",
+  "unraid_version": "6.12.15",
   "script_version": "unreleased",
   "boot": {"mode": "usb", "filesystem": "vfat", "devices": [], "mirrored": false, "shared_with_data_pool": false},
   "docker": {"state": "running", "directory_location": "cache", "writable_layers": [{"container":"stack-web","bytes":0},{"container":"handmade","bytes":0},{"container":"dbtool","bytes":0},{"container":"gateway","bytes":0},{"container":"syncer","bytes":0},{"container":"photos","bytes":0},{"container":"mediaserver","bytes":0},{"container":"notes","bytes":0}]},

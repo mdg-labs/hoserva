@@ -19,8 +19,9 @@
 #       backed by images under this lab's own /lab/<id>/unraid/<variant>/img;
 #   l3  inside the lab's L3 guest (make vm-unraid-fixture), on the guest's own
 #       virtio array disks, found by the serial scripts/vm/create-vm.sh gave
-#       them. Each must be exactly its spec size= (make vm-up VARIANT=<variant>
-#       creates them so); any other size is refused before a disk is written.
+#       them. Each must be exactly its spec size=, or its l3size= where the spec
+#       gives one (make vm-up VARIANT=<variant> creates them so); any other size
+#       is refused before a disk is written.
 # Any other device is refused. A variant is defined in
 # testdata/unraid-fixtures/<variant>/: spec (disk roles, filesystems, sizes),
 # seed (data), flash/ (the authored flash tree laid over common/flash), and, for
@@ -102,7 +103,7 @@ LV_LOOP=""
 LV_LOCATION=""
 SLOTS=()
 APPLEDOUBLE=()
-declare -A D_KIND D_FS D_SIZE D_TARGET D_POOL D_XFS D_GROUP D_BOOT D_CORRUPT
+declare -A D_KIND D_FS D_SIZE D_L3SIZE D_TARGET D_POOL D_XFS D_GROUP D_BOOT D_CORRUPT
 declare -A PART WHOLE FSDEV
 declare -A FACT_LABEL FACT_FEATURES
 declare -A PARITY_SHA PARITY_SIG PARITY_KIND
@@ -137,6 +138,9 @@ parse_disk() {
       size)
         D_SIZE[$slot]=$(numfmt --from=iec "$val") || die "spec: disk '$slot': bad size '$val'"
         ;;
+      l3size)
+        D_L3SIZE[$slot]=$(numfmt --from=iec "$val") || die "spec: disk '$slot': bad l3size '$val'"
+        ;;
       target)
         [[ $val =~ ^[a-z][a-z0-9]*$ ]] || die "spec: disk '$slot': bad target '$val'"
         D_TARGET[$slot]=$val
@@ -167,6 +171,7 @@ parse_disk() {
   done
   [[ -n ${D_KIND[$slot]:-} && -n ${D_FS[$slot]:-} && -n ${D_SIZE[$slot]:-} && -n ${D_TARGET[$slot]:-} ]] \
     || die "spec: disk '$slot' needs kind, fs, size and target"
+  if [[ $TIER == l3 && -n ${D_L3SIZE[$slot]:-} ]]; then D_SIZE[$slot]=${D_L3SIZE[$slot]}; fi
   case ${D_KIND[$slot]} in
     parity) [[ $slot == parity || $slot == parity2 ]] || die "spec: parity disk must be 'parity' or 'parity2'" ;;
     data) [[ $slot == disk* && ${D_FS[$slot]} != none ]] || die "spec: data disk '$slot' needs a diskN name and a filesystem" ;;

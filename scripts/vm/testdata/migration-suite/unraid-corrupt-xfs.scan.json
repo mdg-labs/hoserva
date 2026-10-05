@@ -79,7 +79,7 @@
           "proposedRole": "cache",
           "refused": false,
           "serial": "cache-hoserva-80-a1",
-          "size": 268435456,
+          "size": 1073741824,
           "slot": "pool cache",
           "unraidId": "FIXTURE_cache-hoserva-80-a1",
           "unraidRole": "cache",

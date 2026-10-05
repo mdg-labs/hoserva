@@ -3,71 +3,99 @@
   "phase": "scanned",
   "report": {
     "review": {
-      "boot": {},
+      "boot": {
+        "mode": "usb"
+      },
       "capture": {
-        "state": "missing"
+        "capturedAt": "2026-10-05T14:50:04Z",
+        "state": "present"
       },
       "disks": [
-        {
-          "byId": "virtio-cache-hoserva-80-a1",
-          "device": "/dev/vdh",
-          "filesystem": "btrfs",
-          "hostBoot": false,
-          "refused": false,
-          "serial": "cache-hoserva-80-a1",
-          "size": 68719476736,
-          "slot": "pool cache",
-          "unraidId": "FIXTURE_cache-hoserva-80-a1",
-          "unraidRole": "cache",
-          "weakIdentity": false
-        },
         {
           "byId": "virtio-parity1-hoserva-80-a",
           "device": "/dev/vdb",
           "hostBoot": false,
+          "proposedRole": "parity",
           "refused": false,
           "serial": "parity1-hoserva-80-a",
-          "size": 402653184,
+          "size": 64424509440,
+          "slot": "parity",
+          "unraidId": "FIXTURE_parity1-hoserva-80-a",
+          "unraidRole": "parity",
           "weakIdentity": false
         },
         {
           "byId": "virtio-disk1-hoserva-80-a1",
           "device": "/dev/vdc",
+          "diskNumber": 1,
           "filesystem": "xfs",
           "hostBoot": false,
+          "proposedRole": "data",
           "refused": false,
           "serial": "disk1-hoserva-80-a1",
-          "size": 335544320,
+          "size": 60129542144,
+          "slot": "disk1",
+          "unraidId": "FIXTURE_disk1-hoserva-80-a1",
+          "unraidRole": "data",
           "weakIdentity": false
         },
         {
           "byId": "virtio-disk2-hoserva-80-a1",
           "device": "/dev/vdd",
+          "diskNumber": 2,
           "filesystem": "xfs",
           "hostBoot": false,
+          "proposedRole": "data",
           "refused": false,
           "serial": "disk2-hoserva-80-a1",
           "size": 335544320,
+          "slot": "disk2",
+          "unraidId": "FIXTURE_disk2-hoserva-80-a1",
+          "unraidRole": "data",
           "weakIdentity": false
         },
         {
           "byId": "virtio-disk3-hoserva-80-a1",
           "device": "/dev/vde",
+          "diskNumber": 3,
           "filesystem": "btrfs",
           "hostBoot": false,
+          "proposedRole": "data",
           "refused": false,
           "serial": "disk3-hoserva-80-a1",
           "size": 335544320,
+          "slot": "disk3",
+          "unraidId": "FIXTURE_disk3-hoserva-80-a1",
+          "unraidRole": "data",
           "weakIdentity": false
         },
         {
           "byId": "virtio-disk4-hoserva-80-a1",
           "device": "/dev/vdf",
+          "diskNumber": 4,
           "filesystem": "ext4",
           "hostBoot": false,
+          "proposedRole": "data",
           "refused": false,
           "serial": "disk4-hoserva-80-a1",
           "size": 335544320,
+          "slot": "disk4",
+          "unraidId": "FIXTURE_disk4-hoserva-80-a1",
+          "unraidRole": "data",
+          "weakIdentity": false
+        },
+        {
+          "byId": "virtio-cache-hoserva-80-a1",
+          "device": "/dev/vdh",
+          "filesystem": "btrfs",
+          "hostBoot": false,
+          "proposedRole": "cache",
+          "refused": false,
+          "serial": "cache-hoserva-80-a1",
+          "size": 60129542144,
+          "slot": "pool cache",
+          "unraidId": "FIXTURE_cache-hoserva-80-a1",
+          "unraidRole": "cache",
           "weakIdentity": false
         },
         {
@@ -77,6 +105,7 @@
           "refused": false,
           "serial": "disk5-hoserva-80-a1",
           "size": 4398046511104,
+          "unraidRole": "unassigned",
           "weakIdentity": false
         }
       ],
@@ -87,7 +116,15 @@
           "highWater": true,
           "include": [],
           "name": "appdata",
-          "warningCount": 2
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "fillup",
+          "exclude": [],
+          "highWater": false,
+          "include": [],
+          "name": "backup",
+          "warningCount": 0
         },
         {
           "allocationMethod": "mostfree",
@@ -95,7 +132,7 @@
           "highWater": false,
           "include": [],
           "name": "documents",
-          "warningCount": 1
+          "warningCount": 0
         },
         {
           "allocationMethod": "highwater",
@@ -110,6 +147,22 @@
           "exclude": [],
           "highWater": true,
           "include": [],
+          "name": "isos",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
+          "name": "media",
+          "warningCount": 1
+        },
+        {
+          "allocationMethod": "highwater",
+          "exclude": [],
+          "highWater": true,
+          "include": [],
           "name": "system",
           "warningCount": 2
         }
@@ -117,14 +170,128 @@
     },
     "rows": [
       {
-        "check": "capture",
-        "detail": "The zip has no capture (config/hoserva/capture.json). Run the prepare script on the Unraid server and take the Flash Backup again.",
-        "status": "warn"
+        "check": "data_disks",
+        "detail": "A parity slot: /dev/vdb is never mounted or checked, and its role comes from its slot, never from its filesystem.",
+        "status": "info",
+        "subject": "parity"
       },
       {
         "check": "data_disks",
-        "detail": "The capture has no usable disks.ini, so no disk is known to be a data disk: no filesystem is checked and no baseline is recorded until you assign the roles at import.",
+        "detail": "xfs on /dev/vdc, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk1"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only xfs check of /dev/vdc is clean.",
+        "status": "pass",
+        "subject": "disk1"
+      },
+      {
+        "check": "data_disks",
+        "detail": "xfs on /dev/vdd, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk2"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only xfs check of /dev/vdd is clean.",
+        "status": "pass",
+        "subject": "disk2"
+      },
+      {
+        "check": "data_disks",
+        "detail": "btrfs on /dev/vde, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk3"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only btrfs check of /dev/vde is clean.",
+        "status": "pass",
+        "subject": "disk3"
+      },
+      {
+        "check": "data_disks",
+        "detail": "ext4 on /dev/vdf, a single filesystem; the flash and the device agree on it.",
+        "status": "pass",
+        "subject": "disk4"
+      },
+      {
+        "check": "disk_integrity",
+        "detail": "The read-only ext4 check of /dev/vdf is clean.",
+        "status": "pass",
+        "subject": "disk4"
+      },
+      {
+        "check": "baseline",
+        "detail": "Recorded for the verify phase, with the session. Content hashes: every file of 1.0 MiB or less is hashed, plus a deterministic 1 in 100 (at least 200) of the larger files on each disk, chosen by a stable hash of the path. Every file's size, every symlink with its target and every special file by type is recorded as well.",
         "status": "info"
+      },
+      {
+        "check": "baseline",
+        "detail": "14 files (64.8 MiB), 3 symlinks and 3 special files; 14 files (64.8 MiB) hashed.",
+        "status": "info",
+        "subject": "disk1"
+      },
+      {
+        "check": "baseline",
+        "detail": "9 files (1.2 MiB), 0 symlinks and 0 special files; 9 files (1.2 MiB) hashed. Hidden top-level directories are not shares and are left out: .Trash-99.",
+        "status": "info",
+        "subject": "disk2"
+      },
+      {
+        "check": "baseline",
+        "detail": "7 files (1.5 MiB), 1 symlink and 0 special files; 7 files (1.5 MiB) hashed.",
+        "status": "info",
+        "subject": "disk3"
+      },
+      {
+        "check": "baseline",
+        "detail": "4 files (459.0 KiB), 1 symlink and 1 special file; 4 files (459.0 KiB) hashed.",
+        "status": "info",
+        "subject": "disk4"
+      },
+      {
+        "check": "baseline",
+        "detail": "5 files (64.2 MiB), 3 symlinks and 3 special files, on disk1.",
+        "status": "info",
+        "subject": "appdata"
+      },
+      {
+        "check": "baseline",
+        "detail": "2 files (976.6 KiB), 0 symlinks and 0 special files, on disk3.",
+        "status": "info",
+        "subject": "backup"
+      },
+      {
+        "check": "baseline",
+        "detail": "12 files (297.0 KiB), 1 symlink and 0 special files, on disk1, disk2, disk3.",
+        "status": "info",
+        "subject": "documents"
+      },
+      {
+        "check": "baseline",
+        "detail": "1 file (683.6 KiB), 0 symlinks and 0 special files, on disk2.",
+        "status": "info",
+        "subject": "isos"
+      },
+      {
+        "check": "baseline",
+        "detail": "11 files (1.5 MiB), 0 symlinks and 0 special files, on disk1, disk2, disk3, disk4.",
+        "status": "info",
+        "subject": "media"
+      },
+      {
+        "check": "baseline",
+        "detail": "3 files (341.8 KiB), 1 symlink and 1 special file, on disk4.",
+        "status": "info",
+        "subject": "photos-archive"
+      },
+      {
+        "check": "baseline",
+        "detail": "1 path exists on more than one disk, and the pool shows only one copy of each (mergerfs, as Unraid's user shares do): media/movies/duplicate.bin (on disk1, disk2). Decide which copy to keep before relying on the pool.",
+        "status": "flag"
       }
     ],
     "verdict": "go_with_warnings"

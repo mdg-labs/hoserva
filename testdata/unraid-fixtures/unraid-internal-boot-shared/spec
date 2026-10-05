@@ -9,10 +9,10 @@
 unraid_version=7.3.2
 unraid_release=2026-09-10
 expect_parity_signature=xfs
-disk parity kind=parity fs=none  size=384M  target=parity1
-disk disk1  kind=data   fs=xfs   size=320M  target=disk1
+disk parity kind=parity fs=none  size=60G  target=parity1
+disk disk1  kind=data   fs=xfs   size=56G  target=disk1
 disk disk2  kind=data   fs=xfs   size=320M  target=disk2
 disk disk3  kind=data   fs=xfs   size=320M  target=disk3
-disk cache  kind=pool   fs=btrfs size=6144M target=disk4 pool=cache boot=4096
+disk cache  kind=pool   fs=btrfs size=60G target=disk4 pool=cache boot=4096
 # Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-internal-boot-shared
 include ../common/spec-flash

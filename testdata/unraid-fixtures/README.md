@@ -36,7 +36,7 @@ Variants for the scan's per-filesystem checks and refusals:
 
 | Variant | What it holds | Built on |
 |---|---|---|
-| `unraid-btrfs-and-ext4-disks` | an ext4 and a single-device btrfs disk beside two XFS ones, all adoptable; no `config/hoserva/` | L2, L3 |
+| `unraid-btrfs-and-ext4-disks` | an ext4 and a single-device btrfs disk beside two XFS ones, all adoptable | L2, L3 |
 | `unraid-corrupt-xfs` | one XFS disk whose metadata fails `xfs_repair -n`; refused, the rest proceed | L2, L3 |
 | `unraid-encrypted` | LUKS containers holding XFS (`luks:xfs`); each refused | L3 only |
 | `unraid-zfs-disk` | a ZFS array disk and a two-device btrfs filesystem; each refused | L3 only |
@@ -49,5 +49,16 @@ container lack: `make lab-unraid-fixture` refuses it and names
 measures each on the disk and refuses a variant whose file disagrees, then writes
 the checked result as `expected/scan.txt` (and, for a variant that refuses a disk,
 a whole-device sha256 of every source disk as `expected/source-disks.sha256`).
-Variants without a `config/hoserva/` say `capture=none` in their spec, and
-`make vm-unraid-capture` refuses them.
+A variant that has no `config/hoserva/` by design says `capture=none` in its spec,
+and `make vm-unraid-capture` refuses it; no committed variant does today.
+
+Disks are sparse images, so a large one costs no space, but every whole-device hash
+reads all of it, so only what Hoserva needs is large, and only in the L3 guest, where
+the migration suite imports a variant: a disk's `l3size=` is its size there, `size=`
+the loop-device lab's. Every share Hoserva mounts keeps 50G free (`minfreespace`), and
+`appdata` ends up on the cache, so an imported variant has a 56G cache pool and a 56G
+first data disk in the guest, with parity disks of 60G (at least as large as the
+largest data disk). `mkfs.xfs` also refuses a filesystem under 300 MB, so each cache
+is at least 1G. A variant that refuses a disk is never imported, so it keeps its small
+data disks, and so does `unraid-with-vms`, which no suite imports yet.
+`scripts/vm/unraid-sizing-check.sh` holds the specs to this.

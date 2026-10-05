@@ -119,14 +119,38 @@ for v in unraid-encrypted unraid-zfs-disk unraid-corrupt-xfs; do
   scan_fails "$v: a parity disk that is refused" '(.report.review.disks[] | select(.slot == "parity")) |= (.refused = true)' "parity: refused is true"
 done
 
-# --- a fixture without a capture: the scan names no data disk and records no baseline
+# --- a fixture whose disks are of three filesystem types, scanned in full
 v=unraid-btrfs-and-ext4-disks
+use_variant "$v"
+if assert_scan; then
+  ok "the $v report matches its fixture"
+else
+  bad "the $v report does not match its fixture: $ASSERT_OUT"
+fi
+scan_fails "$v: a baseline row of disk4 missing" '.report.rows |= map(select(.subject != "disk4" or .check != "baseline"))' "disk4: the report has no baseline row"
+scan_fails "$v: another filesystem for the ext4 disk" '(.report.review.disks[] | select(.slot == "disk4") | .filesystem) = "xfs"' "disk4: the report says filesystem"
+scan_fails "$v: another filesystem for the btrfs disk" '(.report.review.disks[] | select(.slot == "disk3") | .filesystem) = "xfs"' "disk3: the report says filesystem"
+scan_fails "$v: no proposed role for the btrfs disk" 'del(.report.review.disks[] | select(.slot == "disk3") | .proposedRole)' "disk3: the proposed role"
+
+# --- a spec that says capture=none: the scan names no data disk and records no
+# baseline. No committed fixture is built so; the report is one captured from a
+# fixture of the same disks without its config/hoserva/.
+real_root=$VM_REPO_ROOT
+VM_REPO_ROOT="$work/repo"
+v=unraid-no-capture
+mkdir -p -- "$VM_REPO_ROOT/testdata/unraid-fixtures/$v"
+{
+  printf 'capture=none\n'
+  grep '^disk ' -- "$real_root/testdata/unraid-fixtures/unraid-btrfs-and-ext4-disks/spec"
+} >"$VM_REPO_ROOT/testdata/unraid-fixtures/$v/spec"
+printf 'disk parity parity\ndisk disk1 adopt\ndisk disk2 adopt\ndisk disk3 adopt\ndisk disk4 adopt\ndisk cache recreated\nwarn capture-missing\n' >"$VM_REPO_ROOT/testdata/unraid-fixtures/$v/expect"
 use_variant "$v"
 if assert_scan; then ok "the $v report matches its fixture"; else bad "the $v report does not match its fixture: $ASSERT_OUT"; fi
 scan_fails "$v: a baseline row" '.report.rows += [{"check": "baseline", "status": "info", "subject": "disk1", "detail": "1 file (1 B), 0 symlinks and 0 special files; 1 file (1 B) hashed."}]' "has baseline rows"
 scan_fails "$v: a disk of the fixture missing from the table" 'del(.report.review.disks[] | select(.serial == "disk3-hoserva-80-a1"))' "no row for disk3"
 scan_fails "$v: another filesystem for the btrfs disk" '(.report.review.disks[] | select(.serial == "disk3-hoserva-80-a1") | .filesystem) = "xfs"' "disk3: the report says filesystem"
 scan_fails "$v: a capture that is not missing" '.report.review.capture.state = "present"' "the capture state is"
+VM_REPO_ROOT=$real_root
 
 # --- the guest helper on a scratch tree
 exp="$work/expected"

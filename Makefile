@@ -816,9 +816,9 @@ lab-destroy: lab-require-id
 # unexport/$(value ...)/export guard before any recipe below runs.
 #
 # vm-up VARIANT=<variant> creates each array disk the variant's spec targets
-# at that spec's size= (parity1, disk1..disk5, cache; a disk no spec line
+# at that spec's l3size=, else size= (parity1, disk1..disk5, cache; a disk no spec line
 # targets keeps its HOSERVA_VM_*_SIZE default), so the L3 build of an Unraid
-# fixture lays out the same partitions as its L2 build. Without VARIANT the
+# fixture lays out the same partition scheme as its L2 build. Without VARIANT the
 # disks are sized by HOSERVA_VM_*_SIZE alone.
 vm-up:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-up)" >&2; exit 1; }
@@ -836,7 +836,7 @@ vm-restore:
 # guest's own array disks before any .deb is deployed, verifies it, and takes
 # the snapshot named like the variant, so `make vm-restore NAME=<variant>`
 # returns to it. The guest must come from `make vm-up VARIANT=<variant>`: each
-# target disk must be exactly its spec size=, and the build refuses any other
+# target disk must be exactly its spec l3size= (else size=), and the build refuses any other
 # before it writes a disk, so the layout (MBR up to 2000G, GPT from 2T) is the
 # one the L2 build gives. A variant with options takes OPTION=<name> too; a
 # non-default one is built, copied and snapshotted as <variant>-<option>. A

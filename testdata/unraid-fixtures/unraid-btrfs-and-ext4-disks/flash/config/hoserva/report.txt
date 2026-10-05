@@ -1,5 +1,5 @@
-Hoserva Phase A report (prepare-migration unreleased, 2026-10-05 15:08 UTC)
-Unraid 7.3.2. Lines starting with !! must be fixed while Unraid still runs.
+Hoserva Phase A report (prepare-migration unreleased, 2026-10-05 14:50 UTC)
+Unraid 6.12.15. Lines starting with !! must be fixed while Unraid still runs.
 
 == Containers ==
 8 containers: 7 running, 1 not running.
@@ -46,7 +46,7 @@ Writable-layer size per container (state kept inside the container, not in a map
   - photos: 0 KiB
   - mediaserver: 0 KiB
   - notes: 0 KiB
-Fit: the data on the cache (328 KiB) fits on the array: 56.4 GiB usable of 56.4 GiB free across 3 data disks, after the largest share floor (0 KiB) is kept free on each. This compares totals; it does not check that one large file fits on one disk.
+Fit: the data on the cache (328 KiB) fits on the array: 56.6 GiB usable of 56.6 GiB free across 4 data disks, after the largest share floor (0 KiB) is kept free on each. This compares totals; it does not check that one large file fits on one disk.
 
 == Last parity check ==
 Last parity check: 2026-09-25 01:33 UTC, exit code 0, 0 errors.
@@ -56,16 +56,15 @@ Last parity check: 2026-09-25 01:33 UTC, exit code 0, 0 errors.
   - disk1 (Data): FIXTURE_disk1-capture as sdc, DISK_OK
   - disk2 (Data): FIXTURE_disk2-capture as sdd, DISK_OK
   - disk3 (Data): FIXTURE_disk3-capture as sde, DISK_OK
-  - cache (Cache): FIXTURE_disk4-capture as sdf, DISK_OK
-  - flash (Boot): FIXTURE_disk4-capture as sdf, DISK_OK
+  - disk4 (Data): FIXTURE_disk4-capture as sdf, DISK_OK
+  - cache (Cache): FIXTURE_cache-capture as sdg, DISK_OK
 Parity disk(s): parity. Their contents are not kept: they are rewritten as parity.
 
 == Boot device and rollback ==
-Unraid boots from an internal boot pool (zfs), 1 device(s).
-The boot device also holds a data pool (boot and data on one device).
+Unraid boots from a USB stick (vfat). Keep the stick safe at step 11 of the migration: it is the rollback.
 Rollback after Debian is installed:
-  - Debian on the same NVMe: restore the Flash Backup zip to a USB stick (USB Flash Creator) and boot it; re-create the cache.
-There is no stick to keep: the Flash Backup zip is the rollback artifact.
+  - Debian on a separate device: reinsert the stick and boot.
+  - Debian on the shared NVMe (with the Unraid cache): reinsert the stick, re-create the Unraid cache, and move appdata back.
 
 == Capture ==
 Written to /boot/config/hoserva/: containers.json, networks.json, disks.ini, autostart, var.ini, smart/, capture.json and this report.

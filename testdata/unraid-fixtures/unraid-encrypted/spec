@@ -18,6 +18,6 @@ disk parity kind=parity fs=none     size=384M target=parity1
 disk disk1  kind=data   fs=luks-xfs size=320M target=disk1
 disk disk2  kind=data   fs=luks-xfs size=320M target=disk2
 disk disk3  kind=data   fs=luks-xfs size=320M target=disk3
-disk cache  kind=pool   fs=btrfs    size=256M target=cache pool=cache
+disk cache  kind=pool   fs=btrfs    size=1G target=cache pool=cache
 # Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-encrypted
 include ../common/spec-flash
