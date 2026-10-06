@@ -241,6 +241,7 @@ describe("parity page sync and the threshold guard", () => {
     renderParityPage();
     const override = await openOverride();
 
+    expect(within(override).getByText(/If the guard no longer blocks it, it runs as a normal sync\./)).toBeInTheDocument();
     expect(await within(override).findByText(/removed=41 \(threshold-relevant\)/)).toBeInTheDocument();
     expect(within(override).queryByText(GUARD_SUMMARY)).not.toBeInTheDocument();
     expect(syncConfirms()).toEqual([false]);

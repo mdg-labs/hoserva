@@ -1601,7 +1601,7 @@
     "override": {
       "open": "Sync anyway…",
       "title": "Sync past the threshold guard",
-      "description": "Hoserva asks the guard again first. Only a block it reports now can be overridden, and syncing anyway writes that change into parity.",
+      "description": "Hoserva first runs the sync through the guard again. If the guard no longer blocks it, it runs as a normal sync. Only a block the guard reports now can be overridden, and syncing anyway writes that change into parity.",
       "checking": "Asking the threshold guard…",
       "notRefused": "The guard no longer blocks this sync, so it ran as a normal sync.",
       "stopped": "The sync was stopped before the guard answered.",
