@@ -190,6 +190,19 @@ every pattern that applies to the files it touches (layers 6 and 7).
    open issue it is blocked-by or blocking — say which. "None of the
    acceptance criteria ask for daemon wiring" is never a reason to pass it.
 
+{{IF SITE_DOCS — fill for an issue whose diff touches `site/docs/` or `site/versioned_docs/`; omit otherwise:}}**Public docs pages.** Read `{{HOSERVA_ROOT}}/.claude/skills/user-docs/SKILL.md`
+and check each changed page against its self-review checklist, under layers 2
+and 3. Run `make site-build` yourself under layer 1. A breach of one of the
+skill's hard rules is **blocking**: wrong positioning, a missing
+`<TrademarkNotice />` on a page naming Unraid, a root-absolute link, a link
+into `docs/internal/`, an issue or the source tree, design-doc citation style
+in page text (`doc N`, `§`, `Dn`, `Qn`, `#n`), behaviour that is not on `dev`
+documented as shipped (or a page for an unbuilt feature left without
+`draft: true`), or a versioning-rule breach (a snapshot edited to add new
+behaviour, a version annotation, `docs:version` run). Judgements about tone
+and structure that the checklist leaves open are notes.
+{{END IF}}
+
 {{IF ANY SAFETY_CRITICAL:}}**Safety-critical issues get layer 5 in full, with no "not applicable".**
 Walk every destructive code path in the diff and state, for each, what
 happens if the process dies at every step. Run the data-loss test yourself

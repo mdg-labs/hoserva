@@ -15,6 +15,8 @@ cd site && npm start # local dev server
 
 ## Writing pages
 
+How to write a page (voice, structure, the elements to use, what a page must never contain) is in `.claude/skills/user-docs/SKILL.md`; read it before writing or editing one. The mechanics are here.
+
 Pages are in `docs/`, one file per page of doc 05 §7's tree. `sidebars.ts` lists the tree. A page with `draft: true` in its front matter is left out of the production build, and the sidebar shows it as a "coming soon" label with no link. Remove `draft: true` and the entry becomes a real link; `sidebars.ts` needs no edit.
 
 Any page that names Unraid renders `<TrademarkNotice />` (`src/components/TrademarkNotice`), which carries the trademark sentence from doc 00 §6.

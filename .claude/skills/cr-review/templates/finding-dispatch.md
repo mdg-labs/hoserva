@@ -38,6 +38,10 @@ Fix to make: {{WHAT_THE_FIX_MUST_DO, in the main session's words}}
 Declared scope: {{SCOPE_PATHS}}
 ```
 
+A finding whose declared scope touches `site/docs/` or `site/versioned_docs/`
+also fills the `SITE_DOCS` block in both templates, so the executor reads, and
+the verifier checks against, `.claude/skills/user-docs/SKILL.md`.
+
 Whether a finding is real is not yours to decide, in either role. If the
 code in the workspace shows the verdict is wrong, change nothing for that
 finding and say so with the evidence; the main session decides.

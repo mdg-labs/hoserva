@@ -137,6 +137,7 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 - No business logic in API handlers; the frontend computes nothing the backend should own. Review convention, not tool-enforced.
 - Every UI string goes through the i18n catalog (Q48), enforced by `eslint-plugin-i18next` in `web/eslint.config.js` and CI's `web` job (`npm run lint`); every technical term gets a plain-language label (doc 03) is a review convention on top of that.
 - The UI is coss ui (D15): use the component and particle doc 03 names for each element, build shared patterns once in `web/src/components/patterns/`, and use the `coss` / `coss-particles` skills when writing them. What coss lacks uses Q59's libraries. Review convention, not tool-enforced.
+- Every page under `site/docs/` or `site/versioned_docs/` follows `.claude/skills/user-docs/SKILL.md` (end-user voice, no internal references, the versioned-docs rules); an executor reads it before writing and the verifier checks against it. Review convention, not tool-enforced.
 - Golden files change only deliberately — a golden diff is explained in the commit message, never regenerated to make a test pass. Not tool-enforced; caught in review.
 - Conventional commits (`feat(parity): …`, `fix(mover): …`), one issue per commit, `Fixes #n` trailer. Not tool-enforced; caught in review.
 - Every commit carries a DCO `Signed-off-by:` trailer (CONTRIBUTING.md, doc 13 Q2) — run `make hooks-install` once per clone (including a scratch clone) and it's automatic; CI's `dco` job rejects a commit that's missing one.
