@@ -1,9 +1,36 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/geist-mono';
 
-:root {
-  --ifm-font-family-base: 'Inter Variable', system-ui, sans-serif;
-  --ifm-font-family-monospace: 'Geist Mono Variable', ui-monospace, monospace;
+/* Tailwind without its preflight, which would fight Infima on the docs pages.
+   Utilities are `important` so Infima's element rules (`a:hover` and so on)
+   never override a coss component. Only the components, pages and theme
+   overrides are scanned for classes. */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' source(none) important;
+@source '../components';
+@source '../pages';
+@source '../theme';
+
+@import './coss.css';
+@import './infima.css';
+
+/* What Tailwind's preflight does for the elements coss components render,
+   scoped to those components. */
+[data-slot],
+[data-slot]::before,
+[data-slot]::after {
+  box-sizing: border-box;
+  border: 0 solid var(--border);
+}
+
+[data-slot='button'],
+[data-slot='input'] {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background-color: transparent;
 }
 
 .trademark-notice {
@@ -15,6 +42,8 @@
   display: block;
   padding: var(--ifm-menu-link-padding-vertical) var(--ifm-menu-link-padding-horizontal);
   color: var(--ifm-color-emphasis-600);
+  font-size: 0.875rem;
+  font-weight: 500;
   cursor: default;
 }
 

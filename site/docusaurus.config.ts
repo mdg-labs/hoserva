@@ -3,6 +3,7 @@ import path from 'node:path';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
+import {prismTheme} from './src/lib/prism';
 
 // Versioning rules: docs/internal/13-open-questions.md Q90. With no
 // versions.json the current docs are the whole docs site, at /docs/. Once
@@ -82,6 +83,7 @@ const config: Config = {
     ],
   ],
   plugins: [
+    './plugins/tailwind',
     'docusaurus-plugin-sass',
     [
       'docusaurus-plugin-openapi-docs',
@@ -122,6 +124,10 @@ const config: Config = {
     },
     colorMode: {
       respectPrefersColorScheme: true,
+    },
+    prism: {
+      theme: prismTheme,
+      darkTheme: prismTheme,
     },
     mermaid: {
       theme: {light: 'neutral', dark: 'dark'},

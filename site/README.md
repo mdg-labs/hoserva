@@ -20,6 +20,17 @@ cd site && npm start # local dev server
 
 Each docs version is built from its own copy of the specification, `versioned_api/openapi-X.Y.yaml`, so a snapshot keeps the API as it was released while the pages stay generated. The current docs read `api/openapi.yaml`. The build fails if `versions.json` lists a version that has no copy.
 
+## Theme
+
+The site takes the web UI's look (coss ui, D15): its palette in light and dark, radius, shadows and type, with `respectPrefersColorScheme` unchanged. The values are copied, never imported (`site/` does not import from `web/`).
+
+- **Token source.** `src/css/coss.css` holds the tokens copied from `web/src/index.css` (`:root` for light; the web UI's `.dark` is `[data-theme='dark']` here). When the web UI's palette changes, copy it again.
+- **Infima mapping.** `src/css/infima.css` maps those tokens onto Infima's variables (`--ifm-*`), the API reference theme's (`--openapi-*`) and the search plugin's (`--search-local-*`), and styles the stock navbar, sidebar, footer, admonitions, tables, tabs and code blocks. `src/lib/prism.ts` is the code-block theme: its token colours are CSS variables defined per colour mode in `infima.css`.
+- **Tailwind v4** comes in through `plugins/tailwind.js`, which puts `@tailwindcss/postcss` first in Docusaurus's PostCSS chain. `src/css/custom.css` imports Tailwind's theme and utilities without its preflight, so Infima's layout on the docs pages is untouched. Utilities are `important` so Infima's element rules (`a:hover`) never override a coss component, and only `src/components`, `src/pages` and `src/theme` are scanned for classes.
+- **coss components** in `src/components/ui/` (Button, Card, Badge, Input) are copied from `web/src/components/ui/`, each with its source in a header comment. Add another by copying it the same way. Pages import them from `@site/src/components/ui/`.
+- **Swizzled components: none.** Everything is reached with CSS. If one is ever needed, list it here with the reason.
+- **Footer.** The footer is styled, but none is configured: the site has no footer content yet.
+
 ## Writing pages
 
 How to write a page (voice, structure, the elements to use, what a page must never contain) is in `.claude/skills/user-docs/SKILL.md`; read it before writing or editing one. The mechanics are here.
