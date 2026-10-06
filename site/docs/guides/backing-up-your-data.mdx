@@ -1,0 +1,109 @@
+---
+title: Backing up your data
+description: Keep a copy of the files in your shares somewhere other than this server, with a backup app from the catalog. Choose an app, back up a share to an off-box destination, and test a restore.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+A backup is a separate copy of your files that survives whatever happens to the server, including your own mistakes. This page shows how to set one up with a backup app from the catalog, send it to a place outside your server, and check that you can restore from it.
+
+## Why is parity not enough?
+
+Parity lets the array survive a failed disk, but it lives in the same box as your data and is updated on a schedule to match it. A deleted folder, ransomware, a fire or a theft takes the parity with it or copies the damage into it. [Parity is not backup](../concepts/parity-is-not-backup.md) walks through each case.
+
+The usual rule of thumb is **3-2-1**: keep three copies of data you cannot replace (the original and two backups), on two kinds of storage, with one copy somewhere else, such as another building or a cloud service. Your pool is the original. The apps below make the other copies.
+
+## Which backup app should I use?
+
+Hoserva does not copy the files in your shares itself. The catalog holds backup apps that do, and you install the one that suits you from **Apps → Catalog**. Search for `backup`, or for the app's name.
+
+| App | Good for | Interface |
+|---|---|---|
+| Duplicati | Scheduled, encrypted backups from a web page, to local or remote destinations | Web UI |
+| Backrest | Scheduled backups with a clear list of snapshots; a web page over the restic backup tool | Web UI |
+| Kopia | Snapshots and snapshot policies, kept in a repository you create from a web page | Web UI |
+| borgmatic | People comfortable editing a YAML file; backs up daily at 01:00 unless you change the schedule, and can send to a repository over SSH | Command line inside the app, no web page |
+| rclone | Copying files to a remote storage service; it copies when you start a transfer and has no schedule of its own | Web UI |
+
+All five mount the pool read-only, so a backup app cannot change or delete the files it protects. Duplicati, Backrest, Kopia and borgmatic encrypt their backups with a password you choose. If you are unsure, start with Backrest or Duplicati.
+
+## Back up a share with Backrest
+
+This walk-through uses Backrest. The other apps follow the same shape: install the app, choose what to back up, choose where it goes, run it, and restore a few files to prove it works. Each app's own documentation, linked from its page in the catalog, covers its screens.
+
+### Before you start
+
+- Decide where the copy will go. It should be outside this server: another machine over SFTP, S3-compatible storage, or a cloud service. A USB disk mounted under `/mnt/disks` and kept in a drawer also counts.
+- Choose a password for the backups and keep a copy of it away from this server. A backup cannot be restored without it.
+- The install form asks for a **Local backup and restore folder**, by default `/mnt/user/backups`. If you have no share called `backups`, create one on **Shares** first, or choose another folder.
+
+### Install Backrest
+
+<Tabs groupId="interface">
+  <TabItem value="web" label="Web UI" default>
+    1. Open **Apps → Catalog** and select **Backrest**. Select **Install**.
+    2. Under **Basic**, check **Folder to back up**. The default is `/mnt/user`, the whole pool, mounted read-only inside the app. Choose a single share instead if you only want part of it.
+    3. Check **Local backup and restore folder**. This is the one folder the app can write to. It is for restored files and for backups kept on this server or on a USB disk.
+    4. Leave **Web UI port** at 9898 unless something else uses it, then select **Install Backrest**.
+    5. Hoserva starts the app. When the page says Backrest is running, open it from **Apps → Installed**.
+  </TabItem>
+  <TabItem value="cli" label="CLI">
+    ```bash
+    hoserva app install backrest --set SOURCE=/mnt/user --set DESTINATION=/mnt/user/backups
+    hoserva stack start backrest
+    ```
+
+    `hoserva app install` creates the app but does not start it, and `hoserva stack start` starts it. Add `--dry-run` to the first command to see what it would do without creating anything. The app's address is `http://SERVER:9898`, with the name or IP address of your server in place of `SERVER`.
+  </TabItem>
+</Tabs>
+
+:::warning[Appdata is not part of this backup]
+**Hoserva backs up app settings and data separately.** The appdata folder lives on the cache disk, outside the pool, so the default **Folder to back up** does not include it, and Hoserva's own appdata backup covers it. If your pool also has a share called `appdata`, exclude `/source/appdata` in the backup plan. See [Backing up appdata](./backing-up-appdata.md).
+:::
+
+### Set up the repository and a backup plan
+
+On your first visit, Backrest asks for an instance ID, which cannot be changed later, and a username and password. Then, using Backrest's own screens (see [its documentation](https://garethgeorge.github.io/backrest/introduction/getting-started)):
+
+1. Add a **repository**: the place the backups are stored. Choose the off-box destination you picked earlier, and give it the backup password. Backrest takes the repository's address in the form its documentation describes.
+2. Add a **plan** that backs up the folder `/source`, which is the folder you chose above, using that repository. Set a schedule, for example nightly.
+3. Add `/source/backups` to the plan's exclusions if the local backup folder sits inside the folder you back up. With the defaults it does, and without the exclusion the backup copies itself.
+
+:::warning[A backup kept only on this server is not an off-box copy]
+**Do not send backups only to `/backups`.** With the defaults that folder is a share on the same pool, so a fire, a theft or a failed pool takes the backup with the original. Use it as a second copy, not the only one.
+:::
+
+### Run the first backup and check it
+
+1. Run the plan once by hand instead of waiting for the schedule. The first run copies everything and takes the longest: at an upload speed of 50 Mbit/s, 1 TB takes about 45 hours. A destination on your own network is much faster.
+2. Open the plan's history in Backrest and check that the run finished without errors. Backrest runs as root inside the app, so it can read every file in the folder.
+3. Check that the snapshot lists the folders you expect, and that its size is close to the size of what you backed up.
+
+### Test a restore
+
+A backup you have never restored from is a guess. Do this now, while nothing is wrong.
+
+1. Pick a few files, including one large file and one in a deep folder.
+2. In Backrest, restore a snapshot's files to `/backups/restore`, as its documentation describes. The app cannot write to the folder it backs up, so a restore always goes there first.
+3. On the server, find the restored files under the **Local backup and restore folder**, by default `/mnt/user/backups/restore`, and compare them with the originals, for example with `sha256sum`.
+4. Move the files back where you want them. Delete the `restore` folder once you are done.
+
+Repeat the test now and then, and after every change to the plan.
+
+## Other apps
+
+Install any of the other apps the same way: **Apps → Catalog**, the app's name, **Install**, or `hoserva app install` followed by `hoserva stack start` and the app's name, which is `duplicati`, `kopia`, `borgmatic` or `rclone`. Every one has the same two folder settings, **Folder to back up** and **Local backup and restore folder**, and the same advice applies: send a copy off the server, keep the backup password somewhere else, and test a restore.
+
+Some details differ:
+
+- **Duplicati** runs as a regular user, not as root, so a file that only another user can read is reported in the backup log instead of being copied.
+- **Kopia** asks you to enter the repository password from its install form when you create the repository. It cannot mount a snapshot as a folder, so restore files instead.
+- **borgmatic** has no web page. You create its configuration file in the app's folder inside the appdata folder, and keep a copy of the passphrase and of the Borg keys away from the server.
+- **rclone** keeps remotes in its web page, and anyone who can sign in to it can read every file it can reach. Keep its port on your local network.
+
+## Next steps
+
+- [Parity is not backup](../concepts/parity-is-not-backup.md)
+- [Backing up appdata](./backing-up-appdata.md)
+- [Recovering files](./recovering-files.mdx)

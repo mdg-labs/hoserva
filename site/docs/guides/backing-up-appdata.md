@@ -11,6 +11,8 @@ This page covers the web UI.
 
 Parity covers the data disks of your array. The cache disk is not one of them, and appdata lives there. Without its own backup, the cache disk would be a single point of failure for every app on the server. [Cache and mover](../concepts/cache-and-mover.mdx) explains the split, and [Parity is not backup](../concepts/parity-is-not-backup.md) explains what parity does and does not cover.
 
+The appdata backup covers the apps' own files only. To back up the files in your shares, see [Backing up your data](./backing-up-your-data.mdx).
+
 Hoserva backs up an app when one of its folders is inside the appdata folder on the cache disk. A server without a cache disk has no appdata folder, so the backup has nothing to do there.
 
 ## What happens by default?

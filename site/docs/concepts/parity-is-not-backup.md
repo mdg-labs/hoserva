@@ -44,7 +44,7 @@ Both defaults write to disks inside your server. A destination you add under **S
 
 ## How do I back up my files?
 
-Hoserva does not copy the files in your shares for you, and it does not try to replace tools built for that. The curated catalog includes backup apps: Duplicati, Backrest, Kopia, borgmatic and rclone. Open **Apps → Catalog** to find them, and install the one that fits where you want your copies to go.
+Hoserva does not copy the files in your shares for you, and it does not try to replace tools built for that. The curated catalog includes backup apps: Duplicati, Backrest, Kopia, borgmatic and rclone. Open **Apps → Catalog** to find them, and install the one that fits where you want your copies to go. [Backing up your data](../guides/backing-up-your-data.mdx) walks through choosing an app, sending a copy off the server and testing a restore.
 
 Whichever tool you use, a backup you have never restored from is a guess. Restore a few files from it once, before you need it.
 
@@ -54,3 +54,4 @@ Whichever tool you use, a backup you have never restored from is a guess. Restor
 - [What happens when a disk dies](../concepts/what-happens-when-a-disk-dies.md)
 - [Recovering files](../guides/recovering-files.mdx)
 - [Backing up appdata](../guides/backing-up-appdata.md)
+- [Backing up your data](../guides/backing-up-your-data.mdx)
