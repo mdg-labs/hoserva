@@ -1669,6 +1669,11 @@ paths:
         period; array to cache follows the two-phase copy-verify-sync-
         delete-sync order, through the same threshold guard every other
         sync goes through. There is no second relocation-invocation path.
+        A relocation in either direction needs the array's cache disk, so
+        it is refused with 409 `no_cache_disk` before any job is queued
+        while the array has no cache disk, and with 409 `no_array` while
+        there is no array; a failure to read the array topology fails the
+        request rather than assuming a cache.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -2694,7 +2699,27 @@ paths:
       summary: Start a SnapRAID fix
       description: >-
         Queues a fix job (`hoserva fix`, doc 01 §3). Requires
-        `confirm: true` — fix rewrites data from parity.
+        `confirm: true` — fix rewrites data from parity. Without `path` the fix
+        covers the whole array, or the one `disk`, and brings back every file
+        changed or deleted since the last sync; with `path` it restores only
+        that one file (doc 02 §2). Refused with 400 `invalid_fix_path` before a
+        job is queued when `path` is not one file under `/mnt/user` or is sent
+        together with `disk`. A fix that SnapRAID reports unrecoverable blocks
+        for, with or without `path`, ends `failed`, never `succeeded`: SnapRAID
+        exits 1, and the job's error gives the number of unrecoverable blocks
+        and names the partial copies it left as `<name>.unrecoverable` on
+        their disks, or says SnapRAID leaves them beside the file when its log
+        names none; files it did recover stay restored. Without `path`, the
+        error also says that SnapRAID can only rebuild what parity held at the
+        last sync, and no more failed blocks than parity covers. With `path`,
+        the error names the file and, when the log names the partial copy,
+        gives one example cause: another file that shares its parity positions
+        changed after the last sync. Any other non-zero exit fails the job
+        too. A fix with `path` also ends `failed` when
+        SnapRAID exits 0 with "Nothing to do": the path matched nothing in
+        parity (misspelt, the wrong case, a directory, a file made after the
+        last sync, a file only on the cache) or the file is intact and needs
+        no restoring, and the job reports that nothing was restored.
       tags: [parity]
       x-hoserva-role: admin
       requestBody:
@@ -4019,7 +4044,7 @@ paths:
         are done by `acknowledgeMigrationChecklistItem`: the first lists the
         User Scripts the scan found, by name and schedule (a script is never
         executed or translated, Q83); the second shows the latest succeeded
-        `fix` job, which an acknowledgement records. Only those two are ever
+        `fix` job that had a `path`, which an acknowledgement records. Only those two are ever
         `acknowledgeable`. The checklist needs no scan: without a report the
         offers, the agents and the scripts are empty.
       tags: [migrate]
@@ -4047,9 +4072,9 @@ paths:
       description: >-
         Records that the user did `user_scripts` (worked through the scan's
         inventory) or `restore_drill` (deleted a file and recovered it with
-        `snapraid fix`), with who made the acknowledgement and when; the
-        restore drill's also records the latest succeeded `fix` job, when there
-        is one. It is kept in the database and outlives `forgetMigration`.
+        `hoserva fix --path`), with who made the acknowledgement and when; the
+        restore drill's also records the latest succeeded `fix` job that had a
+        `path`, when there is one. It is kept in the database and outlives `forgetMigration`.
         Refused with 409 `migration_not_finished` while the checklist does
         not apply (`getMigrationChecklist` answers `finished` false), and with 409 `checklist_item_has_record` for every
         other item, whose state comes from a record and is never set by hand.
@@ -10233,7 +10258,24 @@ components:
           minimum: 1
           description: >-
             Data disk number N (`/mnt/diskN`), fixed only on that disk
-            (`hoserva fix --disk N`).
+            (`hoserva fix --disk N`). Cannot be combined with `path`.
+        path:
+          type: string
+          minLength: 1
+          description: >-
+            One file to restore from parity, as it is seen through the pool:
+            an absolute path under `/mnt/user`, such as
+            `/mnt/user/documents/tax.pdf` (`hoserva fix --path`). Only that file
+            is restored; a file edited or deleted elsewhere since the last sync
+            keeps its current state. It must be canonical, with no empty, `.`
+            or `..` segment and no trailing slash, so a directory is refused; it
+            must hold no control character and none of `*`, `?`, `[`, `]` or
+            `\`, which SnapRAID reads as pattern syntax and which could match
+            more than this one file. Cannot be combined with `disk`. The job
+            records it, and the migration checklist's restore drill shows the
+            latest succeeded fix job that has one, and a fix that did not restore
+            the file (nothing matched, or parity could not rebuild it) does not
+            succeed.
 
     StartShareRelocationRequest:
       type: object
@@ -12133,7 +12175,9 @@ components:
           type: string
           description: >-
             The job the item derives from. For `restore_drill`, the latest
-            succeeded `fix` job, which an acknowledgement records.
+            succeeded `fix` job that had a `path` (`startFix`), which an
+            acknowledgement records. A fix of the whole array or of one disk is
+            not a restore drill and is not shown.
         acknowledgedBy:
           type: string
           description: Who acknowledged it, `local` for the daemon's own socket.

@@ -115,7 +115,8 @@ hoserva disk resume <job-id>            # resume a checkpointed relocation (Q29)
 
 hoserva sync [--dry-run] [--force]      # SnapRAID sync through the threshold guard; dry-run prints the diff
 hoserva scrub [--percent 8] [--all-blocks]   # --all-blocks scrubs blocks of every age, not only those older than 10 days (doc 02 §2)
-hoserva fix --disk 3
+hoserva fix --disk 3                    # one disk, back to its state at the last sync
+hoserva fix --confirm --path /mnt/user/docs/tax.pdf   # one file; every other change since the last sync stays (doc 02 §2)
 hoserva mover run                       # doc 09 §2
 
 hoserva share list

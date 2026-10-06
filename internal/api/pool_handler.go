@@ -405,6 +405,9 @@ func (h *Handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 		d := int(v)
 		p.Disk = &d
 	}
+	if v, ok := req.Path.Get(); ok {
+		p.Path = &v
+	}
 	params, err := json.Marshal(p)
 	if err != nil {
 		return nil, fmt.Errorf("encoding fix params: %w", err)

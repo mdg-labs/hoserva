@@ -2032,6 +2032,64 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "StartFix",
+		name: "valid_one_file",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/tax.pdf", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_outside_the_pool",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/disk1/documents/tax.pdf", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_with_dot_dot",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/../../etc/shadow", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_with_a_pattern",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/*", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_is_a_directory",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/", 0))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_with_a_disk",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartFix(ctx, fixPathRequest("/mnt/user/documents/tax.pdf", 1))
+			return err
+		},
+	},
+	{
+		op:   "StartFix",
+		name: "path_and_missing_confirm",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			req := fixPathRequest("/mnt/user/documents/tax.pdf", 0)
+			req.Confirm = false
+			_, err := h.StartFix(ctx, req)
+			return err
+		},
+	},
+	{
 		op:   "StartMover",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {
@@ -2303,7 +2361,7 @@ var contractCases = []contractCase{
 	},
 	{
 		op:   "StartShareRelocation",
-		name: "valid",
+		name: "to_array_without_a_cache_disk_is_refused",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 				return err
@@ -2322,15 +2380,12 @@ var contractCases = []contractCase{
 	},
 	{
 		op:   "StartShareRelocation",
-		name: "refused_in_maintenance_mode",
+		name: "to_cache_without_a_cache_disk_is_refused",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 				return err
 			}
-			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
-				return err
-			}
-			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToArray}, apiv1.StartShareRelocationParams{Name: "media"})
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
 			return err
 		},
 	},
@@ -5260,4 +5315,13 @@ func contractCreateMigrationStack(ctx context.Context, h apiv1.Handler, template
 		return fmt.Errorf("creating %s: %+v", template, res.Results)
 	}
 	return nil
+}
+
+func fixPathRequest(path string, disk int32) *apiv1.StartFixRequest {
+	req := &apiv1.StartFixRequest{Confirm: true}
+	req.SetPath(apiv1.NewOptString(path))
+	if disk != 0 {
+		req.SetDisk(apiv1.NewOptInt32(disk))
+	}
+	return req
 }

@@ -77,7 +77,9 @@ const (
 
 // JobRecord is a succeeded job as the checklist reads it. A time that is not
 // recorded is the zero time. DryRun is a sync's, ScrubPercent and AllBlocks a
-// scrub's and Share and To a share relocation's; the others leave them zero.
+// scrub's, Share and To a share relocation's and Path a fix's, the pool path of
+// the one file it restored (empty for a fix of the whole array or of one disk);
+// the others leave them zero.
 type JobRecord struct {
 	ID         string
 	CreatedAt  time.Time
@@ -88,6 +90,7 @@ type JobRecord struct {
 	ScrubPercent int
 	AllBlocks    bool
 	Share, To    string
+	Path         string
 }
 
 // ChannelRecord is one notification channel. UpdatedAt is when its
@@ -191,8 +194,10 @@ func (c ChecklistSources) Facts(ctx context.Context) (ChecklistFacts, error) {
 		}
 	}
 	if err := c.Jobs(ctx, JobTypeFix, func(j JobRecord) bool {
-		latest := j
-		f.LatestFix = &latest
+		if j.Path != "" {
+			latest := j
+			f.LatestFix = &latest
+		}
 		return false
 	}); err != nil {
 		return f, fmt.Errorf("reading the succeeded %s jobs: %w", JobTypeFix, err)
@@ -210,8 +215,8 @@ func (c ChecklistSources) Facts(ctx context.Context) (ChecklistFacts, error) {
 type ChecklistAck struct {
 	By string    `json:"by"`
 	At time.Time `json:"at"`
-	// JobID is the latest succeeded fix job when the restore drill was
-	// acknowledged, empty when there was none or for any other item.
+	// JobID is the latest succeeded fix job of one file when the restore drill
+	// was acknowledged, empty when there was none or for any other item.
 	JobID string `json:"jobId,omitempty"`
 }
 
@@ -271,7 +276,7 @@ type ChecklistItem struct {
 	// acknowledged; zero while it is not done.
 	DoneAt time.Time
 	// JobID is the job the item derives from; for the restore drill, the latest
-	// succeeded fix job.
+	// succeeded fix job of one file.
 	JobID string
 	Ack   *ChecklistAck
 

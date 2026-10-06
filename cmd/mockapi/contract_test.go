@@ -257,6 +257,12 @@ var contractNoValidCase = map[string]string{
 	"CheckMigrationContainer":   "a data check is accepted only for a started stack with a container, which production reads from the Docker Engine and the rig's fake has none of for a stack it just created (no compose up runs); the refusals are compared, and each side's own check is tested in its own package (internal/migrate, cmd/hoservad, cmd/mockapi)",
 	"ConfirmMigrationContainer": "a confirmation is accepted only after a data check of a started stack's containers, which production reads from the Docker Engine; the refusals before it are compared, and each side's own confirmation is tested in its own package (internal/migrate, cmd/hoservad, cmd/mockapi)",
 
+	// A relocation needs the array's cache disk in either direction, and no
+	// mock scenario has one, so every request is refused on both sides; the
+	// maintenance and migration gates behind that refusal are unreachable
+	// here until a scenario carries a cache disk.
+	"StartShareRelocation": "a relocation is accepted only on an array with a cache disk and no mock scenario has one, so every request is refused with no_cache_disk on both sides; the refusals are compared",
+
 	"FinishDiskRemoval": "needs an evacuation job to actually run to completion and mark the disk evacuated (job.RunEvacuation); this rig's job types run no-op (job-timing state, out of scope)",
 
 	// GetJobLog's own log file is created by Scheduler.runJob, which

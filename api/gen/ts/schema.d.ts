@@ -970,7 +970,7 @@ export interface paths {
         put?: never;
         /**
          * Relocate a share between cache and array
-         * @description Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09 §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path.
+         * @description Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09 §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path. A relocation in either direction needs the array's cache disk, so it is refused with 409 `no_cache_disk` before any job is queued while the array has no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology fails the request rather than assuming a cache.
          */
         post: operations["startShareRelocation"];
         delete?: never;
@@ -1554,7 +1554,7 @@ export interface paths {
         put?: never;
         /**
          * Start a SnapRAID fix
-         * @description Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from parity.
+         * @description Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2). Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for, with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error gives the number of unrecoverable blocks and names the partial copies it left as `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID can only rebuild what parity held at the last sync, and no more failed blocks than parity covers. With `path`, the error names the file and, when the log names the partial copy, gives one example cause: another file that shares its parity positions changed after the last sync. Any other non-zero exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job reports that nothing was restored.
          */
         post: operations["startFix"];
         delete?: never;
@@ -2104,7 +2104,7 @@ export interface paths {
          *
          *     `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing right after a sync and never counts. `notifications` is done once an enabled channel's test (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in; the Unraid notification agents the scan found are named so the user knows what to recreate, and no secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub` steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a non-correcting check maps to a scrub that only reports) and its spin-down delay as the default. Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over: nothing is offered for `sync` and the user chooses one.
          *
-         *     `user_scripts` and `restore_drill` have no record to derive from and are done by `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and schedule (a script is never executed or translated, Q83); the second shows the latest succeeded `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+         *     `user_scripts` and `restore_drill` have no record to derive from and are done by `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and schedule (a script is never executed or translated, Q83); the second shows the latest succeeded `fix` job that had a `path`, which an acknowledgement records. Only those two are ever `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the scripts are empty.
          */
         get: operations["getMigrationChecklist"];
         put?: never;
@@ -2128,7 +2128,7 @@ export interface paths {
         put?: never;
         /**
          * Acknowledge a checklist item no record can show
-         * @description Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill` (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when; the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409 `checklist_item_has_record` for every other item, whose state comes from a record and is never set by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept. Returns the item as it stands.
+         * @description Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill` (deleted a file and recovered it with `hoserva fix --path`), with who made the acknowledgement and when; the restore drill's also records the latest succeeded `fix` job that had a `path`, when there is one. It is kept in the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409 `checklist_item_has_record` for every other item, whose state comes from a record and is never set by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept. Returns the item as it stands.
          */
         post: operations["acknowledgeMigrationChecklistItem"];
         delete?: never;
@@ -5163,9 +5163,11 @@ export interface components {
             confirm: boolean;
             /**
              * Format: int32
-             * @description Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`).
+             * @description Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`). Cannot be combined with `path`.
              */
             disk?: number;
+            /** @description One file to restore from parity, as it is seen through the pool: an absolute path under `/mnt/user`, such as `/mnt/user/documents/tax.pdf` (`hoserva fix --path`). Only that file is restored; a file edited or deleted elsewhere since the last sync keeps its current state. It must be canonical, with no empty, `.` or `..` segment and no trailing slash, so a directory is refused; it must hold no control character and none of `*`, `?`, `[`, `]` or `\`, which SnapRAID reads as pattern syntax and which could match more than this one file. Cannot be combined with `disk`. The job records it, and the migration checklist's restore drill shows the latest succeeded fix job that has one, and a fix that did not restore the file (nothing matched, or parity could not rebuild it) does not succeed. */
+            path?: string;
         };
         StartShareRelocationRequest: {
             /**
@@ -6069,7 +6071,7 @@ export interface components {
              * @description When the record says it was done, or when it was acknowledged.
              */
             doneAt?: string;
-            /** @description The job the item derives from. For `restore_drill`, the latest succeeded `fix` job, which an acknowledgement records. */
+            /** @description The job the item derives from. For `restore_drill`, the latest succeeded `fix` job that had a `path` (`startFix`), which an acknowledgement records. A fix of the whole array or of one disk is not a restore drill and is not shown. */
             jobId?: string;
             /** @description Who acknowledged it, `local` for the daemon's own socket. */
             acknowledgedBy?: string;

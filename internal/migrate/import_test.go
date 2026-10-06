@@ -286,6 +286,31 @@ func TestPlanImport_FromTheSessionsReport(t *testing.T) {
 	}
 }
 
+func TestPlanImport_AcceptsTheProposalOfNamedPools(t *testing.T) {
+	ctx := context.Background()
+	e := newDataEnv(t, "unraid-named-pools")
+	svc := serviceWithScan(t, e)
+
+	st, err := svc.State(ctx)
+	if err != nil || st.Report == nil || st.Report.Review == nil {
+		t.Fatalf("State = %+v, %v", st, err)
+	}
+	var proposed []disk.AdoptionAssignment
+	for _, d := range st.Report.Review.Disks {
+		switch d.ProposedRole {
+		case ProposeParity, ProposeData, ProposeCache:
+			proposed = append(proposed, disk.AdoptionAssignment{Role: disk.AdoptionRole(d.ProposedRole), Serial: d.Serial})
+		}
+	}
+	p, err := svc.PlanImport(ctx, proposed)
+	if err != nil {
+		t.Fatalf("PlanImport of the scan's own proposal: %v", err)
+	}
+	if p.Plan.Cache == nil || p.Plan.Cache.Serial != "cache-hoserva-test" {
+		t.Errorf("cache = %+v, want the pool named cache", p.Plan.Cache)
+	}
+}
+
 func TestPlanImport_RefusesWithoutAFinishedGoodScan(t *testing.T) {
 	ctx := context.Background()
 	mapping := roles("parity-hoserva-test=parity", "disk1-hoserva-test=data")

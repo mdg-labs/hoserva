@@ -53,7 +53,7 @@ func migrateChecklistAckCmd() *cobra.Command {
 		Short: "Acknowledge user_scripts or restore_drill",
 		Long: "Records that you worked through the User Scripts inventory (user_scripts) or did a restore drill (restore_drill): deleted a " +
 			"file that has not changed since the last sync, recovered it and compared its checksum with the one you took before. It is stored with who acknowledged it and when, and the restore drill's with the " +
-			"latest fix job. Every other item is derived from a record and is refused.",
+			"latest fix job of one file (hoserva fix --path). Every other item is derived from a record and is refused.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newAPIClient()
@@ -90,7 +90,7 @@ var checklistTodo = map[apiv1.MigrationChecklistItemId]string{
 	apiv1.MigrationChecklistItemIdInitialSync:  "Until it has succeeded the array has no redundancy. `hoserva sync` starts one if none is running.",
 	apiv1.MigrationChecklistItemIdFullScrub:    "`hoserva scrub --percent 100 --all-blocks` once the initial sync is done. Without --all-blocks a scrub skips blocks synced in the last 10 days, which is all of them right after a sync, so it does not count.",
 	apiv1.MigrationChecklistItemIdUserScripts:  "Recreate what you still want as a cron job or systemd timer; Hoserva neither runs nor translates them. Then `hoserva migrate checklist ack user_scripts`.",
-	apiv1.MigrationChecklistItemIdRestoreDrill: "Pick an unimportant file that has not changed since the last sync, note its checksum, delete it, recover it from parity and compare the checksum. A fix of a single file through Hoserva is tracked in #619; `hoserva fix` is no substitute, because it restores the whole array to its last sync and reverts every change since. Then `hoserva migrate checklist ack restore_drill`.",
+	apiv1.MigrationChecklistItemIdRestoreDrill: "Pick an unimportant file that has not changed since the last sync, note its checksum, delete it, recover it from parity with `hoserva fix --confirm --path /mnt/user/<share>/<file>` and compare the checksum. `--path` restores only that file; `hoserva fix` without it restores the whole array to its last sync and reverts every change since. Then `hoserva migrate checklist ack restore_drill`.",
 }
 
 func printMigrationChecklist(w io.Writer, l *apiv1.MigrationChecklist) {
@@ -139,7 +139,7 @@ func printChecklistEvidence(w io.Writer, it apiv1.MigrationChecklistItem) {
 			line("%s", hint)
 		}
 		if it.ID == apiv1.MigrationChecklistItemIdRestoreDrill && it.JobId.IsSet() {
-			line("Latest fix job: %s; an acknowledgement records it.", it.JobId.Or(""))
+			line("Latest fix job of one file: %s; an acknowledgement records it.", it.JobId.Or(""))
 		}
 	}
 	if n, ok := it.Notifications.Get(); ok {

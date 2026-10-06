@@ -19,6 +19,6 @@ disk disk2  kind=data   fs=xfs   size=320M target=disk2
 disk disk3  kind=data   fs=zfs   size=320M target=disk3
 disk disk4  kind=data   fs=btrfs size=320M target=disk4 group=bpair
 disk disk5  kind=data   fs=btrfs size=320M target=disk5 group=bpair
-disk cache  kind=pool   fs=btrfs size=256M target=cache pool=cache
+disk cache  kind=pool   fs=btrfs size=1G target=cache pool=cache
 # Regenerate flash/config/hoserva/ (the Phase A capture) with: make vm-unraid-capture VARIANT=unraid-zfs-disk
 include ../common/spec-flash

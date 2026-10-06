@@ -641,6 +641,28 @@ func shareCmd() *cobra.Command {
 	rmData.Flags().StringVar(&confirmData, "confirm", "", "Type the share name to confirm deleting its files")
 	cmd.AddCommand(rmData)
 
+	var relocateTo string
+	relocate := &cobra.Command{
+		Use:   "relocate NAME --to cache|array",
+		Short: "Move a share's files between the cache and the array (doc 09 §2)",
+		Long: "Queues a one-shot move of the whole share. To the array it behaves as a mover run limited to this share; to the cache it copies, verifies, " +
+			"syncs and only then deletes the array copies. Stop the containers that use the share first: " +
+			"relocating a live database is the same hazard as moving an open file.",
+		Example: "  hoserva share relocate media --to cache",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			to := apiv1.StartShareRelocationRequestTo(relocateTo)
+			if to != apiv1.StartShareRelocationRequestToCache && to != apiv1.StartShareRelocationRequestToArray {
+				return fmt.Errorf("share relocate requires --to cache or --to array")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.StartShareRelocation(apiCtx(), &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: apiv1.ShareName(args[0])})
+			})(cmd, args)
+		},
+	}
+	relocate.Flags().StringVar(&relocateTo, "to", "", "Direction: cache or array (required)")
+	cmd.AddCommand(relocate)
+
 	cmd.AddCommand(&cobra.Command{
 		Use:   "browse NAME [PATH]",
 		Short: "List a share directory (may wake disks)",
@@ -776,12 +798,24 @@ func scrubCmd() *cobra.Command {
 func fixCmd() *cobra.Command {
 	var confirm bool
 	var disk int32
+	var path string
 	cmd := &cobra.Command{
 		Use:   "fix",
 		Short: "Start a SnapRAID fix",
+		Long: "Restores data from parity. Without --path the fix covers the whole array, or the one disk named by --disk, and brings back every file " +
+			"changed or deleted since the last sync. With --path it restores only that file and leaves every other change since the last sync as it is.",
+		Example: "  hoserva fix --confirm --path /mnt/user/documents/tax.pdf",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !confirm {
 				return fmt.Errorf("fix requires --confirm")
+			}
+			if cmd.Flags().Changed("path") {
+				if path == "" {
+					return fmt.Errorf("--path must name a file under /mnt/user")
+				}
+				if cmd.Flags().Changed("disk") {
+					return fmt.Errorf("--path and --disk cannot be combined")
+				}
 			}
 			c, err := newAPIClient()
 			if err != nil {
@@ -794,6 +828,9 @@ func fixCmd() *cobra.Command {
 				}
 				req.SetDisk(apiv1.NewOptInt32(disk))
 			}
+			if cmd.Flags().Changed("path") {
+				req.SetPath(apiv1.NewOptString(path))
+			}
 			out, err := c.StartFix(apiCtx(), req)
 			if err != nil {
 				return mapAPIErr(err)
@@ -804,6 +841,7 @@ func fixCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm fix (required)")
 	cmd.Flags().Int32Var(&disk, "disk", 0, "Data disk number N (/mnt/diskN)")
+	cmd.Flags().StringVar(&path, "path", "", "Restore only this file, an absolute path under /mnt/user (cannot be combined with --disk)")
 	return cmd
 }
 

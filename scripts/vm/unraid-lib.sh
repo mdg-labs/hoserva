@@ -39,7 +39,8 @@ unraid_require_variant() {
 }
 
 # unraid_spec_sizes: prints "<target> <bytes>" for each disk line of the
-# variant's own spec, the sizes scripts/devenv/unraid-fixture.sh builds on.
+# variant's own spec, the sizes scripts/devenv/unraid-fixture.sh builds on at L3
+# (a disk's l3size= where it has one, else its size=).
 # Any other disk line (one pulled in by an include) is not read here; the
 # builder refuses a guest disk whose size differs from its spec.
 unraid_spec_sizes() {
@@ -48,13 +49,15 @@ unraid_spec_sizes() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == disk\ * ]] || continue
     read -r -a words <<<"$line"
-    size="" target=""
+    size="" l3size="" target=""
     for w in "${words[@]:2}"; do
       case "$w" in
         size=*) size="${w#size=}" ;;
+        l3size=*) l3size="${w#l3size=}" ;;
         target=*) target="${w#target=}" ;;
       esac
     done
+    [[ -z "$l3size" ]] || size="$l3size"
     [[ -n "$size" && -n "$target" ]] || die "spec of '$VARIANT': disk '${words[1]:-}' needs size= and target="
     [[ "$seen" != *" $target "* ]] || die "spec of '$VARIANT': target '$target' is used by two disks"
     seen+="$target "

@@ -45,6 +45,10 @@ type handler struct {
 
 	mu   sync.Mutex
 	jobs map[uuid.UUID]apiv1.Job
+	// fixPaths is the path of each fix job that restored one file
+	// (startFix's path), which the migration checklist's restore drill reads;
+	// a fix of the whole array or of one disk has no entry.
+	fixPaths map[uuid.UUID]string
 
 	// notifyMu guards the in-memory notification state below (#35) —
 	// separate from mu (jobs) since neither ever needs the other's lock.
@@ -219,6 +223,7 @@ func newHandler(scenario string) (*handler, error) {
 	return &handler{
 		scenario:     scenario,
 		jobs:         jobs,
+		fixPaths:     make(map[uuid.UUID]string),
 		channels:     make(map[uuid.UUID]apiv1.NotificationChannel),
 		routing:      defaultNotificationRouting(),
 		quietHours:   apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},

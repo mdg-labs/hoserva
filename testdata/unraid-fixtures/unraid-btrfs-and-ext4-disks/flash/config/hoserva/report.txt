@@ -1,0 +1,76 @@
+Hoserva Phase A report (prepare-migration unreleased, 2026-10-05 14:50 UTC)
+Unraid 6.12.15. Lines starting with !! must be fixed while Unraid still runs.
+
+== Containers ==
+8 containers: 7 running, 1 not running.
+By origin: 6 from the Docker page (dockerMan templates), 1 from Compose Manager, 1 created by hand.
+  - stack-web  [running]  Compose Manager project stack
+  - handmade  [running]  created by hand
+  - dbtool  [running]  dockerMan
+  - gateway  [running]  dockerMan
+  - syncer  [exited]  dockerMan
+  - photos  [running]  dockerMan
+  - mediaserver  [running]  dockerMan
+  - notes  [running]  dockerMan
+!! 1 dockerMan container(s) have no template whose <Name> matches: dbtool. They cannot be converted. Fix it while Unraid runs: open each one on the Docker page, edit it and apply (that saves its template), or re-add it from its template.
+Created by hand (no template to convert; recreate them from their run command): handmade
+Compose Manager containers come from the project's own compose.yaml and are offered as it is.
+
+== Autostart order ==
+  1. notes
+  2. photos (waits 30 s before the next)
+  3. mediaserver
+
+== Shares and the cache ==
+Shares and their cache setting:
+  - appdata: cache "prefer"
+  - backup: cache "no"
+  - documents: cache "yes"
+  - domains: cache "only"
+  - isos: cache "no"
+  - media: cache "no"
+  - oldstuff: cache "no"
+  - system: cache "prefer"
+!! Data is still on the cache (4 directories). It is lost when the cache device is re-created or the boot device is reinstalled. Move it to the array first: stop the Docker and VM services, then run the mover or rsync.
+     appdata on pool cache: 268 KiB; share cache setting "prefer"; the appdata directory is on the cache
+     documents on pool cache: 48 KiB; share cache setting "yes" (the mover has not moved it)
+     domains on pool cache: 8 KiB; share cache setting "only"; the domains directory is on the cache
+     system on pool cache: 4 KiB; share cache setting "prefer"; the system directory is on the cache
+Docker storage (/mnt/user/system/docker/dockerdir) is on the cache. It is not moved: images are pulled again when the containers are recreated. What does not come back is each container's writable layer, listed below.
+Writable-layer size per container (state kept inside the container, not in a mapped path):
+  - stack-web: 0 KiB
+  - handmade: 0 KiB
+  - dbtool: 0 KiB
+  - gateway: 0 KiB
+  - syncer: 0 KiB
+  - photos: 0 KiB
+  - mediaserver: 0 KiB
+  - notes: 0 KiB
+Fit: the data on the cache (328 KiB) fits on the array: 56.6 GiB usable of 56.6 GiB free across 4 data disks, after the largest share floor (0 KiB) is kept free on each. This compares totals; it does not check that one large file fits on one disk.
+
+== Last parity check ==
+Last parity check: 2026-09-25 01:33 UTC, exit code 0, 0 errors.
+
+== Disks: serial and slot ==
+  - parity (Parity): FIXTURE_parity1-capture as sdb, DISK_OK
+  - disk1 (Data): FIXTURE_disk1-capture as sdc, DISK_OK
+  - disk2 (Data): FIXTURE_disk2-capture as sdd, DISK_OK
+  - disk3 (Data): FIXTURE_disk3-capture as sde, DISK_OK
+  - disk4 (Data): FIXTURE_disk4-capture as sdf, DISK_OK
+  - cache (Cache): FIXTURE_cache-capture as sdg, DISK_OK
+Parity disk(s): parity. Their contents are not kept: they are rewritten as parity.
+
+== Boot device and rollback ==
+Unraid boots from a USB stick (vfat). Keep the stick safe at step 11 of the migration: it is the rollback.
+Rollback after Debian is installed:
+  - Debian on a separate device: reinsert the stick and boot.
+  - Debian on the shared NVMe (with the Unraid cache): reinsert the stick, re-create the Unraid cache, and move appdata back.
+
+== Capture ==
+Written to /boot/config/hoserva/: containers.json, networks.json, disks.ini, autostart, var.ini, smart/, capture.json and this report.
+Docker files are absent when Docker was not running; the capture says so.
+The capture in /boot/config/hoserva/ contains your containers' environment variables, secrets included, like the templates on the same flash. The Flash Backup zip is as sensitive as the flash itself: keep it like the flash.
+
+To fix before you continue (2):
+  !! 1 dockerMan container(s) have no template whose <Name> matches: dbtool. They cannot be converted. Fix it while Unraid runs: open each one on the Docker page, edit it and apply (that saves its template), or re-add it from its template.
+  !! Data is still on the cache (4 directories). It is lost when the cache device is re-created or the boot device is reinstalled. Move it to the array first: stop the Docker and VM services, then run the mover or rsync.

@@ -132,14 +132,14 @@ func TestMigrateChecklistPrintsEachItemsStateAndWhatUnraidOffers(t *testing.T) {
 		"mover on, sync off, scrub on", "Unraid has no sync schedule to carry over", "offered as the chain's start time, 03:40",
 		"a scrub that only reports", "spin-down delay was 30",
 		`User script "nightly-report", schedule 30 2 * * *`, `User script "Weekly cleanup", schedule none in customSchedule.cron`,
-		"checklist ack user_scripts", "Latest fix job: fix-9", "checklist ack restore_drill",
+		"checklist ack user_scripts", "Latest fix job of one file: fix-9", "checklist ack restore_drill",
 	} {
 		if !strings.Contains(printed, want) {
 			t.Errorf("output lacks %q:\n%s", want, printed)
 		}
 	}
-	if !strings.Contains(printed, "#619") || strings.Contains(printed, "fix --confirm") {
-		t.Errorf("the restore drill hint must point at no whole-array fix and name #619:\n%s", printed)
+	if !strings.Contains(printed, "`hoserva fix --confirm --path /mnt/user/<share>/<file>`") || strings.Contains(printed, "#619") {
+		t.Errorf("the restore drill hint must name the path-scoped fix:\n%s", printed)
 	}
 	for _, line := range strings.Split(printed, "\n") {
 		if strings.Contains(line, "Initial sync complete") && !strings.HasPrefix(line, "[x]") {

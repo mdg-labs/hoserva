@@ -929,6 +929,18 @@ func TestMigrateInitializeParitySendsTheTypedConfirmationAndWaitsForTheJob(t *te
 		}
 	}
 
+	if strings.Contains(printed, "parity status") {
+		t.Errorf("the follow-up hint names a command that does not exist:\n%s", printed)
+	}
+	if !strings.Contains(printed, "`hoserva jobs`") {
+		t.Errorf("the follow-up hint does not name the command that lists the queued sync:\n%s", printed)
+	}
+	for _, name := range []string{"jobs", "logs"} {
+		if _, _, err := rootCmd().Find([]string{name}); err != nil {
+			t.Errorf("the follow-up hint names hoserva %s, which does not exist: %v", name, err)
+		}
+	}
+
 	d2 := startMigrateDaemon(t)
 	d2.phase = apiv1.MigrationPhaseVerified
 	d2.parityInit = offeredParityInit()

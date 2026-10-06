@@ -123,6 +123,28 @@ size_refusal "a guest disk whose size could not be read" "cannot read the size o
 # shellcheck disable=SC2034
 TIER=l2
 
+# a disk's l3size= is its size on the L3 tier only: the loop-device lab builds it
+# at size=, so a variant can be large for the guest and cheap to hash in the lab
+size_on_tier() {  # tier, disk line
+  (
+    TIER=$1
+    D_KIND=() D_FS=() D_SIZE=() D_L3SIZE=() D_TARGET=()
+    parse_disk "$2" && printf '%s' "${D_SIZE[disk1]}"
+  )
+}
+dataline='disk disk1 kind=data fs=xfs size=320M l3size=56G target=disk1'
+if [[ $(size_on_tier l2 "$dataline") == 335544320 && $(size_on_tier l3 "$dataline") == 60129542144 ]]; then
+  ok "a disk with l3size= is built at size= on L2 and at l3size= on L3"
+else
+  bad "l3size= gave $(size_on_tier l2 "$dataline") on L2 and $(size_on_tier l3 "$dataline") on L3"
+fi
+if [[ $(size_on_tier l3 'disk disk1 kind=data fs=xfs size=320M target=disk1') == 335544320 ]]; then
+  ok "a disk without l3size= is built at size= on L3"
+else
+  bad "a disk without l3size= is not built at size= on L3"
+fi
+if out=$(size_on_tier l3 'disk disk1 kind=data fs=xfs size=320M l3size=12Q target=disk1' 2>&1); then bad "an unreadable l3size= was accepted"; elif [[ $out == *"bad l3size '12Q'"* ]]; then ok "an unreadable l3size= is refused"; else bad "an unreadable l3size= failed for another reason: $out"; fi
+
 # the EXIT trap's cleanup: a mount it cannot remove is reported and fails the
 # run, never left behind silently. The device commands are stubs, so nothing
 # is mounted or detached.

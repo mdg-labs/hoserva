@@ -38,10 +38,10 @@
 # the other on this lab id.
 #
 # Accommodations for the lab, each logged on the run's output where it is made:
-#  - the fixtures' cache disks are 256 MiB, below the 300 MB mkfs.xfs needs and
-#    the 50G mergerfs minfreespace Hoserva mounts with, so the guest's cache
-#    disk is grown to 64 GiB (a sparse image) before the scan; the shared
-#    layout's spare partition is created at 64G for the same reason;
+#  - the shared layout's spare partition of the OS disk, which stands in for the
+#    cache, is created at 64G: mkfs.xfs needs 300 MB and the mergerfs
+#    minfreespace Hoserva mounts with is 50G (the fixtures' own cache and data
+#    disks are specced larger than both, as sparse images);
 #  - the nightly maintenance chain is switched off after onboarding, so that only
 #    the suite's own actions write parity (see onboard).
 #
@@ -82,9 +82,9 @@ if [[ "${MIGRATION_LIST_RUNS:-}" == "1" ]]; then
   exit 0
 fi
 
-# the cache disk (or spare partition) is made this large: more than mergerfs's
+# the shared layout's spare partition is made this large: more than mergerfs's
 # 50G minfreespace and far more than mkfs.xfs's 300 MB minimum
-CACHE_GROWN_GIB=64
+SPARE_PARTITION_GIB=64
 CONFIRM_TIMEOUT=1200
 
 declare -a STEP_NAMES=()
@@ -178,12 +178,12 @@ wait_job() {
 
 # load_variant fills the run's own view of its fixture: the disks of its spec,
 # whether it is a refusal variant, and where its expected result is.
-declare -A D_KIND D_FS D_SIZE D_TARGET D_POOL D_BOOT
+declare -A D_KIND D_FS D_TARGET D_POOL D_BOOT
 D_SLOTS=()
 load_variant() {
   local line words w slot
   D_SLOTS=()
-  D_KIND=() D_FS=() D_SIZE=() D_TARGET=() D_POOL=() D_BOOT=()
+  D_KIND=() D_FS=() D_TARGET=() D_POOL=() D_BOOT=()
   VDIR="$VM_REPO_ROOT/testdata/unraid-fixtures/$VARIANT"
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == disk\ * ]] || continue
@@ -194,7 +194,6 @@ load_variant() {
       case "$w" in
         kind=*) D_KIND[$slot]=${w#kind=} ;;
         fs=*) D_FS[$slot]=${w#fs=} ;;
-        size=*) D_SIZE[$slot]=${w#size=} ;;
         target=*) D_TARGET[$slot]=${w#target=} ;;
         pool=*) D_POOL[$slot]=${w#pool=} ;;
         boot=*) D_BOOT[$slot]=${w#boot=} ;;
@@ -266,7 +265,7 @@ STEP_REASON=""
 
 prepare_vm() {
   local topology=$1 spare
-  spare="${HOSERVA_VM_SPARE_PARTITION_SIZE:-${CACHE_GROWN_GIB}G}"
+  spare="${HOSERVA_VM_SPARE_PARTITION_SIZE:-${SPARE_PARTITION_GIB}G}"
   if vm_domain_exists "$VM_DOMAIN"; then
     if [[ "$(cat "$VM_STATE_DIR/topology" 2>/dev/null || true)" != "$topology" ]]; then
       STEP_REASON="the lab's existing VM '$VM_DOMAIN' is not in the $topology topology: run make vm-destroy first"
@@ -294,23 +293,6 @@ prepare_vm() {
     STEP_REASON="the fixture's expected result $EXPECTED_HOST does not exist"
     return 1
   }
-}
-
-# The fixtures' cache pools are lab-sized (256 MiB), below what mkfs.xfs and
-# mergerfs's minfreespace accept; grow the cache disk of the VM, a sparse image,
-# before anything reads it. Nothing in the fixture refers to the disk's size.
-grow_cache_disk() {
-  local slot=$CACHE_SLOT dev bytes want
-  [[ -n "$slot" ]] || return 0
-  [[ -z "${D_BOOT[$slot]:-}" ]] || return 0
-  slot_dev "$slot" || return 1
-  dev=$SLOT_DEV
-  bytes=$(numfmt --from=iec "${D_SIZE[$slot]}")
-  want=$((CACHE_GROWN_GIB * 1024 * 1024 * 1024))
-  if ((bytes >= want)); then return 0; fi
-  echo "vm-migration-suite[$HOSERVA_LAB_ID]: growing the cache disk $dev from ${D_SIZE[$slot]} to ${CACHE_GROWN_GIB}G (mkfs.xfs needs 300 MB, mergerfs's minfreespace is 50G)"
-  vm_assert_own_domain "$VM_DOMAIN"
-  virsh -c "$VM_CONNECT" blockresize "$VM_DOMAIN" "$dev" "$((CACHE_GROWN_GIB * 1024 * 1024))KiB" >/dev/null
 }
 
 # shared NVMe: Debian's own disk carries the cache, so the fixture's cache disk
@@ -574,6 +556,20 @@ assert_scan() {
       elif ((NO_CAPTURE == 0)) && [[ "$(jq -r '.proposedRole // empty' <<<"$row")" != parity ]]; then
         out+="$slot: the proposed role is '$(jq -r '.proposedRole // "none"' <<<"$row")', not parity"$'\n'
       fi
+    fi
+  done
+
+  # each disk's size, the one the spec builds it at in the guest; a pool or boot
+  # disk has no slot without the capture, so every disk is found by its serial
+  local -A spec_bytes=()
+  local target bytes
+  while read -r target bytes; do spec_bytes[$target]=$bytes; done < <(unraid_spec_sizes)
+  for s in "${D_SLOTS[@]}"; do
+    row=$(jq -c --arg serial "$(serial_of "$s")" '.report.review.disks[]? | select(.serial == $serial)' <<<"$SCAN_JSON" | head -n 1)
+    [[ -n "$row" ]] || continue
+    bytes=${spec_bytes[${D_TARGET[$s]}]:-}
+    if [[ -n "$bytes" && "$(jq -r '.size // empty' <<<"$row")" != "$bytes" ]]; then
+      out+="$s: the report says size '$(jq -r '.size // "none"' <<<"$row")', the fixture says $bytes bytes"$'\n'
     fi
   done
 
@@ -1428,11 +1424,6 @@ run_variant() {
   if [[ "$LAYOUT" == shared-nvme ]]; then
     if ! detach_fixture_cache; then
       fail "1 shared NVMe layout" "$STEP_REASON"
-      return
-    fi
-  elif ((!REFUSAL)); then
-    if ! grow_cache_disk; then
-      fail "1 grow the cache disk" "$STEP_REASON"
       return
     fi
   fi

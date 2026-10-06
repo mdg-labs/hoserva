@@ -35,13 +35,13 @@ type Handler interface {
 	// AcknowledgeMigrationChecklistItem implements acknowledgeMigrationChecklistItem operation.
 	//
 	// Records that the user did `user_scripts` (worked through the scan's inventory) or `restore_drill`
-	// (deleted a file and recovered it with `snapraid fix`), with who made the acknowledgement and when;
-	// the restore drill's also records the latest succeeded `fix` job, when there is one. It is kept in
-	// the database and outlives `forgetMigration`. Refused with 409 `migration_not_finished` while the
-	// checklist does not apply (`getMigrationChecklist` answers `finished` false), and with 409
-	// `checklist_item_has_record` for every other item, whose state comes from a record and is never set
-	// by hand. Acknowledging an acknowledged item changes nothing: the first acknowledgement is kept.
-	// Returns the item as it stands.
+	// (deleted a file and recovered it with `hoserva fix --path`), with who made the acknowledgement and
+	// when; the restore drill's also records the latest succeeded `fix` job that had a `path`, when there
+	// is one. It is kept in the database and outlives `forgetMigration`. Refused with 409
+	// `migration_not_finished` while the checklist does not apply (`getMigrationChecklist` answers
+	// `finished` false), and with 409 `checklist_item_has_record` for every other item, whose state comes
+	// from a record and is never set by hand. Acknowledging an acknowledged item changes nothing: the
+	// first acknowledgement is kept. Returns the item as it stands.
 	//
 	// POST /migrate/checklist/{item}/acknowledge
 	AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (*MigrationChecklistItem, error)
@@ -720,8 +720,9 @@ type Handler interface {
 	// `user_scripts` and `restore_drill` have no record to derive from and are done by
 	// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
 	// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
-	// `fix` job, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
-	// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+	// `fix` job that had a `path`, which an acknowledgement records. Only those two are ever
+	// `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the
+	// scripts are empty.
 	//
 	// GET /migrate/checklist
 	GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error)
@@ -1848,7 +1849,21 @@ type Handler interface {
 	// StartFix implements startFix operation.
 	//
 	// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
-	// parity.
+	// parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file
+	// changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2).
+	// Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under
+	// `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for,
+	// with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error
+	// gives the number of unrecoverable blocks and names the partial copies it left as
+	// `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log
+	// names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID
+	// can only rebuild what parity held at the last sync, and no more failed blocks than parity covers.
+	// With `path`, the error names the file and, when the log names the partial copy, gives one example
+	// cause: another file that shares its parity positions changed after the last sync. Any other non-zero
+	// exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to
+	// do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after
+	// the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job
+	// reports that nothing was restored.
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, req *StartFixRequest) (*Job, error)
@@ -2059,7 +2074,10 @@ type Handler interface {
 	// §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
 	// mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
 	// copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
-	// There is no second relocation-invocation path.
+	// There is no second relocation-invocation path. A relocation in either direction needs the array's
+	// cache disk, so it is refused with 409 `no_cache_disk` before any job is queued while the array has
+	// no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology
+	// fails the request rather than assuming a cache.
 	//
 	// POST /shares/{name}/relocate
 	StartShareRelocation(ctx context.Context, req *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)

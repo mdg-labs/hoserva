@@ -3,6 +3,7 @@ package parity
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -929,5 +930,229 @@ func TestSnapraidEngine_CurrentRelocationManifest_ReadsWiredStore(t *testing.T) 
 	}
 	if !removingDisks["/mnt/disk3"] {
 		t.Fatalf("removingDisks = %+v, want /mnt/disk3", removingDisks)
+	}
+}
+
+// fixNothingToDoLog is the tail of a real snapraid 12.4-1 `fix -f /docs/bb.bin`
+// log, captured in the lab, for a path that names nothing in parity: exit 0,
+// no recovered file, "Nothing to do".
+const fixNothingToDoLog = `command:fix
+argv:0:snapraid
+argv:5:-f
+argv:6:/docs/bb.bin
+argv:7:fix
+msg:progress: Fixing...
+msg:status: Nothing to do
+msg:status: Everything OK
+summary:error:0
+summary:error_recovered:0
+summary:error_unrecoverable:0
+summary:exit:ok
+`
+
+func TestSnapraidEngine_Fix_PathThatRecoveredNothingFails(t *testing.T) {
+	r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: fixNothingToDoLog}}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+	ch, err := e.Fix(context.Background(), FixOpts{Path: "/docs/bb.bin"})
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	final := drain(t, ch)
+	if !errors.Is(final.Err, ErrFixRestoredNothing) {
+		t.Fatalf("final Progress.Err = %v, want ErrFixRestoredNothing", final.Err)
+	}
+}
+
+func TestSnapraidEngine_Fix_PathThatRecoveredAFileSucceeds(t *testing.T) {
+	r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: string(readCorpus(t, "snapraid_fix_undelete.log"))}}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+	ch, err := e.Fix(context.Background(), FixOpts{Path: "/docs/b.bin"})
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if final := drain(t, ch); final.Err != nil {
+		t.Fatalf("final Progress.Err = %v, want nil", final.Err)
+	}
+}
+
+func TestSnapraidEngine_Fix_WithoutPathNothingToDoStillSucceeds(t *testing.T) {
+	for name, opts := range map[string]FixOpts{"whole array": {}, "one disk": {Disk: "d1"}} {
+		r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: fixNothingToDoLog}}}
+		e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+		ch, err := e.Fix(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("%s: Fix: %v", name, err)
+		}
+		if final := drain(t, ch); final.Err != nil {
+			t.Fatalf("%s: final Progress.Err = %v, want nil", name, final.Err)
+		}
+	}
+}
+
+// fixUnrecoverableLog is the tail of a real snapraid 12.4-1 `fix -f
+// /pr/unrec.bin` log, captured in the lab: unrec.bin was deleted from d3 after
+// the sync and pr/other.bin on d1, which shares its parity position, was
+// rewritten, so parity cannot rebuild it. Exit 1, no recovered file, and
+// SnapRAID leaves pr/unrec.bin.unrecoverable on d3.
+const fixUnrecoverableLog = `command:fix
+argv:0:snapraid
+argv:5:-f
+argv:6:/pr/unrec.bin
+argv:7:fix
+msg:progress: Fixing...
+error:0:d1:pr/other.bin: Data error at position 0, diff bits 67/128
+error:0:d3:pr/unrec.bin: Read error at position 0
+strategy_error:0: No strategy to recover from 2 failures with 1 parity with hash
+unrecoverable:0:d1:pr/other.bin: Unrecoverable error at position 0
+unrecoverable:0:d3:pr/unrec.bin: Unrecoverable error at position 0
+status:unrecoverable:d3:pr/unrec.bin
+msg:status:        2 errors
+msg:status:        0 recovered errors
+msg:status:        1 UNRECOVERABLE errors
+msg:fatal: DANGER! Unrecoverable errors detected!
+summary:error:2
+summary:error_recovered:0
+summary:error_unrecoverable:1
+summary:exit:unrecoverable
+`
+
+func TestSnapraidEngine_Fix_PathThatCannotBeRebuiltFailsNamingTheLeftover(t *testing.T) {
+	r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: fixUnrecoverableLog, err: &fakeExitError{code: 1}}}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+	ch, err := e.Fix(context.Background(), FixOpts{Path: "/pr/unrec.bin"})
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	final := drain(t, ch)
+	if !errors.Is(final.Err, ErrFixUnrecoverable) {
+		t.Fatalf("final Progress.Err = %v, want ErrFixUnrecoverable", final.Err)
+	}
+	if errors.Is(final.Err, ErrFixRestoredNothing) {
+		t.Fatalf("final Progress.Err = %v: the path is in parity, it must not read as restored nothing", final.Err)
+	}
+	if want := "pr/unrec.bin.unrecoverable on disk d3"; !strings.Contains(final.Err.Error(), want) {
+		t.Fatalf("final Progress.Err = %q, want it to name %q", final.Err, want)
+	}
+}
+
+func TestSnapraidEngine_Fix_PathWithOneRecoveredAndOneUnrecoverableFileFails(t *testing.T) {
+	log := strings.Replace(fixUnrecoverableLog, "status:unrecoverable:d3:pr/unrec.bin\n",
+		"status:recovered:d1:pr/twin.bin\nstatus:unrecoverable:d3:pr/twin.bin\n", 1)
+	r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: log, err: &fakeExitError{code: 1}}}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+	ch, err := e.Fix(context.Background(), FixOpts{Path: "/pr/twin.bin"})
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if final := drain(t, ch); !errors.Is(final.Err, ErrFixUnrecoverable) {
+		t.Fatalf("final Progress.Err = %v, want ErrFixUnrecoverable although one copy was recovered", final.Err)
+	}
+}
+
+// fixWholeUnrecoverableLog is a whole-array or one-disk fix (no -f) of the
+// same two files: SnapRAID prints the same unrecoverable report and exits 1.
+var fixWholeUnrecoverableLog = strings.Replace(fixUnrecoverableLog, "argv:5:-f\nargv:6:/pr/unrec.bin\nargv:7:fix\n", "argv:5:fix\n", 1)
+
+func TestSnapraidEngine_Fix_WithoutPathUnrecoverableBlocksFail(t *testing.T) {
+	for name, opts := range map[string]FixOpts{"whole array": {}, "one disk": {Disk: "d3"}, "errors only": {ErrorsOnly: true}} {
+		r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: fixWholeUnrecoverableLog, err: &fakeExitError{code: 1}}}}
+		e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+		ch, err := e.Fix(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("%s: Fix: %v", name, err)
+		}
+		final := drain(t, ch)
+		if !errors.Is(final.Err, ErrFixUnrecoverable) {
+			t.Fatalf("%s: final Progress.Err = %v, want ErrFixUnrecoverable: a fix that left unrecoverable blocks must never end succeeded", name, final.Err)
+		}
+		if errors.Is(final.Err, ErrFixRestoredNothing) {
+			t.Fatalf("%s: final Progress.Err = %v: this fix has no path, it must not read as restored nothing", name, final.Err)
+		}
+		for _, want := range []string{"1 unrecoverable block", "last sync", "pr/unrec.bin.unrecoverable on disk d3"} {
+			if !strings.Contains(final.Err.Error(), want) {
+				t.Fatalf("%s: final Progress.Err = %q, want it to contain %q", name, final.Err, want)
+			}
+		}
+		if strings.Contains(final.Err.Error(), "shares its parity positions") {
+			t.Fatalf("%s: final Progress.Err = %q: a whole-array fix has no one file to blame a shared parity position on", name, final.Err)
+		}
+	}
+}
+
+func TestSnapraidEngine_Fix_WithoutPathUnrecoverableWithNoNamedFileStillFails(t *testing.T) {
+	log := strings.Replace(fixWholeUnrecoverableLog, "status:unrecoverable:d3:pr/unrec.bin\n", "", 1)
+	r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: log, err: &fakeExitError{code: 1}}}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+	ch, err := e.Fix(context.Background(), FixOpts{})
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if final := drain(t, ch); !errors.Is(final.Err, ErrFixUnrecoverable) {
+		t.Fatalf("final Progress.Err = %v, want ErrFixUnrecoverable even when the log names no file", final.Err)
+	}
+}
+
+func TestSnapraidEngine_Fix_WithoutPathNamesAtMostTenLeftovers(t *testing.T) {
+	var b strings.Builder
+	for i := range 25 {
+		fmt.Fprintf(&b, "status:unrecoverable:d1:pr/f%02d.bin\n", i)
+	}
+	log := strings.Replace(fixWholeUnrecoverableLog, "status:unrecoverable:d3:pr/unrec.bin\n", b.String(), 1)
+	r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: log, err: &fakeExitError{code: 1}}}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+	ch, err := e.Fix(context.Background(), FixOpts{Disk: "d1"})
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	final := drain(t, ch)
+	if !errors.Is(final.Err, ErrFixUnrecoverable) {
+		t.Fatalf("final Progress.Err = %v, want ErrFixUnrecoverable", final.Err)
+	}
+	msg := final.Err.Error()
+	if !strings.Contains(msg, "pr/f09.bin.unrecoverable on disk d1") || strings.Contains(msg, "pr/f10.bin") || !strings.Contains(msg, "15 more") {
+		t.Fatalf("final Progress.Err = %q, want the first ten leftovers named and %q more", msg, "15 more")
+	}
+}
+
+func TestSnapraidEngine_Fix_ExitOneWithoutUnrecoverableBlocksFails(t *testing.T) {
+	log := strings.NewReplacer("summary:error_unrecoverable:1", "summary:error_unrecoverable:0", "summary:exit:unrecoverable", "summary:exit:error").Replace(fixWholeUnrecoverableLog)
+	for name, opts := range map[string]FixOpts{"whole array": {}, "one disk": {Disk: "d3"}} {
+		r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: log, err: &fakeExitError{code: 1}}}}
+		e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+		ch, err := e.Fix(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("%s: Fix: %v", name, err)
+		}
+		final := drain(t, ch)
+		if final.Err == nil {
+			t.Fatalf("%s: a fix SnapRAID exited 1 for ended succeeded", name)
+		}
+		if want := `exit "error"`; !strings.Contains(final.Err.Error(), want) {
+			t.Fatalf("%s: final Progress.Err = %q, want it to contain %q", name, final.Err, want)
+		}
+	}
+}
+
+func TestSnapraidEngine_Fix_WithoutPathRecoveredEverythingSucceeds(t *testing.T) {
+	for name, opts := range map[string]FixOpts{"whole array": {}, "one disk": {Disk: "d3"}, "errors only": {ErrorsOnly: true}} {
+		r := &scriptedRunner{t: t, script: []scriptedResult{{logBody: string(readCorpus(t, "snapraid_fix_recovers_corruption.log"))}}}
+		e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: t.TempDir(), Runner: r}
+
+		ch, err := e.Fix(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("%s: Fix: %v", name, err)
+		}
+		if final := drain(t, ch); final.Err != nil {
+			t.Fatalf("%s: final Progress.Err = %v, want nil: every error was recovered", name, final.Err)
+		}
 	}
 }

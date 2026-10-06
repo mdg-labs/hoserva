@@ -745,7 +745,7 @@ func migrateInitializeParityCmd() *cobra.Command {
 				return fmt.Errorf("parity initialisation %s ended %s", done.ID, done.Status)
 			}
 			if !jsonOutput {
-				fmt.Println("The parity and cache disks are formatted and the array is read-write. The initial sync is queued: until it completes the array has no redundancy, so follow it with `hoserva parity status`, and run a full scrub once it is done.")
+				fmt.Println("The parity and cache disks are formatted and the array is read-write. The initial sync is queued: until it completes the array has no redundancy, so follow it with `hoserva jobs` (and `hoserva logs --job <id> --follow` for its log), and run a full scrub once it is done.")
 			}
 			return nil
 		},

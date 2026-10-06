@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,10 @@ const mockDiskSize = 4_000_000_000_000
 
 func errConfirmRequired() error {
 	return &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+}
+
+func errInvalidFixPath(err error) error {
+	return &mockError{code: "invalid_fix_path", statusCode: 400, message: err.Error()}
 }
 
 func errInvalidPlan(err error) error {
@@ -510,9 +515,31 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 	if !req.Confirm {
 		return nil, errConfirmRequired()
 	}
+	path, hasPath := req.Path.Get()
+	if hasPath {
+		p := job.FixParams{Confirm: true, Path: &path}
+		if d, ok := req.Disk.Get(); ok {
+			n := int(d)
+			p.Disk = &n
+		}
+		params, err := json.Marshal(p)
+		if err != nil {
+			return nil, fmt.Errorf("encoding fix params: %w", err)
+		}
+		if err := job.ValidateParams(job.TypeFix, params); err != nil {
+			return nil, errInvalidFixPath(err)
+		}
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.submitParityJob(apiv1.JobTypeFix, true)
+	j, err := h.submitParityJob(apiv1.JobTypeFix, true)
+	if err != nil {
+		return nil, err
+	}
+	if hasPath {
+		h.fixPaths[j.ID] = path
+	}
+	return j, nil
 }
 
 // StartMover is `hoserva mover run`'s manual trigger (doc 09 §2) — the

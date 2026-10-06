@@ -29,6 +29,14 @@ import (
 // wire only one.
 func newShareRelocationTestHandler(t *testing.T) (*api.Handler, *job.Scheduler, *job.Registry) {
 	t.Helper()
+	return newShareRelocationTestHandlerWithCache(t, true)
+}
+
+// newShareRelocationTestHandlerWithCache is newShareRelocationTestHandler
+// with the array's cache disk optional, for the refusal a relocation to
+// the cache gets on an array that has none.
+func newShareRelocationTestHandlerWithCache(t *testing.T, withCache bool) (*api.Handler, *job.Scheduler, *job.Registry) {
+	t.Helper()
 
 	migrations, err := store.Load()
 	if err != nil {
@@ -50,6 +58,9 @@ func newShareRelocationTestHandler(t *testing.T) (*api.Handler, *job.Scheduler, 
 		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "p", Mountpoint: filepath.Join(root, "parity1")},
 		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "d1", Mountpoint: filepath.Join(root, "disk1")},
 		{Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "ext4", FSUUID: "c", Mountpoint: filepath.Join(root, "cache")},
+	}
+	if !withCache {
+		layout = layout[:2]
 	}
 	for _, d := range layout {
 		if err := os.MkdirAll(d.Mountpoint, 0o755); err != nil {
@@ -213,5 +224,104 @@ func TestHandler_StartShareRelocation_ToArray_SubmitsAndRuns(t *testing.T) {
 	dst := filepath.Join(relocShare.ArrayPath, "report.pdf")
 	if _, err := os.Stat(dst); err != nil {
 		t.Fatalf("expected relocated file on the array: %v", err)
+	}
+}
+
+// TestHandler_StartShareRelocation_WithoutCacheDiskIsRefusedBeforeQueueing
+// pins that a relocation in either direction on an array with no cache disk
+// is refused at the API with 409 no_cache_disk and queues no job, rather
+// than answering 200 for a job that then fails: the relocation job needs
+// the share's cache path whichever way the files move.
+func TestHandler_StartShareRelocation_WithoutCacheDiskIsRefusedBeforeQueueing(t *testing.T) {
+	for _, to := range []apiv1.StartShareRelocationRequestTo{
+		apiv1.StartShareRelocationRequestToCache,
+		apiv1.StartShareRelocationRequestToArray,
+	} {
+		t.Run(string(to), func(t *testing.T) {
+			ctx := context.Background()
+			h, _, r := newShareRelocationTestHandlerWithCache(t, false)
+			if _, err := h.Shares.Create(ctx, share.CreateInput{Name: "docs", CacheMode: pool.ArrayOnly}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			r.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+				Open:  cache.NewFakeOpenChecker(),
+				Share: func(context.Context, string) (cache.Share, error) { return cache.Share{Name: "docs"}, nil },
+			}))
+
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: "docs"})
+			status := apiError(t, h, err)
+			if status.StatusCode != 409 || status.Response.Code != "no_cache_disk" {
+				t.Fatalf("StartShareRelocation(to %s, no cache disk) = %d %q, want 409 no_cache_disk", to, status.StatusCode, status.Response.Code)
+			}
+			jobs, err := h.Store.List(ctx, job.ListFilter{})
+			if err != nil {
+				t.Fatalf("listing jobs: %v", err)
+			}
+			if len(jobs) != 0 {
+				t.Fatalf("a refused relocation queued %d job(s), want none", len(jobs))
+			}
+		})
+	}
+}
+
+// TestHandler_StartShareRelocation_RefusedAtSubmitWhileGated pins, with a
+// cache disk present so the no_cache_disk refusal is out of the way, that the
+// scheduler's own admission checks still refuse a relocation in either
+// direction: while the array is stopped (maintenance mode) and while an
+// Unraid migration is pending. Each refusal is a 409 and queues no job.
+func TestHandler_StartShareRelocation_RefusedAtSubmitWhileGated(t *testing.T) {
+	gates := []struct {
+		name     string
+		enter    func(t *testing.T, s *job.Scheduler)
+		wantCode string
+	}{
+		{
+			name: "maintenance_mode",
+			enter: func(t *testing.T, s *job.Scheduler) {
+				if err := s.EnterMaintenance(context.Background()); err != nil {
+					t.Fatalf("EnterMaintenance: %v", err)
+				}
+			},
+			wantCode: "maintenance_mode",
+		},
+		{
+			name: "migration_in_progress",
+			enter: func(_ *testing.T, s *job.Scheduler) {
+				s.SetMigrationPending(func(context.Context) (bool, error) { return true, nil })
+			},
+			wantCode: "migration_in_progress",
+		},
+	}
+	for _, g := range gates {
+		for _, to := range []apiv1.StartShareRelocationRequestTo{
+			apiv1.StartShareRelocationRequestToCache,
+			apiv1.StartShareRelocationRequestToArray,
+		} {
+			t.Run(g.name+"/"+string(to), func(t *testing.T) {
+				ctx := context.Background()
+				h, s, r := newShareRelocationTestHandlerWithCache(t, true)
+				if _, err := h.Shares.Create(ctx, share.CreateInput{Name: "docs", CacheMode: pool.CacheThenMove}); err != nil {
+					t.Fatalf("Create: %v", err)
+				}
+				r.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+					Open:  cache.NewFakeOpenChecker(),
+					Share: func(context.Context, string) (cache.Share, error) { return cache.Share{Name: "docs"}, nil },
+				}))
+				g.enter(t, s)
+
+				_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: "docs"})
+				status := apiError(t, h, err)
+				if status.StatusCode != 409 || status.Response.Code != g.wantCode {
+					t.Fatalf("StartShareRelocation(to %s) = %d %q, want 409 %s", to, status.StatusCode, status.Response.Code, g.wantCode)
+				}
+				jobs, err := h.Store.List(ctx, job.ListFilter{})
+				if err != nil {
+					t.Fatalf("listing jobs: %v", err)
+				}
+				if len(jobs) != 0 {
+					t.Fatalf("a refused relocation queued %d job(s), want none", len(jobs))
+				}
+			})
+		}
 	}
 }

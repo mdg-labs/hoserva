@@ -68,8 +68,10 @@ type DiskReplaceDeps struct {
 // A failure before the store write leaves the array's topology
 // unchanged, aside from the replacement disk itself already having been
 // formatted or adopted. A failure between that write and a successful
-// Fix — the fix step itself failing, or the job being interrupted
-// mid-fix — leaves the array's topology, mounts and snapraid.conf
+// Fix — the fix step itself failing (including a fix that left
+// unrecoverable blocks, parity.ErrFixUnrecoverable, which fails the job
+// with the partial copies named rather than ending it succeeded), or the
+// job being interrupted mid-fix — leaves the array's topology, mounts and snapraid.conf
 // already switched over to the replacement (and, for a slot that was
 // evacuated/unpooled, already out of removal), recoverable by an
 // ordinary `hoserva fix` against the same disk: neither store write nor

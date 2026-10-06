@@ -10033,8 +10033,9 @@ type MigrationChecklistItem struct {
 	Acknowledgeable bool `json:"acknowledgeable"`
 	// When the record says it was done, or when it was acknowledged.
 	DoneAt OptDateTime `json:"doneAt"`
-	// The job the item derives from. For `restore_drill`, the latest succeeded `fix` job, which an
-	// acknowledgement records.
+	// The job the item derives from. For `restore_drill`, the latest succeeded `fix` job that had a `path`
+	// (`startFix`), which an acknowledgement records. A fix of the whole array or of one disk is not a
+	// restore drill and is not shown.
 	JobId OptString `json:"jobId"`
 	// Who acknowledged it, `local` for the daemon's own socket.
 	AcknowledgedBy OptString                          `json:"acknowledgedBy"`
@@ -22148,8 +22149,18 @@ func (s *StartAppdataBackupRequest) SetContainers(val []string) {
 type StartFixRequest struct {
 	// Must be true — fix rewrites data from parity.
 	Confirm bool `json:"confirm"`
-	// Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`).
+	// Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`). Cannot be
+	// combined with `path`.
 	Disk OptInt32 `json:"disk"`
+	// One file to restore from parity, as it is seen through the pool: an absolute path under `/mnt/user`,
+	// such as `/mnt/user/documents/tax.pdf` (`hoserva fix --path`). Only that file is restored; a file
+	// edited or deleted elsewhere since the last sync keeps its current state. It must be canonical, with
+	// no empty, `.` or `..` segment and no trailing slash, so a directory is refused; it must hold no
+	// control character and none of `*`, `?`, `[`, `]` or `\`, which SnapRAID reads as pattern syntax and
+	// which could match more than this one file. Cannot be combined with `disk`. The job records it, and
+	// the migration checklist's restore drill shows the latest succeeded fix job that has one, and a fix
+	// that did not restore the file (nothing matched, or parity could not rebuild it) does not succeed.
+	Path OptString `json:"path"`
 }
 
 // GetConfirm returns the value of Confirm.
@@ -22162,6 +22173,11 @@ func (s *StartFixRequest) GetDisk() OptInt32 {
 	return s.Disk
 }
 
+// GetPath returns the value of Path.
+func (s *StartFixRequest) GetPath() OptString {
+	return s.Path
+}
+
 // SetConfirm sets the value of Confirm.
 func (s *StartFixRequest) SetConfirm(val bool) {
 	s.Confirm = val
@@ -22170,6 +22186,11 @@ func (s *StartFixRequest) SetConfirm(val bool) {
 // SetDisk sets the value of Disk.
 func (s *StartFixRequest) SetDisk(val OptInt32) {
 	s.Disk = val
+}
+
+// SetPath sets the value of Path.
+func (s *StartFixRequest) SetPath(val OptString) {
+	s.Path = val
 }
 
 type StartMigrationDeviceScanReq struct {

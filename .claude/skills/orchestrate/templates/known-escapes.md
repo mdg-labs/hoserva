@@ -146,6 +146,7 @@ existing line by adding its PR number.
 - **tests** — a process probe matches any process in `/proc` instead of this test's own child, so an unrelated one triggers the next step early — PR 357
 - **tests** — a fixture or capture script clears every resource on a shared daemon (all Docker containers and networks) instead of refusing a populated one and removing only what it created — PR 567
 - **tests** — a fixture generator shared by several variants hard-codes a value only some of them support (a cache-pool path), so a variant without it records a state its own spec rules out — PR 568
+- **tests** — a captured report kept as test data is checked against a spec that has since changed, and the assertion never compares the field that changed (disk sizes), so the stale capture still passes as matching its fixture — PR 651
 - **tests** — a readiness gate waits on more than the acceptance criterion measures (the cache disk in an array-disk settle), so unrelated activity fails it — PR 357
 - **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
 - **tests** — a check's cleanup runs after a later step shadows what it must remove (a mount over the directory holding a stray probe), so the leftover survives into later steps — PR 395
