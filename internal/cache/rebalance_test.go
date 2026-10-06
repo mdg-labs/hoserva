@@ -193,6 +193,9 @@ func TestPlanRebalance_SkipsShareWithFewerThanTwoBranches(t *testing.T) {
 // is written for real, since RunRebalance's copy phase reads it.
 func rebalancePlanMoves(t *testing.T, share string, sourceBranch, targetBranch string, n int) RebalancePlan {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(targetBranch), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var moves []RebalanceMove
 	for i := 0; i < n; i++ {
 		rel := fmt.Sprintf("file%03d.bin", i)

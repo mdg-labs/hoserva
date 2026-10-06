@@ -31,6 +31,9 @@ func syncFuncFromEngine(e parity.Engine) cache.SyncFunc {
 func newShareRelocationShare(t *testing.T, name string) cache.Share {
 	t.Helper()
 	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return cache.Share{
 		Name:      name,
 		CachePath: filepath.Join(base, "cache", name),
@@ -144,6 +147,9 @@ func TestRunShareRelocation_ToArray_MovesThroughScheduler(t *testing.T) {
 		Name:      "docs",
 		CachePath: filepath.Join(base, "cache", "docs"),
 		ArrayPath: filepath.Join(base, "array", "docs"),
+	}
+	if err := os.MkdirAll(share.ArrayPath, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	src := filepath.Join(share.CachePath, "report.pdf")
 	mustWriteFile(t, src, "report bytes")
@@ -892,6 +898,9 @@ func TestRunShareRelocation_ToArray_LeftBehindEntryFailsTheJob(t *testing.T) {
 		CachePath: filepath.Join(base, "cache", "docs"),
 		ArrayPath: filepath.Join(base, "array", "docs"),
 	}
+	if err := os.MkdirAll(share.ArrayPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	held := filepath.Join(share.CachePath, "held.db")
 	mustWriteFile(t, held, "database bytes")
 	open := fakeOpen()
@@ -921,6 +930,9 @@ func TestRunShareRelocation_ToArray_OnlyASocketLeftStillSucceeds(t *testing.T) {
 		Name:      "docs",
 		CachePath: filepath.Join(base, "cache", "docs"),
 		ArrayPath: filepath.Join(base, "array", "docs"),
+	}
+	if err := os.MkdirAll(share.ArrayPath, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	mustWriteFile(t, filepath.Join(share.CachePath, "report.pdf"), "report bytes")
 	dir, err := os.Open(share.CachePath)

@@ -24,8 +24,10 @@ func newTestMoverShare(t *testing.T) cache.Share {
 		ArrayPath: filepath.Join(base, "array", "movies"),
 	}
 	src := filepath.Join(share.CachePath, "movie.mkv")
-	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{filepath.Dir(src), share.ArrayPath} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(src, []byte("movie bytes"), 0o640); err != nil {
 		t.Fatal(err)

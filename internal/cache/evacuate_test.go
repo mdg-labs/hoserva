@@ -22,6 +22,9 @@ func evacuateShare(t *testing.T, name string, disks []string) Share {
 	t.Helper()
 	s := Share{Name: name}
 	for _, d := range disks {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		s.Branches = append(s.Branches, filepath.Join(d, name))
 	}
 	return s

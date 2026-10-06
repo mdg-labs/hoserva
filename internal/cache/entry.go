@@ -161,8 +161,8 @@ func copySparse(out, in *os.File, size int64, hash io.Writer, holes bool) error 
 // temp-suffixed sibling that is verified and then renamed into place the
 // same way a regular file's copy is (doc 09 §2). It never follows a
 // symlink and never touches src.
-func copyNode(src, dst string, srcInfo os.FileInfo, deps Deps) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+func copyNode(src, dst, dstRoot string, srcInfo os.FileInfo, deps Deps) error {
+	if err := mkdirAllLike(filepath.Dir(src), dstRoot, filepath.Dir(dst), deps); err != nil {
 		return fmt.Errorf("create target directory: %w", err)
 	}
 	tmp := dst + tempSuffix + deps.UUID()

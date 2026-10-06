@@ -618,7 +618,7 @@ func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps D
 		}
 	}
 
-	if err := copyMoveFile(src, dst, srcInfo, cfg, deps); err != nil {
+	if err := copyMoveFile(src, dst, targetDisk, srcInfo, cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
 			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultConflict}, nil
 		}

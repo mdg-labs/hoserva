@@ -29,6 +29,9 @@ type scriptedRunner struct {
 type scriptedResult struct {
 	logBody string
 	err     error
+	// before runs when the command starts, to stand in for what the real
+	// command does to the disks while it runs.
+	before func()
 }
 
 func (r *scriptedRunner) Start(ctx context.Context, name string, args ...string) (Process, error) {
@@ -39,6 +42,9 @@ func (r *scriptedRunner) Start(ctx context.Context, name string, args ...string)
 	}
 	res := r.script[r.i]
 	r.i++
+	if res.before != nil {
+		res.before()
+	}
 
 	for i, a := range args {
 		if a == "-l" && i+1 < len(args) && res.logBody != "" {

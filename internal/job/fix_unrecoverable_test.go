@@ -63,6 +63,7 @@ summary:exit:unrecoverable
 
 const wholeFixRecoveredLog = `command:fix
 argv:5:fix
+data:d3:/nonexistent/disk3/
 msg:progress: Fixing...
 status:recovered:d3:backup/weekly.bin
 summary:error:3

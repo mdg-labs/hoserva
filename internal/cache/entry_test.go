@@ -639,7 +639,7 @@ func TestCopyRegular_KeepsHolesAndVerifiesTheFullContent(t *testing.T) {
 
 	for _, verify := range []bool{false, true} {
 		dst := filepath.Join(dir, fmt.Sprintf("dst-%v.img", verify))
-		if err := copyMoveFile(src, dst, info, Config{VerifyChecksum: verify}, testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
+		if err := copyMoveFile(src, dst, dir, info, Config{VerifyChecksum: verify}, testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
 			t.Fatalf("copyMoveFile(verify=%v): %v", verify, err)
 		}
 		want, _ := os.ReadFile(src)
@@ -662,7 +662,7 @@ func TestCopyRegular_FullyDenseFileStaysDense(t *testing.T) {
 	}
 	info, _ := os.Lstat(src)
 	dst := filepath.Join(dir, "out")
-	if err := copyMoveFile(src, dst, info, Config{VerifyChecksum: true}, testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
+	if err := copyMoveFile(src, dst, dir, info, Config{VerifyChecksum: true}, testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(dst); !bytes.Equal(got, content) {
@@ -686,7 +686,7 @@ func TestCopyRegular_NeverFollowsASymlinkSwappedInAfterTheStat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := copyMoveFile(src, filepath.Join(dir, "dst"), info, Config{}, testDeps(NewFakeOpenChecker()).withDefaults())
+	err := copyMoveFile(src, filepath.Join(dir, "dst"), dir, info, Config{}, testDeps(NewFakeOpenChecker()).withDefaults())
 	if err == nil {
 		t.Fatal("copyMoveFile followed a symlink that replaced the regular file")
 	}
@@ -712,7 +712,7 @@ func TestCopyRegular_PreallocatedFileStaysAllocated(t *testing.T) {
 	}
 	info, _ := os.Lstat(src)
 	dst := filepath.Join(dir, "out.bin")
-	if err := copyMoveFile(src, dst, info, Config{}, testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
+	if err := copyMoveFile(src, dst, dir, info, Config{}, testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
 		t.Fatal(err)
 	}
 	if got := blocks(t, dst); got < size {

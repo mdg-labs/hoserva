@@ -164,6 +164,21 @@ type ExternalDisk struct {
 	BackupDestination int64          `json:"backup_destination"`
 }
 
+type FileMetadataCurrent struct {
+	ID         int64 `json:"id"`
+	Generation int64 `json:"generation"`
+}
+
+type FileMetadatum struct {
+	Generation     int64  `json:"generation"`
+	DiskMountpoint string `json:"disk_mountpoint"`
+	RelPath        string `json:"rel_path"`
+	IsDir          int64  `json:"is_dir"`
+	Uid            int64  `json:"uid"`
+	Gid            int64  `json:"gid"`
+	Mode           int64  `json:"mode"`
+}
+
 type HostConfig struct {
 	Kind      string `json:"kind"`
 	Decision  string `json:"decision"`

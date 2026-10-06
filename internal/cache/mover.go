@@ -444,7 +444,7 @@ func moveEntry(ctx context.Context, s Share, rel string, srcInfo os.FileInfo, gr
 		return Entry{Share: s.Name, Path: rel, Bytes: srcInfo.Size(), Result: ResultSkippedNoSpace}
 	}
 
-	if err := copyMoveFile(src, dst, srcInfo, cfg, deps); err != nil {
+	if err := copyMoveFile(src, dst, s.ArrayPath, srcInfo, cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
 			return Entry{Share: s.Name, Path: rel, Result: ResultConflict}
 		}
@@ -564,18 +564,21 @@ func spaceAvailable(s Share, size int64, deps Deps) bool {
 // copyMoveFile performs doc 09 §2's copy step for one entry: write a
 // temp-suffixed copy through dst's directory (so mergerfs places it),
 // preserve mode, ownership, xattrs and timestamps, verify, fsync, then
-// atomically rename it into place. A regular file is copied with its holes
-// intact; a symlink, FIFO or device node is recreated and never followed.
-// It never touches src.
-func copyMoveFile(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
+// atomically rename it into place. Directories dst needs that do not exist
+// yet are created with the owner, group and mode of src's, walked down from
+// dstRoot without following a symlink (mkdirAllLike); the temp file and
+// the final rename that follow are still path-based (#656).
+// A regular file is copied with its holes intact; a symlink, FIFO or
+// device node is recreated and never followed. It never touches src.
+func copyMoveFile(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
 	if srcInfo.Mode().IsRegular() {
-		return copyRegular(src, dst, srcInfo, cfg, deps)
+		return copyRegular(src, dst, dstRoot, srcInfo, cfg, deps)
 	}
-	return copyNode(src, dst, srcInfo, deps)
+	return copyNode(src, dst, dstRoot, srcInfo, deps)
 }
 
-func copyRegular(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+func copyRegular(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
+	if err := mkdirAllLike(filepath.Dir(src), dstRoot, filepath.Dir(dst), deps); err != nil {
 		return fmt.Errorf("create target directory: %w", err)
 	}
 	tmp := dst + tempSuffix + deps.UUID()
@@ -778,7 +781,10 @@ func enumerateFiles(root string) ([]string, error) {
 }
 
 // sweepStrayTemps removes every leftover "*.hoserva-moving-*" file under
-// root: an interrupted run's own partial copy. Discarding it is always
+// root, and an empty directory so named (one mkdirAllLike was interrupted
+// in): an interrupted run's own partial copy. Run calls it only on each
+// share's ArrayPath, so what a relocation to the cache or an evacuation
+// left on its own target is not swept. Discarding it is always
 // safe — the mover never unlinks a source before the corresponding
 // rename completes, so the authoritative copy is still on cache and a
 // fresh copy will be made on this same run's pass over it.
@@ -794,6 +800,14 @@ func sweepStrayTemps(root string) error {
 			return err
 		}
 		if d.IsDir() {
+			if strings.Contains(d.Name(), tempSuffix) {
+				// A directory made for a copy, not yet renamed to its real
+				// name: it is empty. One that is not is left alone.
+				if err := os.Remove(path); err != nil && !errors.Is(err, unix.ENOTEMPTY) && !errors.Is(err, unix.EEXIST) {
+					return err
+				}
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if strings.Contains(d.Name(), tempSuffix) {

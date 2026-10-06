@@ -24,6 +24,9 @@ import (
 func newRebalanceTestPlan(t *testing.T, srcDir, dstDir, share, rel, content string) cache.RebalancePlan {
 	t.Helper()
 	mustWriteFile(t, filepath.Join(srcDir, rel), content)
+	if err := os.MkdirAll(filepath.Dir(dstDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return cache.RebalancePlan{Moves: []cache.RebalanceMove{{
 		Share:        share,
 		RelPath:      rel,

@@ -1147,6 +1147,9 @@ func TestRunEvacuation_BoundsManifestReplaceCalls(t *testing.T) {
 // batch.
 func newEvacuationTestPlanMultiFile(t *testing.T, srcDir, dstDir, share string, n int) cache.RebalancePlan {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dstDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	moves := make([]cache.RebalanceMove, 0, n)
 	for i := 0; i < n; i++ {
 		rel := fmt.Sprintf("file%d.bin", i)

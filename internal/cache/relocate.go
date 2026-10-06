@@ -405,7 +405,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 		}
 	}
 
-	if err := copyMoveFile(src, dst, srcInfo, cfg, deps); err != nil {
+	if err := copyMoveFile(src, dst, filepath.Dir(share.CachePath), srcInfo, cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
 			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultConflict}, nil
 		}

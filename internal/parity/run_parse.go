@@ -29,6 +29,10 @@ type RunSummary struct {
 	// Errors, Recovered and Unrecoverable are fix/check's own
 	// `summary:error`/`_recovered`/`_unrecoverable`.
 	Errors, Recovered, Unrecoverable int
+	// DataMounts maps SnapRAID's own disk id ("d1") to its mount path, read
+	// from the log's own config echo like DiffLog.DataMounts, so the disk
+	// ids in RecoveredFiles resolve to paths.
+	DataMounts map[string]string
 	// RecoveredFiles is fix's own `status:recovered:<disk>:<path>` lines,
 	// one per file fix actually rewrote from parity.
 	RecoveredFiles []string
@@ -46,7 +50,7 @@ func ParseRunSummary(log []byte) (RunSummary, error) {
 		return RunSummary{}, fmt.Errorf("%w: empty log", ErrRunParse)
 	}
 
-	var s RunSummary
+	s := RunSummary{DataMounts: map[string]string{}}
 	sawSummary := false
 
 	for _, line := range lines {
@@ -55,6 +59,10 @@ func ParseRunSummary(log []byte) (RunSummary, error) {
 			continue
 		}
 		switch tag {
+		case "data":
+			if id, path, ok := strings.Cut(rest, ":"); ok {
+				s.DataMounts[id] = path
+			}
 		case "summary":
 			sawSummary = true
 			parseRunSummaryField(&s, rest)

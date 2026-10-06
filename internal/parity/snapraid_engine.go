@@ -468,7 +468,7 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 	return e.runStream(ctx, logPath, syncArgv(anyDiskEmptied(diff)), func(s RunSummary, waitErr error) error {
 		defer cleanup()
 		if waitErr == nil && (s.Exit == "ok" || s.Exit == "equal") {
-			return nil
+			return e.recordFileMetadata(ctx, s.Exit == "equal")
 		}
 		return exitErr("snapraid sync", "exit", s.Exit, waitErr)
 	})
@@ -541,22 +541,36 @@ func (e *SnapraidEngine) Fix(ctx context.Context, opts FixOpts) (<-chan Progress
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	return e.runStream(ctx, logPath, fixArgv(opts), func(s RunSummary, waitErr error) error {
 		defer cleanup()
-		if !completedNormally(waitErr) {
-			return fmt.Errorf("parity: snapraid fix: exit %q: %w", s.Exit, waitErr)
+		fixErr := fixOutcome(opts, s, waitErr)
+		if len(s.RecoveredFiles) == 0 {
+			return fixErr
 		}
-		if s.Unrecoverable > 0 {
-			return fixUnrecoverableErr(opts.Path, s)
+		// Even a cancelled or failed fix has already created files, and
+		// they must not stay root-owned because the job was stopped.
+		if err := restoreFixedOwnership(context.WithoutCancel(ctx), e.fileMetaStore(), s, started); err != nil {
+			return errors.Join(fixErr, fmt.Errorf("parity: fix restored files but %w", err))
 		}
-		if waitErr != nil {
-			return fmt.Errorf("parity: snapraid fix: exit %q, %d error(s), %d recovered: %w", s.Exit, s.Errors, s.Recovered, waitErr)
-		}
-		if opts.Path != "" && len(s.RecoveredFiles) == 0 {
-			return fmt.Errorf("%w: %s", ErrFixRestoredNothing, opts.Path)
-		}
-		return nil
+		return fixErr
 	})
+}
+
+func fixOutcome(opts FixOpts, s RunSummary, waitErr error) error {
+	if !completedNormally(waitErr) {
+		return fmt.Errorf("parity: snapraid fix: exit %q: %w", s.Exit, waitErr)
+	}
+	if s.Unrecoverable > 0 {
+		return fixUnrecoverableErr(opts.Path, s)
+	}
+	if waitErr != nil {
+		return fmt.Errorf("parity: snapraid fix: exit %q, %d error(s), %d recovered: %w", s.Exit, s.Errors, s.Recovered, waitErr)
+	}
+	if opts.Path != "" && len(s.RecoveredFiles) == 0 {
+		return fmt.Errorf("%w: %s", ErrFixRestoredNothing, opts.Path)
+	}
+	return nil
 }
 
 // maxNamedLeftovers bounds how many partial copies a fix's error names: a

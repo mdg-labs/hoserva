@@ -133,6 +133,8 @@ var uncomparedTables = map[string]string{
 	"notify_alerts":              "runtime: the state of raised alerts",
 	"share_usage":                "runtime: what a past sync measured",
 	"share_usage_computed_at":    "runtime: when share_usage was measured",
+	"file_metadata":              "runtime: the owner, group and mode a past sync recorded for each tracked file, which a fix gives back to a file it restores",
+	"file_metadata_current":      "runtime: which generation of file_metadata is the record",
 	"mover_run_result":           "runtime: the last mover run's result",
 	"cache_usage_breakdown":      "runtime: what the last mover run measured",
 	"restore_drill_result":       "runtime: the last restore drill's result",
