@@ -249,8 +249,8 @@ export function postParityDiff() {
   return hoservaClient.POST("/parity/diff");
 }
 
-export function postParitySync() {
-  return hoservaClient.POST("/parity/sync", { body: { confirm: true, dryRun: false } });
+export function postParitySync(overrideGuard: boolean) {
+  return hoservaClient.POST("/parity/sync", { body: { confirm: overrideGuard, dryRun: false } });
 }
 
 export function postParityFix() {

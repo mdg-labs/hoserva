@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -12,16 +12,20 @@ import {
   type ParityDiffGroup,
 } from "@/components/patterns/parity-diff";
 import { StatusBadge } from "@/components/patterns/status-badge";
+import { TypedConfirm } from "@/components/patterns/typed-confirm";
+import { FormOverlay } from "@/components/patterns/form-overlay";
 import { Wizard } from "@/components/patterns/wizard";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { useSystemData } from "@/hooks/use-system-status";
 import {
+  getJob,
   getParity,
   postParityDiff,
   postParityFix,
   postParityScrub,
   postParitySync,
 } from "@/lib/api/operations";
+import { apiErrorMessage, isAbortError } from "@/lib/api/request";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { jobTypeLabel } from "@/lib/job-labels";
@@ -37,6 +41,79 @@ import {
 } from "@/components/ui/dialog";
 
 type ParitySnapshot = components["schemas"]["ParitySnapshot"];
+
+const SYNC_POLL_MS = 2000;
+const GUARD_BLOCKED_MARKER = "threshold guard blocked the sync";
+
+// A sync the guard holds is queued like any other and then fails with the
+// engine's GuardBlockedError text, so that text is the only signal the
+// failed job carries.
+function guardBlockDetail(message: string | undefined): string | null {
+  const at = message?.indexOf(GUARD_BLOCKED_MARKER) ?? -1;
+  if (message === undefined || at < 0) {
+    return null;
+  }
+  return message.slice(at + GUARD_BLOCKED_MARKER.length).replace(/^:\s*/, "");
+}
+
+type SyncOutcome =
+  | { kind: "succeeded" }
+  | { kind: "blocked"; detail: string }
+  | { kind: "failed"; message: string }
+  | { kind: "stopped" }
+  | { kind: "aborted" };
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        window.clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+// Polls a sync job until it ends. A job the guard refused is reported as
+// "blocked" with the engine's own text, never as a failure to retry.
+async function followSyncJob(jobId: string, signal: AbortSignal): Promise<SyncOutcome> {
+  for (;;) {
+    try {
+      const result = await getJob(jobId, signal);
+      if (signal.aborted) {
+        return { kind: "aborted" };
+      }
+      if (result.error !== undefined || result.response?.ok === false || result.data === undefined) {
+        return { kind: "failed", message: apiErrorMessage(result.error) };
+      }
+      const job = result.data;
+      if (job.status === "succeeded") {
+        return { kind: "succeeded" };
+      }
+      if (job.status === "failed") {
+        const detail = guardBlockDetail(job.error?.message);
+        return detail !== null
+          ? { kind: "blocked", detail }
+          : { kind: "failed", message: apiErrorMessage(job.error ?? undefined) };
+      }
+      if (job.status === "cancelled" || job.status === "interrupted") {
+        return { kind: "stopped" };
+      }
+    } catch (err: unknown) {
+      if (isAbortError(err, signal)) {
+        return { kind: "aborted" };
+      }
+      return { kind: "failed", message: apiErrorMessage(undefined, err instanceof Error ? err.message : undefined) };
+    }
+    await pause(SYNC_POLL_MS, signal);
+    if (signal.aborted) {
+      return { kind: "aborted" };
+    }
+  }
+}
 
 function freshnessTone(freshness: ParitySnapshot["freshness"]): "success" | "warning" | "error" {
   switch (freshness) {
@@ -57,7 +134,7 @@ export function ParityPage(): React.ReactElement {
     queryFn: (signal) => getParity(signal),
   });
   const diffMutation = useApiMutation({ mutationFn: () => postParityDiff() });
-  const syncMutation = useApiMutation({ mutationFn: () => postParitySync() });
+  const syncMutation = useApiMutation({ mutationFn: (overrideGuard: boolean) => postParitySync(overrideGuard) });
   const fixMutation = useApiMutation({ mutationFn: () => postParityFix() });
   const scrubMutation = useApiMutation({ mutationFn: () => postParityScrub() });
 
@@ -77,6 +154,19 @@ export function ParityPage(): React.ReactElement {
   const [actionError, setActionError] = useState<string | null>(null);
   const [diffDialogError, setDiffDialogError] = useState<string | null>(null);
   const [syncDialogError, setSyncDialogError] = useState<string | null>(null);
+  const [syncJobId, setSyncJobId] = useState<string | null>(null);
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncFinished, setSyncFinished] = useState(false);
+  const [syncBlockDetail, setSyncBlockDetail] = useState<string | null>(null);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideValue, setOverrideValue] = useState("");
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [overrideChecking, setOverrideChecking] = useState(false);
+  const [overrideBlock, setOverrideBlock] = useState<string | null>(null);
+  const [overrideNotice, setOverrideNotice] = useState<string | null>(null);
+  const overrideRun = useRef<AbortController | null>(null);
+  const overrideJobId = useRef<string | null>(null);
+  const refreshAfterSync = useRef(async (): Promise<void> => {});
   const { requestClose, guardDialog } = useUnsavedGuard({
     dirty: fixDirty,
     onClose: () => {
@@ -88,9 +178,68 @@ export function ParityPage(): React.ReactElement {
 
   const parityDisk = pool?.disks.find((disk) => disk.role === "parity");
   const guard = parity?.guard;
-  const guardTripped = guard?.wouldBlock ?? Boolean(status?.parityBlocked);
-  const guardSummary = guard?.summary;
+  const guardTripped = (guard?.wouldBlock ?? Boolean(status?.parityBlocked)) || syncBlockDetail !== null;
+  const guardSummary =
+    syncBlockDetail !== null
+      ? t("parity.guard.syncBlocked", { detail: syncBlockDetail })
+      : guard?.summary;
   const parityJobs = jobs.filter((job) => job.class === "parity");
+
+  const refreshParity = parityQuery.refresh;
+  useEffect(() => {
+    refreshAfterSync.current = async () => {
+      await refresh();
+      await refreshParity();
+    };
+  }, [refresh, refreshParity]);
+
+  // The block an override may approve belongs to one overlay session. Any
+  // other sync, a diff, closing the overlay or leaving the page ends it.
+  const discardOverride = useCallback((): void => {
+    overrideRun.current?.abort();
+    overrideRun.current = null;
+    overrideJobId.current = null;
+    setOverrideOpen(false);
+    setOverrideValue("");
+    setOverrideError(null);
+    setOverrideChecking(false);
+    setOverrideBlock(null);
+    setOverrideNotice(null);
+  }, []);
+
+  useEffect(() => discardOverride, [discardOverride]);
+
+  useEffect(() => {
+    if (syncJobId === null) {
+      return;
+    }
+    const controller = new AbortController();
+    const settle = (): void => {
+      setSyncRunning(false);
+      void refreshAfterSync.current();
+    };
+    void followSyncJob(syncJobId, controller.signal).then((outcome) => {
+      switch (outcome.kind) {
+        case "aborted":
+          return;
+        case "succeeded":
+          setOverrideBlock(null);
+          setSyncFinished(true);
+          break;
+        case "blocked":
+          setOverrideBlock(null);
+          setSyncBlockDetail(outcome.detail);
+          break;
+        case "failed":
+          setActionError(outcome.message);
+          break;
+        case "stopped":
+          break;
+      }
+      settle();
+    });
+    return () => controller.abort();
+  }, [syncJobId]);
 
   const handleRunDiff = async (): Promise<void> => {
     const result = await diffMutation.mutate(undefined);
@@ -100,20 +249,124 @@ export function ParityPage(): React.ReactElement {
     }
     setDiffDialogError(null);
     setRunDiffOpen(false);
+    setSyncBlockDetail(null);
+    discardOverride();
     if (result.data) {
       setLocalDiffGroups(parityDiffGroupsFromAPI(result.data.groups));
       await parityQuery.refresh();
     }
   };
 
+  const followSync = (jobId: string): void => {
+    setSyncFinished(false);
+    setSyncRunning(true);
+    setSyncJobId(jobId);
+  };
+
+  const closeOverride = (): void => {
+    const startedJob = overrideJobId.current;
+    discardOverride();
+    if (startedJob !== null) {
+      followSync(startedJob);
+    }
+  };
+
   const handleSync = async (): Promise<void> => {
-    const result = await syncMutation.mutate(undefined);
+    const result = await syncMutation.mutate(false);
     if (!result.ok) {
-      setSyncDialogError(result.error);
+      if (!result.aborted) {
+        setSyncDialogError(result.error);
+      }
       return;
     }
     setSyncDialogError(null);
     setSyncOpen(false);
+    discardOverride();
+    setActionError(null);
+    setSyncBlockDetail(null);
+    if (result.data) {
+      followSync(result.data.id);
+    }
+    await refresh();
+    await parityQuery.refresh();
+  };
+
+  // Opening the override asks the guard again with confirm: false. Only a
+  // refusal that request returns can be confirmed, in this overlay session.
+  const handleOpenOverride = async (): Promise<void> => {
+    closeOverride();
+    const controller = new AbortController();
+    overrideRun.current = controller;
+    setOverrideOpen(true);
+    setOverrideChecking(true);
+    const result = await syncMutation.mutate(false);
+    if (controller.signal.aborted) {
+      if (result.ok && result.data) {
+        followSync(result.data.id);
+      }
+      return;
+    }
+    if (!result.ok || !result.data) {
+      setOverrideChecking(false);
+      if (!result.ok && !result.aborted) {
+        setOverrideError(result.error);
+      }
+      return;
+    }
+    overrideJobId.current = result.data.id;
+    const outcome = await followSyncJob(result.data.id, controller.signal);
+    if (outcome.kind === "aborted") {
+      return;
+    }
+    overrideJobId.current = null;
+    setOverrideChecking(false);
+    switch (outcome.kind) {
+      case "blocked":
+        setOverrideBlock(outcome.detail);
+        setSyncBlockDetail(outcome.detail);
+        setSyncFinished(false);
+        break;
+      case "succeeded":
+        setOverrideNotice(t("parity.override.notRefused"));
+        setSyncBlockDetail(null);
+        setSyncFinished(true);
+        break;
+      case "failed":
+        setOverrideError(outcome.message);
+        break;
+      case "stopped":
+        setOverrideError(t("parity.override.stopped"));
+        break;
+    }
+    await refreshAfterSync.current();
+  };
+
+  const handleOverrideConfirm = async (): Promise<void> => {
+    const controller = overrideRun.current;
+    if (overrideBlock === null || controller === null || controller.signal.aborted) {
+      return;
+    }
+    const result = await syncMutation.mutate(true);
+    if (controller.signal.aborted) {
+      if (result.ok && result.data) {
+        followSync(result.data.id);
+      }
+      return;
+    }
+    if (!result.ok) {
+      setOverrideBlock(null);
+      setOverrideValue("");
+      if (!result.aborted) {
+        setOverrideError(result.error);
+      }
+      return;
+    }
+    discardOverride();
+    setActionError(null);
+    setSyncBlockDetail(null);
+    if (result.data) {
+      followSync(result.data.id);
+    }
     await refresh();
     await parityQuery.refresh();
   };
@@ -157,6 +410,10 @@ export function ParityPage(): React.ReactElement {
       {error ? <Banner tone="error" title={error} /> : null}
       {parityError ? <Banner tone="error" title={parityError} /> : null}
       {actionError ? <Banner tone="error" title={actionError} /> : null}
+      {syncRunning ? (
+        <Banner tone="info" title={t("parity.sync.running")} description={t("parity.sync.runningDescription")} />
+      ) : null}
+      {syncFinished ? <Banner tone="info" title={t("parity.sync.finished")} /> : null}
       <Card>
         <CardHeader>
           <CardTitle>{t("parity.status.title")}</CardTitle>
@@ -177,6 +434,11 @@ export function ParityPage(): React.ReactElement {
           tone="error"
           title={t("parity.guard.bannerTitle")}
           description={guardSummary ?? t("parity.guard.bannerDescription")}
+          action={
+            <Button size="xs" variant="destructive-outline" onClick={() => void handleOpenOverride()}>
+              {t("parity.override.open")}
+            </Button>
+          }
         />
       ) : null}
       <section className="flex flex-col gap-3">
@@ -259,13 +521,57 @@ export function ParityPage(): React.ReactElement {
         title={t("parity.actions.sync")}
         description={
           <>
-            {guardTripped ? guardSummary ?? t("parity.guard.bannerDescription") : t("parity.actions.syncDescription")}
+            {t("parity.actions.syncDescription")}
+            {guardTripped ? (
+              <InlineNote
+                title={t("parity.actions.guardInfoTitle")}
+                description={guardSummary ?? t("parity.guard.bannerDescription")}
+              />
+            ) : null}
             {syncDialogError ? <Banner tone="error" title={syncDialogError} /> : null}
           </>
         }
         confirmLabel={t("parity.actions.sync")}
+        loading={syncMutation.pending}
         onConfirm={() => void handleSync()}
       />
+      <FormOverlay
+        open={overrideOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeOverride();
+          }
+        }}
+        title={t("parity.override.title")}
+        description={t("parity.override.description")}
+        footer={
+          overrideBlock !== null ? (
+            <Button
+              variant="destructive"
+              disabled={syncMutation.pending || overrideValue !== t("parity.override.phrase")}
+              onClick={() => void handleOverrideConfirm()}
+            >
+              {t("parity.actions.syncAnyway")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {overrideChecking ? <InlineNote description={t("parity.override.checking")} /> : null}
+        {overrideNotice ? <Banner tone="info" title={overrideNotice} /> : null}
+        {overrideError ? <Banner tone="error" title={overrideError} /> : null}
+        {overrideBlock !== null ? (
+          <TypedConfirm
+            phrase={t("parity.override.phrase")}
+            value={overrideValue}
+            onChange={setOverrideValue}
+            title={t("parity.override.confirmTitle")}
+            items={[
+              t("parity.guard.syncBlocked", { detail: overrideBlock }),
+              t("parity.override.consequence"),
+            ]}
+          />
+        ) : null}
+      </FormOverlay>
       <Dialog open={fixOpen} onOpenChange={(open) => !open && requestClose()}>
         <DialogPopup className="max-w-2xl">
           <DialogHeader>
