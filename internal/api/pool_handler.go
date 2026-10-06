@@ -79,6 +79,9 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 				State:      apiv1.DiskStateActive,
 				SizeBytes:  apiv1.NewOptNilInt64(d.Size),
 			}
+			if disk.IsUnraidStick(d) {
+				entry.UnraidStick = apiv1.NewOptBool(true)
+			}
 			if idx := matchIdx[i]; idx >= 0 && claimants[idx] == 1 {
 				matched[idx] = true
 				entry.Role = arrayRoleToAPI(arrayDisks[idx].Role)
@@ -291,6 +294,7 @@ func diskToAPI(d disk.Disk) apiv1.DiskInventoryEntry {
 		WeakIdentity:    apiv1.NewOptBool(d.WeakIdentity),
 		ContainsData:    apiv1.NewOptBool(d.ContainsData),
 		LooksLikeUnraid: apiv1.NewOptBool(d.LooksLikeUnraid),
+		UnraidStick:     apiv1.NewOptBool(disk.IsUnraidStick(d)),
 	}
 	if d.Model != "" {
 		entry.Model = apiv1.NewOptString(d.Model)

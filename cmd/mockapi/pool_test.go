@@ -255,6 +255,9 @@ func TestMockDiskInventory_ListsTheOfferedUnraidStick(t *testing.T) {
 				stick.SizeBytes != offered.Size || stick.Model != offered.Model || stick.Serial != offered.Serial {
 				t.Errorf("listed stick = %+v, want vfat UNRAID, not boot, matching the offer %+v", *stick, offered)
 			}
+			if !stick.UnraidStick.Or(false) {
+				t.Errorf("listed stick has unraidStick %v, want true", stick.UnraidStick)
+			}
 			if !stick.ContainsData.Or(false) {
 				t.Errorf("listed stick has containsData %v, want true: production reports it for any disk with a filesystem", stick.ContainsData)
 			}
@@ -274,7 +277,7 @@ func TestMockDiskInventory_ListsTheOfferedUnraidStick(t *testing.T) {
 					continue
 				}
 				if d.Boot != stick.Boot || d.SizeBytes != stick.SizeBytes || d.Model != stick.Model || d.Serial != stick.Serial ||
-					d.Filesystem != stick.Filesystem || d.Label != stick.Label {
+					d.Filesystem != stick.Filesystem || d.Label != stick.Label || d.UnraidStick != stick.UnraidStick {
 					t.Errorf("production lists the stick as %+v, the mock as %+v", d, *stick)
 				}
 				return

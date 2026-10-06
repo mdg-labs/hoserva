@@ -558,6 +558,28 @@ describe("Pool overview page — add/replace disk (#288)", () => {
     expect(mockPost).not.toHaveBeenCalledWith("/disks/array/add", expect.anything());
   });
 
+  it("offers the unassigned disks to Add disk but never the Unraid stick", async () => {
+    const pool = mountedPool();
+    pool.disks.push({
+      device: "/dev/sdg",
+      mountPoint: "",
+      role: "unassigned",
+      state: "active",
+      sizeBytes: 16_000_000_000,
+      usedBytes: 0,
+      unraidStick: true,
+    } as (typeof pool.disks)[number]);
+    mockStatusAndJobs(mockGet, pool);
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add disk" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Device" }));
+    expect(await screen.findByRole("option", { name: "/dev/sdf" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "/dev/sdg" })).not.toBeInTheDocument();
+  });
+
   it("disables the add-disk submit button until the typed confirmation exactly matches the plan, and submits the plan's own fields", async () => {
     mockPost.mockImplementation((path: string) => {
       if (path === "/disks/array/add/plan") {

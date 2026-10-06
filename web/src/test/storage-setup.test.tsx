@@ -56,6 +56,18 @@ const DISK_WEAK: DiskEntry = {
   weakIdentity: true,
 };
 
+const UNRAID_STICK: DiskEntry = {
+  device: "/dev/sdf",
+  sizeBytes: 16_000_000_000,
+  model: "SanDisk Cruzer Fit",
+  serial: "4C530001240603119335",
+  boot: false,
+  filesystem: "vfat",
+  label: "UNRAID",
+  containsData: true,
+  unraidStick: true,
+};
+
 const BOOT_NVME: DiskEntry = {
   device: "/dev/nvme0n1",
   sizeBytes: 1_000_000_000_000,
@@ -335,6 +347,32 @@ describe("StorageSetupPage", () => {
     const healthyRow = screen.getByText("/dev/sdb").closest("tr");
     expect(healthyRow?.querySelector('[data-slot="field-error"]')).toBeNull();
     expect(healthyRow?.querySelector('[data-slot="select-trigger"]')).not.toHaveAttribute("data-invalid");
+  });
+
+  it("lists the Unraid stick in discovery but offers it no role", async () => {
+    expect(assignableDisks([DISK_SDB, UNRAID_STICK, DISK_SDC]).map((disk) => disk.device)).toEqual([
+      "/dev/sdb",
+      "/dev/sdc",
+    ]);
+    const request = buildCreateArrayRequest(
+      [DISK_SDB, UNRAID_STICK, DISK_SDC],
+      { "/dev/sdb": "parity", "/dev/sdc": "data", "/dev/sdf": "data" },
+      {},
+      "mspmfs",
+      50,
+      "",
+    );
+    expect(request.disks.map((assignment) => assignment.device)).toEqual(["/dev/sdb", "/dev/sdc"]);
+
+    mockFreshInstall([DISK_SDB, UNRAID_STICK, DISK_SDC]);
+    renderSetup();
+    await waitFor(() => expect(screen.getByText("/dev/sdf")).toBeInTheDocument());
+    expect(screen.getAllByText(/Unraid USB stick/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.getByText("Role assignment")).toBeInTheDocument());
+    expect(screen.getByText("/dev/sdb")).toBeInTheDocument();
+    expect(screen.queryByText("/dev/sdf")).not.toBeInTheDocument();
   });
 
   it("shows the boot disk's spare partition as a cache-only choice", async () => {

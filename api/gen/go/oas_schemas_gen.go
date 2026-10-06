@@ -6307,6 +6307,10 @@ type DiskInventoryEntry struct {
 	Boot         bool      `json:"boot"`
 	Failed       OptBool   `json:"failed"`
 	WeakIdentity OptBool   `json:"weakIdentity"`
+	// True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3).
+	// Hoserva only reads it for a migration and never assigns it a role: every role and every
+	// external-disk operation on it is refused with `409 unraid_stick`, so a client offers it no role.
+	UnraidStick OptBool `json:"unraidStick"`
 	// Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk
 	// (doc 02 §1, §4, doc 03 §3.1).
 	Filesystem OptString `json:"filesystem"`
@@ -6369,6 +6373,11 @@ func (s *DiskInventoryEntry) GetFailed() OptBool {
 // GetWeakIdentity returns the value of WeakIdentity.
 func (s *DiskInventoryEntry) GetWeakIdentity() OptBool {
 	return s.WeakIdentity
+}
+
+// GetUnraidStick returns the value of UnraidStick.
+func (s *DiskInventoryEntry) GetUnraidStick() OptBool {
+	return s.UnraidStick
 }
 
 // GetFilesystem returns the value of Filesystem.
@@ -6439,6 +6448,11 @@ func (s *DiskInventoryEntry) SetFailed(val OptBool) {
 // SetWeakIdentity sets the value of WeakIdentity.
 func (s *DiskInventoryEntry) SetWeakIdentity(val OptBool) {
 	s.WeakIdentity = val
+}
+
+// SetUnraidStick sets the value of UnraidStick.
+func (s *DiskInventoryEntry) SetUnraidStick(val OptBool) {
+	s.UnraidStick = val
 }
 
 // SetFilesystem sets the value of Filesystem.
@@ -19344,8 +19358,11 @@ type PoolDiskEntry struct {
 	MountPoint string            `json:"mountPoint"`
 	Role       PoolDiskEntryRole `json:"role"`
 	State      DiskState         `json:"state"`
-	SizeBytes  OptNilInt64       `json:"sizeBytes"`
-	UsedBytes  OptNilInt64       `json:"usedBytes"`
+	// True when this disk is the Unraid USB stick (see `DiskInventoryEntry.unraidStick`). It is reported
+	// as `unassigned` but no array operation accepts it, so a client offers it no role.
+	UnraidStick OptBool     `json:"unraidStick"`
+	SizeBytes   OptNilInt64 `json:"sizeBytes"`
+	UsedBytes   OptNilInt64 `json:"usedBytes"`
 	// Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null
 	// for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
 	FreeBytes OptNilInt64 `json:"freeBytes"`
@@ -19382,6 +19399,11 @@ func (s *PoolDiskEntry) GetRole() PoolDiskEntryRole {
 // GetState returns the value of State.
 func (s *PoolDiskEntry) GetState() DiskState {
 	return s.State
+}
+
+// GetUnraidStick returns the value of UnraidStick.
+func (s *PoolDiskEntry) GetUnraidStick() OptBool {
+	return s.UnraidStick
 }
 
 // GetSizeBytes returns the value of SizeBytes.
@@ -19432,6 +19454,11 @@ func (s *PoolDiskEntry) SetRole(val PoolDiskEntryRole) {
 // SetState sets the value of State.
 func (s *PoolDiskEntry) SetState(val DiskState) {
 	s.State = val
+}
+
+// SetUnraidStick sets the value of UnraidStick.
+func (s *PoolDiskEntry) SetUnraidStick(val OptBool) {
+	s.UnraidStick = val
 }
 
 // SetSizeBytes sets the value of SizeBytes.

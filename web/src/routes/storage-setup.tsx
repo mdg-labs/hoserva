@@ -300,8 +300,11 @@ export function StorageSetupPage(): React.ReactElement {
         <DataTable
           rows={discoveryRows(disks)}
           getRowKey={(disk) => disk.device}
-          rowDisabled={(disk) => disk.boot}
-          rowDisabledReason={(disk) => (disk.boot ? t("storageSetup.discovery.bootDisk") : undefined)}
+          rowDisabled={(disk) => disk.boot || disk.unraidStick === true}
+          rowDisabledReason={(disk) => {
+            if (disk.boot) return t("storageSetup.discovery.bootDisk");
+            return disk.unraidStick ? t("storageSetup.discovery.unraidStick") : undefined;
+          }}
           columns={discoveryColumns}
         />
       ) : null}

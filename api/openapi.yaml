@@ -9416,6 +9416,12 @@ components:
           enum: [data, parity, cache, boot, external, unassigned]
         state:
           $ref: '#/components/schemas/DiskState'
+        unraidStick:
+          type: boolean
+          description: >-
+            True when this disk is the Unraid USB stick (see
+            `DiskInventoryEntry.unraidStick`). It is reported as `unassigned`
+            but no array operation accepts it, so a client offers it no role.
         sizeBytes:
           type:
             - integer
@@ -9570,6 +9576,14 @@ components:
           type: boolean
         weakIdentity:
           type: boolean
+        unraidStick:
+          type: boolean
+          description: >-
+            True when this disk is the Unraid USB stick (a `vfat` filesystem
+            labelled `UNRAID`, doc 05 §3). Hoserva only reads it for a
+            migration and never assigns it a role: every role and every
+            external-disk operation on it is refused with `409 unraid_stick`,
+            so a client offers it no role.
         filesystem:
           type: string
           description: >-

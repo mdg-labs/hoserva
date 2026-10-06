@@ -1987,6 +1987,7 @@
     },
     "discovery": {
       "bootDisk": "Boot disk",
+      "unraidStick": "Unraid USB stick — kept as it is, it cannot be given a role",
       "weakIdentity": "Weak identity",
       "available": "Available",
       "sparePartition": "Spare partition — can hold the cache"

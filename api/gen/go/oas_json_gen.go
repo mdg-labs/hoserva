@@ -13186,6 +13186,12 @@ func (s *DiskInventoryEntry) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.UnraidStick.Set {
+			e.FieldStart("unraidStick")
+			s.UnraidStick.Encode(e)
+		}
+	}
+	{
 		if s.Filesystem.Set {
 			e.FieldStart("filesystem")
 			s.Filesystem.Encode(e)
@@ -13227,7 +13233,7 @@ func (s *DiskInventoryEntry) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfDiskInventoryEntry = [14]string{
+var jsonFieldsNameOfDiskInventoryEntry = [15]string{
 	0:  "device",
 	1:  "sizeBytes",
 	2:  "model",
@@ -13236,12 +13242,13 @@ var jsonFieldsNameOfDiskInventoryEntry = [14]string{
 	5:  "boot",
 	6:  "failed",
 	7:  "weakIdentity",
-	8:  "filesystem",
-	9:  "label",
-	10: "smartStatus",
-	11: "containsData",
-	12: "looksLikeUnraid",
-	13: "cachePartitions",
+	8:  "unraidStick",
+	9:  "filesystem",
+	10: "label",
+	11: "smartStatus",
+	12: "containsData",
+	13: "looksLikeUnraid",
+	14: "cachePartitions",
 }
 
 // Decode decodes DiskInventoryEntry from json.
@@ -13338,6 +13345,16 @@ func (s *DiskInventoryEntry) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"weakIdentity\"")
+			}
+		case "unraidStick":
+			if err := func() error {
+				s.UnraidStick.Reset()
+				if err := s.UnraidStick.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"unraidStick\"")
 			}
 		case "filesystem":
 			if err := func() error {
@@ -34881,6 +34898,12 @@ func (s *PoolDiskEntry) encodeFields(e *jx.Encoder) {
 		s.State.Encode(e)
 	}
 	{
+		if s.UnraidStick.Set {
+			e.FieldStart("unraidStick")
+			s.UnraidStick.Encode(e)
+		}
+	}
+	{
 		if s.SizeBytes.Set {
 			e.FieldStart("sizeBytes")
 			s.SizeBytes.Encode(e)
@@ -34918,17 +34941,18 @@ func (s *PoolDiskEntry) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfPoolDiskEntry = [10]string{
-	0: "device",
-	1: "mountPoint",
-	2: "role",
-	3: "state",
-	4: "sizeBytes",
-	5: "usedBytes",
-	6: "freeBytes",
-	7: "nearMinFreeSpace",
-	8: "removalState",
-	9: "finishConfirmation",
+var jsonFieldsNameOfPoolDiskEntry = [11]string{
+	0:  "device",
+	1:  "mountPoint",
+	2:  "role",
+	3:  "state",
+	4:  "unraidStick",
+	5:  "sizeBytes",
+	6:  "usedBytes",
+	7:  "freeBytes",
+	8:  "nearMinFreeSpace",
+	9:  "removalState",
+	10: "finishConfirmation",
 }
 
 // Decode decodes PoolDiskEntry from json.
@@ -34983,6 +35007,16 @@ func (s *PoolDiskEntry) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"state\"")
+			}
+		case "unraidStick":
+			if err := func() error {
+				s.UnraidStick.Reset()
+				if err := s.UnraidStick.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"unraidStick\"")
 			}
 		case "sizeBytes":
 			if err := func() error {

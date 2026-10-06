@@ -640,7 +640,7 @@ export function PoolOverviewPage(): React.ReactElement {
   // exists for — is exactly what the replace dialog's own slot list must
   // offer (finding 2), not only a slot whose disk is still present.
   const dataDisks = disks.filter((disk) => disk.role === "data");
-  const unassignedDisks = disks.filter((disk) => disk.role === "unassigned");
+  const unassignedDisks = disks.filter((disk) => disk.role === "unassigned" && !disk.unraidStick);
   // replaceSlot is the currently selected "Disk to replace" entry.
   // slotOffersOnlyOwnDevice above names why: offering the unassigned list
   // instead — which never includes it, since GetPool reports its role as

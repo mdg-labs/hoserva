@@ -4753,6 +4753,8 @@ export interface components {
             /** @enum {string} */
             role: "data" | "parity" | "cache" | "boot" | "external" | "unassigned";
             state: components["schemas"]["DiskState"];
+            /** @description True when this disk is the Unraid USB stick (see `DiskInventoryEntry.unraidStick`). It is reported as `unassigned` but no array operation accepts it, so a client offers it no role. */
+            unraidStick?: boolean;
             /** Format: int64 */
             sizeBytes?: number | null;
             /** Format: int64 */
@@ -4824,6 +4826,8 @@ export interface components {
             boot: boolean;
             failed?: boolean;
             weakIdentity?: boolean;
+            /** @description True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3). Hoserva only reads it for a migration and never assigns it a role: every role and every external-disk operation on it is refused with `409 unraid_stick`, so a client offers it no role. */
+            unraidStick?: boolean;
             /** @description Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk (doc 02 §1, §4, doc 03 §3.1). */
             filesystem?: string;
             /** @description Cached filesystem label from udev (`ID_FS_LABEL`). */
