@@ -40,6 +40,13 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: scripts/release/verify-tag-ancestry.sh "$TAG"
+      # A stable tag needs its docs version snapshot in the tagged
+      # commit (Q90); refuse before any build or signing step. Beta tags
+      # are exempt.
+      - name: Verify docs version snapshot
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/verify-docs-snapshot.sh "$TAG"
       # Before any build or signing: the secret's public half must match
       # both EmbeddedPublicKey and the maintainer-set Actions variable.
       # The private key never enters ci.yml; this job is the only place

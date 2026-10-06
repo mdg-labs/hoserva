@@ -120,6 +120,109 @@ if (cd "$repo" && hoserva_verify_tag_ancestry v9.9.9) >/dev/null 2>&1; then
   fail=1
 fi
 
+# hoserva_verify_docs_snapshot: throwaway fixture trees, never the real
+# site/. A stable tag needs site/versioned_docs/version-X.Y/ and an X.Y
+# entry in site/versions.json; a beta tag needs neither.
+docs_dir="$(mktemp -d)"
+trap 'cleanup; rm -rf "$git_dir" "$docs_dir"' EXIT
+
+docs_ok() { hoserva_verify_docs_snapshot "$1" "$2" >/dev/null 2>&1; }
+docs_tree() {
+  local root="$docs_dir/$1" versions="$2"
+  mkdir -p "$root/site"
+  [ -z "$3" ] || mkdir -p "$root/site/versioned_docs/version-$3"
+  [ -z "$versions" ] || printf '%s' "$versions" >"$root/site/versions.json"
+  echo "$root"
+}
+
+full="$(docs_tree full '["0.2","0.1"]' 0.1)"
+if ! docs_ok v0.1.0 "$full"; then
+  note "FAIL: v0.1.0 with its snapshot and versions.json entry should pass"
+  fail=1
+fi
+if ! docs_ok v0.1.7 "$full"; then
+  note "FAIL: a patch tag v0.1.7 should pass on the 0.1 snapshot"
+  fail=1
+fi
+if ! docs_ok v0.1.0-beta.1 "$docs_dir/no-such-tree"; then
+  note "FAIL: a beta tag should pass without any snapshot or site/"
+  fail=1
+fi
+if docs_ok v0.2.0 "$full"; then
+  note "FAIL: v0.2.0 should be refused: its directory is missing even though versions.json lists 0.2"
+  fail=1
+fi
+if docs_ok v0.10.0 "$full"; then
+  note "FAIL: v0.10.0 should be refused: 0.1 is not 0.10"
+  fail=1
+fi
+
+nodir="$(docs_tree nodir '["0.1"]' '')"
+if docs_ok v0.1.0 "$nodir"; then
+  note "FAIL: a stable tag without site/versioned_docs/version-0.1/ should be refused"
+  fail=1
+fi
+nolist="$(docs_tree nolist '["0.2"]' 0.1)"
+if docs_ok v0.1.0 "$nolist"; then
+  note "FAIL: a stable tag whose minor is not in versions.json should be refused"
+  fail=1
+fi
+nofile="$(docs_tree nofile '' 0.1)"
+if docs_ok v0.1.0 "$nofile"; then
+  note "FAIL: a stable tag with no versions.json should be refused"
+  fail=1
+fi
+nosite="$docs_dir/nosite"
+mkdir -p "$nosite"
+if docs_ok v0.1.0 "$nosite"; then
+  note "FAIL: a stable tag with no site/ at all should be refused"
+  fail=1
+fi
+for bad_json in '{not json' '{"0.1":true}' '{"latest":"0.1"}' '"0.1"' '[]' '[0.1]'; do
+  badjson="$(docs_tree "bad$RANDOM" "$bad_json" 0.1)"
+  if docs_ok v0.1.0 "$badjson"; then
+    note "FAIL: versions.json '$bad_json' should be refused"
+    fail=1
+  fi
+done
+if docs_ok v0.1 "$full"; then
+  note "FAIL: an unrecognised tag should be refused"
+  fail=1
+fi
+if docs_ok v0.1.0-rc.1 "$full"; then
+  note "FAIL: an rc tag should be refused, not treated as beta"
+  fail=1
+fi
+
+docs_err="$(hoserva_verify_docs_snapshot v0.3.1 "$nosite" 2>&1 || true)"
+case "$docs_err" in
+  *site/versioned_docs/version-0.3/*"npx docusaurus docs:version 0.3"*) ;;
+  *)
+    note "FAIL: the refusal should name the missing directory and the docs:version command, got: $docs_err"
+    fail=1
+    ;;
+esac
+
+# no jq on PATH: the check must refuse, not skip the versions.json test.
+nojq_bin="$docs_dir/nojq-bin"
+mkdir -p "$nojq_bin"
+for tool in bash dirname; do
+  ln -s "$(command -v "$tool")" "$nojq_bin/$tool"
+done
+nojq_rc=0
+nojq_err="$(PATH="$nojq_bin" hoserva_verify_docs_snapshot v0.1.0 "$full" 2>&1)" || nojq_rc=$?
+if [ "$nojq_rc" -eq 0 ]; then
+  note "FAIL: a stable tag should be refused when jq is unavailable, but the check passed"
+  fail=1
+fi
+case "$nojq_err" in
+  *"jq is not installed"*) ;;
+  *)
+    note "FAIL: a stable tag should be refused with a jq message when jq is unavailable, got: $nojq_err"
+    fail=1
+    ;;
+esac
+
 write_test_pubkey_go() {
   local pem_file="$1" go_file="$2"
   {
@@ -135,7 +238,7 @@ write_test_pubkey_go() {
 
 match_key_dir="$(mktemp -d)"
 other_key_dir="$(mktemp -d)"
-trap 'cleanup; rm -rf "$git_dir" "$match_key_dir" "$other_key_dir"' EXIT
+trap 'cleanup; rm -rf "$git_dir" "$docs_dir" "$match_key_dir" "$other_key_dir"' EXIT
 
 openssl genpkey -algorithm ed25519 -out "$match_key_dir/priv.pem" >/dev/null 2>&1
 openssl pkey -in "$match_key_dir/priv.pem" -pubout -out "$match_key_dir/pub.pem" >/dev/null 2>&1

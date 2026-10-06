@@ -51,6 +51,40 @@ hoserva_verify_tag_ancestry() {
   fi
 }
 
+# hoserva_verify_docs_snapshot fails unless a stable tag $1 has its docs
+# version snapshot in the checkout at $2: site/versioned_docs/version-X.Y/
+# exists and site/versions.json lists "X.Y" (one snapshot per stable
+# minor, made before tagging; doc 13 Q90). A beta tag needs none. Every
+# failure — an unrecognised tag, a missing or malformed versions.json, no
+# jq — refuses the release; nothing here is allowed to pass on error.
+hoserva_verify_docs_snapshot() {
+  local tag="$1" root="$2"
+  local channel minor
+  channel="$(hoserva_channel_from_tag "$tag")" || return 1
+  [ "$channel" = stable ] || return 0
+  minor="${tag#v}"
+  minor="${minor%.*}"
+  local snapshot_dir="site/versioned_docs/version-$minor"
+  local versions_file="site/versions.json"
+  local hint="run 'npx docusaurus docs:version $minor' in site/, commit the result in the release-prep commit on dev, and merge it to main before tagging"
+  if [ ! -d "$root/$snapshot_dir" ]; then
+    echo "hoserva_verify_docs_snapshot: '$tag' has no $snapshot_dir/ — $hint" >&2
+    return 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "hoserva_verify_docs_snapshot: jq is not installed, cannot read $versions_file" >&2
+    return 1
+  fi
+  if [ ! -f "$root/$versions_file" ]; then
+    echo "hoserva_verify_docs_snapshot: '$tag' has no $versions_file listing $minor — $hint" >&2
+    return 1
+  fi
+  if ! jq -e --arg v "$minor" 'type == "array" and any(.[]; . == $v)' "$root/$versions_file" >/dev/null 2>&1; then
+    echo "hoserva_verify_docs_snapshot: $versions_file is unreadable or does not list $minor for '$tag' — $hint" >&2
+    return 1
+  fi
+}
+
 # hoserva_sign_sha256sums signs $1 (a SHA256SUMS file) with the Ed25519
 # private key at $2 (PEM), writing the detached signature to $3 (Q66:
 # "a SHA256SUMS file carrying a detached Ed25519 signature"). openssl's
