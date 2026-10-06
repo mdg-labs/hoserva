@@ -26,7 +26,7 @@ Hoserva does not copy the files in your shares itself. The catalog holds backup 
 | borgmatic | People comfortable editing a YAML file; backs up daily at 01:00 unless you change the schedule, and can send to a repository over SSH | Command line inside the app, no web page |
 | rclone | Copying files to a remote storage service; it copies when you start a transfer and has no schedule of its own | Web UI |
 
-All five mount the pool read-only, so a backup app cannot change or delete the files it protects. Duplicati, Backrest, Kopia and borgmatic encrypt their backups with a password you choose. If you are unsure, start with Backrest or Duplicati.
+All five mount the pool read-only, so a backup app cannot change or delete the files it protects. Duplicati, Backrest, Kopia and borgmatic encrypt their backups with a password you choose. Duplicati does so by default, and lets you turn encryption off, which you should not do for a copy that leaves the server. If you are unsure, start with Backrest or Duplicati.
 
 ## Back up a share with Backrest
 
@@ -59,7 +59,7 @@ This walk-through uses Backrest. The other apps follow the same shape: install t
 </Tabs>
 
 :::warning[Appdata is not part of this backup]
-**Hoserva backs up app settings and data separately.** The appdata folder lives on the cache disk, outside the pool, so the default **Folder to back up** does not include it, and Hoserva's own appdata backup covers it. If your pool also has a share called `appdata`, exclude `/source/appdata` in the backup plan. See [Backing up appdata](./backing-up-appdata.md).
+**Hoserva backs up app settings and data separately.** The appdata folder lives on the cache disk, outside the pool, so the default **Folder to back up** does not include it, and Hoserva's own appdata backup covers it. If your pool also has a share called `appdata`, leave it in this backup. Hoserva's appdata backup takes only the folders of installed apps that have **Back up** switched on. A folder kept from an app you removed, the folder of an app with **Back up** off, and files you added to the share over the network are covered only if this backup includes them. Some app data is then backed up twice, which does no harm. See [Backing up appdata](./backing-up-appdata.md).
 :::
 
 ### Set up the repository and a backup plan
@@ -98,7 +98,7 @@ Install any of the other apps the same way: **Apps → Catalog**, the app's name
 Some details differ:
 
 - **Duplicati** runs as a regular user, not as root, so a file that only another user can read is reported in the backup log instead of being copied.
-- **Kopia** asks you to enter the repository password from its install form when you create the repository. It cannot mount a snapshot as a folder, so restore files instead.
+- **Kopia** asks you to enter the repository password from its install form when you create the repository. If you left that field empty, Hoserva generated a password and keeps it in the `.env` file of the app's stack, `/var/lib/hoserva/stacks/kopia/.env` on the server, as the `REPOSITORY_PASSWORD` line, readable by root. Copy it somewhere away from the server before you rely on the backup. Kopia cannot mount a snapshot as a folder, so restore files instead.
 - **borgmatic** has no web page. You create its configuration file in the app's folder inside the appdata folder, and keep a copy of the passphrase and of the Borg keys away from the server.
 - **rclone** keeps remotes in its web page, and anyone who can sign in to it can read every file it can reach. Keep its port on your local network.
 
