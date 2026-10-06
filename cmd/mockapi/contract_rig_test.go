@@ -651,8 +651,9 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// (container.CacheAppdataRoots, the same rule); it is then a
 		// temporary directory here, standing for the mock's
 		// mockAppdataRoot, so no case deletes anything outside it. No
-		// scenario has a cache disk, so this rig never reaches the
-		// deletion itself — only the appdata_unavailable refusal.
+		// scenario but healthy has a cache disk, so the deletion itself is
+		// reached only there, and the other scenarios get the
+		// appdata_unavailable refusal.
 		Lifecycle: &container.Lifecycle{
 			Provider: containers,
 			// The array state hoservad wires (cmd/hoservad/containers.go):
@@ -779,12 +780,11 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		prepareContractBareMetal(t, db, h.Backup, dbPath)
 	}
 	// Appdata backup (#61) is the real service over this rig's own
-	// Docker fake and backup destinations. This rig has no cache disk in any
-	// scenario, so its appdata location is the temporary directory the
-	// containers above already mount, standing for the mock's
-	// mockAppdataRoot; the scope, the refusals and the job submission are
-	// what is compared. The three job types run the real backup, restore and preview
-	// (not the no-op the other types get), so a case can restore an archive
+	// Docker fake and backup destinations. This rig's appdata location is
+	// the temporary directory the containers above already mount, standing
+	// for the mock's mockAppdataRoot; the scope, the refusals and the job
+	// submission are what is compared. The three job types run the real
+	// backup, restore and preview (not the no-op the other types get), so a case can restore an archive
 	// a backup it started has written.
 	appdataSvc := &backup.AppdataService{
 		Backup:      h.Backup,

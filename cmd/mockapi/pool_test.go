@@ -8,6 +8,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 func TestMockGetPool_MountedFollowsTheArrayStopAndStart(t *testing.T) {
@@ -152,5 +153,47 @@ func TestMockStartScrub_AcceptsAllBlocksAndRefusesWhatProductionRefuses(t *testi
 	}
 	if _, err := client.StartScrub(ctx, req); errorCode(t, err) != "maintenance_mode" {
 		t.Fatalf("StartScrub with allBlocks in maintenance mode = %v, want maintenance_mode", err)
+	}
+}
+
+// A cache disk is one fact: wherever a scenario reports the array, the cache
+// disk is in every report or in none — the stored array, the pool page and
+// the disk inventory — and healthy alone has one.
+func TestMockCacheDiskIsConsistentAcrossReports(t *testing.T) {
+	scenarios := []string{"healthy", "degraded", "rebuilding", "sync-blocked", "fresh-install", "migration-pending"}
+	for _, scenario := range scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			stored := false
+			for _, d := range mockArrayDisks(scenario) {
+				if d.Role == store.ArrayRoleCache {
+					stored = true
+					if d.Mountpoint != "/mnt/cache" || d.Device != mockCacheDevice {
+						t.Errorf("stored cache disk = %+v, want %s at /mnt/cache", d, mockCacheDevice)
+					}
+				}
+			}
+			pooled := false
+			for _, d := range mockPoolStatus(scenario).Disks {
+				if d.Role == apiv1.PoolDiskEntryRoleCache {
+					pooled = true
+					if d.MountPoint != "/mnt/cache" || d.Device != mockCacheDevice {
+						t.Errorf("pool cache disk = %+v, want %s at /mnt/cache", d, mockCacheDevice)
+					}
+				}
+			}
+			listed := false
+			for _, d := range mockDiskInventory(scenario) {
+				if d.Device == mockCacheDevice {
+					listed = true
+					if d.Serial.Or("") != mockCacheSerial {
+						t.Errorf("inventory serial = %q, want %q", d.Serial.Or(""), mockCacheSerial)
+					}
+				}
+			}
+			want := scenario == "healthy"
+			if stored != want || pooled != want || listed != want {
+				t.Fatalf("cache disk in stored array = %v, pool = %v, inventory = %v; want all %v", stored, pooled, listed, want)
+			}
+		})
 	}
 }

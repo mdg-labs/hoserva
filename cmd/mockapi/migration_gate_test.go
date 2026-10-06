@@ -68,6 +68,15 @@ func TestMockJobsRefusedWhileMigrationUnfinished(t *testing.T) {
 				return err
 			}
 		}},
+		{"StartShareRelocation", "healthy", func(t *testing.T, client apiv1.Invoker) func() error {
+			if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				t.Fatalf("CreateShare: %v", err)
+			}
+			return func() error {
+				_, err := client.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
+				return err
+			}
+		}},
 		{"EvacuateDisk", "healthy", func(t *testing.T, client apiv1.Invoker) func() error {
 			confirmation := evacuationPlan(t, client, "/mnt/disk1")
 			return func() error {

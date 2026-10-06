@@ -24,6 +24,11 @@ import (
 // disk4 (mirroring mockPoolStatus's own #326 "missing" entry) carries no
 // serial and no matching inventory entry at all — genuinely absent, the
 // one slot this scenario's own `disk replace` demo can actually replace.
+//
+// healthy alone carries a cache disk (mockHasCacheDisk); every other
+// scenario keeps none, so the refusals a cache-less array gets (a share
+// relocation's no_cache_disk, a cache-mode share's cache-disk check) stay
+// reachable against the mock.
 func mockArrayDisks(scenario string) []store.ArrayDisk {
 	if scenario == "fresh-install" {
 		return nil
@@ -33,6 +38,9 @@ func mockArrayDisks(scenario string) []store.ArrayDisk {
 		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", Serial: "WD-WCC4E7654321", Mountpoint: "/mnt/disk2"},
 		{Role: store.ArrayRoleData, RoleIndex: 3, Device: "/dev/sdd", Filesystem: "xfs", Serial: "WD-WCC4E9999999", Mountpoint: "/mnt/disk3"},
 		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sde", Filesystem: "xfs", Serial: "WD-WCC7E0000001", Mountpoint: "/mnt/parity"},
+	}
+	if mockHasCacheDisk(scenario) {
+		disks = append(disks, store.ArrayDisk{Role: store.ArrayRoleCache, RoleIndex: 1, Device: mockCacheDevice, Filesystem: "xfs", Serial: mockCacheSerial, Mountpoint: "/mnt/cache"})
 	}
 	if scenario == "degraded" {
 		disks = append(disks, store.ArrayDisk{Role: store.ArrayRoleData, RoleIndex: 4, Device: "/dev/sdx", Filesystem: "xfs", Mountpoint: "/mnt/disk4"})
