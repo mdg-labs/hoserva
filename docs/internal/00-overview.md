@@ -13,7 +13,7 @@
 | **02-storage-engine.md** | mergerfs and SnapRAID mechanics, cache/mover, spindown, failure handling |
 | **03-webui-spec.md** | Complete page inventory and per-page functionality |
 | **04-containers.md** | Container management scope, template system, catalog sources, converter, curated catalog |
-| **05-migration.md** | Unraid migration: technical basis, pre-flight, sequence, risks, docs site |
+| **05-migration.md** | Unraid migration: technical basis, pre-flight, sequence, risks, public site |
 | **06-dev-and-testing.md** | Development environment, loop-device harness, test tiers, CI |
 | **07-roadmap.md** | Phasing, feasibility spikes, deferred features, risk register |
 | **08-spike-findings.md** | Researched answers to the two kill-criteria questions — **read before committing to the build** |

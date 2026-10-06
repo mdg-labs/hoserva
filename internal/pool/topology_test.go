@@ -2,8 +2,11 @@ package pool
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 var testDisks = []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"}
@@ -143,15 +146,47 @@ func TestMoverTargetMount(t *testing.T) {
 	if m.Where != "/run/hoserva/array/movies" {
 		t.Fatalf("Where = %q", m.Where)
 	}
-	want := "/mnt/disk1/movies=RW:/mnt/disk2/movies=RW:/mnt/disk3/movies=RW"
+	want := "/run/hoserva/branches/mnt/disk1/movies=RW:/run/hoserva/branches/mnt/disk2/movies=RW:/run/hoserva/branches/mnt/disk3/movies=RW"
 	if m.What != want {
 		t.Fatalf("What:\ngot:  %s\nwant: %s", m.What, want)
+	}
+	wantBinds := []disk.BranchBind{
+		{Source: "/mnt/disk1", Where: "/run/hoserva/branches/mnt/disk1"},
+		{Source: "/mnt/disk2", Where: "/run/hoserva/branches/mnt/disk2"},
+		{Source: "/mnt/disk3", Where: "/run/hoserva/branches/mnt/disk3"},
+	}
+	if !slices.Equal(m.Binds, wantBinds) {
+		t.Fatalf("Binds = %+v, want one nosymfollow bind per data disk in branch order %+v", m.Binds, wantBinds)
+	}
+	wantRequires := []string{"/run/hoserva/branches/mnt/disk1", "/run/hoserva/branches/mnt/disk2", "/run/hoserva/branches/mnt/disk3"}
+	if !slices.Equal(m.RequiresMountsFor, wantRequires) {
+		t.Fatalf("RequiresMountsFor = %v, want the bind points %v", m.RequiresMountsFor, wantRequires)
 	}
 	if m.CreatePolicy != share.CreatePolicy {
 		t.Fatalf("CreatePolicy = %s, want the share's own %s (doc 09 §2: mergerfs places the file exactly as it would a direct write)", m.CreatePolicy, share.CreatePolicy)
 	}
 	if contains(m.RequiresMountsFor, CatchAllPath) {
 		t.Fatalf("RequiresMountsFor %v should not depend on the catch-all — /run/hoserva/array is a separate hierarchy", m.RequiresMountsFor)
+	}
+}
+
+// TestOnlyMoverTargetsUseBranchBinds pins #656's extent: the mover's write
+// targets, where root writes on a share user's behalf, branch on the
+// nosymfollow binds; the catch-all and the share mounts keep the disks'
+// own mountpoints.
+func TestOnlyMoverTargetsUseBranchBinds(t *testing.T) {
+	catchAll, err := CatchAllMount(testDisks, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shareMount, err := ShareMount(Share{Name: "backups", CacheMode: ArrayOnly, CreatePolicy: FillDisksInOrder}, testDisks, "", DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []Mount{catchAll, shareMount} {
+		if len(m.Binds) != 0 || strings.Contains(m.What, disk.BranchBindRoot) {
+			t.Errorf("%s: Binds = %v, What = %q, want the disks' own mountpoints", m.Where, m.Binds, m.What)
+		}
 	}
 }
 
@@ -273,7 +308,7 @@ func TestMoverTargetMountRemoving_MarksOnlyTheRemovingDiskNC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoverTargetMountRemoving: %v", err)
 	}
-	want := "/mnt/disk1/movies=RW:/mnt/disk2/movies=NC:/mnt/disk3/movies=RW"
+	want := "/run/hoserva/branches/mnt/disk1/movies=RW:/run/hoserva/branches/mnt/disk2/movies=NC:/run/hoserva/branches/mnt/disk3/movies=RW"
 	if m.What != want {
 		t.Fatalf("What:\ngot:  %s\nwant: %s", m.What, want)
 	}

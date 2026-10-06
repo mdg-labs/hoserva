@@ -194,6 +194,13 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   - **Tests that prove something.** For every test you add, know which line
     of your change it would fail without. A test that passes with the
     change reverted proves nothing.
+{{IF SITE_DOCS — fill when the issue's scope touches `site/docs/` or `site/versioned_docs/`; omit otherwise:}}- **Public docs pages.** Before you write or edit any page under `site/docs/`
+  or `site/versioned_docs/`, read `{{HOSERVA_ROOT}}/.claude/skills/user-docs/SKILL.md`
+  in full and follow it: its hard rules (no internal references, positioning
+  and the trademark notice, relative file links, only behaviour that exists on
+  `dev`, the versioned-docs rules) and its self-review checklist. You cannot
+  invoke a skill; reading the file is how you use it.
+{{END IF}}
 - **Conventions:** no comments unless the *why* is non-obvious; no
   speculative abstraction; no half-finished work; no error handling for
   cases that can't happen. Conventional commit subjects (`feat(parity): …`).
@@ -228,6 +235,9 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   - Docs: every `doc NN §N` and `Qn` reference you add or touch resolves to a
     real section or doc 13 entry; the doc 00 table and doc 13 index still
     match what exists
+  {{IF SITE_DOCS:}}Text on a public docs page carries no such reference (the
+  user-docs skill forbids them): run `make site-build` and the skill's
+  self-review checklist instead.{{END IF}}
   {{IF LANDING_REPO is mdg-labs/hoserva-catalog:}}This commit lands in the catalog repository, which has no `make test`:
   run that repository's **own** checks — whatever its `README.md`,
   `CONTRIBUTING.md`, `Makefile` and `.github/workflows/` define — and treat

@@ -1,0 +1,137 @@
+---
+title: Exposing services safely
+description: Why not to port-forward the Hoserva admin UI, who can reach it by default, and safer ways to get at it from outside your network, with certificates, TOTP, lockout and API tokens.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Do not port-forward the Hoserva admin UI to the internet. It controls your disks, your shares and your apps, and it does so with the highest privileges on the server. This page explains who can reach the UI by default, what changes if you open it up, and how to get at your server from outside your home without exposing it.
+
+The realistic danger is a weak password on a UI that anyone can reach. The default settings keep the UI on your own network.
+
+## Who can reach the admin UI by default?
+
+The UI is served over HTTPS only, on port 8008. Out of the box Hoserva accepts connections only from addresses that belong to a private network:
+
+- the server itself
+- home and office networks: `10.0.0.0/8`, `172.16.0.0/12` and `192.168.0.0/16`
+- link-local addresses and IPv6 private addresses
+- `100.64.0.0/10`, the range Tailscale uses
+
+A connection from any other address is refused before it reaches the UI. This is the access scope. It checks the address of the device that connects to Hoserva directly. A reverse proxy on your network connects from a private address, so a proxy in front of the admin UI makes the access scope protect nothing: everyone who can reach the proxy can reach the UI.
+
+## What does "Allow connections from any address" change?
+
+The switch is on **Settings → Network**, in the **Access scope** card. Turning it on makes the UI accept connections from every address, including the public internet.
+
+:::danger[Anyone on the internet can reach the login page]
+**Do not turn on Allow connections from any address unless you have a strong reason and you understand the risk.** Hoserva asks you to confirm with **Allow all sources?** The change applies at once and is saved, and turning the switch off restores the default. With it on, the UI is exposed to password guessing from anywhere, and a successful login controls your whole server.
+:::
+
+If you need to reach the server from outside, use one of the options below instead.
+
+## How can I reach my server from outside my home?
+
+Put a private network between you and the server, and leave the admin UI closed to the internet.
+
+- **A VPN into your home network.** Connect to a VPN server on your router or another machine. Once connected, your device has a private address and reaches the UI like any device at home.
+- **A tailnet.** The Tailscale address range is accepted by default, so a device on your tailnet can reach the UI without changing the access scope.
+
+Either way, no port on your router is opened for the UI.
+
+## Which certificate does the UI use?
+
+Hoserva generates a self-signed certificate on first start. It encrypts the connection, but browsers warn about it until you trust it. On **Settings → Network**, the **HTTPS** card shows **Certificate expiry** as **Valid**, **Expiring soon** or **Expired**. Select **Regenerate self-signed certificate** to issue a new one.
+
+If you own a domain, you can use a trusted certificate from Let's Encrypt instead. Hoserva proves ownership of the domain through your DNS provider, so it never opens ports 80 or 443.
+
+1. Open **Settings → Network**.
+2. In the **HTTPS** card, select **Set up Let's Encrypt**.
+3. Enter your **Domain**, for example `nas.example.com`.
+4. Choose a **DNS provider**: **Cloudflare** or **RFC 2136**.
+5. For Cloudflare, enter a **Cloudflare API token** that can edit the zone's DNS records. For RFC 2136, enter the **Nameserver**, **TSIG key name** and **TSIG secret**.
+6. Select **Issue certificate**.
+
+Hoserva stores the credentials encrypted and renews the certificate automatically. **Stop automatic renewal** ends the renewal and keeps the current certificate in use. If a request fails, the card shows **Last Let's Encrypt error**.
+
+## How do I protect logins?
+
+### Use an authenticator app
+
+TOTP adds a six-digit code from an authenticator app to the password. You can set one up while you create the first admin account, with **Set up an authenticator app (recommended)**. Add the account to your authenticator app with the **Authenticator URI** or the **Manual entry secret**, then enter a code from the app as the **Confirmation code**. Afterwards, the login page asks for an **Authenticator code**. The **TOTP** column on **Users** shows which accounts have one.
+
+If you lose the authenticator app, an administrator with root access on the server can remove it from the account:
+
+```bash
+hoserva user disable-totp admin
+```
+
+### What happens after repeated failed logins?
+
+After five failed attempts, each further failure makes the account wait: 30 seconds after the sixth, doubling each time up to one hour. It applies to the account and to the address the attempts come from.
+
+Anyone on your network who knows an account name can trigger this wait for that account, so a lockout does not always mean something is wrong. To clear it without waiting, run this as root on the server:
+
+```bash
+hoserva user unlock admin
+```
+
+The account recovery commands (`hoserva user unlock`, `hoserva user reset-password` and `hoserva user disable-totp`) work only when run as root on the server itself. Hoserva records them in its audit log and notifies you.
+
+### Personal API tokens for remote CLI use
+
+A personal API token lets a script or a remote `hoserva` command act as one of your accounts, without a password. Each token has a scope, **Admin** or **Viewer**, which cannot exceed the account's own role. A viewer token can read but not change anything.
+
+<Tabs groupId="interface">
+  <TabItem value="web" label="Web UI" default>
+    1. Open **Users** and find **Personal API tokens**.
+    2. Select **Create token**.
+    3. Choose the **Account**, enter a **Token name** and choose the **Scope**.
+    4. Copy the value of the new token straight away. Hoserva shows it once and stores only its hash.
+
+    Select **Revoke** on a token to stop it working immediately.
+  </TabItem>
+  <TabItem value="cli" label="CLI">
+    ```bash
+    hoserva token create admin laptop --role viewer
+    ```
+
+    The command prints the token once. `--role` is `admin` or `viewer`, and defaults to `viewer`.
+
+    ```bash
+    hoserva token list
+    ```
+
+    ```bash
+    hoserva token revoke <id>
+    ```
+
+    `revoke` takes the token's id from the list and stops the token working immediately.
+  </TabItem>
+</Tabs>
+
+To use a token from another computer on your network or over a VPN, point `hoserva` at the server and pass the token. The first command asks for the token, so paste it when it prompts and press Enter:
+
+```bash
+read -rsp 'Token: ' HOSERVA_TOKEN && export HOSERVA_TOKEN
+hoserva --host 192.168.1.20 status
+```
+
+`--host` connects over HTTPS on port 8008. Use `--port` if you changed the listen port. With the default self-signed certificate, add `--insecure-skip-tls-verify`. Reading the token into `HOSERVA_TOKEN` this way keeps it off the screen and out of your shell history. `--token` works too, but the token then ends up in your shell history.
+
+## What about exposing an app through a reverse proxy?
+
+Apps are separate from the admin UI. If you want to reach one app from the internet, such as a photo gallery, put a reverse proxy in front of that app only. This is general guidance, and Hoserva does not set up or manage the proxy for you.
+
+- Never proxy Hoserva's own UI port, 8008.
+- Expose the one app, not a whole range of ports.
+- Use HTTPS with a trusted certificate, and keep the app updated.
+- Give the app its own strong login. Treat anything you expose as one a stranger can try to break into.
+- Remember that apps can reach your shares. A compromised app can delete or encrypt files in the shares it can see, and parity can bring them back only until the next sync. [Parity is not backup](../concepts/parity-is-not-backup.md) explains the limits, and the threshold guard holds a sync after a mass deletion.
+
+## Next steps
+
+- [Parity is not backup](../concepts/parity-is-not-backup.md)
+- [Backing up appdata](./backing-up-appdata.md)
+- [How parity works](../concepts/how-parity-works.mdx)

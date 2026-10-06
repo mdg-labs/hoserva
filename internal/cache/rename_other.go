@@ -2,15 +2,23 @@
 
 package cache
 
-import "os"
+import (
+	"os"
 
-// renameNoReplace falls back to Stat-then-Rename off Linux. Hoserva's
-// production target is Debian; this exists so the package still builds.
-func renameNoReplace(oldpath, newpath string) error {
-	if _, err := os.Stat(newpath); err == nil {
+	"golang.org/x/sys/unix"
+)
+
+// renameNoReplace falls back to a stat-then-rename within the directory
+// dirfd off Linux. Hoserva's production target is Debian; this exists so
+// the package still builds.
+func renameNoReplace(dirfd int, oldname, newname string) error {
+	var st unix.Stat_t
+	switch err := unix.Fstatat(dirfd, newname, &st, unix.AT_SYMLINK_NOFOLLOW); err {
+	case nil:
 		return os.ErrExist
-	} else if err != nil && !os.IsNotExist(err) {
+	case unix.ENOENT:
+	default:
 		return err
 	}
-	return os.Rename(oldpath, newpath)
+	return unix.Renameat(dirfd, oldname, dirfd, newname)
 }

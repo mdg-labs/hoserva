@@ -122,6 +122,12 @@ func bringUpLabMoverTopology(t *testing.T, name string) labMoverTopology {
 		_ = mounter.Unmount(context.Background(), shareMount.Where)
 		_ = mounter.Unmount(context.Background(), catchAll.Where)
 		_ = mounter.Unmount(context.Background(), moverMount.Where)
+		// The mover target's branch binds (#656) live outside the lab's
+		// directory, where its teardown does not look, and would keep the
+		// data disks' loop devices busy.
+		for _, b := range moverMount.Binds {
+			_, _ = mounter.Runner.Run(context.Background(), "umount", b.Where)
+		}
 		_ = os.Remove(moverMount.Where)
 		_ = os.Remove(arrayRootWhere)
 		_ = os.Remove(catchAllWhere)

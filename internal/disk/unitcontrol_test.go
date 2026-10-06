@@ -3,6 +3,7 @@ package disk
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -195,5 +196,109 @@ func TestServiceUnitController_FailsClosedWhenLoadStateQueryErrors(t *testing.T)
 	calls := r.Calls()
 	if len(calls) != 2 {
 		t.Fatalf("got %d calls, want only the two failed LoadState queries, no stop/start attempted: %+v", len(calls), calls)
+	}
+}
+
+// bindTable is a fake mount table of branch binds that `systemctl stop` of
+// a bind's unit and `umount` of a bind point take down, as systemd's and
+// the kernel's own would.
+type bindTable struct {
+	*FakeRunner
+	units   map[string]string // unit name → bind point
+	mounted map[string]bool
+	stuck   bool // stopping or unmounting a bind leaves it mounted
+}
+
+func newBindTable(binds ...string) *bindTable {
+	t := &bindTable{FakeRunner: NewFakeRunner(), units: map[string]string{}, mounted: map[string]bool{}}
+	for _, b := range binds {
+		t.units[UnitFileName(b)] = b
+		t.mounted[b] = true
+	}
+	return t
+}
+
+func (t *bindTable) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := t.FakeRunner.Run(ctx, name, args...)
+	if err != nil || t.stuck {
+		return out, err
+	}
+	switch {
+	case name == "systemctl" && len(args) == 2 && args[0] == "stop":
+		delete(t.mounted, t.units[args[1]])
+	case name == "umount" && len(args) == 1:
+		delete(t.mounted, args[0])
+	}
+	return out, err
+}
+
+func (t *bindTable) target(path string) ([]string, bool, error) {
+	if t.mounted[path] {
+		return []string{"rw", "nosymfollow"}, true, nil
+	}
+	return nil, false, nil
+}
+
+// Array stop must not rely on the bind's BindsTo= (#656): a bind whose
+// unit systemd no longer has loaded with it — reloaded after the file
+// went, or never there — would keep the disk's filesystem mounted at
+// /run/hoserva/branches after its own unit stops. The controller stops a
+// still-mounted bind itself, before the disk.
+func TestMountUnitController_Unmount_StopsAStillMountedBranchBindFirst(t *testing.T) {
+	bind := "/run/hoserva/branches/mnt/disk1"
+	table := newBindTable(bind)
+	c := MountUnitController{Unit: MountUnit{Where: "/mnt/disk1"}, Runner: table, MountTarget: table.target}
+
+	if err := c.Unmount(context.Background()); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	calls := table.Calls()
+	if len(calls) != 2 || strings.Join(calls[0].Args, " ") != "stop run-hoserva-branches-mnt-disk1.mount" || strings.Join(calls[1].Args, " ") != "stop mnt-disk1.mount" {
+		t.Fatalf("calls = %+v, want the bind's unit stopped, then the disk's", calls)
+	}
+	if table.mounted[bind] {
+		t.Fatal("the bind is still mounted after array stop unmounted its disk")
+	}
+}
+
+// A bind that stays mounted — its stop fails, or reports success with the
+// bind still there — keeps the disk mounted and fails the unmount, so the
+// array stop fails instead of reporting a stopped array whose disk is
+// still mounted read-write.
+func TestMountUnitController_Unmount_ABindThatStaysMountedKeepsTheDiskMounted(t *testing.T) {
+	bind := "/run/hoserva/branches/mnt/disk1"
+	for name, fail := range map[string]bool{"stop fails": true, "stop leaves it mounted": false} {
+		t.Run(name, func(t *testing.T) {
+			table := newBindTable(bind)
+			if fail {
+				table.Script("systemctl", []string{"stop", "run-hoserva-branches-mnt-disk1.mount"}, nil, errors.New("Job failed"))
+			} else {
+				table.stuck = true
+			}
+			c := MountUnitController{Unit: MountUnit{Where: "/mnt/disk1"}, Runner: table, MountTarget: table.target}
+
+			if err := c.Unmount(context.Background()); err == nil {
+				t.Fatal("Unmount = nil, want the bind's failure")
+			}
+			for _, call := range table.Calls() {
+				if strings.Join(call.Args, " ") == "stop mnt-disk1.mount" {
+					t.Fatalf("calls = %+v: the disk was stopped with its bind still mounted", table.Calls())
+				}
+			}
+		})
+	}
+}
+
+func TestMountUnitController_Unmount_ACheckFailureKeepsTheDiskMounted(t *testing.T) {
+	r := NewFakeRunner()
+	c := MountUnitController{
+		Unit: MountUnit{Where: "/mnt/disk1"}, Runner: r,
+		MountTarget: func(string) ([]string, bool, error) { return nil, false, errors.New("mountinfo unreadable") },
+	}
+	if err := c.Unmount(context.Background()); err == nil {
+		t.Fatal("Unmount = nil, want the mount table's failure")
+	}
+	if calls := r.Calls(); len(calls) != 0 {
+		t.Fatalf("calls = %+v, want nothing stopped", calls)
 	}
 }

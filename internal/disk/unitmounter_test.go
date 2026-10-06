@@ -115,3 +115,74 @@ func TestDirectMounter_MountExitsZeroWithOtherUUIDIsError(t *testing.T) {
 		t.Fatal("Mount: nil although a different UUID is mounted at the path")
 	}
 }
+
+// fakeMountTarget reports exactly the paths in mounted as mount points.
+func fakeMountTarget(mounted ...string) func(string) ([]string, bool, error) {
+	return func(path string) ([]string, bool, error) {
+		for _, m := range mounted {
+			if m == path {
+				return []string{"rw", "nosymfollow"}, true, nil
+			}
+		}
+		return nil, false, nil
+	}
+}
+
+func TestDirectMounter_Unmount_UnmountsTheBranchBindFirst(t *testing.T) {
+	r := newBindTable("/run/hoserva/branches/mnt/disk1")
+	m := DirectMounter{Runner: r, MountTarget: r.target}
+	if err := m.Unmount(context.Background(), MountUnit{Where: "/mnt/disk1"}); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	calls := r.Calls()
+	if len(calls) != 2 || strings.Join(calls[0].Args, " ") != "/run/hoserva/branches/mnt/disk1" || strings.Join(calls[1].Args, " ") != "/mnt/disk1" {
+		t.Fatalf("calls = %+v, want umount of the bind, then of the disk", calls)
+	}
+}
+
+func TestDirectMounter_Unmount_WithoutABindUnmountsOnlyTheDisk(t *testing.T) {
+	r := NewFakeRunner()
+	m := DirectMounter{Runner: r, MountTarget: fakeMountTarget()}
+	if err := m.Unmount(context.Background(), MountUnit{Where: "/mnt/disk1"}); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	if calls := r.Calls(); len(calls) != 1 || strings.Join(calls[0].Args, " ") != "/mnt/disk1" {
+		t.Fatalf("calls = %+v, want only the disk's umount", calls)
+	}
+}
+
+// A bind that cannot be unmounted would keep the disk's filesystem
+// mounted after its own mountpoint reads as unmounted: the disk is left
+// mounted and the failure reported.
+func TestDirectMounter_Unmount_ABusyBindKeepsTheDiskMounted(t *testing.T) {
+	r := newBindTable("/run/hoserva/branches/mnt/disk1")
+	r.Script("umount", []string{"/run/hoserva/branches/mnt/disk1"}, nil, errors.New("target is busy"))
+	m := DirectMounter{Runner: r, MountTarget: r.target}
+	if err := m.Unmount(context.Background(), MountUnit{Where: "/mnt/disk1"}); err == nil {
+		t.Fatal("Unmount: got nil, want the bind's failure")
+	}
+	if calls := r.Calls(); len(calls) != 1 {
+		t.Fatalf("calls = %+v, want the disk left mounted", calls)
+	}
+}
+
+func TestSystemdMounter_Unmount_StopsTheBranchBindFirst(t *testing.T) {
+	r := newBindTable("/run/hoserva/branches/mnt/disk1")
+	m := SystemdMounter{Runner: r, MountTarget: r.target}
+	if err := m.Unmount(context.Background(), MountUnit{Where: "/mnt/disk1"}); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	calls := r.Calls()
+	if len(calls) != 2 || strings.Join(calls[0].Args, " ") != "stop run-hoserva-branches-mnt-disk1.mount" || strings.Join(calls[1].Args, " ") != "stop mnt-disk1.mount" {
+		t.Fatalf("calls = %+v, want the bind's unit stopped, then the disk's", calls)
+	}
+}
+
+func TestReadMountTarget(t *testing.T) {
+	if _, mounted, err := ReadMountTarget("/"); err != nil || !mounted {
+		t.Fatalf("ReadMountTarget(/) = %v, %v, want mounted", mounted, err)
+	}
+	if _, mounted, err := ReadMountTarget(t.TempDir()); err != nil || mounted {
+		t.Fatalf("ReadMountTarget(a plain directory) = %v, %v, want not mounted", mounted, err)
+	}
+}

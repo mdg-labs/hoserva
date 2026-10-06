@@ -154,26 +154,28 @@ test("mass deletion blocks the sync", async ({ page }) => {
     "expected the threshold guard to report wouldBlock=true after diffing the mass deletion",
   ).toBe(true);
 
-  // Step 3: opening Sync shows the guard's own warning, not the plain
-  // sync description — and the dialog is closed again without
-  // confirming, so the override is never exercised through the UI.
+  // Step 3: opening Sync now shows the plain sync description with the
+  // guard's cached summary beside it as information. Sync now itself sends
+  // `confirm: false`, so the dialog offers no override; it is closed again
+  // without confirming either way.
   await page.getByRole("button", { name: catalogString("parity.actions.sync"), exact: true }).click();
   const syncDialog = page.getByRole("dialog", { name: catalogString("parity.actions.sync") });
   await expect(syncDialog).toBeVisible();
-  const plainSyncDescription = catalogString("parity.actions.syncDescription");
-  const syncDialogText = await syncDialog.innerText();
-  expect(syncDialogText).not.toContain(plainSyncDescription);
+  await expect(syncDialog).toContainText(catalogString("parity.actions.syncDescription"));
   const expectedWarning = tripped.guard?.summary ?? catalogString("parity.guard.bannerDescription");
   await expect(syncDialog).toContainText(expectedWarning);
+  await expect(
+    syncDialog.getByRole("button", { name: catalogString("parity.actions.syncAnyway"), exact: true }),
+  ).toHaveCount(0);
   await syncDialog.getByRole("button", { name: catalogString("confirm.cancel") }).click();
   await expect(syncDialog).toBeHidden();
 
   // Step 4 (Q14, doc 02 §2): startSync without the explicit override is
   // refused — the queued job itself fails against the tripped guard,
   // never writing parity. Calling this through the documented API
-  // directly (D18) is deliberate: confirming the UI's own Sync dialog
-  // would send `confirm: true` and actually perform the override, which
-  // this journey must never do.
+  // directly (D18) mirrors what the UI's Sync now sends (`confirm: false`);
+  // the journey never performs the override, which only the page's own
+  // Sync anyway action, behind a typed confirmation, can send.
   const refusedSync = await page.request.post("/api/v1/parity/sync", {
     data: { confirm: false, dryRun: false },
   });

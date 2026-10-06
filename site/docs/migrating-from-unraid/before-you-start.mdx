@@ -1,0 +1,155 @@
+---
+title: Before you start
+description: A printable checklist to work through on the Unraid server before you migrate, led by the unprotected window.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+:::danger[The unprotected window]
+**From the moment you stop the Unraid array in step 10 until the first Hoserva parity sync has finished, your array has no redundancy at all.**
+
+Unraid's parity protects nothing once its array stops and the disks are repurposed, and Hoserva's parity does not exist until its first sync completes. If a disk fails in that window, its data is gone.
+:::
+
+Work through this checklist on the Unraid server and on your own computer before you start the migration. Everything on this page happens while Unraid is still running, and none of it changes your data disks. It is written to be printed: each step has boxes to tick. The numbering carries on in [The migration](./the-migration.mdx), which starts at step 10.
+
+<TrademarkNotice />
+
+## How to reduce the risk
+
+- Keep a backup of anything irreplaceable somewhere other than this array. This is always true, and acutely true here.
+- Do not migrate while any disk has a SMART warning. The scan flags a disk with reallocated or pending sectors and recommends aborting.
+- Finish the first parity sync before you write significant new data.
+- Start when you have the hours to see it through, not on a weeknight.
+
+## What you need
+
+- [ ] A computer with SSH access to the Unraid server as `root`
+- [ ] Somewhere private to keep the Flash Backup zip, which holds secrets
+- [ ] Debian stable installation media and the Hoserva `.deb` package
+- [ ] The time to finish: the checks read every file, and the first sync runs for hours
+
+## Step 0: Run the prepare script
+
+The prepare script records things Unraid only knows while it runs: which containers exist and how each one starts, the disk slots and serial numbers, the last parity check, and what is still on the cache. It reads the Docker daemon and Unraid's runtime state and writes only one folder on the flash, `/boot/config/hoserva/`. It never touches the array.
+
+From your own computer, run it over SSH. Replace `<server>` with the server's name or address, and `<tag>` with the tag of the Hoserva release you are installing, which the project's [releases page](https://github.com/mdg-labs/hoserva/releases) lists:
+
+```bash
+ssh root@<server> 'curl -fsSL https://github.com/mdg-labs/hoserva/releases/download/<tag>/prepare-migration.sh | bash -s -- --zip' > <server>-boot.zip
+```
+
+The report prints in your terminal, and the zip streams into `<server>-boot.zip` on your computer. The zip is the Flash Backup of step 1, so steps 0 and 1 are one command. The server needs the `zip` command for this.
+
+If you would rather read the script before it runs, download it, check it against its checksum and send it over SSH:
+
+```bash
+curl -fsSLO https://github.com/mdg-labs/hoserva/releases/download/<tag>/prepare-migration.sh
+curl -fsSLO https://github.com/mdg-labs/hoserva/releases/download/<tag>/prepare-migration.sh.sha256
+sha256sum -c prepare-migration.sh.sha256
+less prepare-migration.sh
+ssh root@<server> 'bash -s -- --zip' < prepare-migration.sh > <server>-boot.zip
+```
+
+- [ ] I ran the script and read its report
+- [ ] Every line starting with `!!` is fixed. Run the script again after fixing, so the capture and the zip are current
+
+## Step 1: Keep the Flash Backup zip
+
+:::warning[The zip holds secrets]
+The capture contains your containers' environment variables, secrets included, and the flash holds password hashes, SSH host keys and the licence key. **Keep the zip as private as the Unraid flash drive itself.**
+:::
+
+The zip is both your rollback artifact and the input for the scan. Copy it off the server, and keep it until the migration is long finished. Hoserva stores the copy you give it on the new server, readable by root only, until you delete the scan.
+
+If you prefer Unraid's own Flash Backup (**Main → Flash → Flash Backup**), run it after step 0 so the zip contains the capture. Do not use its option to save the backup to the server: it asks for a cache pool, and the zip could land on the cache that is about to be emptied.
+
+- [ ] The zip is on my computer, not on the server
+- [ ] A second copy is somewhere safe
+
+## Step 2: Confirm every container has a saved template
+
+A container installed without a saved template cannot be converted. The script's report names each one. For each, open the container on the Docker page, edit it and apply, which saves its template, or re-add it from its template.
+
+- [ ] The report lists no container without a template, or I accept recreating it by hand
+
+## Step 3: Note the share list
+
+Shares are created from the backup, so you do not recreate them by hand. Write down your shares anyway, as your own cross-check.
+
+- [ ] Share list noted
+
+## Step 4: Tell everyone who uses SMB
+
+Accounts are recreated from the backup, but passwords cannot be carried over. Each person gets a new password, and each client reconnects with it.
+
+- [ ] The people who use the shares know their passwords will be reset
+
+## Step 5: Empty the cache
+
+The cache device is about to be wiped or repartitioned, and appdata is only part of what a real server keeps there.
+
+:::danger[Anything left on the cache is lost]
+**Move everything off the cache onto the array and confirm the cache is empty before step 10.** Whatever is still there when the cache is re-created, or when Debian is installed onto a shared device, is gone with it.
+:::
+
+Move these to the array:
+
+- every share whose cache setting is `prefer` or `only`
+- `appdata`
+- `domains`
+- `system`, except Docker's own storage (the Docker directory, or the `docker.img` file)
+- `libvirt.img`, which sits in `system`
+
+1. Stop the Docker service and the VM service (**Settings → Docker** and **Settings → VM Manager**, with **Enable** set to **No**). Unraid's mover skips files that are open.
+2. For each share above, set **Primary storage** to the cache pool, **Secondary storage** to **Array** and **Mover action** to **Cache → Array**. A `prefer` share is moved onto the cache, and an `only` share is never moved, so the default settings do not empty the cache.
+3. Run the mover, then check that the cache is empty. The prepare script reports what is still there, and whether it fits on the array.
+
+Docker's own storage is deliberately not moved. It holds every image layer, and the images are pulled again when the containers are recreated. What does not come back is each container's writable-layer state, meaning anything it kept inside itself rather than in a mapped folder. The report lists that state per container. If any of it matters, recover it from the running Unraid system now, because after step 10 it is out of reach.
+
+- [ ] The cache is empty
+- [ ] I have dealt with the writable-layer state the report lists
+
+## Step 6: Run a final parity check
+
+Run a full parity check in Unraid and confirm it completes with no errors. Migrating on top of an already degraded array is how people lose everything.
+
+- [ ] The last parity check completed clean
+
+## Step 7: Record the serial numbers
+
+Device names such as `/dev/sdb` change between reboots and operating systems. Serial numbers do not. Hoserva matches your disks by serial number, and you need the table to check its work. The script's report prints it. Write down each disk's serial number and Unraid slot.
+
+| Unraid slot | Serial number | Size |
+|---|---|---|
+| Parity | | |
+| Disk 1 | | |
+| Disk 2 | | |
+| Disk 3 | | |
+| Cache | | |
+
+- [ ] The table is filled in
+
+## Step 8: Note which disk is parity
+
+Its contents are worthless to Hoserva. The disk is erased and rewritten as Hoserva parity at the point of no return.
+
+- [ ] Parity disk(s) marked in my table
+
+## Step 9: Note the disk positions
+
+If the case has more than four bays, photograph or note which disk sits where. Finding the right disk later is a real problem.
+
+- [ ] Positions noted
+
+## Choose your rollback row before step 10
+
+What going back means after step 12 depends on where Unraid boots from and where Debian will be installed. Read the [rollback table](./rollback.mdx#what-going-back-looks-like-by-boot-layout), find your row and write it here.
+
+- [ ] I know my row, and I have the Flash Backup zip, and the Unraid USB stick if there is one
+
+## Next steps
+
+- [The migration](./the-migration.mdx) starts at step 10, when you stop the array.
+- [Rollback](./rollback.mdx) explains what going back means at each stage.
+- [Troubleshooting](./troubleshooting.mdx) covers what to check when something does not look right.

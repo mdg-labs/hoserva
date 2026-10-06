@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/config/golden"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
@@ -35,10 +36,10 @@ func loadPoolState(t *testing.T) PoolState {
 }
 
 // TestWritePoolMounts exercises WritePoolMounts end to end: given a small
-// pool state, it writes the catch-all, each share's own mount, and each
-// non-cache-only share's mover write target, and every written file matches
-// a checked-in golden fixture (CLAUDE.md: "Golden files change only
-// deliberately").
+// pool state, it writes the catch-all, each share's own mount, each
+// non-cache-only share's mover write target and the branch bind of every
+// data disk those use, and every written file matches a checked-in golden
+// fixture (CLAUDE.md: "Golden files change only deliberately").
 func TestWritePoolMounts(t *testing.T) {
 	state := loadPoolState(t)
 	g := NewGenerator(t.TempDir())
@@ -56,6 +57,8 @@ func TestWritePoolMounts(t *testing.T) {
 		pool.SharePath("movies"),
 		pool.MoverTargetPath("movies"),
 		pool.SharePath("appdata"),
+		disk.BranchBindFor("/mnt/disk1").Where,
+		disk.BranchBindFor("/mnt/disk2").Where,
 	}
 	for _, where := range wheres {
 		path := mountUnitPath(where)
@@ -165,11 +168,116 @@ func TestWritePoolMounts_RemovingDiskMarksOnlyThatDiskNC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading movies mover-target unit: %v", err)
 	}
-	if !strings.Contains(string(mover), "/mnt/disk1/movies=NC") {
-		t.Fatalf("movies mover-target unit missing /mnt/disk1/movies=NC:\n%s", mover)
+	if !strings.Contains(string(mover), "/run/hoserva/branches/mnt/disk1/movies=NC") {
+		t.Fatalf("movies mover-target unit missing disk1's branch as NC:\n%s", mover)
 	}
-	if !strings.Contains(string(mover), "/mnt/disk2/movies=RW") {
+	if !strings.Contains(string(mover), "/run/hoserva/branches/mnt/disk2/movies=RW") {
 		t.Fatalf("movies mover-target unit's other disk must stay RW:\n%s", mover)
+	}
+}
+
+// TestWritePoolMounts_KeepsABindUnitForEveryDataDiskUntilItsMountUnitGoes:
+// a branch bind's unit is what binds a mounted bind to its disk (BindsTo=),
+// so it is written for every data disk of the pool whether or not a mover
+// target uses it — with no share at all, after the last share is deleted,
+// once every share is cache-only — and it outlives a disk leaving the
+// pool. Only RemoveDiskMount, which the removal job calls once the disk and
+// its bind are unmounted, removes it. Removing it while the bind is still
+// mounted would leave the disk's filesystem mounted past array stop once
+// systemd reloads (#656).
+func TestWritePoolMounts_KeepsABindUnitForEveryDataDiskUntilItsMountUnitGoes(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 9, 14, 10, 33, 12, 0, time.UTC)
+	bind1 := mountUnitPath(disk.BranchBindFor("/mnt/disk1").Where)
+	bind2 := mountUnitPath(disk.BranchBindFor("/mnt/disk2").Where)
+	bound := func(p, diskUnit string) bool {
+		body, err := os.ReadFile(filepath.Join(g.Root, p))
+		return err == nil && strings.Contains(string(body), "BindsTo="+diskUnit+"\n")
+	}
+	assertBinds := func(step string, want1, want2 bool) {
+		t.Helper()
+		if got1, got2 := bound(bind1, "mnt-disk1.mount"), bound(bind2, "mnt-disk2.mount"); got1 != want1 || got2 != want2 {
+			t.Fatalf("%s: disk1's bind unit %v, disk2's %v — want %v, %v", step, got1, got2, want1, want2)
+		}
+	}
+
+	state := PoolState{DataDisks: []string{"/mnt/disk1", "/mnt/disk2"}, CachePath: "/mnt/cache"}
+	if err := g.WritePoolMounts(ctx, state, "array start", 1, now); err != nil {
+		t.Fatalf("WritePoolMounts: %v", err)
+	}
+	assertBinds("no share", true, true)
+
+	state.Shares = []PoolShare{{Name: "movies", CacheMode: pool.CacheThenMove, CreatePolicy: pool.KeepFoldersTogether}}
+	if err := g.WritePoolMounts(ctx, state, "share", 2, now); err != nil {
+		t.Fatalf("WritePoolMounts (a share): %v", err)
+	}
+	assertBinds("a moved share", true, true)
+
+	state.Shares[0].CacheMode = pool.CacheOnly
+	if err := g.WritePoolMounts(ctx, state, "share", 3, now); err != nil {
+		t.Fatalf("WritePoolMounts (cache-only): %v", err)
+	}
+	assertBinds("every share cache-only", true, true)
+
+	state.Shares = nil
+	if err := g.WritePoolMounts(ctx, state, "share", 4, now); err != nil {
+		t.Fatalf("WritePoolMounts (last share deleted): %v", err)
+	}
+	assertBinds("the last share deleted", true, true)
+
+	state.DataDisks = []string{"/mnt/disk1"}
+	if err := g.WritePoolMounts(ctx, state, "array start", 5, now); err != nil {
+		t.Fatalf("WritePoolMounts (disk2 left the pool): %v", err)
+	}
+	assertBinds("disk2 left the pool", true, true)
+
+	if err := g.RemoveDiskMount(ctx, "/mnt/disk2"); err != nil {
+		t.Fatalf("RemoveDiskMount: %v", err)
+	}
+	assertBinds("disk2's mount unit removed", true, false)
+	if err := g.RemoveDiskMount(ctx, "/mnt/disk2"); err != nil {
+		t.Fatalf("RemoveDiskMount again: %v", err)
+	}
+}
+
+// A bind unit taken over by hand is kept, and the disk's removal refused,
+// as for the disk's own unit.
+func TestRemoveDiskMount_RefusesAnUnmanagedBindUnit(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	state := PoolState{DataDisks: []string{"/mnt/disk1"}}
+	if err := g.WritePoolMounts(ctx, state, "array start", 1, time.Date(2026, 9, 14, 10, 33, 12, 0, time.UTC)); err != nil {
+		t.Fatalf("WritePoolMounts: %v", err)
+	}
+	bind := mountUnitPath(disk.BranchBindFor("/mnt/disk1").Where)
+	if err := g.KeepUnmanaged(ctx, bind); err != nil {
+		t.Fatalf("KeepUnmanaged: %v", err)
+	}
+	if err := g.RemoveDiskMount(ctx, "/mnt/disk1"); err == nil {
+		t.Fatal("RemoveDiskMount = nil, want a refusal for the hand-kept bind unit")
+	}
+	if _, err := os.Stat(filepath.Join(g.Root, bind)); err != nil {
+		t.Fatalf("the hand-kept bind unit is gone: %v", err)
+	}
+}
+
+func TestCanWriteShareFiles_RefusesAnUnmanagedBindUnit(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	state := PoolState{
+		DataDisks: []string{"/mnt/disk1"},
+		Shares:    []PoolShare{{Name: "media", CacheMode: pool.ArrayOnly, CreatePolicy: pool.KeepFoldersTogether}},
+	}
+	if err := g.WritePoolMounts(ctx, state, "share", 1, now); err != nil {
+		t.Fatalf("WritePoolMounts: %v", err)
+	}
+	if err := g.KeepUnmanaged(ctx, mountUnitPath(disk.BranchBindFor("/mnt/disk1").Where)); err != nil {
+		t.Fatalf("KeepUnmanaged: %v", err)
+	}
+	if err := g.CanWriteShareFiles(ctx, state); !errors.Is(err, ErrUnmanaged) {
+		t.Fatalf("CanWriteShareFiles = %v, want ErrUnmanaged", err)
 	}
 }
 

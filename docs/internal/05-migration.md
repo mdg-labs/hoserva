@@ -102,7 +102,7 @@ Runs on the freshly installed Hoserva, after the Debian install and **before any
 
 **`looksLikeUnraid` in `GET /pool`.** The hint is kept, with a heuristic that matches a real array. A real Unraid array carries no filesystem label (doc 08 §2), so the earlier label match (`diskN`, `parity`, `cache`) was always false on one. It now holds for a disk with an MBR or GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4, which is how Unraid lays out array and pool disks (§1.1). It is a hint for a warning in the storage setup, never a role: a parity disk has the same layout, and the scan takes every role from `disks.ini`.
 
-Checks that need a *running* Unraid — the final parity check itself — are a printable pre-cutover checklist (docs site, `before-you-start`), not scan items.
+Checks that need a *running* Unraid — the final parity check itself — are a printable pre-cutover checklist (documentation, `before-you-start`), not scan items.
 
 ### Output
 
@@ -356,24 +356,33 @@ Four phases, matching above:
 
 ---
 
-## 7. Documentation site
+## 7. Public site and documentation
 
-Migration needs its own documentation, not a README section.
+Migration needs its own documentation, not a README section. The documentation lives on the project's public site, `hoserva.dev`, which also carries a landing page and a browsable list of the curated catalog.
 
-**Docusaurus, at the root of the project site on GitHub Pages (Q66)** — docs-only mode, with its native docs versioning, a local build-time search index (no hosted search service), and dark mode, and it builds in CI without a server. React matches the web UI's stack. Lives in `site/` at the repo root; `docs/internal/` holds the design docs (Q3).
+**Docusaurus builds the whole project site on GitHub Pages (Q66)**: custom React pages give the landing page at `/` and the app list at `/apps` and `/apps/<id>`, and the docs plugin serves the documentation under `/docs/`. Docs keep their native versioning, a local build-time search index (no hosted search service), and dark mode, and the site builds in CI without a server. React matches the web UI's stack. Lives in `site/` at the repo root; `docs/internal/` holds the design docs (Q3).
 
-**Versioning (Q90).** Every stable Hoserva minor release gets its own docs version, a snapshot kept in the repo that `npx docusaurus docs:version X.Y` writes in the release-prep commit for `vX.Y.0`, so an old version's docs are fixed with an ordinary commit rather than a new release. Beta pre-release tags are never snapshotted. Before the first stable release the current docs are the whole site, at the root, with the "unreleased" banner. Once a version exists, the root serves the latest stable version, the current docs (`main`) are served at `/next/` with the "unreleased" banner and `noindex`, older versions carry the "unmaintained" banner, and a navbar dropdown switches between them. All versions stay published until build time or the Pages size canary forces the oldest to be dropped.
+**Landing page (`/`).** A short overview that says what Hoserva is, who it is for and what it is not, described by what it does (doc 00 §6), with links into the docs and the app list.
+
+**App list (`/apps`, `/apps/<id>`).** A read-only, browsable list of the curated catalog, built from the signed catalog archive, with a page per template (doc 04 §7). It has no install action: installing an app happens in Hoserva.
+
+**Look.** The site follows the web UI's coss ui look: its colours, radius and type. The values are copied into `site/`, not imported from `web/`, so `site/` can still split out (doc 12 §7). The site is not part of the web UI and does not come under D15.
+
+**Versioning (Q90).** Every stable Hoserva minor release gets its own docs version, a snapshot kept in the repo that `npx docusaurus docs:version X.Y` writes in the release-prep commit for `vX.Y.0`, so an old version's docs are fixed with an ordinary commit rather than a new release. Beta pre-release tags are never snapshotted. Before the first stable release the current docs are the whole site, at `/docs/`, with the "unreleased" banner. Once a version exists, `/docs/` serves the latest stable version, the current docs (`main`) are served at `/docs/next/` with the "unreleased" banner and `noindex`, older versions carry the "unmaintained" banner, and a navbar dropdown switches between them. All versions stay published until build time or the Pages size canary forces the oldest to be dropped.
 
 ### Structure
 
 ```
-/                          What Hoserva is, who it's for
-/getting-started/
+/                          Landing page: what Hoserva is, who it's for, what it is not
+/apps                      Browsable list of the curated catalog (doc 04 §7)
+/apps/<id>                 One template of the catalog
+/docs/                     The documentation's own introduction: what Hoserva is, who it's for
+/docs/getting-started/
   requirements             Hardware, disks, boot device
   install-deb              Install onto existing Debian
   install-iso              ISO bundle (Phase 4)
   first-array              Creating your first array
-/migrating-from-unraid/
+/docs/migrating-from-unraid/
   overview                 What migrates, what doesn't, what it costs
   before-you-start         Pre-flight checklist (printable)
   the-migration            Happy path, step by step, screenshots
@@ -387,14 +396,14 @@ Migration needs its own documentation, not a README section.
     unraid-7
     unsupported-arrays     Encrypted, ZFS, multi-device btrfs: why refused, manual options
   troubleshooting          Disk not detected, share empty, container can't find appdata, permissions wrong
-/concepts/
+/docs/concepts/
   how-pooling-works        mergerfs, in plain language
   how-parity-works         SnapRAID, and the honest caveat about sync timing
   parity-is-not-backup     Doc 10 §3's stated posture
   cache-and-mover
   what-happens-when-a-disk-dies
   why-disks-wake-up        Union filesystems and spindown, doc 08 §1
-/guides/
+/docs/guides/
   adding-a-disk
   replacing-a-failed-disk
   recovering-files         Including "undelete" via the guided fix flow, and its limits
@@ -402,7 +411,7 @@ Migration needs its own documentation, not a README section.
   backing-up-your-data     Pool data backup with the curated backup containers (doc 10 §3)
   migrating-vms            Domain XML and passthrough remapping, once Phase 3.5 ships (doc 14 §5)
   exposing-safely          The "don't put this on the internet" guide
-/reference/
+/docs/reference/
   cli
   api                      Generated from api/openapi.yaml on every site build (D18)
   config-files
@@ -413,6 +422,6 @@ Migration needs its own documentation, not a README section.
 
 Two pieces carry disproportionate weight:
 
-**`/concepts/how-parity-works`** must be honest about the nightly-sync model, because a user who learns this after losing data will say so publicly and they will be right to. The page should present it as a deliberate tradeoff with clear reasoning, not bury it.
+**`/docs/concepts/how-parity-works`** must be honest about the nightly-sync model, because a user who learns this after losing data will say so publicly and they will be right to. The page should present it as a deliberate tradeoff with clear reasoning, not bury it.
 
-**`/migrating-from-unraid/before-you-start`** must be printable and must lead with the unprotected window. People do this migration at 11pm and skim.
+**`/docs/migrating-from-unraid/before-you-start`** must be printable and must lead with the unprotected window. People do this migration at 11pm and skim.

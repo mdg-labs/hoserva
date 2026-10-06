@@ -1595,7 +1595,24 @@
       "blocked": "Guard tripped",
       "clear": "Guard clear",
       "bannerTitle": "Threshold guard is blocking sync",
-      "bannerDescription": "Review the diff and free space before syncing past the guard."
+      "bannerDescription": "Review the diff and free space before syncing past the guard.",
+      "syncBlocked": "The guard held this sync before anything was written to parity: {{detail}}"
+    },
+    "override": {
+      "open": "Sync anyway…",
+      "title": "Sync past the threshold guard",
+      "description": "Hoserva first runs the sync through the guard again. If the guard no longer blocks it, it runs as a normal sync. Only a block the guard reports now can be overridden, and syncing anyway writes that change into parity.",
+      "checking": "Asking the threshold guard…",
+      "notRefused": "The guard no longer blocks this sync, so it ran as a normal sync.",
+      "stopped": "The sync was stopped before the guard answered.",
+      "confirmTitle": "Confirm the override of this block",
+      "consequence": "Files removed or changed since the last sync can no longer be recovered from parity once it is overwritten.",
+      "phrase": "SYNC ANYWAY"
+    },
+    "sync": {
+      "running": "Sync started",
+      "runningDescription": "Follow its progress under Jobs.",
+      "finished": "Sync finished"
     },
     "diff": {
       "title": "Changes since last sync",
@@ -1614,9 +1631,11 @@
     },
     "actions": {
       "sync": "Sync now",
+      "syncAnyway": "Sync anyway",
       "scrub": "Scrub now",
       "fix": "Guided fix",
-      "syncDescription": "Queue a parity sync job through the threshold guard."
+      "syncDescription": "Queue a parity sync job through the threshold guard.",
+      "guardInfoTitle": "What the guard last reported"
     },
     "history": {
       "title": "Recent parity jobs",

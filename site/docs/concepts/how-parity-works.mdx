@@ -1,0 +1,104 @@
+---
+title: How parity works
+description: How Hoserva protects the pool against a failed disk with SnapRAID parity, why parity is updated by a schedule rather than on every write, and what that means for new files.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Parity is extra information stored on a separate disk. It lets Hoserva rebuild the contents of one failed data disk, or of two if you use a second parity disk. Hoserva uses SnapRAID for this. You need to understand when parity is updated, because that decides which files are protected at any moment.
+
+## Parity is a snapshot, updated by a schedule
+
+SnapRAID computes parity on demand. It does not update it on every write. Hoserva runs a **sync** every night, by default at 02:00, and the sync brings parity up to date with the files on the data disks at that moment.
+
+:::warning[New and changed files are not protected until the next sync]
+A file you write or change after the last sync is not covered by parity until the next one finishes. If a disk fails in between, that file cannot be rebuilt. A rebuild restores the disk as it was at the last successful sync, and nothing newer.
+:::
+
+This is a deliberate tradeoff, and it has two reasons:
+
+- **Disks stay asleep.** A write touches only the data disk that holds the file. The parity disk and the other data disks are not woken for it, so a server that sits idle most of the day keeps its disks spun down.
+- **It fits the usual contents.** Media, downloads and backups are large, change rarely, and can often be fetched again. Parity serves that workload well. It is not a good fit for a file you edit all day and cannot afford to lose.
+
+For files you cannot replace, keep a second copy somewhere else. [Parity is not backup](../concepts/parity-is-not-backup.md) explains why.
+
+## What parity needs
+
+- One or two parity disks. Each must be at least as large as your largest data disk.
+- Parity disks hold no files of your own, and they do not add capacity.
+- The data disks can be any mix of sizes.
+
+## What is the throughput ceiling?
+
+Hoserva does not stripe data across disks the way RAID does. Each file is stored whole on one data disk and read from that disk, so a single transfer runs at the speed of one disk. [How pooling works](../concepts/how-pooling-works.md) describes this limit. Many transfers at once can use different disks at the same time.
+
+## What does a sync do?
+
+A sync compares the data disks with parity and writes the difference. It runs as a job, and you can follow it in **Jobs**. The nightly run is one step of a chain: the mover runs first, then Hoserva checks the changes against the threshold guard, then the sync, then on Sundays a scrub. Because the mover runs first, files it moves to the array are covered by that night's sync. See [Cache and mover](../concepts/cache-and-mover.mdx).
+
+You can also start a sync yourself at any time. Parity is only ever written by this schedule or by an action you start.
+
+## What stops a sync? The threshold guard
+
+A large number of deleted or changed files is either a cleanup you meant to do or a disaster in progress: ransomware encrypting a share, a failing disk dropping its filesystem, an `rm -rf` with a bad variable, or a share that unmounted and left an empty folder. A sync after such an event overwrites the parity that could have recovered those files.
+
+The threshold guard checks the changes before every sync, whether it was the nightly run or one you started. It holds the sync when any of these is true:
+
+| Check | Default limit |
+|---|---|
+| Files removed | More than 500 |
+| Files removed or changed | More than 10% of the files in the array |
+| A data disk that held files now holds none | Any such disk |
+
+Files that Hoserva itself moved between disks are counted separately as **Moved by Hoserva** and do not count towards these limits. When the guard holds the nightly sync, Hoserva sends a notification, and the Parity page shows **Threshold guard is blocking sync**. Nothing syncs until you decide. You can review the changes and sync anyway, or leave the sync held and investigate. You cannot turn the guard off, and **Sync now** never overrides it.
+
+## How do I see how fresh parity is?
+
+The dashboard has a **Parity freshness** card, and **Storage → Parity** shows the same status with the time of the last sync. It reads either that parity is up to date, or how many files have changed since the last sync. The count comes from SnapRAID's saved state and not from walking your disks, so reading it does not wake them.
+
+## What does a scrub do?
+
+A scrub reads data and parity and checks that they still agree. It finds silent corruption, where a file's bits change on disk without any error. The scheduled scrub runs on Sundays after the sync and checks 8% of the array. It skips blocks that were checked or synced in the last 10 days, so repeated scrubs work through the whole array over time.
+
+## Run each step
+
+<Tabs groupId="interface">
+  <TabItem value="web" label="Web UI" default>
+    - **Sync now:** open **Storage → Parity** and select **Sync now**, then confirm. This starts a normal sync, and the guard can hold it like the nightly one. If it does, the page shows **Threshold guard is blocking sync** with the reason.
+    - **Sync anyway:** to sync past a held sync, select **Sync anyway…** on that banner. Hoserva first asks the guard again, and the override is offered only if the guard still blocks the sync. If it does not, the sync runs as a normal one. Type `SYNC ANYWAY` to confirm, then select **Sync anyway**.
+    - **See the changes first:** select **Run diff**. A diff checks every data disk against parity, so it spins all of them up, and Hoserva shows a warning before it runs. It then lists the changes in groups such as **Removed**, **Updated** and **Added**.
+    - **Scrub:** select **Scrub now**.
+    - **Change the schedule:** open **Settings → Schedules**. The **Nightly maintenance chain** card holds the start time and the steps.
+  </TabItem>
+  <TabItem value="cli" label="CLI">
+    ```bash
+    hoserva sync --dry-run
+    ```
+
+    `--dry-run` runs the same check as **Run diff** without syncing. It queues a job and prints that job, not a list of changes, and the check wakes every data disk.
+
+    ```bash
+    hoserva sync
+    ```
+
+    `hoserva sync --force` confirms a sync past a tripped guard.
+
+    ```bash
+    hoserva scrub
+    ```
+
+    `--percent N` sets how much of the array to check, from 1 to 100. `--all-blocks` includes blocks of every age, not only those older than 10 days.
+  </TabItem>
+</Tabs>
+
+:::warning[Syncing past the guard]
+**Confirm a sync past the guard only after you have looked at what was removed.** If the removals are not what you intended, the sync destroys the parity that could restore those files.
+:::
+
+## Next steps
+
+- [Parity is not backup](../concepts/parity-is-not-backup.md)
+- [Recovering files](../guides/recovering-files.mdx)
+- [What happens when a disk dies](../concepts/what-happens-when-a-disk-dies.md)
+- [Cache and mover](../concepts/cache-and-mover.mdx)

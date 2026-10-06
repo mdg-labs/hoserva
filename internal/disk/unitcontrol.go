@@ -20,6 +20,9 @@ import (
 type MountUnitController struct {
 	Unit   MountUnit
 	Runner Runner
+
+	// MountTarget is DirectMounter.MountTarget.
+	MountTarget func(path string) (opts []string, mounted bool, err error)
 }
 
 // Where is the disk's own mountpoint, for logging and error messages.
@@ -33,8 +36,17 @@ func (c MountUnitController) Mount(ctx context.Context) error {
 	return nil
 }
 
-// Unmount runs `systemctl stop <unit>`.
+// Unmount runs `systemctl stop <unit>`, after stopping the disk's branch
+// bind (BranchBind) when it is still mounted. The bind's BindsTo= would
+// stop it with the disk only while systemd still has its unit file loaded;
+// array stop must leave no filesystem of a data disk mounted however the
+// bind got there (#656). A bind that stays mounted fails the unmount with
+// the disk still mounted, so array stop reports the failure rather than a
+// stopped array.
 func (c MountUnitController) Unmount(ctx context.Context) error {
+	if err := stopSystemdBranchBind(ctx, c.Runner, c.MountTarget, c.Unit.Where); err != nil {
+		return err
+	}
 	if _, err := c.Runner.Run(ctx, "systemctl", "stop", UnitFileName(c.Unit.Where)); err != nil {
 		return fmt.Errorf("disk: stopping mount unit for %s: %w", c.Unit.Where, err)
 	}

@@ -24,7 +24,7 @@ This will be built entirely with Claude Code, and that strengthens the monorepo 
 
 **Exception, from the start:** the curated template catalog lives in its own repository, `mdg-labs/hoserva-catalog` (Q39). It was split before any template existed, because that costs a docs change where splitting later means moving history, CI, issues and labels under contributors already using the old layout. Template requests and template PRs are also a different kind of work with a different review bar, so the catalog repository's tracker is for template requests and template content only, such as a single app. Everything else about the catalog, its CI and Pages deploy included, is foundation and engineering work: it is tracked here on `mdg-labs/hoserva` under its epic, so this repository's issues stay the whole engineering plan. Such an issue carries a `Lands in: mdg-labs/hoserva-catalog` line, and `orchestrate` lands its commits in the catalog repository's own clone (`HOSERVA_CATALOG_REPO`, default `../hoserva-catalog`) — on its `dev` branch, the same working-branch model as this repository (§6) — with a `Fixes mdg-labs/hoserva#<n>` trailer that closes the issue here once the commit reaches the catalog's `main` through a `dev → main` pull request (`CLAUDE.md`, "Issues are the plan"). The catalog's CI depends on outside services (registry image and tag checks, `docker compose config`) and must not gate a Hoserva release. The `x-hoserva` schema and its validator stay here (`internal/template/`), and the catalog repository's CI runs Hoserva's own checker from a pinned version (doc 04 §7).
 
-**Exception, later:** the docs site is a genuine candidate for a separate repo, because it will have external contributors, different review standards, and different release cadence. Split it out when that becomes true, not before.
+**Exception, later:** the public site is a genuine candidate for a separate repo, because it will have external contributors, different review standards, and different release cadence. Split it out when that becomes true, not before.
 
 ---
 
@@ -39,7 +39,7 @@ hoserva/
 │
 ├── .claude/
 │   ├── agents/                 task-executor, task-verifier (§5)
-│   └── skills/                 github-triage, orchestrate (§5); coss, coss-particles (symlinks into .agents/, D15)
+│   └── skills/                 github-triage, orchestrate (§5); user-docs (public docs pages); coss, coss-particles (symlinks into .agents/, D15)
 ├── .agents/skills/             coss and coss-particles skills from cosscom/coss, pinned in skills-lock.json
 ├── .github/workflows/          CI (doc 06 §7), issue-status.yml lifecycle (§5)
 │
@@ -104,7 +104,7 @@ hoserva/
 │   └── iso/
 │
 ├── docs/internal/              design docs (this document set)
-└── site/                       Docusaurus public docs, versioned (Q3, Q90; split out later)
+└── site/                       Docusaurus public site: landing page, app list, versioned docs (Q3, Q90; split out later)
 ```
 
 ### Notable choices

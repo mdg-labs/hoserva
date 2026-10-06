@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -56,6 +57,39 @@ type Mounter struct {
 	// GetXattr reads one key of a live mount's runtime control file. Nil
 	// means syscall.Getxattr; a test injects a scripted value.
 	GetXattr func(path, attr string) ([]byte, error)
+
+	// MountTarget reports whether a path is a mount point and that mount's
+	// options. Nil means disk.ReadMountTarget; a test injects a fake.
+	MountTarget func(path string) (opts []string, mounted bool, err error)
+
+	// SameFile reports whether two paths are the same directory (device and
+	// inode). Nil means os.Stat on both and os.SameFile; a test injects a
+	// fake.
+	SameFile func(a, b string) (bool, error)
+}
+
+func (m Mounter) mountTarget() func(string) ([]string, bool, error) {
+	if m.MountTarget != nil {
+		return m.MountTarget
+	}
+	return disk.ReadMountTarget
+}
+
+func (m Mounter) sameFile() func(string, string) (bool, error) {
+	if m.SameFile != nil {
+		return m.SameFile
+	}
+	return func(a, b string) (bool, error) {
+		ai, err := os.Stat(a)
+		if err != nil {
+			return false, err
+		}
+		bi, err := os.Stat(b)
+		if err != nil {
+			return false, err
+		}
+		return os.SameFile(ai, bi), nil
+	}
 }
 
 func (m Mounter) getXattr() func(string, string) ([]byte, error) {
@@ -147,9 +181,17 @@ func systemdStopShouldRetry(err error) bool {
 // table says is "recognisable in df and mount listings" precisely so it
 // can be told apart this way — because a wrong mount masquerading as
 // "already there" would be worse than a start that refuses loudly.
+//
+// mnt's branch binds (Mount.Binds) are brought up first, on both paths, so
+// a branch never joins the mount before its bind is there (bindBranch).
 func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 	if err := os.MkdirAll(mnt.Where, 0o755); err != nil {
 		return fmt.Errorf("pool: creating mount point %s: %w", mnt.Where, err)
+	}
+	for _, b := range mnt.Binds {
+		if err := m.bindBranch(ctx, b); err != nil {
+			return err
+		}
 	}
 
 	mounted, err := m.isMountpoint()(mnt.Where)
@@ -172,6 +214,76 @@ func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 		return fmt.Errorf("pool: mounting %s: %w", mnt.Where, err)
 	}
 	return nil
+}
+
+// onSource reports whether the bind at b.Where is b.Source's own directory
+// (device and inode): the disk's current filesystem, not one that has since
+// left b.Source. Any error reading either reads as not.
+func (m Mounter) onSource(b disk.BranchBind) bool {
+	same, err := m.sameFile()(b.Source, b.Where)
+	return err == nil && same
+}
+
+// bindBranch brings b up the way its systemd unit does (disk.BranchBind.
+// Render), for the direct mounts the loop-device lab makes: b.Source bound
+// at b.Where with nosymfollow. A source that does not exist, or that is not
+// a mount point (a data disk that is not mounted, whose bare mountpoint
+// directory is on the root filesystem), leaves the bind absent, and with it
+// that branch, as the unit's BindsTo= on the disk's mount does.
+// A bind already at b.Where is kept only while it is still b.Source's own
+// directory with nosymfollow in force; one left over from a disk that was
+// since unmounted or remounted is unmounted and bound again, so it never
+// keeps serving a filesystem that has left b.Source. A bind that does not
+// come up with nosymfollow is unmounted and refused, never used.
+func (m Mounter) bindBranch(ctx context.Context, b disk.BranchBind) error {
+	target := m.mountTarget()
+	opts, mounted, err := target(b.Where)
+	if err != nil {
+		return fmt.Errorf("pool: checking the mover branch at %s: %w", b.Where, err)
+	}
+	if _, err := os.Stat(b.Source); errors.Is(err, fs.ErrNotExist) {
+		if mounted {
+			if _, err := m.Runner.Run(ctx, "umount", b.Where); err != nil {
+				return fmt.Errorf("pool: unmounting the mover branch at %s, whose source %s is gone: %w", b.Where, b.Source, err)
+			}
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("pool: checking %s for its mover branch: %w", b.Source, err)
+	}
+	if _, sourceMounted, err := target(b.Source); err != nil {
+		return fmt.Errorf("pool: checking whether %s is mounted for its mover branch: %w", b.Source, err)
+	} else if !sourceMounted {
+		if mounted {
+			if _, err := m.Runner.Run(ctx, "umount", b.Where); err != nil {
+				return fmt.Errorf("pool: unmounting the mover branch at %s, whose source %s is not mounted: %w", b.Where, b.Source, err)
+			}
+		}
+		return nil
+	}
+	if mounted {
+		if m.onSource(b) && slices.Contains(opts, "nosymfollow") {
+			return nil
+		}
+		if _, err := m.Runner.Run(ctx, "umount", b.Where); err != nil {
+			return fmt.Errorf("pool: unmounting the stale mover branch at %s: %w", b.Where, err)
+		}
+	}
+	if err := os.MkdirAll(b.Where, 0o755); err != nil {
+		return fmt.Errorf("pool: creating mover branch mount point %s: %w", b.Where, err)
+	}
+	if _, err := m.Runner.Run(ctx, "mount", "--bind", "-o", "nosymfollow", b.Source, b.Where); err != nil {
+		return fmt.Errorf("pool: binding %s at %s: %w", b.Source, b.Where, err)
+	}
+	opts, mounted, err = target(b.Where)
+	if err == nil && mounted && slices.Contains(opts, "nosymfollow") {
+		return nil
+	}
+	_, _ = m.Runner.Run(ctx, "umount", b.Where)
+	if err != nil {
+		return fmt.Errorf("pool: confirming the mover branch at %s: %w", b.Where, err)
+	}
+	return fmt.Errorf("pool: the mover branch at %s did not come up with nosymfollow (mounted %t, options %q)", b.Where, mounted, strings.Join(opts, ","))
 }
 
 // applyRuntime sets mnt's runtime-configurable options on the live mount

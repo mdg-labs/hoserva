@@ -1,0 +1,254 @@
+---
+title: The migration
+description: Step by step from stopping the Unraid array to a verified import, the point of no return and your containers running again.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+This page walks through the migration from stopping the Unraid array to starting your containers on Hoserva. The steps carry on from the checklist in [Before you start](./before-you-start.mdx), so the first one here is step 10. Phase B (steps 10 to 13) is the cutover, phase C (steps 14 to 17) is the import, and phase D (steps 18 to 26) brings your services back.
+
+<TrademarkNotice />
+
+## Before you start
+
+- Every step of [Before you start](./before-you-start.mdx) is done, including an empty cache and a clean parity check.
+- You have the Flash Backup zip, your serial number table and your rollback row.
+- You have set aside the hours the steps below take.
+
+## Phase B: Cutover
+
+### Step 10: Stop the array and shut down
+
+:::danger[The unprotected window starts here]
+**From this step until the first Hoserva parity sync has finished, the array has no redundancy at all.** Unraid's parity protects nothing once the array stops and its disks are repurposed, and Hoserva's parity does not exist until its first sync completes. If a disk fails in that window, its data is gone. Make sure anything irreplaceable has a backup that is not this array.
+:::
+
+Stop the array in Unraid, then shut the server down cleanly. A clean stop leaves each disk's filesystem log clean, which the scan requires.
+
+### Step 11: Set the Unraid boot device aside
+
+If Unraid boots from a USB stick, remove it and keep it safe. It is your way back.
+
+If Unraid boots from an internal device, there is no stick to remove. The Flash Backup zip is your rollback artifact, and the internal boot devices are left alone unless step 12 installs onto one. A stick that is still attached only for licensing stays where you keep it.
+
+### Step 12: Install Debian
+
+Install Debian stable onto the boot device. Three things need care in the installer's partitioner.
+
+:::danger[Do not install onto an array disk]
+**Choose the target by model and serial number from your step 7 table, never by size or `sdX` name alone.** The installer lists every disk in the machine, array disks included, and installing onto one destroys that disk's data. The surest way is to power off and disconnect every array and parity disk for the installation, and to reconnect them before step 14.
+:::
+
+- **A separate boot device.** Give Debian the whole device. Unraid's cache device is not touched by the installation.
+- **A shared NVMe (Debian root and cache on one device).** Partition it with the root at about 60 GB and a second partition left unused: no filesystem, no mount point and no swap. The installation destroys everything Unraid kept on that device, its cache included, which is why the cache had to be empty in step 5. Hoserva formats the spare partition as its cache at step 17 and never edits the boot device's partition table.
+- **Unraid with internal boot.** Its UEFI entries (`Unraid Internal Boot - <serial>`) stay in the firmware after Debian is installed on another device. Afterwards, confirm that the firmware boots Debian first. Going back relies on the same boot order.
+
+### Step 13: Install Hoserva
+
+[Install Hoserva](../getting-started/install-deb.mdx) on the new Debian system from its `.deb` package and open its web UI. The scan and import below run on this installation, and the `hoserva` command-line tool talks to the same daemon.
+
+### What happens to the cache device
+
+The sequence has no separate step for reformatting the cache. When it happens depends on your layout.
+
+| Layout | What happens to the Unraid cache | When Hoserva formats it |
+|---|---|---|
+| Separate boot device | The cache device survives steps 10 to 16 unchanged. | At step 17, as Hoserva's own cache, in the same confirmed action as the former parity disks. |
+| Shared NVMe | The Debian installation in step 12 destroys it. The spare partition from step 12 becomes the cache. | At step 17. |
+| Unraid boot and data device, with Debian on another device | The device survives steps 10 to 16 unchanged. Partitions 1 to 3 hold Unraid's boot pool, and partition 4 is the cache. | At step 17, partition 4 only. Partitions 1 to 3 are left alone. |
+
+If Debian goes on the same device as the Unraid boot and cache, the shared NVMe row applies and the installation destroys the cache.
+
+## Phase C: Import
+
+Phase C has four stages: scan, review, import and verify. The scan and review read and report only. The import and verify mount your data disks read-only. No stage writes to a data disk.
+
+### Step 14: Scan
+
+Reconnect your array disks if you disconnected them. The scan reads Unraid's configuration from the Flash Backup zip, or from the Unraid USB stick attached to this machine, which it mounts read-only and never writes to. If Unraid booted from an internal device, only the zip works. The scan then matches Unraid's disks to this machine's by serial number, checks every data disk read-only, and records every file's path and size, with a checksum of a sample, as the baseline for the verify.
+
+<Tabs groupId="interface">
+<TabItem value="web" label="Web UI" default>
+
+1. Open **Tools → Migration**. The page shows four steps: **Scan**, **Review**, **Import** and **Verify**.
+2. Choose **Flash Backup zip** and select your zip, or choose **Unraid USB stick** and pick the stick under **USB stick**. The stick is offered only when one is attached and Unraid did not boot from an internal device.
+3. Select **Start scan**. The scan runs in the background and can take hours on a full array. You can leave the page and come back.
+4. Read the report. It ends in a verdict: **Go**, **Go, with warnings** or **No-go**. Each finding is **Pass**, **Note**, **Warning**, **Flagged** or **Blocked**. Select **Download the report** to keep a copy.
+5. Fix anything under **Blocks the migration**, then select **Review**.
+
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+hoserva migrate scan --flash-backup <server>-boot.zip
+```
+
+To read the stick instead, use `--flash-device /dev/sdb` with the stick's device. Two options exist only on the command line. `--unverified-layout` lets through an Unraid version or flash layout Hoserva has not been verified against, and the report records that you did. `--full-checksums` hashes every file instead of a sample, which takes much longer.
+
+The command prints the report when the scan finishes. <kbd>Ctrl</kbd> + <kbd>C</kbd> only stops waiting, and the scan carries on as a job. These commands show the session and save the report:
+
+```bash
+hoserva migrate status
+hoserva migrate report -o report.txt
+```
+
+</TabItem>
+</Tabs>
+
+If the report warns that **The container capture needs a look** or **The container capture may be out of date**, you can carry on. If the capture is missing or could not be read, every template is listed as unknown and none is pre-selected, so you choose the containers to recreate yourself. If the capture is only out of date, each template keeps its class and the autostart ones are still pre-selected, but that pre-selection may not match what ran on the server, so check it. To refresh the capture, boot Unraid again (see [Rollback](./rollback.mdx)), run the prepare script, take a new Flash Backup and scan again.
+
+### Step 14 continued: Review and import
+
+The review shows what the import will do. Check it against your notes before you confirm.
+
+<Tabs groupId="interface">
+<TabItem value="web" label="Web UI" default>
+
+1. Under **Disk roles**, compare each row with your step 7 table. **Role in Hoserva** is pre-filled from the capture with **Parity**, **Data**, **Cache** or **Ignore**. Change a role only if you mean to.
+2. Under **Boot mode and layout**, confirm **Unraid boots from** and **Hoserva's cache** are what you expect. If the cache is on the disk this machine boots from, choose its **Spare partition** under **Cache partition**.
+3. Look through **Shares** and **Docker templates**. Each template shows whether it converts with warnings.
+4. Tick **I have checked each disk's serial number and role against my Unraid server**, then select **Import**.
+
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+Run the import without `--yes` first. It prints the mapping of roles to disks and stops:
+
+```bash
+hoserva migrate import
+```
+
+Check the mapping against your step 7 table. Override a role with `--role <serial>=<role>`, where the role is `parity`, `data`, `cache` or `ignore`, and name a cache on a spare partition of the boot disk with `--cache-partition <by-id name>:<partuuid>`. When the mapping is right, run it again with `--yes`:
+
+```bash
+hoserva migrate import --yes
+```
+
+To read a template's conversion before you decide, run `hoserva migrate templates` for the list, or `hoserva migrate templates <file>.xml` for one preview.
+
+</TabItem>
+</Tabs>
+
+### Step 15: What the import does
+
+The import adopts the data disks without formatting them. It mounts the pool at `/mnt/user`, **read-only**, and records the former parity and cache disks by identity without opening them. It creates the shares from the backup and creates your accounts **without passwords**. `/mnt/cache` does not exist yet.
+
+When it finishes, the Web UI lists **Shares created** with a **Notes** column for anything Hoserva had no exact equivalent for. Under **Accounts that need a password**, select **Set passwords**, which opens **Users**. For each account, select **Edit**, choose **Set or change SMB password** and enter a password. From the command line, `hoserva migrate status` lists the shares and the accounts with no password yet.
+
+### Step 16: Verify
+
+This is the last checkpoint where problems are cheap. The verify compares what is adopted with the scan's baseline: file counts, sizes, links, and checksums of the same sample the scan hashed. A path that exists on two disks is shown once by the pool, and the verify lists it without counting it as missing or extra.
+
+<Tabs groupId="interface">
+<TabItem value="web" label="Web UI" default>
+
+1. Select **Continue to verification**, then **Run verify**. It reads every file's details and can take a long time.
+2. A clean result reads **Every disk and share matches what the scan recorded.**
+3. Anything else reads **Stop and investigate**. Do not go on. The tables show which disk or share differs and which files are missing, changed or extra. Fix the cause, then select **Re-run verify**.
+
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+hoserva migrate verify
+```
+
+The command waits, prints the comparison per disk and share, and exits non-zero unless everything matches. If it does not pass, do not go on. A verify can be run again after you fix the cause.
+
+</TabItem>
+</Tabs>
+
+### Step 17: Initialise parity, the point of no return
+
+:::danger[This erases disks and cannot be undone]
+**Initialising parity erases your former Unraid parity disk or disks and your cache device, and formats them for Hoserva.** It is the first step that writes to a disk of the old array. After it begins, the old parity is destroyed and going back to Unraid means restoring from a backup. Your data disks are never formatted.
+
+The confirmation names every device it will erase. If it names the wrong disk, stop. A cache on a spare partition, or on partition 4 of an Unraid boot and data device, erases that partition only.
+:::
+
+Parity is offered only after a verify that passed. The unprotected window stays open until the first sync completes, and the sync itself can take hours: it is a full parity build.
+
+<Tabs groupId="interface">
+<TabItem value="web" label="Web UI" default>
+
+1. Under **Initialise parity**, read the list: each device it erases, the unprotected window and what going back means for your layout.
+2. Type the confirmation phrase exactly as shown under **Type the confirmation phrase**. It reads `ERASE` followed by the devices, for example `ERASE /dev/nvme0n1, /dev/sdb`.
+3. Select **Initialise parity**. Hoserva formats the former parity disks and the cache, mounts the data disks read-write and queues the first parity sync.
+4. Follow the sync on this page. **The first sync is complete** means parity now protects the array, and **Done** becomes available.
+
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+Without `--confirm`, the command prints what it would erase, the unprotected window and your rollback row, and formats nothing:
+
+```bash
+hoserva migrate initialize-parity
+```
+
+Run it again with the exact confirmation string it printed:
+
+```bash
+hoserva migrate initialize-parity --confirm 'ERASE /dev/nvme0n1, /dev/sdb'
+```
+
+The command never fills in the confirmation for you. Follow the first sync with `hoserva jobs`, and read its log with `hoserva logs --job <id> --follow`.
+
+</TabItem>
+</Tabs>
+
+The first sync runs through the same threshold guard as every sync. If the guard blocks it, the sync waits for your decision on **Storage → Parity**, which shows **Guard tripped**.
+
+If initialising stops part way with an error, how far it got decides what happens next. If it stopped before the formatted disks were recorded, the migration goes back to the verified state and **Initialise parity** is offered again with the full confirmation. If it stopped after they were recorded, the web UI offers **Finish initialisation**, which erases nothing. In both cases your data disks are never formatted. See [Troubleshooting](./troubleshooting.mdx#initialising-parity-stopped-with-an-error).
+
+## Phase D: Services
+
+Phase D brings your containers back and closes the migration. The steps here are done with the command line. The web UI has no page for the container and checklist steps.
+
+### Step 18: Move appdata back to the cache
+
+Appdata was moved to the array in step 5. If you have a cache, move it back. A share relocation copies, verifies, syncs parity and only then deletes the originals:
+
+```bash
+hoserva share relocate appdata --to cache
+```
+
+With no cache disk this step is optional, because appdata already lives on the array.
+
+### Step 19: Create your containers
+
+Containers can be created only after step 17 has finished. List what the scan offers, then create stopped stacks from your templates and Compose Manager projects:
+
+```bash
+hoserva migrate containers
+hoserva migrate containers create
+```
+
+Without names, `create` takes the pre-selected templates, which are the ones on Unraid's autostart list. It prints each generated Compose file and every warning first, and creates nothing until you add `--yes`. Read the warnings, which include each container's writable-layer warning: state kept inside a container is not carried over. A template whose warnings need manual action is created only when you also name it with `--acknowledge <file>.xml`. Compose Manager projects are created from their own `compose.yaml`. Containers created by hand are listed with their image and need recreating from their run command.
+
+```bash
+hoserva migrate containers create --yes
+```
+
+### Step 20: Start containers one at a time
+
+Start one container, check that it sees its data, confirm it, then start the next. In the order the list gives:
+
+```bash
+hoserva migrate containers start <name>
+hoserva migrate containers check <name>
+hoserva migrate containers confirm <name>
+```
+
+After `start`, wait the seconds Unraid's autostart list gave the container, which the command prints. `check` reads each folder the container uses under `/mnt/user` or `/mnt/cache` and reports it `ok`, `empty`, `missing` or `unreadable`. Hoserva refuses to start another container until the one running is confirmed or stopped. If a folder is meant to be empty, `confirm <name> --accept-failed-check` accepts it. The `check` runs only when you ask, and it can spin a disk up.
+
+### Steps 21 to 26: Close the migration
+
+The remaining steps are reconnecting SMB clients with their new passwords, a full scrub after the first sync, tested notifications, schedules, the User Scripts inventory and a restore drill. [After the migration](./after-the-migration.mdx) covers them with the closing checklist. Virtual machines are not migrated by this flow yet, so there is no step for them.
+
+## Next steps
+
+- [After the migration](./after-the-migration.mdx)
+- [Rollback](./rollback.mdx)
+- [Troubleshooting](./troubleshooting.mdx)

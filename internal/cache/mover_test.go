@@ -327,15 +327,18 @@ func TestRun_FsyncsTargetDirectoryBeforeSourceUnlink(t *testing.T) {
 	var fsyncedDir string
 	var sourceExistedAtFsync, renameDoneAtFsync bool
 	deps := testDeps(NewFakeOpenChecker())
-	deps.FsyncDir = func(dir string) error {
-		fsyncedDir = dir
+	deps.FsyncDir = func(dirfd int) error {
+		var err error
+		if fsyncedDir, err = os.Readlink(fdPath(dirfd)); err != nil {
+			t.Errorf("FsyncDir was not given a directory descriptor: %v", err)
+		}
 		if _, err := os.Stat(src); err == nil {
 			sourceExistedAtFsync = true
 		}
 		if _, err := os.Stat(dst); err == nil {
 			renameDoneAtFsync = true
 		}
-		return fsyncDir(dir)
+		return fsyncDir(dirfd)
 	}
 
 	report, err := Run(context.Background(), []Share{s}, Config{}, deps, RunHooks{}, nil)
@@ -370,7 +373,7 @@ func TestRun_FsyncDirFailureLeavesSourceIntactAndResumeCompletes(t *testing.T) {
 	dst := filepath.Join(s.ArrayPath, "show.mkv")
 
 	failingDeps := testDeps(NewFakeOpenChecker())
-	failingDeps.FsyncDir = func(dir string) error {
+	failingDeps.FsyncDir = func(int) error {
 		return fmt.Errorf("simulated fsync failure")
 	}
 

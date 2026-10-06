@@ -418,13 +418,14 @@ func p359BranchMode(where, branch string) (string, error) {
 }
 
 // p359RequireMode fails unless every pool mount's own branch on disk1 has
-// mode.
+// mode. The mover target names that branch through disk1's nosymfollow
+// bind (#656).
 func p359RequireMode(t *testing.T, disk1, mode string) {
 	t.Helper()
 	for _, c := range []struct{ where, branch string }{
 		{pool.CatchAllPath, disk1},
 		{pool.SharePath(p359Share), filepath.Join(disk1, p359Share)},
-		{pool.MoverTargetPath(p359Share), filepath.Join(disk1, p359Share)},
+		{pool.MoverTargetPath(p359Share), filepath.Join(disk.BranchBindFor(disk1).Where, p359Share)},
 	} {
 		got, err := p359BranchMode(c.where, c.branch)
 		if err != nil {
@@ -753,9 +754,12 @@ func TestLabEvacuation_RestartMidEvacuation_UnitsKeepNoCreate_ResumeReappliesIt(
 		t.Fatalf("removal state after the restart = (%q, %q), want (%q, %q)", state, holder, store.RemovalStateEvacuating, j.ID)
 	}
 
-	// The restarted daemon's own mounts and generated units give disk1 NC.
+	// The restarted daemon's own mounts and generated units give disk1 NC
+	// (the mover target through disk1's nosymfollow bind, #656).
 	for _, m := range second.poolMounts(t) {
-		if !strings.Contains(":"+m.What+":", ":"+disk1+"=NC:") && !strings.Contains(":"+m.What+":", ":"+filepath.Join(disk1, p359Share)+"=NC:") {
+		branches := ":" + m.What + ":"
+		if !strings.Contains(branches, ":"+disk1+"=NC:") && !strings.Contains(branches, ":"+filepath.Join(disk1, p359Share)+"=NC:") &&
+			!strings.Contains(branches, ":"+filepath.Join(disk.BranchBindFor(disk1).Where, p359Share)+"=NC:") {
 			t.Fatalf("restarted daemon's %s mount has branches %q, want disk1 NC", m.Where, m.What)
 		}
 	}
@@ -878,7 +882,7 @@ func TestLabEvacuation_DeadCatchAllMergerfs_FailsBeforeAnyCopy(t *testing.T) {
 	// the share mount is nested under it (above).
 	for _, c := range []struct{ where, branch string }{
 		{pool.SharePath(p359Share), filepath.Join(disk1, p359Share)},
-		{pool.MoverTargetPath(p359Share), filepath.Join(disk1, p359Share)},
+		{pool.MoverTargetPath(p359Share), filepath.Join(disk.BranchBindFor(disk1).Where, p359Share)},
 	} {
 		got, err := p359BranchMode(c.where, c.branch)
 		if err != nil {
