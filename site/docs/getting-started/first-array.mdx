@@ -1,0 +1,134 @@
+---
+title: Create your first array
+description: Use the storage setup wizard to choose data, parity and cache disks, format them, and start the pool, then see what happens with the first parity sync and the nightly schedule.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+An array is the set of disks Hoserva manages together: data disks that hold your files, parity disks that protect them, and an optional cache. This page walks through the setup wizard that creates it, and what to expect afterwards. You need it once, on a new server.
+
+The array is created in the web interface. The `hoserva` command-line tool has no command for it.
+
+<TrademarkNotice />
+
+## Before you start
+
+- Hoserva is installed and you have signed in. See [Install on Debian](./install-deb.md).
+- Every disk you want to use is connected and visible. Check the layout rules in [Requirements](./requirements.md): parity disks at least as large as the largest data disk, and enough disks in total.
+- You know which disks are which. Write down the device name (for example `/dev/sdb`), model and serial number of each one, as **Disk discovery** shows them. The last step names disks by device name only.
+- Anything on the disks you want to keep has been copied somewhere else, unless you plan to keep a disk's existing data in step 3.
+
+The setup wizard works only on a system with no array. If one exists, the page says **An array is already configured**.
+
+## Open the setup wizard
+
+When you finish the Welcome wizard with **Fresh install**, you arrive here. You can also open **Storage → Setup wizard** at any time. The wizard has six steps, and **Back** and **Next** move between them. Nothing is written to any disk until the last step.
+
+## Steps
+
+### 1. Disk discovery
+
+Review every disk Hoserva can see. The table shows the device, model, serial number, size, filesystem, label, SMART health, whether the disk **Contains data**, and whether it looks like an Unraid disk. The **Status** column marks each disk:
+
+- **Available:** the disk can be used.
+- **Boot disk:** the disk Debian runs from. It cannot be used as a data or parity disk.
+- **Spare partition — can hold the cache:** a spare partition of the boot disk. It can be the cache and nothing else.
+- **Weak identity:** the disk does not report a reliable serial number, usually because of its USB enclosure. It can be a data disk, but not a parity disk.
+- **Unraid USB stick:** kept exactly as it is, and it cannot be given a role.
+
+Check that the list matches the disks you expect. If a disk is missing, close the wizard, fix the connection and open it again.
+
+### 2. Role assignment
+
+Give each disk a role: **Parity**, **Data**, **Cache** or **Ignore**. A disk left **Unassigned**, or set to **Ignore**, is not touched. The wizard enforces these rules and shows the problem in red until you fix it:
+
+- At least one data disk and at least one parity disk.
+- At most two parity disks and at most one cache disk.
+- Each parity disk at least as large as the largest data disk.
+
+With one parity disk the array survives one failed disk, and with two it survives two. See [How parity works](../concepts/how-parity-works.mdx) for what parity does, and when it is updated.
+
+The wizard also warns you, without blocking you, when a disk already holds data, reports SMART problems or looks like an Unraid disk. Read each warning. If you did not expect existing data on a disk, you may have picked the wrong one.
+
+For example, with disks of 4 TB, 8 TB, 12 TB, 12 TB and a 1 TB NVMe drive, give the 4 TB, 8 TB and one 12 TB disk **Data**, the other 12 TB disk **Parity**, and the NVMe drive **Cache**.
+
+### 3. Filesystem
+
+For each data and cache disk, choose what happens to the disk:
+
+- **Format as XFS:** erase the disk and create a fresh XFS filesystem. This is the default.
+- **Keep existing data:** adopt the disk's existing filesystem without formatting it. This is offered only for a disk whose filesystem is XFS, ext4 or btrfs.
+
+Parity disks are always formatted as XFS, and the wizard says so. A disk you format loses everything on it.
+
+### 4. Pool options
+
+Two settings apply to the whole pool:
+
+- **Default create policy for new shares:** decides which disk receives a new file. **Keep folders together** is the default, and keeps the files of a folder on the same disk where there is room. The other choices are **Balance across disks**, **Quiet disks** and **Fill disks in order**. [How pooling works](../concepts/how-pooling-works.md) explains them, and you can change a share's policy later.
+- **Minimum free space per disk:** the amount of space Hoserva leaves free on each disk. The default is 50 GB. It keeps room on a data disk that is the same size as the parity disk.
+
+### 5. Review
+
+Read the **Array summary**. It gives the number of disks, the usable capacity, the parity disks and the level of protection, for example **Single-disk fault tolerance.** Below it, the preview of the **snapraid.conf** file and of the **mergerfs mount unit** show the exact configuration Hoserva will generate. You do not need to read them, and they are there for anyone who wants to check.
+
+### 6. Confirm and create
+
+The last step lists every disk that will be erased under **Disks that will be erased**.
+
+:::danger[Creating the array erases the listed disks]
+**Every disk in the list is formatted, and everything on it is lost. This cannot be undone.** The list names each disk by its device name only. Match every name against the notes you made from **Disk discovery**, or select **Back** to look it up there, before you type the phrase. Cancel if any disk is not one you meant to erase.
+:::
+
+1. Under **Type the confirmation phrase**, type the phrase shown after **Type exactly:**. It starts with `ERASE` and names the disks.
+2. Select **Create array**.
+
+Hoserva queues a job and shows its progress on the page. You can also follow it in **Jobs**. The job formats the disks you chose, mounts them, and generates the pool and SnapRAID configuration from the choices you made. A layout that cannot be set up, for example one with too few disks, is refused before any disk is formatted.
+
+## What happens next?
+
+When the job has finished, open **Storage → Pool overview**. It shows the pool, the disks in it and the capacity.
+
+### The array has no parity yet
+
+Creating the array does not calculate parity. Parity is calculated by a sync, and until the first one finishes the array has no protection: a disk that fails before then takes its files with it. Hoserva writes parity only on a schedule or when you start a sync.
+
+There are two ways to run the first sync:
+
+- **Wait for the nightly run.** The nightly maintenance chain starts at 02:00, in the timezone you chose in the Welcome wizard. It runs the mover, checks the changes against the threshold guard, runs the sync and then a config backup. On Sundays a scrub follows the sync.
+- **Start it yourself.** Open **Storage → Parity** and select **Sync now**. This is worth doing after you have copied your first data onto the array. The first sync of a large array takes hours.
+
+Change the nightly time under **Settings → Schedules**, on the **Nightly maintenance chain** card.
+
+Parity is a snapshot from the last sync. Files you add later are not protected until the next sync, and parity does not replace a backup. Read [Parity is not backup](../concepts/parity-is-not-backup.md) for what to back up separately, and [What happens when a disk dies](../concepts/what-happens-when-a-disk-dies.md) to know what to expect.
+
+If you gave a disk the **Cache** role, new writes can land on it first and the mover later moves them to the array. See [Cache and mover](../concepts/cache-and-mover.mdx).
+
+## Troubleshooting
+
+### Next is disabled on the role assignment step
+
+The wizard names the problem in the **Fix these problems before continuing** box. The common causes are a missing data or parity disk, a parity disk smaller than the largest data disk, and a disk with a weak identity chosen as parity. Change the roles until the box disappears.
+
+### A disk is not in the list
+
+The wizard lists the disks that Hoserva can see. Check that the disk is powered and connected, and then reload the wizard. A disk behind some USB enclosures may not show a serial number. It is listed as **Weak identity**.
+
+### The array creation failed
+
+The wizard shows **Array creation failed**, or the job in **Jobs** ends as failed, and gives the reason. Read it, correct the roles or the disks, and run the wizard again.
+
+### The pool shows Not mounted after the job finishes
+
+Start the array from the server.
+
+```bash
+sudo hoserva array start
+```
+
+## Next steps
+
+- [How parity works](../concepts/how-parity-works.mdx)
+- [How pooling works](../concepts/how-pooling-works.md)
+- [Cache and mover](../concepts/cache-and-mover.mdx)
+- [What happens when a disk dies](../concepts/what-happens-when-a-disk-dies.md)
