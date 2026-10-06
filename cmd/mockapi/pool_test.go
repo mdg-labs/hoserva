@@ -9,6 +9,7 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
+	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
 func TestMockGetPool_MountedFollowsTheArrayStopAndStart(t *testing.T) {
@@ -193,6 +194,26 @@ func TestMockCacheDiskIsConsistentAcrossReports(t *testing.T) {
 			want := scenario == "healthy"
 			if stored != want || pooled != want || listed != want {
 				t.Fatalf("cache disk in stored array = %v, pool = %v, inventory = %v; want all %v", stored, pooled, listed, want)
+			}
+		})
+	}
+}
+
+// Real device paths are unique, and the disks page keys its rows by device:
+// no scenario's inventory may list one path twice, and the USB disk must be
+// the one the external-disk endpoints report.
+func TestMockDiskInventory_DevicePathsAreUnique(t *testing.T) {
+	for _, scenario := range fixtures.Scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			seen := map[string]string{}
+			for _, d := range mockDiskInventory(scenario) {
+				if prev, dup := seen[d.Device]; dup {
+					t.Errorf("%s listed twice: serial %q and %q", d.Device, prev, d.Serial.Or(""))
+				}
+				seen[d.Device] = d.Serial.Or("")
+			}
+			if _, ok := seen[mockExternalDevice]; !ok {
+				t.Errorf("the USB disk %s is not in the inventory", mockExternalDevice)
 			}
 		})
 	}

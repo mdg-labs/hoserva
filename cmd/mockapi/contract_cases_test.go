@@ -3343,7 +3343,7 @@ var contractCases = []contractCase{
 		op:   "RegisterExternalDisk",
 		name: "valid_new_device",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"})
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"})
 			return err
 		},
 	},
@@ -3426,7 +3426,7 @@ var contractCases = []contractCase{
 		op:   "RegisterExternalDisk",
 		name: "invalid_label_is_refused",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "../etc"})
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "../etc"})
 			return err
 		},
 	},
@@ -3436,7 +3436,7 @@ var contractCases = []contractCase{
 		op:   "UpdateExternalDisk",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"}); err != nil {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"}); err != nil {
 				return err
 			}
 			_, err := h.UpdateExternalDisk(ctx, &apiv1.UpdateExternalDiskRequest{BackupDestination: apiv1.NewOptBool(true)}, apiv1.UpdateExternalDiskParams{Label: "backup2"})
@@ -3450,7 +3450,7 @@ var contractCases = []contractCase{
 		op:   "UpdateExternalDisk",
 		name: "flag_clashing_with_a_destination_name",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"}); err != nil {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"}); err != nil {
 				return err
 			}
 			if _, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{Name: "Backup2", Type: apiv1.BackupDestinationTypeLocal, Path: "/srv/elsewhere"}); err != nil {
@@ -3467,7 +3467,7 @@ var contractCases = []contractCase{
 			if _, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{Name: "Backup2", Type: apiv1.BackupDestinationTypeLocal, Path: "/srv/elsewhere"}); err != nil {
 				return err
 			}
-			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)})
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2", BackupDestination: apiv1.NewOptBool(true)})
 			return err
 		},
 	},
@@ -3477,7 +3477,7 @@ var contractCases = []contractCase{
 		op:   "DeleteBackupDestination",
 		name: "external_destination_twice",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
 				return err
 			}
 			if err := h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "external:backup2"}); err != nil {
@@ -3536,7 +3536,7 @@ var contractCases = []contractCase{
 		op:   "FormatExternalDisk",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: "ERASE /dev/sdf"}, apiv1.FormatExternalDiskParams{Label: "backup"})
+			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: "ERASE " + mockExternalDevice}, apiv1.FormatExternalDiskParams{Label: "backup"})
 			return err
 		},
 	},

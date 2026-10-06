@@ -10,7 +10,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
-const mockExternalDevice = "/dev/sdf"
+const mockExternalDevice = "/dev/sdi"
 const mockExternalLabel = "backup"
 
 func mockUSBDisk() apiv1.DiskInventoryEntry {

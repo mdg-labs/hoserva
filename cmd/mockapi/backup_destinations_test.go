@@ -16,7 +16,7 @@ func TestMockTestBackupDestination_ExternalDiskFollowsItsMountState(t *testing.T
 	}
 	ctx := context.Background()
 
-	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
+	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
 		t.Fatal(err)
 	}
 	params := apiv1.TestBackupDestinationParams{DestinationId: "external:backup2"}
@@ -84,7 +84,7 @@ func TestMockTestBackupDestination_HandAddedExternalPathFollowsItsMountState(t *
 	}
 	ctx := context.Background()
 
-	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"}); err != nil {
+	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"}); err != nil {
 		t.Fatal(err)
 	}
 	id := addLocalDestination(t, h, "Hand added", "/mnt/disks/backup2/hoserva")

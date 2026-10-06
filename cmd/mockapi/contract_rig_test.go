@@ -611,16 +611,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	extMounter := disk.NewFakeMounter()
 	extRunner := disk.NewFakeRunner()
 	// mockDiskInventory's own mockUSBDisk() entry (Label "backup",
-	// Device /dev/sdf, Filesystem "xfs") is what FakeProvider.AddDisk
-	// keeps for /dev/sdf once every mockDiskInventory entry has been
-	// added (later entries win — mockUSBDisk is appended last) — the
-	// same device the "spare disk" cases above resolve against, now
-	// carrying a filesystem. RegisterExternalDisk/resolveExternal read
-	// its real filesystem UUID through h.diskRunner() (external_handler.
-	// go's own FilesystemUUID call) rather than falling back to a
-	// pending one, so MountExternalDisk's own valid case can resolve a
-	// disk that is not "format before mounting".
-	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdf"}, []byte("ext-fixture-uuid\n"), nil)
+	// Device mockExternalDevice, Filesystem "xfs") is the only disk the
+	// external-disk cases resolve. RegisterExternalDisk/
+	// resolveExternal read its real filesystem UUID through
+	// h.diskRunner() (external_handler.go's own FilesystemUUID call)
+	// rather than falling back to a pending one, so MountExternalDisk's
+	// own valid case can resolve a disk that is not "format before
+	// mounting".
+	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", mockExternalDevice}, []byte("ext-fixture-uuid\n"), nil)
 
 	// Registered last, so t.Cleanup's LIFO order runs this before every
 	// other cleanup above — the db.Close, the netSvc.Close, the mount.Close
