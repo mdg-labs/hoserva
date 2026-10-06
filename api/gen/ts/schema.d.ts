@@ -4826,7 +4826,7 @@ export interface components {
             boot: boolean;
             failed?: boolean;
             weakIdentity?: boolean;
-            /** @description True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3). Hoserva only reads it for a migration and never assigns it a role: every role and every external-disk operation on it is refused with `409 unraid_stick`, so a client offers it no role. */
+            /** @description True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3). Hoserva only reads it for a migration and never assigns it a role: every role assignment, and registering, mounting, formatting or enabling it as a backup destination as an external disk, is refused with `409 unraid_stick`, so a client offers it no role. Ejecting a stick registered before it was recognised still works, so it can be taken offline. */
             unraidStick?: boolean;
             /** @description Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk (doc 02 §1, §4, doc 03 §3.1). */
             filesystem?: string;
