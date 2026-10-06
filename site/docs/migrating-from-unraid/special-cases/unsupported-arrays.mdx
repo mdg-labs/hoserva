@@ -1,0 +1,57 @@
+---
+title: Unsupported arrays
+description: Why the migration refuses encrypted, ZFS and multi-device btrfs data disks, how the scan reports them, and how to move the data onto supported disks first.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+Hoserva refuses to migrate an Unraid array that has an encrypted disk, a ZFS disk or a disk in a multi-device btrfs filesystem. This page explains why each is refused, what the scan shows, and how to move your data onto disks Hoserva can adopt while Unraid is still running.
+
+<TrademarkNotice />
+
+## Which disks are refused, and why?
+
+Hoserva adopts XFS, ext4 and single-device btrfs data disks, and nothing else. For the three cases below there is no option to adopt the disk anyway.
+
+| Disk | How the scan recognises it | Why it is refused |
+|---|---|---|
+| **Encrypted** (`encrypted`) | Unraid's configuration names a filesystem that starts with `luks:`, such as `luks:xfs`, or the disk itself is an encrypted LUKS container. | Hoserva does not adopt encrypted disks. Unraid itself warns that encryption makes recovery harder when something is corrupted, and Hoserva does not take that risk with your data. |
+| **ZFS** (`zfs`) | Unraid's configuration names ZFS, or the disk holds a ZFS member. | Hoserva cannot read ZFS. Doing so would need OpenZFS, which Hoserva does not include. |
+| **Multi-device btrfs** (`multi_device_btrfs`) | The disk's own superblock says its btrfs filesystem spans more than one device. | Hoserva needs every data disk to be a complete filesystem on its own, because each disk is mounted separately and parity is calculated per disk. One member of a larger btrfs filesystem is not that. |
+
+The word in brackets is the refusal's code. If you read the scan as JSON, with `hoserva migrate status --json`, each refused disk in the review part of the report carries it as `refusalCode`. A disk with any other filesystem is refused the same way, with the code `unsupported_filesystem`.
+
+These refusals are about the data disks of the array. A cache is never adopted: it is emptied in step 5 of [Before you start](../before-you-start.mdx) and re-created, so a multi-device btrfs cache pool is not refused.
+
+## What does the scan show?
+
+The scan checks every data disk, refuses the ones above by name and carries on with the rest. You see the refusal in three places:
+
+- The **Data disk filesystem** check marks the disk **Blocked**. Its detail says the disk is not adopted and gives the reason, for example that it is encrypted or that it is a ZFS disk.
+- The verdict becomes **No-go**, and the report lists the disk under **Blocks the migration**.
+- In the **Review** step, the disk's row under **Disk roles** is marked **Not adopted**, and the import is not offered. The page says that the scan found a problem that blocks the migration, and to fix it and scan again.
+
+Nothing has been written to any disk at this point. The scan only reads, so you can stop and take your time.
+
+## How do I move the data onto supported disks?
+
+The way out is to empty the disk onto supported ones in Unraid, while Unraid is still running and your array is still protected, and then convert it. The steps are the same for all three kinds of disk.
+
+1. Check that the XFS, ext4 or btrfs disks in the array have enough free space for what is on the disk you are emptying. If they do not, add a disk to the Unraid array first.
+2. Copy the files off the unsupported disk onto the supported disks, and check the copy. Do not delete anything yet.
+3. Convert the emptied disk to XFS, ext4 or single-device btrfs. Unraid's own documentation describes how to change a disk's file system.
+
+   :::danger[Formatting a disk erases it]
+   **Format the emptied disk only after you have checked that its files exist on another disk.** Formatting in Unraid destroys everything on the disk.
+   :::
+
+4. Run a full parity check, as in step 6 of [Before you start](../before-you-start.mdx).
+5. Run the prepare script again and take a new Flash Backup, because the scan reads each disk's filesystem type from it. Then scan again.
+
+For a multi-device btrfs filesystem, copy the files off the whole filesystem, because they may be spread over several of its devices, and rebuild those disks as single-device filesystems.
+
+## Next steps
+
+- [Before you start](../before-you-start.mdx) is the checklist to finish before you migrate.
+- [btrfs and ext4 data disks](./btrfs-and-ext4-data-disks.mdx) covers the checks a supported disk still has to pass.
+- [Troubleshooting](../troubleshooting.mdx#a-disk-is-refused) lists every reason a disk is refused.

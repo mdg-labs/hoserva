@@ -1,0 +1,63 @@
+---
+title: No cache disk
+description: How to migrate an Unraid server that has no cache disk, which steps do not apply, and what to know about appdata, shares and adding a cache later.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+A server with no cache disk migrates like any other, with fewer steps. Its appdata is already on the array, so there is no cache to empty and nothing to move back. This page lists what changes and what to watch for.
+
+<TrademarkNotice />
+
+## What changes without a cache disk?
+
+| Step | With a cache disk | Without one |
+|---|---|---|
+| Step 5, empty the cache | Everything on the cache moves to the array first. | Nothing to empty. Your shares and appdata are on the array already. |
+| Step 17, initialise parity | Erases the former parity disks and the cache device. | Erases the former parity disks only. The confirmation you type names only those disks. |
+| Step 18, move appdata back to the cache | Relocates the `appdata` share onto the cache. | Not applicable. Appdata stays on the array. |
+| Closing checklist | **Appdata moved back onto the cache** is an item to do. | The item shows as `[-]`, not applicable, in `hoserva migrate checklist`. |
+
+The checklist marks the item not applicable when the scan could read Unraid's disk roles and none of them was a cache.
+
+Docker's own storage is not carried over with or without a cache. Images are pulled again, and state a container kept inside itself is lost. The prepare script lists that state per container, as described in [Before you start](../before-you-start.mdx).
+
+## What should I watch for?
+
+### Enough data disks for SnapRAID's index copies
+
+SnapRAID keeps copies of its index of your files, called content files, on different disks. Hoserva keeps one copy for each parity disk plus two more. They go on the boot device, then on a cache disk of its own if there is one, then on data disks. Without a cache disk, one parity disk therefore needs at least two data disks, and two parity disks need at least three.
+
+The scan reports this under **Room for parity index files**. The import refuses a layout that cannot place all the copies.
+
+### Template paths under `/mnt/cache`
+
+Hoserva creates `/mnt/cache` only when there is a cache disk, and it does not flag a template path under it. If a container's template still points at `/mnt/cache/...`, the folder does not exist on this server. Change the path to the matching `/mnt/user/...` folder before you start the container. `hoserva migrate containers check <name>` reports a folder that is missing.
+
+### Appdata is not covered by the appdata backup
+
+Hoserva's appdata backup looks only at the `appdata` folder on the cache disk. Without a cache disk it has nothing to back up, so your apps' settings and databases are not in it. They are on the data disks, where parity protects them against a disk failure but not against deletion or corruption. Back them up with your other data. See [Backing up your data](../../guides/backing-up-your-data.mdx), and [Parity is not backup](../../concepts/parity-is-not-backup.md) for what parity does and does not cover.
+
+### Every share is array-only
+
+The import creates each share array-only, because no cache exists before the point of no return. Without a cache disk, a share cannot use the cache modes **Cache then move** or **Cache only**. If a share's Unraid settings still named a cache, **Shares created** shows its mode under **Cache** with the words "once the cache exists", and the share stays array-only.
+
+## Can I add a cache disk later?
+
+Hoserva cannot add a cache disk to an array that has already been set up. **Add disk** adds data disks only. If you think you may want a cache, add it as part of the migration:
+
+:::danger[The cache disk is erased]
+**Step 17 erases the disk you give the role Cache and formats it as Hoserva's cache.** Use a disk whose contents you do not need.
+:::
+
+1. Attach the disk before you scan, so the scan lists it. It appears under **Disk roles** with the badge **Not in the Unraid configuration**.
+2. In the **Review** step, choose **Cache** under **Role in Hoserva** for that disk.
+3. At the point of no return, check that the confirmation you type names it, together with the former parity disks.
+
+From then on the server has a cache disk, and step 18 is open to you as it is to any server with one. A share whose Unraid settings named a cache gets that cache mode at step 17, the mode **Shares created** shows with "once the cache exists". Every other share stays array-only until you choose its cache mode, as [Cache and mover](../../concepts/cache-and-mover.mdx) describes.
+
+## Next steps
+
+- [Before you start](../before-you-start.mdx) lists the steps, including step 5, which you can skip.
+- [The migration](../the-migration.mdx) shows where step 18 falls.
+- [After the migration](../after-the-migration.mdx) covers the closing checklist.

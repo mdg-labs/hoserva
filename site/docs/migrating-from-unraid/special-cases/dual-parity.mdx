@@ -1,0 +1,48 @@
+---
+title: Dual parity
+description: How an Unraid array with two parity disks migrates, with both disks erased and rebuilt as Hoserva parity, and what that costs in time and index copies.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+If your Unraid array has two parity disks, Hoserva migrates it with two parity disks. Both are erased and rebuilt from scratch. This page explains what that means for your parity disks, for the first sync and for the number of disks the migration needs.
+
+<TrademarkNotice />
+
+## What happens to the two parity disks?
+
+Hoserva supports one or two parity disks, and a second one needs no special handling. It is treated exactly like the first:
+
+- **Nothing on them is kept.** Parity is the information that lets you rebuild a failed disk. The parity Unraid wrote is meaningless to Hoserva, so it is never read or reused.
+- **Both are erased at the point of no return.** When you initialise parity, Hoserva formats both former parity disks for its own use. The confirmation you type names both of them, for example `ERASE /dev/sdb, /dev/sdc`, together with the cache device if there is one.
+- **Both are filled again by the first sync.** Hoserva calculates parity for every data disk and writes it to both disks. Until that sync finishes, neither disk holds usable parity.
+
+:::danger[Both parity disks are erased]
+**After the point of no return, Unraid can no longer rebuild a disk from either parity disk.** Going back to Unraid means restoring from a backup. See [Rollback](../rollback.mdx).
+:::
+
+Your data disks are not touched by this. They are adopted as they are and never formatted.
+
+## What does the scan check?
+
+The scan's **Parity setup** row reports how many parity disks Unraid had and notes that parity is rewritten from scratch either way. Two findings are **Blocked** and stop the migration until you resolve them: more than two parity disks, because Hoserva supports one or two, and a parity disk smaller than the largest data disk, reported under **Parity size**, because parity must be at least as large as the largest data disk.
+
+In the **Review** step, both parity disks are pre-filled with the role **Parity** under **Disk roles**. Under **Role in Hoserva**, choose one or two disks as **Parity**. With none, or with more than two, the page shows **No parity disk is chosen** or **Too many parity disks are chosen**, and you cannot go on.
+
+## How long does the first sync take?
+
+Dual parity does not shorten the unprotected window. Until the first sync has finished, the array has no redundancy at all, even though Unraid could survive two failed disks. The sync is a full parity build, and with two parity disks it writes two sets of parity.
+
+The scan's **First sync estimate** row gives a planning figure from the size of your data disks, at an assumed 400 MB/s: about 17 hours for 24 TB of data. The estimate counts the data disks only and does not change with the number of parity disks, so allow more time than it states. Read [Before you start](../before-you-start.mdx) and plan for the window.
+
+## Do I need more data disks?
+
+SnapRAID keeps copies of its index of your files, called content files, on different disks. Hoserva keeps one copy for each parity disk plus two more, so two parity disks mean four copies. They go on the boot device, then on the cache if it is a device of its own, then on data disks. A cache that is a partition of the boot disk does not count as another device.
+
+Without a separate cache disk, two parity disks therefore need at least three data disks. With a cache disk of its own, two data disks are enough. The scan reports this under **Room for parity index files**, and the import refuses a layout that cannot place all the copies. If yours is refused, keep another data disk in the import or give it a cache disk of its own.
+
+## Next steps
+
+- [The migration](../the-migration.mdx) walks through the point of no return, step 17.
+- [Rollback](../rollback.mdx) explains what going back means before and after it.
+- [How parity works](../../concepts/how-parity-works.mdx) explains what parity protects and when it is updated.
