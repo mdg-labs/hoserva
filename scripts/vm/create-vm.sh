@@ -75,8 +75,9 @@ else
 fi
 
 # VARIANT (issue #570) sizes each array disk its spec names, by target, from
-# that Unraid fixture variant's spec (doc 06 §5), so the L3 build lays out the
-# same partitions as the L2 one. A disk no spec line targets keeps the size
+# that Unraid fixture variant's spec (doc 06 §5) at its l3size=, else size=, so
+# the L3 build lays out the same partition scheme as the L2 one. A disk no spec
+# line targets keeps the size
 # above. Everything is resolved here, before the first image is fetched or
 # created: a missing variant, a spec line without a size or target, or a target
 # this topology has no disk for refuses the whole run. The shared-nvme topology
