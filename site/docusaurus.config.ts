@@ -4,9 +4,10 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 // Versioning rules: docs/internal/13-open-questions.md Q90. With no
-// versions.json the current docs are the whole site, at the root. Once
-// `docs:version` has made a snapshot, the latest stable version takes the
-// root and the current docs move to /next/, kept out of search engines.
+// versions.json the current docs are the whole docs site, at /docs/. Once
+// `docs:version` has made a snapshot, the latest stable version takes /docs/
+// and the current docs move to /docs/next/, kept out of search engines. The
+// site root and /apps are custom pages beside the docs plugin.
 const versionsFile = path.join(__dirname, 'versions.json');
 const versions: string[] = fs.existsSync(versionsFile)
   ? JSON.parse(fs.readFileSync(versionsFile, 'utf8'))
@@ -36,7 +37,7 @@ const config: Config = {
       'classic',
       {
         docs: {
-          routeBasePath: '/',
+          routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
           lastVersion: hasVersions ? versions[0] : undefined,
           versions: {
@@ -63,7 +64,7 @@ const config: Config = {
         indexDocs: true,
         indexBlog: false,
         indexPages: false,
-        docsRouteBasePath: '/',
+        docsRouteBasePath: 'docs',
       },
     ],
   ],

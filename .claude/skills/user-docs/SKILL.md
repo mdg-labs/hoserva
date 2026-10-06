@@ -316,13 +316,13 @@ The heading is a good link target because it is specific and stable: `[what happ
 
 ## Versioned docs
 
-The mechanics (the snapshot per stable minor, `/next/`, banners, the release step, fixing and dropping a version) are in `site/README.md` and in Q90 of the open-questions doc. They are not repeated here. As a writer:
+The mechanics (the snapshot per stable minor, `/docs/next/`, banners, the release step, fixing and dropping a version) are in `site/README.md` and in Q90 of the open-questions doc. They are not repeated here. As a writer:
 
-1. **New and changed documentation goes in `site/docs/` only.** Once a version exists, `site/docs/` is served as `/next/`.
+1. **New and changed documentation goes in `site/docs/` only.** Once a version exists, `site/docs/` is served as `/docs/next/`, and the latest stable version as `/docs/`.
 2. **Patch a snapshot only to correct something wrong in it.** Fix the latest stable snapshot (`site/versioned_docs/version-X.Y/`) when the same page there states something incorrect. Do not put new behaviour in a snapshot. Edit an older snapshot only to fix a real error.
 3. **Never run `docusaurus docs:version`.** It runs only in the release-prep commit. Do not edit `versions.json` or `versioned_sidebars/` either; dropping a version is a maintainer step.
 4. **No version annotations in pages.** A page describes its own version's behaviour, and the snapshot is the version record. Do not write "since 0.3", "new in 1.2" or "this will change in the next release".
-5. **Links stay relative file links**, so a page works unchanged in every snapshot. Never link to `/next/` or to a version path.
+5. **Links stay relative file links**, so a page works unchanged in every snapshot. Never link to `/docs/next/` or to a version path.
 6. **A snapshot's pages follow every rule in this file** like any other page.
 7. **With no `versions.json`**, there are no snapshots and rule 1 is the only rule that applies.
 

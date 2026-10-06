@@ -27,8 +27,7 @@ vi.mock("@/lib/api/client", () => ({
   },
 }));
 
-const DOCS_BEFORE_YOU_START = "https://hoserva.dev/migrating-from-unraid/before-you-start";
-const DOCS_THE_MIGRATION = "https://hoserva.dev/migrating-from-unraid/the-migration";
+const DOCS_BEFORE_YOU_START = "https://hoserva.dev/docs/migrating-from-unraid/before-you-start";
 
 const ok = (data: unknown): ApiResult => ({ data, response: { ok: true } });
 const refused = (message: string, code = "invalid_zip"): ApiResult => ({
@@ -502,7 +501,7 @@ describe("the migration workspace", () => {
       expect(await within(banner).findByText(/Every template is listed as unknown/)).toBeInTheDocument();
       expect(within(banner).getByRole("link", { name: "Read the capture steps" })).toHaveAttribute(
         "href",
-        DOCS_THE_MIGRATION,
+        DOCS_BEFORE_YOU_START,
       );
       expect(screen.getByText("Step 2 of 4")).toBeInTheDocument();
       expect(await screen.findByText("gateway")).toBeInTheDocument();

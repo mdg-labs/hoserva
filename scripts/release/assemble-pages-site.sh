@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assembles the GitHub Pages artifact for hoserva.dev (Q66, Q3, Q65):
-# docs (or a placeholder until site/ exists) at the root and the release
-# index under /releases/. The catalog is published from its own
+# the site build (the root page, with the docs under /docs/; a placeholder
+# until site/ exists) and the release index under /releases/. The catalog is published from its own
 # repository at catalog.hoserva.dev (Q66, Q65), so this site has no
 # /catalog/ path and strips one if a docs tree tries to add it. Apt is
 # not part of this origin and is stripped too.
@@ -15,7 +15,7 @@
 # site-build` builds it and site/dist is used; the build output is never
 # taken from an earlier run. A failed build, or a build with no
 # site/dist/index.html, stops the assembly rather than publishing a
-# placeholder over the docs. Without a site/ project the placeholder page
+# placeholder over the site. Without a site/ project the placeholder page
 # that points at the GitHub repository is used.
 #
 # HOSERVA_PAGES_MAX_BYTES (default 900 MiB) is the fail-before-deploy
