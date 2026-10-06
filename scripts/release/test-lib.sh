@@ -121,8 +121,11 @@ if (cd "$repo" && hoserva_verify_tag_ancestry v9.9.9) >/dev/null 2>&1; then
 fi
 
 # hoserva_verify_docs_snapshot: throwaway fixture trees, never the real
-# site/. A stable tag needs site/versioned_docs/version-X.Y/ and an X.Y
-# entry in site/versions.json; a beta tag needs neither.
+# site/. A stable tag needs site/versioned_docs/version-X.Y/,
+# site/versioned_sidebars/version-X.Y-sidebars.json and an X.Y entry in
+# site/versions.json; a beta tag needs none of them. docs_tree writes the
+# sidebar beside the snapshot directory unless its fourth argument is
+# nosidebar.
 docs_dir="$(mktemp -d)"
 trap 'cleanup; rm -rf "$git_dir" "$docs_dir"' EXIT
 
@@ -130,7 +133,13 @@ docs_ok() { hoserva_verify_docs_snapshot "$1" "$2" >/dev/null 2>&1; }
 docs_tree() {
   local root="$docs_dir/$1" versions="$2"
   mkdir -p "$root/site"
-  [ -z "$3" ] || mkdir -p "$root/site/versioned_docs/version-$3"
+  if [ -n "$3" ]; then
+    mkdir -p "$root/site/versioned_docs/version-$3"
+    if [ "${4:-}" != nosidebar ]; then
+      mkdir -p "$root/site/versioned_sidebars"
+      printf '{}' >"$root/site/versioned_sidebars/version-$3-sidebars.json"
+    fi
+  fi
   [ -z "$versions" ] || printf '%s' "$versions" >"$root/site/versions.json"
   echo "$root"
 }
@@ -162,6 +171,19 @@ if docs_ok v0.1.0 "$nodir"; then
   note "FAIL: a stable tag without site/versioned_docs/version-0.1/ should be refused"
   fail=1
 fi
+nosidebar="$(docs_tree nosidebar '["0.1"]' 0.1 nosidebar)"
+if docs_ok v0.1.0 "$nosidebar"; then
+  note "FAIL: a stable tag without site/versioned_sidebars/version-0.1-sidebars.json should be refused"
+  fail=1
+fi
+nosidebar_err="$(hoserva_verify_docs_snapshot v0.1.0 "$nosidebar" 2>&1 || true)"
+case "$nosidebar_err" in
+  *site/versioned_sidebars/version-0.1-sidebars.json*"npx docusaurus docs:version 0.1"*) ;;
+  *)
+    note "FAIL: the refusal should name the missing sidebar and the docs:version command, got: $nosidebar_err"
+    fail=1
+    ;;
+esac
 nolist="$(docs_tree nolist '["0.2"]' 0.1)"
 if docs_ok v0.1.0 "$nolist"; then
   note "FAIL: a stable tag whose minor is not in versions.json should be refused"

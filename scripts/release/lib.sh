@@ -53,7 +53,8 @@ hoserva_verify_tag_ancestry() {
 
 # hoserva_verify_docs_snapshot fails unless a stable tag $1 has its docs
 # version snapshot in the checkout at $2: site/versioned_docs/version-X.Y/
-# exists and site/versions.json lists "X.Y" (one snapshot per stable
+# and site/versioned_sidebars/version-X.Y-sidebars.json exist and
+# site/versions.json lists "X.Y" (one snapshot per stable
 # minor, made before tagging; doc 13 Q90). A beta tag needs none. Every
 # failure — an unrecognised tag, a missing or malformed versions.json, no
 # jq — refuses the release; nothing here is allowed to pass on error.
@@ -65,10 +66,15 @@ hoserva_verify_docs_snapshot() {
   minor="${tag#v}"
   minor="${minor%.*}"
   local snapshot_dir="site/versioned_docs/version-$minor"
+  local sidebar_file="site/versioned_sidebars/version-$minor-sidebars.json"
   local versions_file="site/versions.json"
   local hint="run 'npx docusaurus docs:version $minor' in site/, commit the result in the release-prep commit on dev, and merge it to main before tagging"
   if [ ! -d "$root/$snapshot_dir" ]; then
     echo "hoserva_verify_docs_snapshot: '$tag' has no $snapshot_dir/ — $hint" >&2
+    return 1
+  fi
+  if [ ! -f "$root/$sidebar_file" ]; then
+    echo "hoserva_verify_docs_snapshot: '$tag' has no $sidebar_file — $hint" >&2
     return 1
   fi
   if ! command -v jq >/dev/null 2>&1; then
