@@ -60,6 +60,8 @@ existing line by adding its PR number.
 - **fail-open** — a paired stop-then-start recovery step reads live status to decide whether the start is still owed, but live status can't distinguish "never touched" from "an earlier attempt's stop succeeded and its start didn't", so a retry after a failed start silently skips finishing it and reports success — PR 421
 - **fail-open** — a teardown discards each step's error and returns the run's own status, so a mount or device it could not remove stays behind while the run exits 0 — PR 579
 - **fail-open** — a config edit that matches only the exact expected line (`sed s/^Components: main$/…/`) silently changes nothing when the line carries more values, so the step it enables fails later with an unrelated error — PR 581
+- **fail-open** — a mount or bind made from a disk's mountpoint path checks only that the path exists, not that the disk is mounted there, so an unmounted disk's bare directory on the root filesystem is served in its place — PR 688
+- **fail-open** — a completeness gate checks only some of the files the documented procedure produces and says to commit (a docs snapshot without its versioned sidebar), so an incomplete result passes — PR 688
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks, and not put back by a rollback that did complete the stop) — PR 199, 246, 338, 395
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
@@ -88,6 +90,7 @@ existing line by adding its PR number.
 - **drift** — a UI rule derived from one flow's backend contract (schema versions differ → no change groups) applied unchanged to a second flow whose backend does send that data, so the page hides what the server returned — PR 474
 - **drift** — a hand-kept web list of an API enum (notification event types) not extended when the spec gains a value, so the new value gets no settings row or label — PR 531
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
+- **ui-copy** — help text describes an action as only a check when it can carry out the operation itself (opening an override re-runs the sync, which proceeds if the guard now clears) — PR 688
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **ui-states** — a download's object URL revoked in the same task as `anchor.click()`, so a browser that resolves the download asynchronously finds the blob gone and saves nothing, with no error shown — PR 589
 - **ui-states** — a reload that settles an unanswered save replaces the editor's unsent text with the server's copy and keeps nothing to restore it from, including edits made between a failed reload and its retry — PR 555
@@ -154,6 +157,7 @@ existing line by adding its PR number.
 - **tests** — a test swaps process-global state (the `log` output) and its cleanup restores a hard-coded default rather than the value it saved, clobbering whatever an earlier caller set — PR 527
 - **docs** — a design doc or spike verdict says a behaviour is verified (by fixtures, the lab or the scan) when the check that would verify it has not been built yet — PR 562
 - **docs** — a fixture or spec comment states a property only one build tier produces (an L2-only partition layout) as if every build had it — PR 568
+- **docs** — a user-facing command block that is not safe to paste (an `export VAR=<value>` the shell reads as redirection) or whose surrounding text it contradicts (an `export` of a secret said to keep it out of shell history) — PR 688
 
 ## Catalog templates
 - **template** — an image option that prints credentials (peer configuration QR codes) to the container log left switched on, when the image also saves them in the app's folder — catalog PR 81
