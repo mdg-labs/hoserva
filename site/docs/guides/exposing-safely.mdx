@@ -111,14 +111,14 @@ A personal API token lets a script or a remote `hoserva` command act as one of y
   </TabItem>
 </Tabs>
 
-To use a token from another computer on your network or over a VPN, point `hoserva` at the server and pass the token:
+To use a token from another computer on your network or over a VPN, point `hoserva` at the server and pass the token. The first command asks for the token, so paste it when it prompts and press Enter:
 
 ```bash
-export HOSERVA_TOKEN=<token>
+read -rsp 'Token: ' HOSERVA_TOKEN && export HOSERVA_TOKEN
 hoserva --host 192.168.1.20 status
 ```
 
-`--host` connects over HTTPS on port 8008. Use `--port` if you changed the listen port. With the default self-signed certificate, add `--insecure-skip-tls-verify`. Setting the token in `HOSERVA_TOKEN` keeps it out of your shell history, and `--token` works too.
+`--host` connects over HTTPS on port 8008. Use `--port` if you changed the listen port. With the default self-signed certificate, add `--insecure-skip-tls-verify`. Reading the token into `HOSERVA_TOKEN` this way keeps it off the screen and out of your shell history. `--token` works too, but the token then ends up in your shell history.
 
 ## What about exposing an app through a reverse proxy?
 
