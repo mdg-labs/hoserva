@@ -125,6 +125,9 @@ describe("issue #271 — cache page's mode dialog stays busy across the whole ha
             resolve({ data: { shares: [{ ...share(), cacheMode: "array-only" as const }] }, response: { ok: true } });
         });
       }
+      if (path === "/shares/{name}/relocation-precheck") {
+        return Promise.resolve({ data: { dockerAvailable: true, containers: [], openPaths: [] }, response: { ok: true } });
+      }
       return Promise.resolve({ data: null, response: { ok: false } });
     });
     mockPatch.mockImplementation((path: string) => {
@@ -155,7 +158,10 @@ describe("issue #271 — cache page's mode dialog stays busy across the whole ha
     const cancelButton = within(dialog).getByRole("button", { name: "Cancel" });
     expect(cancelButton).not.toBeDisabled();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Change mode and relocate" }));
+    // The relocation is held until the precheck of the share has answered.
+    const relocateButton = within(dialog).getByRole("button", { name: "Change mode and relocate" });
+    await waitFor(() => expect(relocateButton).toBeEnabled());
+    fireEvent.click(relocateButton);
 
     // The PATCH has resolved and the second GET /shares (the refetch) is
     // now the only thing still in flight.

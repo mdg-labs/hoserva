@@ -437,6 +437,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	logs := job.NewLogStore(t.TempDir())
 	registry := job.NewRegistry()
 	scheduler := job.NewScheduler(jobStore, logs, job.NewHub(), registry)
+	scheduler.SetMigrationPending(arrayStore.MigrationUnfinished)
 	noop := func(context.Context, *job.RunContext) error { return nil }
 	// A started migration stack's start job stays running until the rig is
 	// torn down, so the one-at-a-time gate sees it as not over — the state the
@@ -642,6 +643,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 
 	appdata := filepath.Join(t.TempDir(), "appdata")
 	containers := contractContainerProvider(t, appdata)
+	relocationRoot := t.TempDir()
 	h := &api.Handler{
 		Scheduler: scheduler,
 		Store:     jobStore,
@@ -692,6 +694,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 			Root:   filepath.Join(t.TempDir(), "stacks"),
 		},
 		ArrayStore: arrayStore,
+		// The relocation precheck resolves a share to temporary, empty cache
+		// and branch directories (this rig mounts nothing for real) and reads
+		// open files from a fake, never /proc.
+		RelocationShare: func(_ context.Context, name string) (cache.Share, error) {
+			root := filepath.Join(relocationRoot, name)
+			return cache.Share{Name: name, CachePath: filepath.Join(root, "cache"), Branches: []string{filepath.Join(root, "disk1")}}, nil
+		},
+		RelocationOpen: cache.NewFakeOpenChecker(),
 		// ArrayReady: CancelDiskRemoval (#361) is the only handler method
 		// that calls it directly rather than through a job — this rig
 		// never mounts anything for real (Array's own doc comment
@@ -1026,6 +1036,25 @@ func (s *scriptedCatalogRefresher) Last() (template.CheckResult, bool) {
 // contractDBs is each production handler's database, so a case can end a
 // migration through the store's own step.
 var contractDBs sync.Map
+
+// contractStartMigration gives whichever side h is an unfinished migration, the
+// state production's scheduler refuses parity, array-write and topology jobs
+// in: the array record's migration_pending flag, and the mock's pending import.
+func contractStartMigration(ctx context.Context, h apiv1.Handler) error {
+	switch s := h.(type) {
+	case *api.Handler:
+		raw, ok := contractDBs.Load(s)
+		if !ok {
+			return fmt.Errorf("contractStartMigration: no database for the production handler")
+		}
+		_, err := raw.(*sql.DB).ExecContext(ctx, `UPDATE array_settings SET migration_pending = 1`)
+		return err
+	case *handler:
+		s.migration.imported.Store(true)
+		return nil
+	}
+	return fmt.Errorf("contractStartMigration: unknown handler %T", h)
+}
 
 // contractFinishMigration gives whichever side h is the record the checklist
 // reads as a finished migration: production's array record is taken through its

@@ -121,7 +121,7 @@ hoserva mover run                       # doc 09 §2
 
 hoserva share list
 hoserva share create media --smb --guest=no --cache=then-move
-hoserva share relocate media --to cache # one-shot move between cache and array (doc 09 §2)
+hoserva share relocate media --to cache [--ignore-running-containers]   # one-shot move between cache and array; lists the containers using the share first and refuses while one runs (doc 09 §2)
 hoserva share rm media
 
 hoserva app list

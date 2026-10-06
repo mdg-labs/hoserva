@@ -652,7 +652,15 @@ func TestFixRefusesAnUnusablePathBeforeCallingTheDaemon(t *testing.T) {
 	}
 }
 
+const emptyRelocationPrecheck = `{"dockerAvailable":true,"containers":[],"openPaths":[]}`
+
 func runShareRelocateCLI(t *testing.T, args ...string) (requests []string, bodies []string, runErr error) {
+	t.Helper()
+	requests, bodies, _, runErr = runShareRelocateCLIWith(t, emptyRelocationPrecheck, args...)
+	return requests, bodies, runErr
+}
+
+func runShareRelocateCLIWith(t *testing.T, precheck string, args ...string) (requests []string, bodies []string, stderr string, runErr error) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hsv")
 	if err != nil {
@@ -671,6 +679,11 @@ func runShareRelocateCLI(t *testing.T, args ...string) (requests []string, bodie
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		bodies = append(bodies, string(raw))
 		mu.Unlock()
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(precheck))
+			return
+		}
 		j := apiv1.Job{ID: uuid.New(), Type: apiv1.JobTypeShareRelocation, Class: apiv1.JobClassArrayWrite, Status: apiv1.JobStatusQueued, CreatedAt: time.Now().UTC()}
 		out, err := j.MarshalJSON()
 		if err != nil {
@@ -689,6 +702,8 @@ func runShareRelocateCLI(t *testing.T, args ...string) (requests []string, bodie
 	}
 	os.Stdout = w
 	root := rootCmd()
+	var errOut bytes.Buffer
+	root.SetErr(&errOut)
 	root.SetArgs(append([]string{"--socket", sock, "--json"}, args...))
 	root.SilenceUsage, root.SilenceErrors = true, true
 	runErr = root.Execute()
@@ -698,7 +713,7 @@ func runShareRelocateCLI(t *testing.T, args ...string) (requests []string, bodie
 	jsonOutput = false
 	mu.Lock()
 	defer mu.Unlock()
-	return requests, bodies, runErr
+	return requests, bodies, errOut.String(), runErr
 }
 
 func TestShareRelocateSendsTheDirectionToTheNamedShare(t *testing.T) {
@@ -708,11 +723,11 @@ func TestShareRelocateSendsTheDirectionToTheNamedShare(t *testing.T) {
 			if err != nil {
 				t.Fatalf("share relocate --to %s: %v", to, err)
 			}
-			if len(requests) != 1 || requests[0] != "POST /api/v1/shares/media/relocate" {
-				t.Fatalf("requests = %v, want one POST /api/v1/shares/media/relocate", requests)
+			if len(requests) != 2 || requests[0] != "GET /api/v1/shares/media/relocation-precheck" || requests[1] != "POST /api/v1/shares/media/relocate" {
+				t.Fatalf("requests = %v, want the precheck GET then one POST /api/v1/shares/media/relocate", requests)
 			}
-			if want := `{"to":"` + to + `"}`; bodies[0] != want {
-				t.Fatalf("request body = %s, want %s", bodies[0], want)
+			if want := `{"to":"` + to + `"}`; bodies[1] != want {
+				t.Fatalf("request body = %s, want %s", bodies[1], want)
 			}
 		})
 	}
@@ -766,5 +781,98 @@ func TestShareRelocateReportsTheDaemonsRefusal(t *testing.T) {
 	jsonOutput = false
 	if runErr == nil {
 		t.Fatal("a refused relocation was reported as success")
+	}
+}
+
+const relocationPrecheckWithContainers = `{"dockerAvailable":true,"containers":[` +
+	`{"id":"a1","name":"database","state":"running","active":true,"mounts":["/mnt/user/media/db"]},` +
+	`{"id":"a2","name":"idle","state":"exited","active":false,"mounts":["/mnt/cache/media"]}],"openPaths":["db/live.db"]}`
+
+func TestShareRelocateRefusesWhileAListedContainerRuns(t *testing.T) {
+	requests, _, stderr, err := runShareRelocateCLIWith(t, relocationPrecheckWithContainers, "share", "relocate", "media", "--to", "cache")
+	if err == nil || !strings.Contains(err.Error(), "database") || !strings.Contains(err.Error(), "--ignore-running-containers") {
+		t.Fatalf("error = %v, want a refusal naming the running container and the flag", err)
+	}
+	if strings.Contains(err.Error(), "idle") {
+		t.Fatalf("error = %v, names a container that is not running", err)
+	}
+	for _, r := range requests {
+		if strings.HasPrefix(r, "POST") {
+			t.Fatalf("a refused relocation still queued it: %v", requests)
+		}
+	}
+	for _, want := range []string{"database", "/mnt/user/media/db", "idle", "open file: db/live.db"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("output %q does not list %q", stderr, want)
+		}
+	}
+}
+
+func TestShareRelocateWithTheFlagStartsDespiteRunningContainers(t *testing.T) {
+	requests, bodies, stderr, err := runShareRelocateCLIWith(t, relocationPrecheckWithContainers, "share", "relocate", "media", "--to", "array", "--ignore-running-containers")
+	if err != nil {
+		t.Fatalf("share relocate --ignore-running-containers: %v", err)
+	}
+	if len(requests) != 2 || requests[1] != "POST /api/v1/shares/media/relocate" || bodies[1] != `{"to":"array"}` {
+		t.Fatalf("requests = %v %v, want the precheck then the relocation", requests, bodies)
+	}
+	if !strings.Contains(stderr, "database") {
+		t.Fatalf("the list was not printed before starting: %q", stderr)
+	}
+}
+
+func TestShareRelocateStartsWhenOnlyStoppedContainersUseTheShare(t *testing.T) {
+	stopped := `{"dockerAvailable":true,"containers":[{"id":"a2","name":"idle","state":"exited","active":false,"mounts":["/mnt/cache/media"]}],"openPaths":[]}`
+	requests, _, stderr, err := runShareRelocateCLIWith(t, stopped, "share", "relocate", "media", "--to", "cache")
+	if err != nil {
+		t.Fatalf("share relocate with only a stopped container: %v", err)
+	}
+	if len(requests) != 2 || requests[1] != "POST /api/v1/shares/media/relocate" {
+		t.Fatalf("requests = %v, want the precheck then the relocation", requests)
+	}
+	if !strings.Contains(stderr, "idle") {
+		t.Fatalf("the stopped container was not listed: %q", stderr)
+	}
+}
+
+func TestShareRelocateDoesNotStartWhenThePrecheckFails(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var posts int
+	var mu sync.Mutex
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"code":"internal","message":"listing containers failed"}`))
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "share", "relocate", "media", "--to", "cache"})
+	root.SilenceUsage, root.SilenceErrors = true, true
+	runErr := root.Execute()
+	jsonOutput = false
+	if runErr == nil {
+		t.Fatal("a failed precheck was reported as success")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 0 {
+		t.Fatalf("a failed precheck still queued the relocation %d time(s)", posts)
 	}
 }

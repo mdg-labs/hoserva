@@ -567,6 +567,20 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	return j, nil
 }
 
+// CheckAdmission runs the admission checks Submit makes for a job of type t
+// (admitLocked itself, so the two cannot drift) and reports the refusal Submit
+// would return, without creating, queueing or backing anything up. A caller
+// uses it to say "this would be refused" before asking the user to confirm
+// something; it is no reservation, since the state can change before Submit.
+func (s *Scheduler) CheckAdmission(ctx context.Context, t Type) error {
+	if err := ValidateType(t); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.admitLocked(ctx, t)
+}
+
 // admitDiskUpgradeDataLocked is doc 02 §4 E8 for a new data-disk
 // upgrade: refused while another is pending, and admitted only once the
 // array's stop sequence has completed (UR3). Callers must hold s.mu, so

@@ -856,6 +856,27 @@ type Invoker interface {
 	//
 	// GET /shares/{name}/permissions
 	GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error)
+	// GetShareRelocationPrecheck invokes getShareRelocationPrecheck operation.
+	//
+	// What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose
+	// mounts use the share and every file of the share some process currently holds open, across the cache
+	// and every array branch. A container uses the share when a mount's host path is the share's pool
+	// path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the
+	// pool, on the cache or on a data disk; the match is made on the path as written, never through a
+	// symlink, so it reads no data disk. `active` is true for a container that is running, paused or
+	// restarting — one that can hold files open and that a relocation must not run beside. Listing the
+	// open files enumerates the share on the cache and on every array branch, so this is an explicit call
+	// that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no
+	// containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of
+	// the share, so it is the same whichever way the share will move. No answer is given in the cases
+	// `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no
+	// cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is
+	// stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409
+	// `database_restore_in_progress` during a database restore. These are the scheduler's own admission
+	// checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
+	//
+	// GET /shares/{name}/relocation-precheck
+	GetShareRelocationPrecheck(ctx context.Context, params GetShareRelocationPrecheckParams) (*ShareRelocationPrecheck, error)
 	// GetStack invokes getStack operation.
 	//
 	// One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its
@@ -13033,6 +13054,168 @@ func (c *Client) sendGetSharePermissions(ctx context.Context, params GetSharePer
 
 	stage = "DecodeResponse"
 	result, err := decodeGetSharePermissionsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetShareRelocationPrecheck invokes getShareRelocationPrecheck operation.
+//
+// What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose
+// mounts use the share and every file of the share some process currently holds open, across the cache
+// and every array branch. A container uses the share when a mount's host path is the share's pool
+// path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the
+// pool, on the cache or on a data disk; the match is made on the path as written, never through a
+// symlink, so it reads no data disk. `active` is true for a container that is running, paused or
+// restarting — one that can hold files open and that a relocation must not run beside. Listing the
+// open files enumerates the share on the cache and on every array branch, so this is an explicit call
+// that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no
+// containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of
+// the share, so it is the same whichever way the share will move. No answer is given in the cases
+// `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no
+// cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is
+// stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409
+// `database_restore_in_progress` during a database restore. These are the scheduler's own admission
+// checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
+//
+// GET /shares/{name}/relocation-precheck
+func (c *Client) GetShareRelocationPrecheck(ctx context.Context, params GetShareRelocationPrecheckParams) (*ShareRelocationPrecheck, error) {
+	res, err := c.sendGetShareRelocationPrecheck(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetShareRelocationPrecheck(ctx context.Context, params GetShareRelocationPrecheckParams) (res *ShareRelocationPrecheck, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getShareRelocationPrecheck"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/shares/{name}/relocation-precheck"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetShareRelocationPrecheckOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/shares/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := string(params.Name); true {
+				return e.EncodeValue(conv.StringToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/relocation-precheck"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetShareRelocationPrecheckOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetShareRelocationPrecheckOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetShareRelocationPrecheckResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

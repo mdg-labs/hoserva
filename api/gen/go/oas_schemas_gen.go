@@ -21263,6 +21263,110 @@ func (s *SharePermissionsResult) SetGroups(val []GroupPermissionEntry) {
 	s.Groups = val
 }
 
+// Ref: #/components/schemas/ShareRelocationContainer
+type ShareRelocationContainer struct {
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	State AppState `json:"state"`
+	// True for a running, paused or restarting container. Stopping it (`stopApp`) is what clears it for a
+	// relocation.
+	Active bool `json:"active"`
+	// The host paths of this container's mounts that use the share.
+	Mounts []string `json:"mounts"`
+}
+
+// GetID returns the value of ID.
+func (s *ShareRelocationContainer) GetID() string {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *ShareRelocationContainer) GetName() string {
+	return s.Name
+}
+
+// GetState returns the value of State.
+func (s *ShareRelocationContainer) GetState() AppState {
+	return s.State
+}
+
+// GetActive returns the value of Active.
+func (s *ShareRelocationContainer) GetActive() bool {
+	return s.Active
+}
+
+// GetMounts returns the value of Mounts.
+func (s *ShareRelocationContainer) GetMounts() []string {
+	return s.Mounts
+}
+
+// SetID sets the value of ID.
+func (s *ShareRelocationContainer) SetID(val string) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *ShareRelocationContainer) SetName(val string) {
+	s.Name = val
+}
+
+// SetState sets the value of State.
+func (s *ShareRelocationContainer) SetState(val AppState) {
+	s.State = val
+}
+
+// SetActive sets the value of Active.
+func (s *ShareRelocationContainer) SetActive(val bool) {
+	s.Active = val
+}
+
+// SetMounts sets the value of Mounts.
+func (s *ShareRelocationContainer) SetMounts(val []string) {
+	s.Mounts = val
+}
+
+// Ref: #/components/schemas/ShareRelocationPrecheck
+type ShareRelocationPrecheck struct {
+	// False when Docker is not reachable; `containers` is then empty because there is nothing to list, not
+	// because none uses the share.
+	DockerAvailable bool                       `json:"dockerAvailable"`
+	Containers      []ShareRelocationContainer `json:"containers"`
+	// Every file, relative to the share root, that some process holds open on the cache or on an array
+	// branch. A file a client or container reaches through the pool shows as held open by mergerfs itself,
+	// so a name is never attributed to it.
+	OpenPaths []string `json:"openPaths"`
+}
+
+// GetDockerAvailable returns the value of DockerAvailable.
+func (s *ShareRelocationPrecheck) GetDockerAvailable() bool {
+	return s.DockerAvailable
+}
+
+// GetContainers returns the value of Containers.
+func (s *ShareRelocationPrecheck) GetContainers() []ShareRelocationContainer {
+	return s.Containers
+}
+
+// GetOpenPaths returns the value of OpenPaths.
+func (s *ShareRelocationPrecheck) GetOpenPaths() []string {
+	return s.OpenPaths
+}
+
+// SetDockerAvailable sets the value of DockerAvailable.
+func (s *ShareRelocationPrecheck) SetDockerAvailable(val bool) {
+	s.DockerAvailable = val
+}
+
+// SetContainers sets the value of Containers.
+func (s *ShareRelocationPrecheck) SetContainers(val []ShareRelocationContainer) {
+	s.Containers = val
+}
+
+// SetOpenPaths sets the value of OpenPaths.
+func (s *ShareRelocationPrecheck) SetOpenPaths(val []string) {
+	s.OpenPaths = val
+}
+
 // Ref: #/components/schemas/ShareSMB
 type ShareSMB struct {
 	Enabled     bool `json:"enabled"`

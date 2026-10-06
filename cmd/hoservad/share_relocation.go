@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -94,4 +95,11 @@ func shareRelocationSyncFunc(eng parity.Engine) cache.SyncFunc {
 		}
 		return nil
 	}
+}
+
+// wireShareRelocationPrecheck gives h the resolver getShareRelocationPrecheck
+// lists open files over: the same one-share resolution the relocation job
+// itself uses, so the precheck looks at exactly the files the job would move.
+func wireShareRelocationPrecheck(h *api.Handler, shares *store.ShareStore, arrays *store.ArrayStore) {
+	h.RelocationShare = shareRelocationShareFromStore(shares, arrays)
 }

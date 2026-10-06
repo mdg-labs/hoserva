@@ -57,6 +57,8 @@ import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
 import { buildNfsExportLine, buildSmbStanza } from "@/routes/shares/config-preview";
+import { useRelocationPrecheck } from "@/routes/shares/relocation-precheck";
+import { RelocationPrecheckPanel } from "@/routes/shares/relocation-precheck-panel";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
@@ -313,7 +315,7 @@ export function ShareDetailPage(): React.ReactElement {
   }
 
   async function handleSaveCacheModeAndRelocate(): Promise<void> {
-    if (!cacheModeFrom) {
+    if (!cacheModeFrom || !relocationPrecheck.canRelocate) {
       return;
     }
     const direction = shareRelocationDirection(cacheModeFrom, cacheModeDraft);
@@ -430,10 +432,13 @@ export function ShareDetailPage(): React.ReactElement {
     setDeleteDataConfirm("");
   }
 
-  const cacheDialogBusy = cacheModeMutation.pending || relocateMutation.pending;
+  const cacheRelocationDirection = cacheModeFrom ? shareRelocationDirection(cacheModeFrom, cacheModeDraft) : null;
+  const relocationPrecheck = useRelocationPrecheck(
+    cacheConfirmOpen && cacheRelocationDirection !== null ? name : null,
+  );
+  const cacheDialogBusy = cacheModeMutation.pending || relocateMutation.pending || relocationPrecheck.busy;
 
   const includedInParity = share ? share.cacheMode !== "cache-only" : false;
-  const cacheRelocationDirection = cacheModeFrom ? shareRelocationDirection(cacheModeFrom, cacheModeDraft) : null;
 
   const permissionColumns: DataTableColumn<PermissionRow>[] = useMemo(
     () => [
@@ -935,7 +940,11 @@ export function ShareDetailPage(): React.ReactElement {
               {t("shares.detail.cache.changeModeOnly")}
             </Button>
             {cacheRelocationDirection ? (
-              <Button loading={cacheDialogBusy} onClick={() => void handleSaveCacheModeAndRelocate()}>
+              <Button
+                loading={cacheDialogBusy}
+                disabled={!relocationPrecheck.canRelocate}
+                onClick={() => void handleSaveCacheModeAndRelocate()}
+              >
                 {t("shares.detail.cache.relocateNow")}
               </Button>
             ) : null}
@@ -952,6 +961,7 @@ export function ShareDetailPage(): React.ReactElement {
             })}
           </p>
         ) : null}
+        <RelocationPrecheckPanel precheck={relocationPrecheck} />
       </FormOverlay>
 
       <ConfirmDialog

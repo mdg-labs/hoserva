@@ -979,6 +979,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shares/{name}/relocation-precheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List what a share relocation would collide with
+         * @description What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose mounts use the share and every file of the share some process currently holds open, across the cache and every array branch. A container uses the share when a mount's host path is the share's pool path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the pool, on the cache or on a data disk; the match is made on the path as written, never through a symlink, so it reads no data disk. `active` is true for a container that is running, paused or restarting — one that can hold files open and that a relocation must not run beside. Listing the open files enumerates the share on the cache and on every array branch, so this is an explicit call that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of the share, so it is the same whichever way the share will move. No answer is given in the cases `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409 `database_restore_in_progress` during a database restore. These are the scheduler's own admission checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
+         */
+        get: operations["getShareRelocationPrecheck"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shares/{name}/browse": {
         parameters: {
             query?: never;
@@ -5176,6 +5198,22 @@ export interface components {
              */
             to: "cache" | "array";
         };
+        ShareRelocationPrecheck: {
+            /** @description False when Docker is not reachable; `containers` is then empty because there is nothing to list, not because none uses the share. */
+            dockerAvailable: boolean;
+            containers: components["schemas"]["ShareRelocationContainer"][];
+            /** @description Every file, relative to the share root, that some process holds open on the cache or on an array branch. A file a client or container reaches through the pool shows as held open by mergerfs itself, so a name is never attributed to it. */
+            openPaths: string[];
+        };
+        ShareRelocationContainer: {
+            id: string;
+            name: string;
+            state: components["schemas"]["AppState"];
+            /** @description True for a running, paused or restarting container. Stopping it (`stopApp`) is what clears it for a relocation. */
+            active: boolean;
+            /** @description The host paths of this container's mounts that use the share. */
+            mounts: string[];
+        };
         StopArrayRequest: {
             /** @description Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks. */
             confirm: boolean;
@@ -7772,6 +7810,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getShareRelocationPrecheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The containers and open files a relocation would collide with. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareRelocationPrecheck"];
                 };
             };
             default: components["responses"]["Error"];
