@@ -3,6 +3,8 @@ package pool
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // Mount is one systemd .mount unit for a mergerfs pool mount — the
@@ -24,6 +26,10 @@ type Mount struct {
 	// through it. It is the catch-all of a pending Unraid migration (doc 05 §5),
 	// whose disks are not to be written until the point of no return.
 	ReadOnly bool
+	// Binds are the nosymfollow branch binds What's branches sit on, one per
+	// data disk, which a mounter brings up before the mount itself. Only a
+	// mover write target has them (MoverTargetMount, #656).
+	Binds []disk.BranchBind
 }
 
 // UnitFileName returns the systemd .mount unit filename for a mount at

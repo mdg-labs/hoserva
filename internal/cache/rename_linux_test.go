@@ -7,7 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
+
+func openTestDir(t *testing.T, dir string) int {
+	t.Helper()
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(fd) })
+	return fd
+}
 
 // TestRenameNoReplaceFallback_ConflictNeverAutoResolved proves the EINVAL
 // fallback renameNoReplace takes when Renameat2 can't carry the flag
@@ -26,6 +38,7 @@ func TestRenameNoReplaceFallback_ConflictNeverAutoResolved(t *testing.T) {
 	dir := t.TempDir()
 	oldpath := filepath.Join(dir, "old")
 	newpath := filepath.Join(dir, "new")
+	dirfd := openTestDir(t, dir)
 
 	if err := os.WriteFile(oldpath, []byte("source content"), 0o640); err != nil {
 		t.Fatal(err)
@@ -34,7 +47,7 @@ func TestRenameNoReplaceFallback_ConflictNeverAutoResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := renameNoReplaceFallback(oldpath, newpath)
+	err := renameNoReplaceFallback(dirfd, "old", "new")
 	if !errors.Is(err, os.ErrExist) {
 		t.Fatalf("renameNoReplaceFallback: got %v, want os.ErrExist", err)
 	}
@@ -55,12 +68,13 @@ func TestRenameNoReplaceFallback_RenamesWhenTargetAbsent(t *testing.T) {
 	dir := t.TempDir()
 	oldpath := filepath.Join(dir, "old")
 	newpath := filepath.Join(dir, "new")
+	dirfd := openTestDir(t, dir)
 
 	if err := os.WriteFile(oldpath, []byte("source content"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := renameNoReplaceFallback(oldpath, newpath); err != nil {
+	if err := renameNoReplaceFallback(dirfd, "old", "new"); err != nil {
 		t.Fatalf("renameNoReplaceFallback: %v", err)
 	}
 	got, err := os.ReadFile(newpath)

@@ -64,13 +64,14 @@ func unitFileName(where string) string {
 	return pool.UnitFileName(where)
 }
 
-// poolMountUnitPrefixes are the escaped-name prefixes every unit
+// poolMountUnitPrefixes are the escaped-name prefixes every mergerfs unit
 // WritePoolMounts can write falls under: the catch-all itself, any
-// per-share mount nested under it, and any mover write-target mount
-// nested under pool.ArrayRootPath. Reconciliation (below) only ever
-// removes a manifest entry whose key falls under one of these, so it can
-// never reach a unit some other generator (disk's own data-disk mounts,
-// say) wrote into the same systemd/system/ directory.
+// per-share mount nested under it, and any mover write-target mount nested
+// under pool.ArrayRootPath. Reconciliation (below) only ever removes a
+// manifest entry whose key falls under one of these, so it can never reach
+// a unit some other generator (disk's own data-disk mounts, say) wrote into
+// the same systemd/system/ directory — nor a data disk's branch bind, which
+// goes only with its disk's own unit (RemoveDiskMount).
 func poolMountUnitPrefixes() (catchAll, sharePrefix, moverPrefix string) {
 	catchAll = unitFileName(pool.CatchAllPath)
 	sharePrefix = strings.TrimSuffix(catchAll, ".mount") + "-"
@@ -79,7 +80,7 @@ func poolMountUnitPrefixes() (catchAll, sharePrefix, moverPrefix string) {
 }
 
 // isPoolMountUnitKey reports whether key (a Generator manifest key) names
-// one of WritePoolMounts's own units.
+// one of WritePoolMounts's own mergerfs units.
 func isPoolMountUnitKey(key string) bool {
 	name := strings.TrimPrefix(key, poolMountUnitDir)
 	if name == key {
@@ -101,12 +102,21 @@ func mountUnitPath(where string) string {
 // RemoveDiskMount deletes the physical-disk .mount unit WriteDiskMounts
 // wrote for where, and its manifest record, so a data disk that has left
 // the array (#358, doc 09 §4 step 9) is not mounted again at the next
-// boot. A unit that is already gone is success, and any record left for
-// it is dropped. A unit that was edited by hand or kept unmanaged is
-// left in place and refused: deleting it would discard that change, and
-// keeping it quietly would mount the disk at the next boot.
+// boot. The disk's branch bind unit (disk.BranchBind) goes first, the same
+// way: it is removed only here, once the removal job has unmounted the disk
+// and its bind, never while the bind could still be mounted (#656). A unit
+// that is already gone is success, and any record left for it is dropped.
+// A unit that was edited by hand or kept unmanaged is left in place and
+// refused: deleting it would discard that change, and keeping it quietly
+// would mount the disk at the next boot.
 func (g *Generator) RemoveDiskMount(ctx context.Context, where string) error {
-	path := poolMountUnitDir + disk.UnitFileName(where)
+	if err := g.removeMountUnit(ctx, mountUnitPath(disk.BranchBindFor(where).Where)); err != nil {
+		return err
+	}
+	return g.removeMountUnit(ctx, poolMountUnitDir+disk.UnitFileName(where))
+}
+
+func (g *Generator) removeMountUnit(ctx context.Context, path string) error {
 	removed, err := g.RemoveManaged(ctx, path)
 	if err != nil {
 		return err
@@ -195,6 +205,11 @@ func (g *Generator) CanWriteShareFiles(ctx context.Context, state PoolState) err
 			return err
 		}
 	}
+	for _, b := range branchBinds(state) {
+		if err := g.CanWrite(ctx, mountUnitPath(b.Where)); err != nil {
+			return err
+		}
+	}
 	if err := g.CanWrite(ctx, PathSamba); err != nil {
 		return err
 	}
@@ -237,12 +252,21 @@ func (g *Generator) WriteCatchAllMount(ctx context.Context, state PoolState, com
 // describes from state — the catch-all, one per-share mount in the shape
 // its own cache mode calls for, and each non-cache-only share's own mover
 // write target (pool.CatchAllMount, pool.ShareMount, pool.MoverTargetMount)
-// — and writes each one through Write. It never reformats or recomputes
+// — and writes each one through Write, together with the nosymfollow branch
+// bind unit of every data disk (disk.BranchBind, #656). It never reformats
+// or recomputes
 // what internal/pool already computed (doc 09 §2: one placement algorithm,
 // mergerfs's own): each file's body is exactly the Mount's own Render()
 // output, with only the doc 01 §2 header Write adds around it. command
 // names the `hoserva <command>` a user runs to regenerate this state
 // instead of hand-editing the unit files, per the doc 01 §2 header.
+//
+// A bind unit is written whether or not a mover write target uses the
+// bind, and the reconciliation never removes one: the unit is what binds a
+// mounted bind to its disk (BindsTo=), and systemd drops that tie once the
+// file is gone and it reloads, so a bind still mounted would then keep the
+// disk's filesystem mounted past array stop. A disk that left the pool
+// keeps its bind unit until RemoveDiskMount removes it with the disk's own.
 func (g *Generator) WritePoolMounts(ctx context.Context, state PoolState, command string, revision int, now time.Time) error {
 	mounts, err := poolMounts(state)
 	if err != nil {
@@ -254,14 +278,37 @@ func (g *Generator) WritePoolMounts(ctx context.Context, state PoolState, comman
 			return err
 		}
 	}
+	for _, b := range branchBinds(state) {
+		if err := g.writeUnit(ctx, b.Where, b.Render(g.stoppedFlagPath()), command, revision, now, desired); err != nil {
+			return err
+		}
+	}
 	return g.reconcilePoolMounts(ctx, desired)
 }
 
+// branchBinds returns the branch bind of every data disk in state — none
+// for the read-only pool of a pending migration, which has no mover write
+// target and whose disks are not written until its point of no return.
+func branchBinds(state PoolState) []disk.BranchBind {
+	if state.ReadOnly {
+		return nil
+	}
+	out := make([]disk.BranchBind, len(state.DataDisks))
+	for i, d := range state.DataDisks {
+		out[i] = disk.BranchBindFor(d)
+	}
+	return out
+}
+
 func (g *Generator) writeMount(ctx context.Context, m pool.Mount, command string, revision int, now time.Time, desired map[string]bool) error {
+	return g.writeUnit(ctx, m.Where, m.Render(g.stoppedFlagPath()), command, revision, now, desired)
+}
+
+func (g *Generator) writeUnit(ctx context.Context, where, body, command string, revision int, now time.Time, desired map[string]bool) error {
 	file := File{
-		Path:    mountUnitPath(m.Where),
+		Path:    mountUnitPath(where),
 		Command: command,
-		Body:    []byte(m.Render(g.stoppedFlagPath())),
+		Body:    []byte(body),
 	}
 	if err := g.Write(ctx, file, revision, now); err != nil {
 		return err

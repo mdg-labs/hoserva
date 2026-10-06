@@ -34,20 +34,27 @@ const dirPreservedBits = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSt
 // O_NOFOLLOW, and every directory is created, given its owner and mode and
 // renamed relative to its parent's descriptor, so a component that is or
 // becomes a symlink, at any depth, fails the copy with beneath.ErrSymlink
-// instead of creating a directory somewhere else as the share's user.
+// instead of creating a directory somewhere else as the share's user. On
+// the mover's mergerfs mount, where mergerfs makes each of these calls by
+// path on its branch, the branch's nosymfollow bind is what refuses a
+// symlink the walk has not seen (copyMoveFile).
 // A directory that already exists on the target is never touched: it may
 // hold other files, and its metadata is not this copy's to change.
-func mkdirAllLike(srcDir, dstRoot, dstDir string, deps Deps) error {
-	rel, err := filepath.Rel(dstRoot, dstDir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		return fmt.Errorf("%s is not beneath %s", dstDir, dstRoot)
+//
+// It returns the descriptor of dstDir itself, which the caller closes and
+// creates the entry's temp file in, so the entry lands in the directory
+// that was walked and not in whatever the path names a moment later.
+func mkdirAllLike(srcDir, dstRoot, dstDir string, deps Deps) (int, error) {
+	rel, err := relBeneath(dstRoot, dstDir)
+	if err != nil {
+		return -1, err
 	}
-	if rel == "." {
-		return nil
+	if rel == "" {
+		return beneath.OpenRoot(dstRoot)
 	}
 	comps, err := beneath.Components(rel)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	srcDirs := make([]string, len(comps))
 	for i, d := len(comps)-1, srcDir; i >= 0; i, d = i-1, filepath.Dir(d) {
@@ -56,7 +63,7 @@ func mkdirAllLike(srcDir, dstRoot, dstDir string, deps Deps) error {
 
 	parent, err := beneath.OpenRoot(dstRoot)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	for i, name := range comps {
 		fd, err := beneath.Open(parent, name, unix.O_RDONLY|unix.O_DIRECTORY)
@@ -67,11 +74,48 @@ func mkdirAllLike(srcDir, dstRoot, dstDir string, deps Deps) error {
 		}
 		_ = unix.Close(parent)
 		if err != nil {
-			return fmt.Errorf("create %s: %w", filepath.Join(dstRoot, filepath.Join(comps[:i+1]...)), err)
+			return -1, fmt.Errorf("create %s: %w", filepath.Join(dstRoot, filepath.Join(comps[:i+1]...)), err)
 		}
 		parent = fd
 	}
-	_ = unix.Close(parent)
+	return parent, nil
+}
+
+// relBeneath is dir's path relative to root, "" for root itself, refusing a
+// dir that is not beneath it.
+func relBeneath(root, dir string) (string, error) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("%s is not beneath %s", dir, root)
+	}
+	if rel == "." {
+		return "", nil
+	}
+	return rel, nil
+}
+
+// requireNoSymlinks walks dstDir again from dstRoot and fails when any
+// component is now a symlink or gone, so a copy whose directory was swapped
+// for a symlink while it ran is not published, and its source deleted, as
+// if it were at its path. It is not what keeps the copy on the target:
+// that is the held directory descriptor on a plain filesystem, and the
+// nosymfollow branch binds on the mover's mergerfs mount (copyMoveFile),
+// where a swap made on a data disk behind mergerfs can stay hidden from
+// this walk for as long as the kernel's FUSE entry cache keeps the old
+// lookup.
+func requireNoSymlinks(dstRoot, dstDir string) error {
+	rel, err := relBeneath(dstRoot, dstDir)
+	if err != nil {
+		return err
+	}
+	w, err := beneath.NewWalker(dstRoot)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	if _, err := w.Dir(rel, nil); err != nil {
+		return fmt.Errorf("target directory changed during the copy: %w", err)
+	}
 	return nil
 }
 

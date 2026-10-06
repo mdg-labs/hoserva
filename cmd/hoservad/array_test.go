@@ -572,7 +572,8 @@ func TestNewArraySequence_DiskLeavingThePoolIsInNoBranchList(t *testing.T) {
 // TestShareService_ApplyTopology_LeavesADepartedDiskOutOfEveryUnit is the
 // share-file half of #358's filter, through the share.Service run()
 // builds: with a data disk unpooled or unlisted, no generated pool unit
-// — catch-all, share or mover target — lists it as a branch.
+// — catch-all, share, mover target or a mover branch bind (#656) — lists
+// it as a branch.
 func TestShareService_ApplyTopology_LeavesADepartedDiskOutOfEveryUnit(t *testing.T) {
 	for _, state := range []string{store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
 		t.Run(state, func(t *testing.T) {
@@ -604,8 +605,8 @@ func TestShareService_ApplyTopology_LeavesADepartedDiskOutOfEveryUnit(t *testing
 				t.Fatalf("ApplyTopology: %v", err)
 			}
 			units, err := filepath.Glob(filepath.Join(configRoot, "systemd/system", "*.mount"))
-			if err != nil || len(units) != 3 {
-				t.Fatalf("generated units = %v (%v), want the catch-all, media and its mover target", units, err)
+			if err != nil || len(units) != 4 {
+				t.Fatalf("generated units = %v (%v), want the catch-all, media, its mover target and disk2's branch bind", units, err)
 			}
 			for _, unit := range units {
 				body, err := os.ReadFile(unit)

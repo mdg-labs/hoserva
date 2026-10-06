@@ -164,3 +164,32 @@ func TestFilesystemUUID_CancelledContext(t *testing.T) {
 		t.Fatalf("FilesystemUUID: got %v, want context.Canceled", err)
 	}
 }
+
+func TestBranchBindFor(t *testing.T) {
+	got := BranchBindFor("/mnt/disk1")
+	want := BranchBind{Source: "/mnt/disk1", Where: "/run/hoserva/branches/mnt/disk1"}
+	if got != want {
+		t.Fatalf("BranchBindFor(/mnt/disk1) = %+v, want %+v", got, want)
+	}
+}
+
+// TestBranchBind_Render pins #656's bind unit: bound to the disk's own
+// mount unit, gated on the array-stopped flag like every generated mount,
+// and mounted nosymfollow so a symlink on the disk is never followed.
+func TestBranchBind_Render(t *testing.T) {
+	got := BranchBindFor("/mnt/disk1").Render(StorageStoppedFlagPath)
+	want := "[Unit]\n" +
+		"Description=Hoserva mover branch of /mnt/disk1 (no symlinks followed)\n" +
+		"ConditionPathExists=!" + StorageStoppedFlagPath + "\n" +
+		"BindsTo=mnt-disk1.mount\n" +
+		"After=mnt-disk1.mount\n" +
+		"\n" +
+		"[Mount]\n" +
+		"What=/mnt/disk1\n" +
+		"Where=/run/hoserva/branches/mnt/disk1\n" +
+		"Type=none\n" +
+		"Options=bind,nosymfollow,nofail\n"
+	if got != want {
+		t.Fatalf("Render():\n%s\nwant:\n%s", got, want)
+	}
+}

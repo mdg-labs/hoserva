@@ -10,8 +10,11 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
 // entryKind names a non-regular entry's type for Entry.Kind; a regular
@@ -157,15 +160,17 @@ func copySparse(out, in *os.File, size int64, hash io.Writer, holes bool) error 
 	return nil
 }
 
-// copyNode recreates a symlink, FIFO or device node at dst, through a
-// temp-suffixed sibling that is verified and then renamed into place the
-// same way a regular file's copy is (doc 09 §2). It never follows a
-// symlink and never touches src.
-func copyNode(src, dst, dstRoot string, srcInfo os.FileInfo, deps Deps) error {
-	if err := mkdirAllLike(filepath.Dir(src), dstRoot, filepath.Dir(dst), deps); err != nil {
-		return fmt.Errorf("create target directory: %w", err)
-	}
-	tmp := dst + tempSuffix + deps.UUID()
+// copyNode recreates a symlink, FIFO or device node as dst's name in the
+// directory parentfd, through a temp-suffixed sibling that is verified and
+// then renamed into place the same way a regular file's copy is (doc 09
+// §2). The node is created, inspected, given its owner, mode, xattrs and
+// timestamps and removed on failure relative to parentfd, through a
+// descriptor opened on the node itself with O_PATH|O_NOFOLLOW, so nothing
+// it does follows a symlink. It never follows a symlink of the source and
+// never touches src.
+func copyNode(src, dst, dstRoot string, parentfd int, srcInfo os.FileInfo, deps Deps) error {
+	name := filepath.Base(dst)
+	tmpName := name + tempSuffix + deps.UUID()
 	st, ok := srcInfo.Sys().(*syscall.Stat_t)
 	if !ok {
 		return errors.New("source has no unix metadata")
@@ -174,25 +179,28 @@ func copyNode(src, dst, dstRoot string, srcInfo os.FileInfo, deps Deps) error {
 	perm := uint32(mode.Perm())
 
 	var linkTarget string
+	var wantType uint32
 	switch kind {
 	case "symlink":
 		var err error
 		if linkTarget, err = os.Readlink(src); err != nil {
 			return fmt.Errorf("read symlink: %w", err)
 		}
-		if err := os.Symlink(linkTarget, tmp); err != nil {
-			return fmt.Errorf("create symlink: %w", err)
+		if err := unix.Symlinkat(linkTarget, parentfd, tmpName); err != nil {
+			return fmt.Errorf("create symlink: %w", &fs.PathError{Op: "symlinkat", Path: tmpName, Err: err})
 		}
+		wantType = unix.S_IFLNK
 	case "fifo":
-		if err := deps.Mknod(tmp, unix.S_IFIFO|perm, 0); err != nil {
+		if err := deps.Mknod(parentfd, tmpName, unix.S_IFIFO|perm, 0); err != nil {
 			return fmt.Errorf("create fifo: %w", err)
 		}
+		wantType = unix.S_IFIFO
 	case "char_device", "block_device":
-		typ := uint32(unix.S_IFBLK)
+		wantType = unix.S_IFBLK
 		if kind == "char_device" {
-			typ = unix.S_IFCHR
+			wantType = unix.S_IFCHR
 		}
-		if err := deps.Mknod(tmp, typ|perm, int(st.Rdev)); err != nil {
+		if err := deps.Mknod(parentfd, tmpName, wantType|perm, int(st.Rdev)); err != nil {
 			return fmt.Errorf("create device node: %w", err)
 		}
 	default:
@@ -201,69 +209,87 @@ func copyNode(src, dst, dstRoot string, srcInfo os.FileInfo, deps Deps) error {
 	published := false
 	defer func() {
 		if !published {
-			_ = os.Remove(tmp)
+			_ = unix.Unlinkat(parentfd, tmpName, 0)
 		}
 	}()
 
-	if err := os.Lchown(tmp, int(st.Uid), int(st.Gid)); err != nil {
+	nfd, err := beneath.Open(parentfd, tmpName, unix.O_PATH)
+	if err != nil {
+		return fmt.Errorf("open new node %s: %w", tmpName, err)
+	}
+	defer func() { _ = unix.Close(nfd) }()
+	var got unix.Stat_t
+	if err := unix.Fstat(nfd, &got); err != nil {
+		return fmt.Errorf("inspect new node %s: %w", tmpName, err)
+	}
+	if got.Mode&unix.S_IFMT != wantType || got.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("%s is not the node just created", tmpName)
+	}
+
+	if err := unix.Fchownat(nfd, "", int(st.Uid), int(st.Gid), unix.AT_EMPTY_PATH); err != nil {
 		return fmt.Errorf("preserve ownership: %w", err)
 	}
 	if kind != "symlink" {
-		if err := os.Chmod(tmp, mode.Perm()); err != nil {
+		if err := unix.Chmod(fdPath(nfd), perm); err != nil {
 			return fmt.Errorf("preserve mode: %w", err)
 		}
-		if err := copyXattrs(src, tmp); err != nil {
+		if err := copyXattrs(src, fdPath(nfd)); err != nil {
 			return err
 		}
 	}
 	mt := unix.NsecToTimespec(srcInfo.ModTime().UnixNano())
-	if err := unix.UtimesNanoAt(unix.AT_FDCWD, tmp, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.UtimesNanoAt(parentfd, tmpName, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return fmt.Errorf("preserve timestamps: %w", err)
 	}
 
-	if err := verifyNode(tmp, srcInfo, linkTarget); err != nil {
+	if err := verifyNode(parentfd, tmpName, nfd, srcInfo, linkTarget); err != nil {
 		return err
 	}
 
-	renamed, err := publishTemp(tmp, dst, deps)
+	if err := requireNoSymlinks(dstRoot, filepath.Dir(dst)); err != nil {
+		return err
+	}
+	renamed, err := publishTemp(parentfd, tmpName, name, deps)
 	if renamed {
 		published = true
 	}
 	return err
 }
 
-// verifyNode re-reads tmp from disk and compares it with the source:
-// type, link target, device number, owner, permissions and mtime.
-func verifyNode(tmp string, srcInfo os.FileInfo, linkTarget string) error {
-	got, err := os.Lstat(tmp)
-	if err != nil {
+// verifyNode re-reads the node tmp in the directory parentfd, through nfd,
+// the descriptor opened on it, and compares it with the source: type, link
+// target, device number, owner, permissions and mtime.
+func verifyNode(parentfd int, tmp string, nfd int, srcInfo os.FileInfo, linkTarget string) error {
+	var got unix.Stat_t
+	if err := unix.Fstat(nfd, &got); err != nil {
 		return fmt.Errorf("verify: stat target: %w", err)
 	}
-	if got.Mode().Type() != srcInfo.Mode().Type() {
-		return fmt.Errorf("verify: target is a %s, source is a %s", entryKind(got.Mode()), entryKind(srcInfo.Mode()))
+	want := srcInfo.Sys().(*syscall.Stat_t)
+	if got.Mode&unix.S_IFMT != want.Mode&unix.S_IFMT {
+		return fmt.Errorf("verify: target is type %#o, source is a %s", got.Mode&unix.S_IFMT, entryKind(srcInfo.Mode()))
 	}
-	want, gotSt := srcInfo.Sys().(*syscall.Stat_t), got.Sys().(*syscall.Stat_t)
-	if gotSt.Uid != want.Uid || gotSt.Gid != want.Gid {
-		return fmt.Errorf("verify: target owner %d:%d, source %d:%d", gotSt.Uid, gotSt.Gid, want.Uid, want.Gid)
+	if got.Uid != want.Uid || got.Gid != want.Gid {
+		return fmt.Errorf("verify: target owner %d:%d, source %d:%d", got.Uid, got.Gid, want.Uid, want.Gid)
 	}
-	if !got.ModTime().Equal(srcInfo.ModTime()) {
-		return fmt.Errorf("verify: target mtime %v, source %v", got.ModTime(), srcInfo.ModTime())
+	if gotMtime := time.Unix(got.Mtim.Unix()); !gotMtime.Equal(srcInfo.ModTime()) {
+		return fmt.Errorf("verify: target mtime %v, source %v", gotMtime, srcInfo.ModTime())
 	}
 	if srcInfo.Mode()&fs.ModeSymlink != 0 {
-		target, err := os.Readlink(tmp)
+		buf := make([]byte, len(linkTarget)+1)
+		n, err := unix.Readlinkat(parentfd, tmp, buf)
 		if err != nil {
 			return fmt.Errorf("verify: read target symlink: %w", err)
 		}
-		if target != linkTarget {
+		if target := string(buf[:n]); target != linkTarget {
 			return fmt.Errorf("verify: target links to %q, source to %q", target, linkTarget)
 		}
 		return nil
 	}
-	if got.Mode().Perm() != srcInfo.Mode().Perm() {
-		return fmt.Errorf("verify: target mode %v, source %v", got.Mode().Perm(), srcInfo.Mode().Perm())
+	if fs.FileMode(got.Mode).Perm() != srcInfo.Mode().Perm() {
+		return fmt.Errorf("verify: target mode %v, source %v", fs.FileMode(got.Mode).Perm(), srcInfo.Mode().Perm())
 	}
-	if srcInfo.Mode()&fs.ModeDevice != 0 && gotSt.Rdev != want.Rdev {
-		return fmt.Errorf("verify: target device %d, source %d", gotSt.Rdev, want.Rdev)
+	if srcInfo.Mode()&fs.ModeDevice != 0 && got.Rdev != want.Rdev {
+		return fmt.Errorf("verify: target device %d, source %d", got.Rdev, want.Rdev)
 	}
 	return nil
 }

@@ -262,7 +262,8 @@ A power cut mid-sync is recoverable (doc 02 §6), but a clean shutdown is better
                               cache-only      → /mnt/cache/<share>=RW
                               array-only      → /mnt/disk*/<share>=RW
                             create policy = the share's own (Q11)
-/run/hoserva/array/<share>  mergerfs: /mnt/disk*/<share>=RW, same policy — the mover's write target
+/run/hoserva/array/<share>  mergerfs: /run/hoserva/branches/mnt/disk*/<share>=RW, same policy — the mover's write target
+                            (each branch a nosymfollow bind of /mnt/diskN, #656, doc 02 §1)
 ```
 
 - Paths stay identical to Unraid (D10): `/mnt/user/<share>` is still where every share lives.

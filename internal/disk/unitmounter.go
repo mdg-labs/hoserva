@@ -30,6 +30,10 @@ type UnitMounter interface {
 // as the post-mount UUID confirmation, therefore guard real disks.
 type DirectMounter struct {
 	Runner Runner
+
+	// MountTarget reports whether a path is a mount point and that mount's
+	// options. Nil means ReadMountTarget; a test injects a fake.
+	MountTarget func(path string) (opts []string, mounted bool, err error)
 }
 
 // Mount creates unit.Where if needed and mounts the unit's filesystem there:
@@ -98,8 +102,16 @@ func (m DirectMounter) confirmUnit(ctx context.Context, unit MountUnit) error {
 
 // Unmount unmounts unit.Where as an argv. A path that is already not a
 // mountpoint is success, so eject after a partial unmount does not fail.
+// The disk's branch bind (BranchBind), when it is mounted, is unmounted
+// first (stopBranchBind).
 func (m DirectMounter) Unmount(ctx context.Context, unit MountUnit) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := stopBranchBind(ctx, m.MountTarget, unit.Where, func(bind string) error {
+		_, err := m.Runner.Run(ctx, "umount", bind)
+		return err
+	}); err != nil {
 		return err
 	}
 	if _, err := m.Runner.Run(ctx, "umount", unit.Where); err != nil {
@@ -117,6 +129,9 @@ func (m DirectMounter) Unmount(ctx context.Context, unit MountUnit) error {
 // before start.
 type SystemdMounter struct {
 	Runner Runner
+
+	// MountTarget is DirectMounter.MountTarget.
+	MountTarget func(path string) (opts []string, mounted bool, err error)
 }
 
 // Mount reloads systemd units and starts unit's mount unit.
@@ -134,9 +149,13 @@ func (m SystemdMounter) Mount(ctx context.Context, unit MountUnit) error {
 	return nil
 }
 
-// Unmount stops unit's mount unit.
+// Unmount stops unit's mount unit. The disk's branch bind, when it is
+// mounted, is stopped first (stopSystemdBranchBind).
 func (m SystemdMounter) Unmount(ctx context.Context, unit MountUnit) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := stopSystemdBranchBind(ctx, m.Runner, m.MountTarget, unit.Where); err != nil {
 		return err
 	}
 	name := UnitFileName(unit.Where)
@@ -144,6 +163,71 @@ func (m SystemdMounter) Unmount(ctx context.Context, unit MountUnit) error {
 		return fmt.Errorf("disk: stopping mount unit for %s: %w", unit.Where, err)
 	}
 	return nil
+}
+
+// ReadMountTarget reports, from this process's mount table
+// (DefaultMountInfo), whether path is itself a mount point and, if so, the
+// per-mount options of the mount on top of it. It never stats path, so it
+// also sees a bind of a directory on the same filesystem as its parent,
+// which a device-number comparison (isMountpoint) cannot tell from a plain
+// directory.
+func ReadMountTarget(path string) (opts []string, mounted bool, err error) {
+	f, err := os.Open(DefaultMountInfo)
+	if err != nil {
+		return nil, false, fmt.Errorf("disk: reading the mount table: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	e, found, err := mountEntry(f, path)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	return strings.Split(e.mountOptions, ","), true, nil
+}
+
+// stopBranchBind brings down the branch bind of the disk mounted at where,
+// when it is mounted, through stop, and confirms from the mount table that
+// it is gone. Unmounting where alone would leave the disk's filesystem
+// mounted at the bind, read-write and its device busy, while where itself
+// reads as unmounted. Any failure is returned before the disk is touched,
+// so the caller leaves the disk mounted and reports it.
+func stopBranchBind(ctx context.Context, mountTarget func(string) ([]string, bool, error), where string, stop func(bind string) error) error {
+	target := mountTargetOrDefault(mountTarget)
+	bind := BranchBindFor(where).Where
+	if _, mounted, err := target(bind); err != nil {
+		return fmt.Errorf("disk: checking %s's mover branch at %s: %w", where, bind, err)
+	} else if !mounted {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := stop(bind); err != nil {
+		return fmt.Errorf("disk: unmounting %s's mover branch at %s: %w", where, bind, err)
+	}
+	if _, mounted, err := target(bind); err != nil {
+		return fmt.Errorf("disk: confirming %s's mover branch at %s is unmounted: %w", where, bind, err)
+	} else if mounted {
+		return fmt.Errorf("disk: %s's mover branch at %s is still mounted — leaving %s mounted", where, bind, where)
+	}
+	return nil
+}
+
+// stopSystemdBranchBind is stopBranchBind through the bind's own unit. A
+// mounted bind's unit is always loaded — systemd makes one from the mount
+// table even with no unit file — so this also stops a bind whose file is
+// gone, which its BindsTo= would no longer stop with the disk.
+func stopSystemdBranchBind(ctx context.Context, r Runner, mountTarget func(string) ([]string, bool, error), where string) error {
+	return stopBranchBind(ctx, mountTarget, where, func(bind string) error {
+		_, err := r.Run(ctx, "systemctl", "stop", UnitFileName(bind))
+		return err
+	})
+}
+
+func mountTargetOrDefault(f func(string) ([]string, bool, error)) func(string) ([]string, bool, error) {
+	if f != nil {
+		return f
+	}
+	return ReadMountTarget
 }
 
 // FakeMounter records every Mount call so a test can assert a failed

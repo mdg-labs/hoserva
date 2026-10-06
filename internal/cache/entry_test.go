@@ -372,7 +372,7 @@ func TestRun_MknodFailureIsAFailedEntryAndLeavesTheSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := testDeps(NewFakeOpenChecker())
-	deps.Mknod = func(string, uint32, int) error { return unix.EPERM }
+	deps.Mknod = func(int, string, uint32, int) error { return unix.EPERM }
 
 	report, err := Run(context.Background(), []Share{s}, Config{}, deps, RunHooks{}, nil)
 	if err != nil {

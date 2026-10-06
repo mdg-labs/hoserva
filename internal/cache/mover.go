@@ -11,12 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
 // tempSuffix marks an in-flight copy (doc 09 §2): a file named
@@ -47,10 +50,11 @@ const socketReason = "runtime-only: its owner recreates it when it starts"
 // share. ArrayPath is the share's own array-only mergerfs mount (doc 02
 // §1, pool.MoverTargetPath) — the mover writes only through it, so
 // mergerfs — not this package — decides which disk a moved file lands on
-// (CLAUDE.md: "one placement algorithm"). Branches are that mount's own
-// underlying per-disk directories (the same paths pool.MoverTargetMount
-// built its branch list from); when empty, the space pre-check falls
-// back to ArrayPath's own pool-wide free space. Exclude is a set of
+// (CLAUDE.md: "one placement algorithm"). Branches are the share's
+// per-disk directories on the data disks' own mountpoints, in that
+// mount's branch order — the same directories its branches name through
+// each disk's nosymfollow bind (pool.MoverTargetMount); when empty, the
+// space pre-check falls back to ArrayPath's own pool-wide free space. Exclude is a set of
 // path/filepath.Match patterns, tried against both a file's path relative
 // to the share root and its base name.
 type Share struct {
@@ -91,15 +95,18 @@ type Config struct {
 // scriptable fake"). Zero-value fields are filled with the real
 // implementation by withDefaults.
 type Deps struct {
-	Open     OpenChecker
-	Avail    func(path string) (int64, error)
-	Now      func() time.Time
-	UUID     func() string
-	FsyncDir func(dir string) error
-	// Mknod creates a FIFO or device node (mknod(2)); defaults to
-	// unix.Mknod. A filesystem or a missing capability can refuse it, and
-	// the entry is then reported as failed.
-	Mknod func(path string, mode uint32, dev int) error
+	Open  OpenChecker
+	Avail func(path string) (int64, error)
+	Now   func() time.Time
+	UUID  func() string
+	// FsyncDir fsyncs the target directory a copy was published in,
+	// through its descriptor; defaults to unix.Fsync.
+	FsyncDir func(dirfd int) error
+	// Mknod creates a FIFO or device node named name in the directory
+	// dirfd (mknodat(2)); defaults to unix.Mknodat. A filesystem or a
+	// missing capability can refuse it, and the entry is then reported as
+	// failed.
+	Mknod func(dirfd int, name string, mode uint32, dev int) error
 	// Sync is RelocateToCache's own dependency (#54): a caller-supplied
 	// adapter onto parity.Engine.Sync, kept out of this package's own
 	// imports the same way RunHooks avoids importing internal/job (see
@@ -176,7 +183,7 @@ func (d Deps) withDefaults() Deps {
 		d.Usage = UsageBytes
 	}
 	if d.Mknod == nil {
-		d.Mknod = unix.Mknod
+		d.Mknod = unix.Mknodat
 	}
 	return d
 }
@@ -565,23 +572,57 @@ func spaceAvailable(s Share, size int64, deps Deps) bool {
 // temp-suffixed copy through dst's directory (so mergerfs places it),
 // preserve mode, ownership, xattrs and timestamps, verify, fsync, then
 // atomically rename it into place. Directories dst needs that do not exist
-// yet are created with the owner, group and mode of src's, walked down from
-// dstRoot without following a symlink (mkdirAllLike); the temp file and
-// the final rename that follow are still path-based (#656).
-// A regular file is copied with its holes intact; a symlink, FIFO or
-// device node is recreated and never followed. It never touches src.
+// yet are created with the owner, group and mode of src's. dst's directory
+// is resolved once, from dstRoot, one component at a time without following
+// a symlink (mkdirAllLike); the temp file, every change to it, its removal
+// on failure and the rename into place are then made relative to that
+// directory's descriptor and never by path (#656).
+//
+// What keeps all of that on the target depends on what dstRoot is. On a
+// plain filesystem — the cache disk for a relocation to the cache, a data
+// disk for a rebalance or an evacuation — the descriptor is the directory
+// itself, so one swapped for a symlink while the copy runs cannot send
+// anything outside the target tree. On the mover's array-only mergerfs
+// mount — the mover and a relocation to the array — the descriptor is a
+// FUSE node, and mergerfs carries out each of those calls by path on its
+// branch, after a lookup the kernel may still be answering from its entry
+// cache; there it is the branch that holds: every branch is a nosymfollow
+// bind of its data disk (pool.MoverTargetMount, doc 02 §1), so the kernel
+// refuses to follow a symlink swapped into that path at any moment.
+//
+// A symlink met among dst's directories — by the walk, by requireNoSymlinks
+// or by the kernel on a branch — fails the copy with beneath.ErrSymlink and
+// leaves src, which this never touches, in place. A regular file is copied
+// with its holes intact; a symlink, FIFO or device node is recreated and
+// never followed.
 func copyMoveFile(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
-	if srcInfo.Mode().IsRegular() {
-		return copyRegular(src, dst, dstRoot, srcInfo, cfg, deps)
+	err := copyMoveFileAt(src, dst, dstRoot, srcInfo, cfg, deps)
+	if errors.Is(err, unix.ELOOP) && !errors.Is(err, beneath.ErrSymlink) {
+		return fmt.Errorf("%w: %w", beneath.ErrSymlink, err)
 	}
-	return copyNode(src, dst, dstRoot, srcInfo, deps)
+	return err
 }
 
-func copyRegular(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
-	if err := mkdirAllLike(filepath.Dir(src), dstRoot, filepath.Dir(dst), deps); err != nil {
+func copyMoveFileAt(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps Deps) error {
+	parentfd, err := mkdirAllLike(filepath.Dir(src), dstRoot, filepath.Dir(dst), deps)
+	if err != nil {
 		return fmt.Errorf("create target directory: %w", err)
 	}
-	tmp := dst + tempSuffix + deps.UUID()
+	defer func() { _ = unix.Close(parentfd) }()
+	if srcInfo.Mode().IsRegular() {
+		return copyRegular(src, dst, dstRoot, parentfd, srcInfo, cfg, deps)
+	}
+	return copyNode(src, dst, dstRoot, parentfd, srcInfo, deps)
+}
+
+// fdPath names the file or directory a descriptor holds open, for the few
+// system calls that take only a path (chmod, setxattr). It resolves to that
+// object itself, whatever the path it was opened by has become.
+func fdPath(fd int) string { return "/proc/self/fd/" + strconv.Itoa(fd) }
+
+func copyRegular(src, dst, dstRoot string, parentfd int, srcInfo os.FileInfo, cfg Config, deps Deps) error {
+	name := filepath.Base(dst)
+	tmpName := name + tempSuffix + deps.UUID()
 
 	in, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
@@ -594,15 +635,16 @@ func copyRegular(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps
 		return fmt.Errorf("source is no longer a regular file")
 	}
 
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, srcInfo.Mode().Perm())
+	tfd, err := unix.Openat(parentfd, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(srcInfo.Mode().Perm()))
 	if err != nil {
-		return fmt.Errorf("create target: %w", err)
+		return fmt.Errorf("create target: %w", &fs.PathError{Op: "openat", Path: tmpName, Err: err})
 	}
+	out := os.NewFile(uintptr(tfd), tmpName)
 	cleanTemp := true
 	defer func() {
 		if cleanTemp {
 			_ = out.Close()
-			_ = os.Remove(tmp)
+			_ = unix.Unlinkat(parentfd, tmpName, 0)
 		}
 	}()
 
@@ -627,12 +669,12 @@ func copyRegular(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps
 	if err := out.Chmod(srcInfo.Mode().Perm()); err != nil {
 		return fmt.Errorf("preserve mode: %w", err)
 	}
-	if err := copyXattrs(src, tmp); err != nil {
+	if err := copyXattrs(src, fdPath(int(out.Fd()))); err != nil {
 		return err
 	}
 
 	if cfg.VerifyChecksum {
-		if err := verifyChecksum(tmp, srcHash); err != nil {
+		if err := verifyChecksum(parentfd, tmpName, srcHash); err != nil {
 			return err
 		}
 	}
@@ -645,22 +687,27 @@ func copyRegular(src, dst, dstRoot string, srcInfo os.FileInfo, cfg Config, deps
 	}
 	// Set after every write and read of tmp above, so nothing after this
 	// touches its atime/mtime again before the rename.
-	if err := os.Chtimes(tmp, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
+	mt := unix.NsecToTimespec(srcInfo.ModTime().UnixNano())
+	if err := unix.UtimesNanoAt(parentfd, tmpName, []unix.Timespec{mt, mt}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return fmt.Errorf("preserve timestamps: %w", err)
 	}
 
-	renamed, err := publishTemp(tmp, dst, deps)
+	if err := requireNoSymlinks(dstRoot, filepath.Dir(dst)); err != nil {
+		return err
+	}
+	renamed, err := publishTemp(parentfd, tmpName, name, deps)
 	if renamed {
 		cleanTemp = false
 	}
 	return err
 }
 
-// publishTemp renames tmp to dst without replacing anything and makes the
-// rename durable. renamed reports whether the rename happened, so a caller
-// whose cleanup removes tmp stops once it is gone.
-func publishTemp(tmp, dst string, deps Deps) (renamed bool, err error) {
-	if err := renameNoReplace(tmp, dst); err != nil {
+// publishTemp renames tmp to name in the directory parentfd without
+// replacing anything and makes the rename durable. renamed reports whether
+// the rename happened, so a caller whose cleanup removes tmp stops once it
+// is gone.
+func publishTemp(parentfd int, tmp, name string, deps Deps) (renamed bool, err error) {
+	if err := renameNoReplace(parentfd, tmp, name); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return false, errTargetAppeared
 		}
@@ -677,22 +724,18 @@ func publishTemp(tmp, dst string, deps Deps) (renamed bool, err error) {
 	// "<name>.hoserva-moving-<uuid>", which the next run's
 	// sweepStrayTemps discards as a stray copy — losing the file rather
 	// than merely duplicating it (doc 09 §2).
-	if err := deps.FsyncDir(filepath.Dir(dst)); err != nil {
+	if err := deps.FsyncDir(parentfd); err != nil {
 		return true, fmt.Errorf("fsync target directory: %w", err)
 	}
 	return true, nil
 }
 
-// fsyncDir fsyncs dir itself, not any file in it, so a rename or create
-// inside it is durable against power loss (the directory entry is its
-// own piece of filesystem metadata, distinct from the file's own data).
-func fsyncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open directory for fsync: %w", err)
-	}
-	defer func() { _ = d.Close() }()
-	if err := d.Sync(); err != nil {
+// fsyncDir fsyncs the directory dirfd itself, not any file in it, so a
+// rename or create inside it is durable against power loss (the directory
+// entry is its own piece of filesystem metadata, distinct from the file's
+// own data).
+func fsyncDir(dirfd int) error {
+	if err := unix.Fsync(dirfd); err != nil {
 		return fmt.Errorf("sync directory: %w", err)
 	}
 	return nil
@@ -704,15 +747,16 @@ type hashWriter interface {
 	Sum(b []byte) []byte
 }
 
-// verifyChecksum re-reads tmp from disk and compares its hash against
+// verifyChecksum re-reads tmp, in the directory parentfd, from disk and compares its hash against
 // srcHash — the bytes actually written, not merely the bytes that passed
 // through memory during the copy (doc 09 §2: "verify ... checksum
 // optionally").
-func verifyChecksum(tmp string, srcHash hashWriter) error {
-	f, err := os.Open(tmp)
+func verifyChecksum(parentfd int, tmp string, srcHash hashWriter) error {
+	fd, err := beneath.Open(parentfd, tmp, unix.O_RDONLY)
 	if err != nil {
 		return fmt.Errorf("verify: reopen target: %w", err)
 	}
+	f := os.NewFile(uintptr(fd), tmp)
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {

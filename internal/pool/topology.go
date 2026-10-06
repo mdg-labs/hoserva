@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // CatchAllPath is where the catch-all pool mounts (doc 02 §1, Q12).
@@ -184,6 +186,13 @@ func shareMount(share Share, dataDisks []string, cachePath, removingDisk string,
 // (doc 02 §1, Q12; doc 09 §2): array-only branches with the share's own
 // create policy, so mergerfs — not the mover — places every file the
 // mover relocates (doc 09 §2, "one placement algorithm").
+//
+// Its branches are each data disk's nosymfollow bind (disk.BranchBind),
+// not the disk's own mountpoint, in the same order and with the same
+// modes: mergerfs makes every branch call by path, as root here, so a
+// directory a share user swaps for a symlink on a data disk would
+// otherwise take the mover's create, rename or unlink anywhere on the host
+// (#656). On the bind the kernel refuses to follow it.
 func MoverTargetMount(share Share, dataDisks []string, opts Options) (Mount, error) {
 	return moverTargetMount(share, dataDisks, "", opts)
 }
@@ -210,14 +219,25 @@ func moverTargetMount(share Share, dataDisks []string, removingDisk string, opts
 	if err := checkRemovingDisk(dataDisks, removingDisk); err != nil {
 		return Mount{}, err
 	}
+	binds := make([]disk.BranchBind, len(dataDisks))
+	roots := make([]string, len(dataDisks))
+	removingRoot := ""
+	for i, d := range dataDisks {
+		binds[i] = disk.BranchBindFor(d)
+		roots[i] = binds[i].Where
+		if d == removingDisk {
+			removingRoot = roots[i]
+		}
+	}
 	return Mount{
 		Where:             MoverTargetPath(share.Name),
-		What:              strings.Join(shareBranchesRemoving(dataDisks, share.Name, "RW", removingDisk), ":"),
+		What:              strings.Join(shareBranchesRemoving(roots, share.Name, "RW", removingRoot), ":"),
 		FSName:            "hoserva-" + share.Name,
 		CreatePolicy:      share.CreatePolicy,
 		Options:           share.optionsFor(opts),
 		Description:       fmt.Sprintf("Hoserva share %s — mover write target", share.Name),
-		RequiresMountsFor: append([]string(nil), dataDisks...),
+		RequiresMountsFor: append([]string(nil), roots...),
+		Binds:             binds,
 	}, nil
 }
 

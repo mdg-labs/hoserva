@@ -3,6 +3,7 @@ package disk
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -161,6 +162,55 @@ func (u MountUnit) Render(stoppedFlag string) string {
 	fmt.Fprintf(&b, "[Mount]\nWhat=%s\nWhere=%s\nType=%s\n", u.device(), u.Where, u.Filesystem)
 	fmt.Fprintf(&b, "Options=%s\n", opts)
 	return b.String()
+}
+
+// BranchBindRoot is where each data disk is bind-mounted again, with
+// nosymfollow, for the mover's write targets to use as their mergerfs
+// branches (doc 02 §1, #656): /mnt/disk1 is bound at
+// /run/hoserva/branches/mnt/disk1.
+const BranchBindRoot = "/run/hoserva/branches"
+
+// BranchBindOptions are a branch bind's mount options. nosymfollow makes the
+// kernel refuse to follow a symlink anywhere in a path resolved on the bind,
+// so a directory a share user swaps for a symlink on the data disk cannot
+// carry a write mergerfs makes by path on the mover's behalf, as root, off
+// the disk.
+const BranchBindOptions = "bind,nosymfollow,nofail"
+
+// BranchBind is one data disk's nosymfollow bind mount (BranchBindRoot). The
+// mover's write targets are mergerfs mounts that run as root on behalf of a
+// share's users, and mergerfs makes every branch call by path, so on a
+// branch that follows symlinks the kernel resolves whatever a user put in
+// that path at that moment. Only those mounts use it; the share mounts and
+// the catch-all keep /mnt/diskN as their branches.
+type BranchBind struct {
+	Source string // the disk's own mountpoint, e.g. /mnt/disk1
+	Where  string // e.g. /run/hoserva/branches/mnt/disk1
+}
+
+// BranchBindFor returns the branch bind of the disk mounted at source.
+func BranchBindFor(source string) BranchBind {
+	return BranchBind{Source: source, Where: BranchBindRoot + filepath.Clean("/"+source)}
+}
+
+// Render returns b's systemd unit file content. The bind is bound to the
+// disk's own mount unit (BindsTo=, After=): it never starts without the disk,
+// and stops when the disk stops, so it can neither serve the bare mountpoint
+// directory nor keep a removed disk's filesystem mounted — for as long as
+// systemd has this file loaded, which is why config.WritePoolMounts never
+// removes it and every disk unmount stops a mounted bind itself first
+// (MountUnitController.Unmount, SystemdMounter.Unmount). It carries the same
+// array-stopped condition as every other generated mount unit (see
+// StorageStoppedFlagPath).
+func (b BranchBind) Render(stoppedFlag string) string {
+	disk := UnitFileName(b.Source)
+	var s strings.Builder
+	fmt.Fprintf(&s, "[Unit]\nDescription=Hoserva mover branch of %s (no symlinks followed)\n", b.Source)
+	fmt.Fprintf(&s, "ConditionPathExists=!%s\n", stoppedFlag)
+	fmt.Fprintf(&s, "BindsTo=%s\nAfter=%s\n\n", disk, disk)
+	fmt.Fprintf(&s, "[Mount]\nWhat=%s\nWhere=%s\nType=none\n", b.Source, b.Where)
+	fmt.Fprintf(&s, "Options=%s\n", BranchBindOptions)
+	return s.String()
 }
 
 // MountPlan assigns every disk in plan its standard mountpoint (doc 01

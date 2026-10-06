@@ -2,7 +2,8 @@
 // describe: a catch-all /mnt/user pool over every data disk, one mount
 // per share with branches chosen by the share's own cache mode, and the
 // array-only /run/hoserva/array/<share> mount the mover writes through
-// so mergerfs — never the mover — places every file (doc 09 §2). It
+// so mergerfs — never the mover — places every file (doc 09 §2), its
+// branches each data disk's nosymfollow bind (disk.BranchBind, #656). It
 // renders the systemd .mount units that topology needs. Production
 // brings them up with SystemdMounter (systemctl start on those units)
 // so mergerfs lives outside hoserva.service's cgroup (#335); Mounter's

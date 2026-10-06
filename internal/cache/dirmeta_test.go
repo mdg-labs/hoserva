@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/mdg-labs/hoserva/internal/beneath"
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
@@ -164,9 +166,11 @@ func TestMkdirAllLike_LeavesNoTempDirectoryBehind(t *testing.T) {
 	if err := os.Mkdir(dstRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := mkdirAllLike(src, dstRoot, filepath.Join(dstRoot, "a", "b"), testDeps(NewFakeOpenChecker()).withDefaults()); err != nil {
+	fd, err := mkdirAllLike(src, dstRoot, filepath.Join(dstRoot, "a", "b"), testDeps(NewFakeOpenChecker()).withDefaults())
+	if err != nil {
 		t.Fatalf("mkdirAllLike: %v", err)
 	}
+	_ = unix.Close(fd)
 	for _, d := range []string{dstRoot, filepath.Join(dstRoot, "a")} {
 		if got := tempNamed(t, d); len(got) != 0 {
 			t.Fatalf("temp directories left in %s after a successful create: %v", d, got)
@@ -183,7 +187,7 @@ func TestMkdirAllLike_RefusesADestinationOutsideTheRoot(t *testing.T) {
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := mkdirAllLike(base, root, filepath.Join(base, "elsewhere"), testDeps(NewFakeOpenChecker()).withDefaults()); err == nil {
+	if _, err := mkdirAllLike(base, root, filepath.Join(base, "elsewhere"), testDeps(NewFakeOpenChecker()).withDefaults()); err == nil {
 		t.Fatal("mkdirAllLike created a directory outside its root")
 	}
 	if _, err := os.Lstat(filepath.Join(base, "elsewhere")); err == nil {
@@ -204,7 +208,7 @@ func TestMkdirAllLike_AFailedChownLeavesNothingUnderTheRealName(t *testing.T) {
 		t.Fatal(err)
 	}
 	// "/" is root's: the daemon's user cannot hand a directory to it.
-	if err := mkdirAllLike("/", dstRoot, filepath.Join(dstRoot, "new"), testDeps(NewFakeOpenChecker()).withDefaults()); err == nil {
+	if _, err := mkdirAllLike("/", dstRoot, filepath.Join(dstRoot, "new"), testDeps(NewFakeOpenChecker()).withDefaults()); err == nil {
 		t.Fatal("mkdirAllLike succeeded although the owner could not be set")
 	}
 	if _, err := os.Lstat(filepath.Join(dstRoot, "new")); !errors.Is(err, fs.ErrNotExist) {

@@ -79,11 +79,11 @@ func moverSharesFromStore(shares *store.ShareStore, arrays *store.ArrayStore) fu
 	}
 }
 
-// shareBranchDirs mirrors the per-share directories the pool package's own
-// MoverTargetMount builds its branch list from (internal/pool/topology.go's
-// unexported shareBranches) — one directory per data disk, without the
-// mergerfs "=RW" mode suffix that only the mount option string itself
-// needs.
+// shareBranchDirs returns the share's directory on each data disk's own
+// mountpoint, in the pool package's own MoverTargetMount branch order — the
+// same directories that mount's branches name through each disk's
+// nosymfollow bind, without the mergerfs "=RW" mode suffix that only the
+// mount option string itself needs.
 func shareBranchDirs(dataDisks []string, share string) []string {
 	branches := make([]string, len(dataDisks))
 	for i, d := range dataDisks {

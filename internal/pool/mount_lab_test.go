@@ -18,7 +18,10 @@
 // never at the production /mnt/user or /run/hoserva/array paths this
 // package's constructors return — so each Mount's Where is rebuilt
 // under $LAB after the constructor computes its branches, options and
-// create policy exactly as production would.
+// create policy exactly as production would. The one exception is a mover
+// target's branch binds, which its branch list names: they are made at
+// their production path (inside this container), and each test unmounts
+// them itself (labReleaseBinds).
 
 package pool
 
@@ -40,6 +43,16 @@ func labDir(t *testing.T) string {
 		t.Skip("HOSERVA_LAB_ID not set — this test only runs inside its own lab container")
 	}
 	return filepath.Join("/lab", id)
+}
+
+// labReleaseBinds unmounts mnt's branch binds (#656). They live at their
+// production path under disk.BranchBindRoot, outside the lab's directory,
+// where its teardown does not look, and would keep the data disks' loop
+// devices busy.
+func labReleaseBinds(mounter Mounter, mnt Mount) {
+	for _, b := range mnt.Binds {
+		_, _ = mounter.Runner.Run(context.Background(), "umount", b.Where)
+	}
 }
 
 func mustMkdirAll(t *testing.T, path string) {
@@ -204,6 +217,7 @@ func TestLabPoolTopology_MountsInOrderAndSurvivesRemount(t *testing.T) {
 		_ = mounter.Unmount(context.Background(), shareMount.Where)
 		_ = mounter.Unmount(context.Background(), catchAll.Where)
 		_ = mounter.Unmount(context.Background(), moverMount.Where)
+		labReleaseBinds(mounter, moverMount)
 		_ = os.Remove(moverMount.Where)
 		_ = os.Remove(arrayRootWhere)
 		_ = os.Remove(catchAllWhere)

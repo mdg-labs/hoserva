@@ -168,8 +168,8 @@ func (h RunHooks) checkpointRelocate(cp RelocateCheckpoint) error {
 // share.Branches must be the share's own per-disk directories in
 // pool.MoverTargetMount's own branch order (mover.go's Share doc
 // comment) — RelocateToCache derives each file's owning data disk as
-// filepath.Dir(branch), the same "<disk>/<share>" shape
-// pool.shareBranches builds every branch from.
+// filepath.Dir(branch), so each is "<disk>/<share>" on the disk's own
+// mountpoint.
 func RelocateToCache(ctx context.Context, share Share, cfg Config, deps Deps, hooks RunHooks, initialCheckpoint []byte) (Report, error) {
 	deps = deps.withDefaults()
 	if deps.Sync == nil {
