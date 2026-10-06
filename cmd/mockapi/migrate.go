@@ -33,6 +33,27 @@ import (
 // no stick; like production it refuses any other device.
 const mockFlashDevice = "/dev/sdu"
 
+const (
+	mockFlashSize   = 16 * disk.GB
+	mockFlashModel  = "SanDisk Cruzer Fit"
+	mockFlashSerial = "4C530001240603119335"
+)
+
+// mockFlashDisk is the stick as the disk inventory lists it: production lists
+// any attached Unraid stick, and tells it by its filesystem and label alone.
+func mockFlashDisk() apiv1.DiskInventoryEntry {
+	return apiv1.DiskInventoryEntry{
+		Device:     mockFlashDevice,
+		SizeBytes:  mockFlashSize,
+		Model:      apiv1.NewOptString(mockFlashModel),
+		Serial:     apiv1.NewOptString(mockFlashSerial),
+		Filesystem: apiv1.NewOptString(disk.UnraidStickFilesystem),
+		Label:      apiv1.NewOptString(disk.UnraidStickLabel),
+		// Production reports a filesystem-bearing disk as containing data.
+		ContainsData: apiv1.NewOptBool(true),
+	}
+}
+
 // mockMigration is the migration session this mock instance keeps: a report
 // and the size of the zip it came from, or the device it was read from. Like
 // production's session it holds the report only; the mock keeps no zip.
@@ -274,7 +295,7 @@ func mockReview(flash *migrate.Flash, at time.Time, disk3Refusal string) *migrat
 	// an internal boot are the ones the capture names by serial, which the mock
 	// attaches as NVMe devices. An internal boot that shares its disk with the
 	// cache is that disk as the cache pool's row, as production builds it.
-	machine := []disk.Disk{{Device: mockFlashDevice, Size: 16 * disk.GB, Model: "SanDisk Cruzer Fit", Serial: "4C530001240603119335", Filesystem: disk.UnraidStickFilesystem, Label: disk.UnraidStickLabel}}
+	machine := []disk.Disk{{Device: mockFlashDevice, Size: mockFlashSize, Model: mockFlashModel, Serial: mockFlashSerial, Filesystem: disk.UnraidStickFilesystem, Label: disk.UnraidStickLabel}}
 	if rv.Boot.Mode == "internal" {
 		shared := rv.Boot.SharedWithCache != nil && *rv.Boot.SharedWithCache
 		for i, bd := range f.Capture.Boot.Devices {
@@ -528,8 +549,8 @@ func (h *handler) GetMigration(ctx context.Context) (*apiv1.Migration, error) {
 	}
 	if !out.ZipOnly {
 		out.FlashDevices = append(out.FlashDevices, apiv1.MigrationFlashDevice{
-			Device: mockFlashDevice, Size: 16 * disk.GB,
-			Model: apiv1.NewOptString("SanDisk Cruzer Fit"), Serial: apiv1.NewOptString("4C530001240603119335"),
+			Device: mockFlashDevice, Size: mockFlashSize,
+			Model: apiv1.NewOptString(mockFlashModel), Serial: apiv1.NewOptString(mockFlashSerial),
 		})
 	}
 	return out, nil

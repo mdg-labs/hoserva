@@ -424,10 +424,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 
 	provider := disk.NewFakeProvider()
 	for _, e := range mockDiskInventory(scenario) {
-		provider.AddDisk(e.Device, contractDiskFromInventory(e))
+		d := contractDiskFromInventory(e)
+		if e.Device == mockFlashDevice {
+			// Production only offers a stick whose filesystem UUID udev
+			// reported, a field the inventory entry does not carry.
+			d.FSUUID = "ABCD-1234"
+		}
+		provider.AddDisk(e.Device, d)
 	}
-
-	provider.AddDisk(mockFlashDevice, disk.Disk{Size: 16 * disk.GB, Filesystem: "vfat", Label: "UNRAID", FSUUID: "ABCD-1234"})
 
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(t.TempDir())

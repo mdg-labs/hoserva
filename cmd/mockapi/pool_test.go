@@ -218,3 +218,68 @@ func TestMockDiskInventory_DevicePathsAreUnique(t *testing.T) {
 		})
 	}
 }
+
+// The stick GetMigration offers to read from must be in the disk list, as
+// production lists any attached Unraid stick: a vfat filesystem labelled
+// UNRAID, not the boot disk and not in the array.
+func TestMockDiskInventory_ListsTheOfferedUnraidStick(t *testing.T) {
+	ctx := context.Background()
+	for _, scenario := range fixtures.Scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			h, err := newHandler(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, err := h.GetMigration(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(m.FlashDevices) != 1 {
+				t.Fatalf("GetMigration offers %+v, want the one stick", m.FlashDevices)
+			}
+			offered := m.FlashDevices[0]
+			listed, err := h.ListDisks(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stick *apiv1.DiskInventoryEntry
+			for i := range listed.Disks {
+				if listed.Disks[i].Device == offered.Device {
+					stick = &listed.Disks[i]
+				}
+			}
+			if stick == nil {
+				t.Fatalf("ListDisks does not list %s, which GetMigration offers", offered.Device)
+			}
+			if stick.Boot || stick.Filesystem.Or("") != "vfat" || stick.Label.Or("") != "UNRAID" ||
+				stick.SizeBytes != offered.Size || stick.Model != offered.Model || stick.Serial != offered.Serial {
+				t.Errorf("listed stick = %+v, want vfat UNRAID, not boot, matching the offer %+v", *stick, offered)
+			}
+			if !stick.ContainsData.Or(false) {
+				t.Errorf("listed stick has containsData %v, want true: production reports it for any disk with a filesystem", stick.ContainsData)
+			}
+			for _, d := range mockArrayDisks(scenario) {
+				if d.Device == offered.Device {
+					t.Errorf("the stick %s is also in the array", offered.Device)
+				}
+			}
+
+			prod := newContractProductionHandler(t, scenario)
+			got, err := prod.ListDisks(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range got.Disks {
+				if d.Device != offered.Device {
+					continue
+				}
+				if d.Boot != stick.Boot || d.SizeBytes != stick.SizeBytes || d.Model != stick.Model || d.Serial != stick.Serial ||
+					d.Filesystem != stick.Filesystem || d.Label != stick.Label {
+					t.Errorf("production lists the stick as %+v, the mock as %+v", d, *stick)
+				}
+				return
+			}
+			t.Errorf("production does not list %s", offered.Device)
+		})
+	}
+}

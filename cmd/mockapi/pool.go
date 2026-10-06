@@ -83,6 +83,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			},
 			mockBootNVMe(),
 			mockUSBDisk(),
+			mockFlashDisk(),
 		}
 	}
 
@@ -142,7 +143,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			Model: apiv1.NewOptString("WDC WD40EFRX"), Serial: apiv1.NewOptString("WD-WCC4E2222222"),
 		})
 	}
-	return append(disks, mockUSBDisk())
+	return append(disks, mockUSBDisk(), mockFlashDisk())
 }
 
 // mockBootNVMe is the shared-NVMe layout (doc 01 §6): one NVMe holding the
