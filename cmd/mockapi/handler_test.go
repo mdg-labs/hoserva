@@ -913,8 +913,9 @@ func TestMockEvacuationDataDisk_RefusesADiskThatLeftThePool(t *testing.T) {
 	}
 }
 
-// No mock scenario has a cache disk, so a relocation is refused in either
-// direction, as production refuses it on a cache-less array.
+// healthy alone carries a cache disk (mockHasCacheDisk); the other scenarios
+// do not, so a relocation there is refused in either direction, as production
+// refuses it on a cache-less array.
 func TestStartShareRelocation_WithoutACacheDiskIsRefused(t *testing.T) {
 	for _, to := range []apiv1.StartShareRelocationRequestTo{
 		apiv1.StartShareRelocationRequestToCache,
@@ -922,7 +923,7 @@ func TestStartShareRelocation_WithoutACacheDiskIsRefused(t *testing.T) {
 	} {
 		t.Run(string(to), func(t *testing.T) {
 			ctx := context.Background()
-			client := newTestClient(t, "healthy")
+			client := newTestClient(t, "rebuilding")
 			if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 				t.Fatalf("CreateShare: %v", err)
 			}
@@ -930,15 +931,69 @@ func TestStartShareRelocation_WithoutACacheDiskIsRefused(t *testing.T) {
 			if code := errorCode(t, err); code != "no_cache_disk" {
 				t.Fatalf("StartShareRelocation to %s: code = %q, want no_cache_disk", to, code)
 			}
-			jobs, err := client.ListJobs(ctx, apiv1.ListJobsParams{})
-			if err != nil {
-				t.Fatalf("ListJobs: %v", err)
-			}
-			for _, j := range jobs.Jobs {
-				if j.Type == apiv1.JobTypeShareRelocation {
-					t.Fatalf("a refused relocation queued job %s", j.ID)
-				}
+			if n := relocationJobs(t, client); n != 0 {
+				t.Fatalf("a refused relocation queued %d job(s)", n)
 			}
 		})
+	}
+}
+
+func relocationJobs(t *testing.T, client apiv1.Invoker) int {
+	t.Helper()
+	jobs, err := client.ListJobs(context.Background(), apiv1.ListJobsParams{})
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	n := 0
+	for _, j := range jobs.Jobs {
+		if j.Type == apiv1.JobTypeShareRelocation {
+			n++
+		}
+	}
+	return n
+}
+
+// The healthy scenario's array has a cache disk, so a relocation is accepted
+// in either direction and queues one job each time.
+func TestStartShareRelocation_WithACacheDiskIsQueued(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t, "healthy")
+	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	for i, to := range []apiv1.StartShareRelocationRequestTo{
+		apiv1.StartShareRelocationRequestToCache,
+		apiv1.StartShareRelocationRequestToArray,
+	} {
+		j, err := client.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: "media"})
+		if err != nil {
+			t.Fatalf("StartShareRelocation to %s: %v", to, err)
+		}
+		if j.Type != apiv1.JobTypeShareRelocation || j.Status != apiv1.JobStatusQueued {
+			t.Fatalf("StartShareRelocation to %s = %s %s, want a queued share_relocation job", to, j.Type, j.Status)
+		}
+		if n := relocationJobs(t, client); n != i+1 {
+			t.Fatalf("relocation jobs after %d accepted request(s) = %d, want %d", i+1, n, i+1)
+		}
+	}
+}
+
+// Production's Scheduler.Submit refuses a relocation while the array is
+// stopped (maintenance mode, Q70) once the cache-disk check has passed.
+func TestStartShareRelocation_RefusedWhileTheArrayIsStopped(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t, "healthy")
+	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	_, err := client.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("StartShareRelocation while the array is stopped: code = %q, want maintenance_mode", code)
+	}
+	if n := relocationJobs(t, client); n != 0 {
+		t.Fatalf("a refused relocation queued %d job(s)", n)
 	}
 }

@@ -71,6 +71,8 @@ func migrateError(err error) error {
 		return errMigrationNotConfigured()
 	case errors.Is(err, migrate.ErrVerifyRequired):
 		return &apiError{code: "verify_required", statusCode: 409, message: err.Error()}
+	case errors.Is(err, migrate.ErrPoolBelowMinFreeSpace):
+		return &apiError{code: "pool_below_min_free_space", statusCode: 409, message: err.Error()}
 	case errors.Is(err, migrate.ErrContainersNotConfigured), errors.Is(err, migrate.ErrChecklistNotConfigured):
 		return errMigrationNotConfigured()
 	case errors.Is(err, migrate.ErrMigrationNotFinished):

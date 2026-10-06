@@ -28,6 +28,7 @@ package migrate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -114,6 +115,7 @@ func newLabParity(t *testing.T, change func(a *labArray, manifest map[string]map
 		return disks, recorded, err
 	}
 	li.svc.Finishing = li.arrays.MigrationFinishing
+	li.svc.MinFreeSpace = labMinFreeSpace
 	li.sched.SetMigrationPending(li.arrays.MigrationUnfinished)
 	// The import's own tests seed through a filesystem that refuses every write;
 	// past the point of no return the share step writes for real, inside the lab.
@@ -304,6 +306,42 @@ func TestLabParity_InitialisingWithoutAPassingVerifyOrTheRightConfirmationErases
 		}
 		lp.assertNothingFormatted("a job with no confirmation")
 	})
+}
+
+// When no data disk has the catch-all's minfreespace free, mergerfs answers ENOSPC
+// to every directory made through /mnt/user, which the point of no return does for
+// each share's mount point once the disks are writable,
+// after the parity disk and the cache are erased. The gate refuses first: the
+// confirmation is not offered, a job submitted with the confirmation a client
+// could guess is refused by its own gate before anything is stopped, unmounted or
+// erased, and every source disk is byte-identical afterwards.
+func TestLabParity_NoDataDiskWithTheCatchAllsMinFreeSpaceRefusesBeforeAnythingIsErased(t *testing.T) {
+	lp := newLabParity(t, nil)
+	ctx := context.Background()
+	if done, res := lp.verify(); done.Status != job.StatusSucceeded || res == nil || res.Status != VerifyPassed {
+		t.Fatalf("the verify ended %s (%s): %+v", done.Status, done.ErrorMessage, res)
+	}
+	guess, err := lp.li.svc.ExpectedParityConfirmation(ctx)
+	if err != nil {
+		t.Fatalf("ExpectedParityConfirmation with room on the data disks: %v", err)
+	}
+
+	// The floor now sits above every lab disk, the way the default 50G sits above a
+	// real array whose disks are nearly full.
+	lp.li.svc.MinFreeSpace = "100G"
+	if _, err := lp.li.svc.ExpectedParityConfirmation(ctx); !errors.Is(err, ErrPoolBelowMinFreeSpace) {
+		t.Fatalf("ExpectedParityConfirmation = %v, want ErrPoolBelowMinFreeSpace: no confirmation is offered", err)
+	}
+	info, err := lp.li.svc.ParityInit(ctx)
+	if err != nil || info == nil || info.Confirmation != "" || len(info.Erases) != 0 || info.Problem == "" {
+		t.Fatalf("ParityInit = %+v, %v, want a problem and no confirmation", info, err)
+	}
+
+	done := lp.attempt(guess)
+	if done.Status != job.StatusFailed || !strings.Contains(done.ErrorMessage, ErrPoolBelowMinFreeSpace.Error()) {
+		t.Fatalf("the job ended %s: %q, want it refused for the pool's minimum free space", done.Status, done.ErrorMessage)
+	}
+	lp.assertNothingFormatted("a pool whose every data disk is below its minimum free space")
 }
 
 // The happy path: only the confirmed parity disk and cache are formatted, the

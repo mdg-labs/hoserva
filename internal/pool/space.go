@@ -129,6 +129,52 @@ func ParseMinFreeSpace(s string) (int64, error) {
 	return n * unit, nil
 }
 
+// ErrBelowMinFreeSpace is CheckCreatable's refusal: every data disk has
+// less free space than the pool's minfreespace. The error wraps a
+// *BelowMinFreeSpaceError.
+var ErrBelowMinFreeSpace = errors.New("pool: every data disk has less free space than the pool's minfreespace")
+
+// BelowMinFreeSpaceError says how close CheckCreatable's pool came: the
+// minfreespace as configured and the disk with the most room.
+type BelowMinFreeSpaceError struct {
+	MinFreeSpace     string
+	LargestPath      string
+	LargestFreeBytes int64
+}
+
+func (e *BelowMinFreeSpaceError) Error() string {
+	return fmt.Sprintf("%s: minfreespace is %s and %s, the disk with the most room, has %d bytes free",
+		ErrBelowMinFreeSpace.Error(), e.MinFreeSpace, e.LargestPath, e.LargestFreeBytes)
+}
+
+func (e *BelowMinFreeSpaceError) Is(target error) bool { return target == ErrBelowMinFreeSpace }
+
+// CheckCreatable reports whether a directory or file can be created through
+// a mergerfs pool over diskPaths with minfreespace set to minFreeSpace
+// (Options.MinFreeSpace): mergerfs's create policies skip a branch with less
+// than that much free, and answer ENOSPC when they skip every branch, however
+// small the new entry is. It refuses with a *BelowMinFreeSpaceError when no
+// disk has minFreeSpace free. Each disk costs one statfs(2) call (doc 09 §5),
+// and a disk that cannot be read is an error, never a disk with room.
+func CheckCreatable(ctx context.Context, statter SpaceStatter, diskPaths []string, minFreeSpace string) error {
+	space, err := ComputePoolSpace(ctx, statter, diskPaths, minFreeSpace)
+	if err != nil {
+		return err
+	}
+	floor, err := ParseMinFreeSpace(minFreeSpace)
+	if err != nil {
+		return err
+	}
+	if space.LargestDiskFreeBytes >= floor {
+		return nil
+	}
+	return &BelowMinFreeSpaceError{
+		MinFreeSpace:     strings.TrimSpace(minFreeSpace),
+		LargestPath:      space.LargestDiskPath,
+		LargestFreeBytes: space.LargestDiskFreeBytes,
+	}
+}
+
 // ErrDiskNotInPool is EvacuationFits' refusal: evacuating is not one of
 // dataDisks, so there is nothing meaningful to check it against.
 var ErrDiskNotInPool = errors.New("pool: evacuating disk is not one of the pool's data disks")

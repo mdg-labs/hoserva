@@ -17,13 +17,13 @@ func mockErrorCode(t *testing.T, err error) string {
 	return me.code
 }
 
-// No scenario has a cache disk, so RemoveApp refuses appdata deletion the
-// way hoservad does for an array without one — before it looks at whether
-// the appdata is shared.
+// A scenario without a cache disk (every one but healthy) makes RemoveApp
+// refuse appdata deletion the way hoservad does for an array without one —
+// before it looks at whether the appdata is shared.
 func TestRemoveAppRefusesAppdataWithoutACacheDisk(t *testing.T) {
 	for _, id := range []string{"portainer", "transcoder"} {
 		t.Run(id, func(t *testing.T) {
-			h, err := newHandler("healthy")
+			h, err := newHandler("rebuilding")
 			if err != nil {
 				t.Fatalf("newHandler: %v", err)
 			}
@@ -38,6 +38,22 @@ func TestRemoveAppRefusesAppdataWithoutACacheDisk(t *testing.T) {
 				t.Fatalf("a refused removal must leave the container: %v", err)
 			}
 		})
+	}
+}
+
+// healthy has a cache disk, so the appdata-location refusal does not apply:
+// RemoveApp goes on to the shared-appdata check.
+func TestRemoveAppWithACacheDiskReachesTheSharedAppdataCheck(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	_, err = h.RemoveApp(t.Context(), apiv1.RemoveAppParams{ID: "transcoder", DeleteAppdata: apiv1.NewOptBool(true)})
+	if err == nil {
+		t.Fatal("RemoveApp(transcoder, deleteAppdata=true): expected appdata_shared, got success")
+	}
+	if code := mockErrorCode(t, err); code != "appdata_shared" {
+		t.Fatalf("code = %q, want appdata_shared", code)
 	}
 }
 

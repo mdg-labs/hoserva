@@ -402,8 +402,8 @@ const mockAppdataRoot = "/mnt/cache/appdata/"
 // appdata is deleted only when asked for — then only the mounts inside the
 // appdata location, which the mock reports without touching any disk. The
 // location is the cache disk's, as in hoservad (container.CacheAppdataRoots):
-// no scenario has a cache disk, so asking for appdata deletion is refused
-// with appdata_unavailable everywhere the mock has an array.
+// only healthy has a cache disk, so asking for appdata deletion is refused
+// with appdata_unavailable in every other scenario that has an array.
 func (h *handler) RemoveApp(ctx context.Context, params apiv1.RemoveAppParams) (*apiv1.RemoveAppResult, error) {
 	if params.DeleteAppdata.Or(false) {
 		if err := h.requireArrayRunning(); err != nil {

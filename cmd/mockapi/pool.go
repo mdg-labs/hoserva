@@ -21,6 +21,19 @@ import (
 
 const mockDiskSize = 4_000_000_000_000
 
+const (
+	mockCacheSize   = 1_000_000_000_000
+	mockCacheDevice = "/dev/sdh"
+	mockCacheSerial = "S5Y2NX0M765432K"
+)
+
+// mockHasCacheDisk reports whether scenario's array carries a cache disk:
+// healthy only, so the other scenarios still show a cache-less array and
+// the refusals one gets stay reachable (mockArrayDisks).
+func mockHasCacheDisk(scenario string) bool {
+	return scenario == "healthy"
+}
+
 func errConfirmRequired() error {
 	return &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
 }
@@ -70,6 +83,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			},
 			mockBootNVMe(),
 			mockUSBDisk(),
+			mockFlashDisk(),
 		}
 	}
 
@@ -107,6 +121,14 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			Serial:    apiv1.NewOptString("WD-WCC4E1111111"),
 		},
 	}
+	if mockHasCacheDisk(scenario) {
+		disks = append(disks, apiv1.DiskInventoryEntry{
+			Device:    mockCacheDevice,
+			SizeBytes: mockCacheSize,
+			Model:     apiv1.NewOptString("Samsung SSD 870 EVO 1TB"),
+			Serial:    apiv1.NewOptString(mockCacheSerial),
+		})
+	}
 	if scenario == "degraded" {
 		disks[2].Failed = apiv1.NewOptBool(true)
 	}
@@ -121,7 +143,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			Model: apiv1.NewOptString("WDC WD40EFRX"), Serial: apiv1.NewOptString("WD-WCC4E2222222"),
 		})
 	}
-	return append(disks, mockUSBDisk())
+	return append(disks, mockUSBDisk(), mockFlashDisk())
 }
 
 // mockBootNVMe is the shared-NVMe layout (doc 01 §6): one NVMe holding the
@@ -187,6 +209,16 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 			SizeBytes:  size,
 			UsedBytes:  apiv1.NewOptNilInt64(mockDiskSize / 10),
 		},
+	}
+	if mockHasCacheDisk(scenario) {
+		disks = append(disks, apiv1.PoolDiskEntry{
+			Device:     mockCacheDevice,
+			MountPoint: "/mnt/cache",
+			Role:       apiv1.PoolDiskEntryRoleCache,
+			State:      apiv1.DiskStateActive,
+			SizeBytes:  apiv1.NewOptNilInt64(mockCacheSize),
+			UsedBytes:  apiv1.NewOptNilInt64(mockCacheSize / 5),
+		})
 	}
 	if scenario == "degraded" {
 		disks[1].State = apiv1.DiskStateFailed

@@ -27,7 +27,7 @@ func errShareInvalidInput(msg string) error {
 
 // mockCacheModeNeedsCacheDisk mirrors internal/share.Service.Create/
 // Update's own cache-disk check: cache-then-move and cache-only both need
-// a cache disk in the array, and mockArrayDisks("healthy") has none, so a
+// a cache disk in the array, and every mockArrayDisks scenario but healthy has none, so a
 // share created with no explicit cache mode (production's own default is
 // cache-then-move, internal/share/service.go) must be refused the same
 // way production refuses it, not silently accepted. A nil-array scenario

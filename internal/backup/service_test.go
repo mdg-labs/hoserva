@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1392,5 +1394,132 @@ func TestRetentionPrune_PreChangeArchivesDoNotOccupyOrdinarySlots(t *testing.T) 
 		if (err == nil) != want {
 			t.Fatalf("archive %q kept = %v, want %v", names[i], err == nil, want)
 		}
+	}
+}
+
+// pendingMigrationService builds a Service whose pool is mounted — the
+// state an adoption leaves it in, read-only — with a fake migration state.
+func pendingMigrationService(t *testing.T, dests func(poolDest, bootDest string) []Destination, unfinished func(context.Context) (bool, error)) (svc *Service, poolDest, bootDest string, now time.Time) {
+	t.Helper()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest = filepath.Join(poolRoot, "hoserva-backups")
+	bootDest = filepath.Join(root, "boot-backups")
+	now = time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc = &Service{
+		DB:                  db,
+		Paths:               paths,
+		Secrets:             &FakeSecretSource{Passphrase: "backup-pass", HasPass: true},
+		Cipher:              FakeSecretCipher{},
+		Destinations:        dests(poolDest, bootDest),
+		Hostname:            "test-host",
+		Version:             "0.0.0-test",
+		Now:                 func() time.Time { return now },
+		PoolRoot:            poolRoot,
+		PoolMounted:         func(string) (bool, error) { return true, nil },
+		MigrationUnfinished: unfinished,
+	}
+	return svc, poolDest, bootDest, now
+}
+
+func poolAndBoot(poolDest, bootDest string) []Destination {
+	retention := Retention{Daily: 7, Weekly: 4, Monthly: 6}
+	return []Destination{
+		{ID: "boot", Path: bootDest, Enabled: true, Retention: retention},
+		{ID: "pool", Path: poolDest, Enabled: true, Retention: retention},
+	}
+}
+
+// TestService_RunSkipsPoolDestinationWhileAMigrationIsUnfinished is #639: the
+// pool is mounted but read-only until the point of no return (doc 05 §4), so
+// the pool destination is skipped with a named reason instead of failing on
+// EROFS, and the boot destination is written as usual.
+func TestService_RunSkipsPoolDestinationWhileAMigrationIsUnfinished(t *testing.T) {
+	var logs []string
+	svc, poolDest, bootDest, now := pendingMigrationService(t, poolAndBoot,
+		func(context.Context) (bool, error) { return true, nil })
+	svc.Log = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+
+	if err := svc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
+		t.Fatalf("pool destination %q must not be touched while a migration is unfinished: stat error = %v", poolDest, err)
+	}
+	if _, err := os.Stat(filepath.Join(bootDest, archiveName(svc.installationID(), now, ReasonNone, 0))); err != nil {
+		t.Fatalf("boot archive missing: %v", err)
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0], `"pool"`) || !strings.Contains(logs[0], "migration is finished") {
+		t.Fatalf("logs = %q, want one line naming the pool destination and the pending migration", logs)
+	}
+}
+
+func TestService_RunFailsNamingTheMigrationWhenThePoolIsTheOnlyDestination(t *testing.T) {
+	svc, poolDest, _, _ := pendingMigrationService(t, func(poolDest, _ string) []Destination { return poolAndBoot(poolDest, "")[1:] },
+		func(context.Context) (bool, error) { return true, nil })
+
+	err := svc.Run(context.Background())
+	if err == nil {
+		t.Fatal("Run reported success with nothing written")
+	}
+	if !strings.Contains(err.Error(), "every enabled destination was skipped") || !strings.Contains(err.Error(), "migration is finished") {
+		t.Fatalf("error = %v, want it to say nothing was written and why", err)
+	}
+	if _, statErr := os.Stat(poolDest); !os.IsNotExist(statErr) {
+		t.Fatalf("pool destination %q was touched: %v", poolDest, statErr)
+	}
+}
+
+// A migration state that cannot be read is no proof there is none: the pool
+// is not written, exactly as when the migration is known to be pending.
+func TestService_RunDoesNotWriteThePoolWhenTheMigrationStateCannotBeRead(t *testing.T) {
+	svc, poolDest, bootDest, now := pendingMigrationService(t, poolAndBoot,
+		func(context.Context) (bool, error) { return false, errors.New("database is locked") })
+
+	if err := svc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
+		t.Fatalf("pool destination %q written although the migration state was unreadable: %v", poolDest, err)
+	}
+	if _, err := os.Stat(filepath.Join(bootDest, archiveName(svc.installationID(), now, ReasonNone, 0))); err != nil {
+		t.Fatalf("boot archive missing: %v", err)
+	}
+
+	only := func(poolDest, _ string) []Destination { return poolAndBoot(poolDest, "")[1:] }
+	svc, _, _, _ = pendingMigrationService(t, only, func(context.Context) (bool, error) { return false, errors.New("database is locked") })
+	if err := svc.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Fatalf("Run = %v, want a failure carrying the read error", err)
+	}
+}
+
+func TestService_RunWritesThePoolOnceTheMigrationIsFinished(t *testing.T) {
+	svc, poolDest, _, now := pendingMigrationService(t, poolAndBoot,
+		func(context.Context) (bool, error) { return false, nil })
+
+	if err := svc.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(poolDest, archiveName(svc.installationID(), now, ReasonNone, 0))); err != nil {
+		t.Fatalf("pool archive missing with no migration pending: %v", err)
+	}
+}
+
+func TestService_AdmitWriteRefusesOnlyAWriteToThePool(t *testing.T) {
+	svc, poolDest, _, _ := pendingMigrationService(t, poolAndBoot,
+		func(context.Context) (bool, error) { return true, nil })
+	release, why := svc.admitDestination(context.Background(), Destination{ID: "pool", Path: poolDest})
+	if why != "" {
+		t.Fatalf("a read of the pool refused during a migration: %s", why)
+	}
+	release()
+	if _, why := svc.admitWrite(context.Background(), Destination{ID: "pool", Path: poolDest}); !strings.Contains(why, "migration is finished") {
+		t.Fatalf("a write to the pool admitted during a migration: %q", why)
+	}
+	if release, why := svc.admitWrite(context.Background(), Destination{ID: "boot", Path: filepath.Join(filepath.Dir(poolDest), "..", "boot")}); why != "" {
+		t.Fatalf("a write outside the pool refused during a migration: %s", why)
+	} else {
+		release()
 	}
 }

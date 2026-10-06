@@ -643,7 +643,7 @@ func (s *Service) TestDestination(ctx context.Context, id string) (TestResult, e
 	if err != nil {
 		return TestResult{}, err
 	}
-	release, refusal := s.admitDestination(ctx, dest)
+	release, refusal := s.admitWrite(ctx, dest)
 	if refusal != "" {
 		return TestResult{Error: refusal}, nil
 	}

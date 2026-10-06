@@ -197,8 +197,10 @@ func TestHandler_StartShareRelocation_ToArray_SubmitsAndRuns(t *testing.T) {
 		ArrayPath: filepath.Join(base, "array", "docs"),
 	}
 	src := filepath.Join(relocShare.CachePath, "report.pdf")
-	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{filepath.Dir(src), relocShare.ArrayPath} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(src, []byte("report bytes"), 0o640); err != nil {
 		t.Fatal(err)

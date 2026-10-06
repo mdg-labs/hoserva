@@ -1194,3 +1194,27 @@ func TestIsStale_CountsFromTheLaterOfLastSuccessAndReenable(t *testing.T) {
 		}
 	}
 }
+
+func TestTestDestination_PoolDestinationIsNotWrittenWhileAMigrationIsUnfinished(t *testing.T) {
+	rig := newRemoteRig(t)
+	ctx := context.Background()
+	poolRoot := filepath.Join(rig.root, "mnt", "user")
+	rig.svc.PoolRoot = poolRoot
+	rig.svc.PoolMounted = func(string) (bool, error) { return true, nil }
+	rig.svc.MigrationUnfinished = func(context.Context) (bool, error) { return true, nil }
+	dest, err := rig.svc.AddDestination(ctx, NewDestination{Name: "Pool", Type: TypeLocal, Path: filepath.Join(poolRoot, "hoserva-backups")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := rig.svc.TestDestination(ctx, dest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Success || !strings.Contains(res.Error, "migration is finished") {
+		t.Fatalf("result = %+v, want a refusal because a migration is pending", res)
+	}
+	if _, err := os.Stat(poolRoot); !os.IsNotExist(err) {
+		t.Fatalf("the test wrote under %q while a migration was pending: %v", poolRoot, err)
+	}
+}

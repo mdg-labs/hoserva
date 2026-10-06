@@ -711,8 +711,9 @@ var contractCases = []contractCase{
 		},
 	},
 	{
-		op:   "RemoveStack",
-		name: "appdata_deletion_needs_an_appdata_location",
+		op:       "RemoveStack",
+		name:     "appdata_deletion_needs_an_appdata_location",
+		scenario: "rebuilding",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: "nginx", Compose: "services: {}\n"}); err != nil {
 				return err
@@ -1784,12 +1785,13 @@ var contractCases = []contractCase{
 	},
 	{
 		// Production refuses appdata deletion with appdata_unavailable/409
-		// when the array has no cache disk to hold appdata, and no mock
-		// scenario has one — so the mock's appdata_shared refusal and
-		// successful appdata deletion are reached only by the unit tests
-		// in apps_test.go, which call removeApp directly, not by this rig.
-		op:   "RemoveApp",
-		name: "delete_appdata_without_a_cache_disk_is_refused",
+		// when the array has no cache disk to hold appdata; only healthy
+		// has one, so this runs on rebuilding. The mock's appdata_shared
+		// refusal and successful appdata deletion are reached by the unit
+		// tests in apps_test.go, not by this rig.
+		op:       "RemoveApp",
+		name:     "delete_appdata_without_a_cache_disk_is_refused",
+		scenario: "rebuilding",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
 			return err
@@ -1798,8 +1800,9 @@ var contractCases = []contractCase{
 	{
 		// Same refusal for a container whose appdata is shared: with no
 		// cache disk, appdata_unavailable comes before appdata_shared.
-		op:   "RemoveApp",
-		name: "delete_appdata_of_a_shared_mount_without_a_cache_disk_is_refused",
+		op:       "RemoveApp",
+		name:     "delete_appdata_of_a_shared_mount_without_a_cache_disk_is_refused",
+		scenario: "rebuilding",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "transcoder", DeleteAppdata: apiv1.NewOptBool(true)})
 			return err
@@ -2235,11 +2238,12 @@ var contractCases = []contractCase{
 		// Production's CreateShare defaults to cache-then-move
 		// (internal/share/service.go) and refuses it without a cache
 		// disk in the array; mockCacheModeNeedsCacheDisk (shares.go)
-		// mirrors that check, and mockArrayDisks("healthy") has no
+		// mirrors that check, and mockArrayDisks("rebuilding") has no
 		// cache disk, so the default is refused with
 		// share_invalid_input on both sides.
-		op:   "CreateShare",
-		name: "cache_then_move_default_needs_a_cache_disk",
+		op:       "CreateShare",
+		name:     "cache_then_move_default_needs_a_cache_disk",
+		scenario: "rebuilding",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media"})
 			return err
@@ -2361,12 +2365,37 @@ var contractCases = []contractCase{
 	},
 	{
 		op:   "StartShareRelocation",
-		name: "to_array_without_a_cache_disk_is_refused",
+		name: "valid_to_cache",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "StartShareRelocation",
+		name: "valid_to_array",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 				return err
 			}
 			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToArray}, apiv1.StartShareRelocationParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "StartShareRelocation",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
 			return err
 		},
 	},
@@ -2379,8 +2408,21 @@ var contractCases = []contractCase{
 		},
 	},
 	{
-		op:   "StartShareRelocation",
-		name: "to_cache_without_a_cache_disk_is_refused",
+		op:       "StartShareRelocation",
+		name:     "to_array_without_a_cache_disk_is_refused",
+		scenario: "rebuilding",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToArray}, apiv1.StartShareRelocationParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:       "StartShareRelocation",
+		name:     "to_cache_without_a_cache_disk_is_refused",
+		scenario: "rebuilding",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 				return err
@@ -3301,7 +3343,7 @@ var contractCases = []contractCase{
 		op:   "RegisterExternalDisk",
 		name: "valid_new_device",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"})
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"})
 			return err
 		},
 	},
@@ -3384,7 +3426,7 @@ var contractCases = []contractCase{
 		op:   "RegisterExternalDisk",
 		name: "invalid_label_is_refused",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "../etc"})
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "../etc"})
 			return err
 		},
 	},
@@ -3394,7 +3436,7 @@ var contractCases = []contractCase{
 		op:   "UpdateExternalDisk",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"}); err != nil {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"}); err != nil {
 				return err
 			}
 			_, err := h.UpdateExternalDisk(ctx, &apiv1.UpdateExternalDiskRequest{BackupDestination: apiv1.NewOptBool(true)}, apiv1.UpdateExternalDiskParams{Label: "backup2"})
@@ -3408,7 +3450,7 @@ var contractCases = []contractCase{
 		op:   "UpdateExternalDisk",
 		name: "flag_clashing_with_a_destination_name",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2"}); err != nil {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2"}); err != nil {
 				return err
 			}
 			if _, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{Name: "Backup2", Type: apiv1.BackupDestinationTypeLocal, Path: "/srv/elsewhere"}); err != nil {
@@ -3425,7 +3467,7 @@ var contractCases = []contractCase{
 			if _, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{Name: "Backup2", Type: apiv1.BackupDestinationTypeLocal, Path: "/srv/elsewhere"}); err != nil {
 				return err
 			}
-			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)})
+			_, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2", BackupDestination: apiv1.NewOptBool(true)})
 			return err
 		},
 	},
@@ -3435,7 +3477,7 @@ var contractCases = []contractCase{
 		op:   "DeleteBackupDestination",
 		name: "external_destination_twice",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sdf", Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
+			if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: mockExternalDevice, Label: "backup2", BackupDestination: apiv1.NewOptBool(true)}); err != nil {
 				return err
 			}
 			if err := h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "external:backup2"}); err != nil {
@@ -3494,7 +3536,7 @@ var contractCases = []contractCase{
 		op:   "FormatExternalDisk",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: "ERASE /dev/sdf"}, apiv1.FormatExternalDiskParams{Label: "backup"})
+			_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: "ERASE " + mockExternalDevice}, apiv1.FormatExternalDiskParams{Label: "backup"})
 			return err
 		},
 	},

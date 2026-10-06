@@ -979,3 +979,20 @@ func TestAppdataRun_AnEmptyResolvedScopeDoesNothingEvenWhenContainersAreIncluded
 		t.Fatalf("archives = %v, want none", got)
 	}
 }
+
+func TestAppdataRun_SkipsThePoolDestinationWhileAMigrationIsUnfinished(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+	rig.svc.Backup.PoolRoot = rig.poolDir
+	rig.svc.Backup.PoolMounted = func(string) (bool, error) { return true, nil }
+	rig.svc.Backup.MigrationUnfinished = func(context.Context) (bool, error) { return true, nil }
+	rig.svc.Backup.Log = func(string, ...any) {}
+
+	err := rig.run(t)
+	if err == nil || !strings.Contains(err.Error(), "migration is finished") {
+		t.Fatalf("Run = %v, want a failure naming the pending migration: nothing was written", err)
+	}
+	if got := rig.archives(t, rig.poolDir); len(got) != 0 {
+		t.Fatalf("archives written to the read-only pool: %v", got)
+	}
+}

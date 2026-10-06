@@ -217,7 +217,7 @@ func validateMockCompose(text string) error {
 // RemoveStack mirrors production: asking for appdata deletion is refused with
 // array_stopped, before the stack is looked up, while the array is not
 // running, and with appdata_unavailable, as RemoveApp is, where the mock has
-// no cache disk; a plain remove needs neither. The name is free again
+// no cache disk (every scenario but healthy); a plain remove needs neither. The name is free again
 // afterwards, and so are its containers: production brings them down with
 // the stack, so they leave the list.
 func (h *handler) RemoveStack(ctx context.Context, params apiv1.RemoveStackParams) (*apiv1.RemoveStackResult, error) {

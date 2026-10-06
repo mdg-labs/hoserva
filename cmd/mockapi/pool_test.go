@@ -8,6 +8,8 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/store"
+	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
 func TestMockGetPool_MountedFollowsTheArrayStopAndStart(t *testing.T) {
@@ -152,5 +154,132 @@ func TestMockStartScrub_AcceptsAllBlocksAndRefusesWhatProductionRefuses(t *testi
 	}
 	if _, err := client.StartScrub(ctx, req); errorCode(t, err) != "maintenance_mode" {
 		t.Fatalf("StartScrub with allBlocks in maintenance mode = %v, want maintenance_mode", err)
+	}
+}
+
+// A cache disk is one fact: wherever a scenario reports the array, the cache
+// disk is in every report or in none — the stored array, the pool page and
+// the disk inventory — and healthy alone has one.
+func TestMockCacheDiskIsConsistentAcrossReports(t *testing.T) {
+	scenarios := []string{"healthy", "degraded", "rebuilding", "sync-blocked", "fresh-install", "migration-pending"}
+	for _, scenario := range scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			stored := false
+			for _, d := range mockArrayDisks(scenario) {
+				if d.Role == store.ArrayRoleCache {
+					stored = true
+					if d.Mountpoint != "/mnt/cache" || d.Device != mockCacheDevice {
+						t.Errorf("stored cache disk = %+v, want %s at /mnt/cache", d, mockCacheDevice)
+					}
+				}
+			}
+			pooled := false
+			for _, d := range mockPoolStatus(scenario).Disks {
+				if d.Role == apiv1.PoolDiskEntryRoleCache {
+					pooled = true
+					if d.MountPoint != "/mnt/cache" || d.Device != mockCacheDevice {
+						t.Errorf("pool cache disk = %+v, want %s at /mnt/cache", d, mockCacheDevice)
+					}
+				}
+			}
+			listed := false
+			for _, d := range mockDiskInventory(scenario) {
+				if d.Device == mockCacheDevice {
+					listed = true
+					if d.Serial.Or("") != mockCacheSerial {
+						t.Errorf("inventory serial = %q, want %q", d.Serial.Or(""), mockCacheSerial)
+					}
+				}
+			}
+			want := scenario == "healthy"
+			if stored != want || pooled != want || listed != want {
+				t.Fatalf("cache disk in stored array = %v, pool = %v, inventory = %v; want all %v", stored, pooled, listed, want)
+			}
+		})
+	}
+}
+
+// Real device paths are unique, and the disks page keys its rows by device:
+// no scenario's inventory may list one path twice, and the USB disk must be
+// the one the external-disk endpoints report.
+func TestMockDiskInventory_DevicePathsAreUnique(t *testing.T) {
+	for _, scenario := range fixtures.Scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			seen := map[string]string{}
+			for _, d := range mockDiskInventory(scenario) {
+				if prev, dup := seen[d.Device]; dup {
+					t.Errorf("%s listed twice: serial %q and %q", d.Device, prev, d.Serial.Or(""))
+				}
+				seen[d.Device] = d.Serial.Or("")
+			}
+			if _, ok := seen[mockExternalDevice]; !ok {
+				t.Errorf("the USB disk %s is not in the inventory", mockExternalDevice)
+			}
+		})
+	}
+}
+
+// The stick GetMigration offers to read from must be in the disk list, as
+// production lists any attached Unraid stick: a vfat filesystem labelled
+// UNRAID, not the boot disk and not in the array.
+func TestMockDiskInventory_ListsTheOfferedUnraidStick(t *testing.T) {
+	ctx := context.Background()
+	for _, scenario := range fixtures.Scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			h, err := newHandler(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, err := h.GetMigration(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(m.FlashDevices) != 1 {
+				t.Fatalf("GetMigration offers %+v, want the one stick", m.FlashDevices)
+			}
+			offered := m.FlashDevices[0]
+			listed, err := h.ListDisks(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stick *apiv1.DiskInventoryEntry
+			for i := range listed.Disks {
+				if listed.Disks[i].Device == offered.Device {
+					stick = &listed.Disks[i]
+				}
+			}
+			if stick == nil {
+				t.Fatalf("ListDisks does not list %s, which GetMigration offers", offered.Device)
+			}
+			if stick.Boot || stick.Filesystem.Or("") != "vfat" || stick.Label.Or("") != "UNRAID" ||
+				stick.SizeBytes != offered.Size || stick.Model != offered.Model || stick.Serial != offered.Serial {
+				t.Errorf("listed stick = %+v, want vfat UNRAID, not boot, matching the offer %+v", *stick, offered)
+			}
+			if !stick.ContainsData.Or(false) {
+				t.Errorf("listed stick has containsData %v, want true: production reports it for any disk with a filesystem", stick.ContainsData)
+			}
+			for _, d := range mockArrayDisks(scenario) {
+				if d.Device == offered.Device {
+					t.Errorf("the stick %s is also in the array", offered.Device)
+				}
+			}
+
+			prod := newContractProductionHandler(t, scenario)
+			got, err := prod.ListDisks(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range got.Disks {
+				if d.Device != offered.Device {
+					continue
+				}
+				if d.Boot != stick.Boot || d.SizeBytes != stick.SizeBytes || d.Model != stick.Model || d.Serial != stick.Serial ||
+					d.Filesystem != stick.Filesystem || d.Label != stick.Label {
+					t.Errorf("production lists the stick as %+v, the mock as %+v", d, *stick)
+				}
+				return
+			}
+			t.Errorf("production does not list %s", offered.Device)
+		})
 	}
 }

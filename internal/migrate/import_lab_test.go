@@ -337,6 +337,10 @@ func (li *labImport) current() *job.ArraySequence {
 	return li.seq
 }
 
+// labMinFreeSpace is the catch-all's minfreespace in the lab, below the free space
+// of the fixture's data disks (the product's default, 50G, is above all of them).
+const labMinFreeSpace = "50M"
+
 // rebuild is what hoservad's array sequence builder does for a pending array:
 // read-only, device-bound disk units and a read-only catch-all.
 func (li *labImport) rebuild(ctx context.Context) error {
@@ -362,7 +366,7 @@ func (li *labImport) rebuild(ctx context.Context) error {
 			data = append(data, u.Where)
 		}
 	}
-	opts := pool.Options{MinFreeSpace: "50M", Responsiveness: pool.Responsive}
+	opts := pool.Options{MinFreeSpace: labMinFreeSpace, Responsiveness: pool.Responsive}
 	var catchAll pool.Mount
 	if settings.MigrationPending {
 		catchAll, err = pool.CatchAllMountReadOnly(data, opts)

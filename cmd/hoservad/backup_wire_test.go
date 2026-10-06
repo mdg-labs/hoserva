@@ -125,7 +125,7 @@ func TestNewBackupService_NoArchiveHoldsTheMachineKey(t *testing.T) {
 			}
 
 			settings := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
-			svc, err := newBackupService(ctx, cfg, db, machineKey, nil, settings, disk.NewFakeRunner(), api.NewBackupDestinationStore(db))
+			svc, err := newBackupService(ctx, cfg, db, machineKey, nil, settings, disk.NewFakeRunner(), api.NewBackupDestinationStore(db), store.NewArrayStore(db))
 			if err != nil {
 				t.Fatalf("newBackupService: %v", err)
 			}

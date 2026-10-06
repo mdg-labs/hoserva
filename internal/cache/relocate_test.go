@@ -24,6 +24,9 @@ func relocateShare(t *testing.T, name string, branchCount int) Share {
 		Name:      name,
 		CachePath: filepath.Join(base, "cache", name),
 	}
+	if err := os.MkdirAll(filepath.Dir(s.CachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < branchCount; i++ {
 		s.Branches = append(s.Branches, filepath.Join(base, "disks", "disk"+string(rune('1'+i)), name))
 	}

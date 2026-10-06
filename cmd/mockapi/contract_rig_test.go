@@ -424,10 +424,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 
 	provider := disk.NewFakeProvider()
 	for _, e := range mockDiskInventory(scenario) {
-		provider.AddDisk(e.Device, contractDiskFromInventory(e))
+		d := contractDiskFromInventory(e)
+		if e.Device == mockFlashDevice {
+			// Production only offers a stick whose filesystem UUID udev
+			// reported, a field the inventory entry does not carry.
+			d.FSUUID = "ABCD-1234"
+		}
+		provider.AddDisk(e.Device, d)
 	}
-
-	provider.AddDisk(mockFlashDevice, disk.Disk{Size: 16 * disk.GB, Filesystem: "vfat", Label: "UNRAID", FSUUID: "ABCD-1234"})
 
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(t.TempDir())
@@ -611,16 +615,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	extMounter := disk.NewFakeMounter()
 	extRunner := disk.NewFakeRunner()
 	// mockDiskInventory's own mockUSBDisk() entry (Label "backup",
-	// Device /dev/sdf, Filesystem "xfs") is what FakeProvider.AddDisk
-	// keeps for /dev/sdf once every mockDiskInventory entry has been
-	// added (later entries win — mockUSBDisk is appended last) — the
-	// same device the "spare disk" cases above resolve against, now
-	// carrying a filesystem. RegisterExternalDisk/resolveExternal read
-	// its real filesystem UUID through h.diskRunner() (external_handler.
-	// go's own FilesystemUUID call) rather than falling back to a
-	// pending one, so MountExternalDisk's own valid case can resolve a
-	// disk that is not "format before mounting".
-	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdf"}, []byte("ext-fixture-uuid\n"), nil)
+	// Device mockExternalDevice, Filesystem "xfs") is the only disk the
+	// external-disk cases resolve. RegisterExternalDisk/
+	// resolveExternal read its real filesystem UUID through
+	// h.diskRunner() (external_handler.go's own FilesystemUUID call)
+	// rather than falling back to a pending one, so MountExternalDisk's
+	// own valid case can resolve a disk that is not "format before
+	// mounting".
+	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", mockExternalDevice}, []byte("ext-fixture-uuid\n"), nil)
 
 	// Registered last, so t.Cleanup's LIFO order runs this before every
 	// other cleanup above — the db.Close, the netSvc.Close, the mount.Close
@@ -651,8 +653,9 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// (container.CacheAppdataRoots, the same rule); it is then a
 		// temporary directory here, standing for the mock's
 		// mockAppdataRoot, so no case deletes anything outside it. No
-		// scenario has a cache disk, so this rig never reaches the
-		// deletion itself — only the appdata_unavailable refusal.
+		// scenario but healthy has a cache disk, so the deletion itself is
+		// reached only there, and the other scenarios get the
+		// appdata_unavailable refusal.
 		Lifecycle: &container.Lifecycle{
 			Provider: containers,
 			// The array state hoservad wires (cmd/hoservad/containers.go):
@@ -779,12 +782,11 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		prepareContractBareMetal(t, db, h.Backup, dbPath)
 	}
 	// Appdata backup (#61) is the real service over this rig's own
-	// Docker fake and backup destinations. This rig has no cache disk in any
-	// scenario, so its appdata location is the temporary directory the
-	// containers above already mount, standing for the mock's
-	// mockAppdataRoot; the scope, the refusals and the job submission are
-	// what is compared. The three job types run the real backup, restore and preview
-	// (not the no-op the other types get), so a case can restore an archive
+	// Docker fake and backup destinations. This rig's appdata location is
+	// the temporary directory the containers above already mount, standing
+	// for the mock's mockAppdataRoot; the scope, the refusals and the job
+	// submission are what is compared. The three job types run the real
+	// backup, restore and preview (not the no-op the other types get), so a case can restore an archive
 	// a backup it started has written.
 	appdataSvc := &backup.AppdataService{
 		Backup:      h.Backup,

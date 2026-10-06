@@ -666,6 +666,34 @@ CREATE TABLE share_usage_computed_at (
     computed_at TEXT NOT NULL
 ) STRICT;
 
+-- The owner, group and mode every tracked file and its directories had when
+-- the last parity-changing sync finished (#626, doc 02 §2). SnapRAID keeps no
+-- ownership and recreates what `fix` restores as the daemon's user with mode
+-- 0600, so this is what the restored file is given back afterwards. One row
+-- per tracked file and per directory above one, keyed by the data disk's
+-- mount point as share_usage is. A sync writes a whole new generation in
+-- bounded batches, then makes it current in one statement
+-- (file_metadata_current), so no write transaction spans a disk walk and a
+-- rewrite that fails leaves the previous generation as the record; rows of
+-- any other generation are leftovers a later rewrite deletes.
+CREATE TABLE file_metadata (
+    generation INTEGER NOT NULL,
+    disk_mountpoint TEXT NOT NULL,
+    rel_path TEXT NOT NULL,
+    is_dir INTEGER NOT NULL CHECK (is_dir IN (0, 1)),
+    uid INTEGER NOT NULL CHECK (uid >= 0),
+    gid INTEGER NOT NULL CHECK (gid >= 0),
+    mode INTEGER NOT NULL CHECK (mode >= 0 AND mode <= 4095),
+    PRIMARY KEY (generation, disk_mountpoint, rel_path)
+) STRICT, WITHOUT ROWID;
+
+-- The generation of file_metadata that is the record. No row means no sync
+-- has recorded one yet.
+CREATE TABLE file_metadata_current (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    generation INTEGER NOT NULL
+) STRICT;
+
 -- Q15's own persisted relocation manifest (doc 09 §3-4): the file-level
 -- record a mover/rebalance/evacuation/share-relocation job builds as it
 -- copies and verifies each file onto its target, before requesting the

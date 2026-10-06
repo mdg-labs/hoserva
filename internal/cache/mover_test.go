@@ -35,11 +35,19 @@ func mustWrite(t *testing.T, path, content string) {
 func newShare(t *testing.T, name string) Share {
 	t.Helper()
 	base := t.TempDir()
-	return Share{
+	s := Share{
 		Name:      name,
 		CachePath: filepath.Join(base, "cache", name),
 		ArrayPath: filepath.Join(base, "array", name),
 	}
+	// The cache mount and the array mount point exist before a share's
+	// files move; the share's own directory on the cache is made by its tests.
+	for _, d := range []string{filepath.Dir(s.CachePath), s.ArrayPath} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s
 }
 
 // TestRun_MovesEligibleFile is the mover's central happy path: a file

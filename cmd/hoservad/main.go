@@ -507,7 +507,7 @@ func run(cfg config) error {
 	}
 	backupDestinations := api.NewBackupDestinationStore(db)
 	registryCredentialStore := store.NewRegistryCredentialStore(db)
-	backupService, err := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec, backupDestinations)
+	backupService, err := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec, backupDestinations, arrayStore)
 	if err != nil {
 		return err
 	}

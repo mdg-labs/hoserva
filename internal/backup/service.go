@@ -70,6 +70,15 @@ type Service struct {
 	// than raced against it. Nil never refuses — the zero-value default,
 	// matching a Service built before job.ArraySequence is wired to one.
 	PoolWriteGate *PoolWriteGate
+	// MigrationUnfinished reports whether an Unraid migration is anywhere
+	// between its adoption and its point of no return. The pool is mounted
+	// read-only while it is pending and read-write once parity initialises
+	// (doc 05 §4), but is left alone throughout. A write to a destination
+	// under the pool root is refused for as long as it is true, and when it
+	// cannot be read: an error is never taken to mean "no migration". Nil
+	// skips the check, as a Service built for a host with no migration
+	// state does.
+	MigrationUnfinished func(ctx context.Context) (bool, error)
 
 	// ExternalRoot is where external disks mount, /mnt/disks/<label> (Q72),
 	// a destination path is compared against by path component to decide
@@ -327,16 +336,16 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 	var writtenTo []string
 	var failed []DestinationFailure
 	wrote := false
-	skipped := false
+	var skips []error
 	for _, dest := range dests {
 		if !dest.Enabled {
 			continue
 		}
 
-		release, why := s.admitDestination(ctx, dest)
+		release, why := s.admitWrite(ctx, dest)
 		if why != "" {
 			s.log("skipping destination %q: %s", dest.ID, why)
-			skipped = true
+			skips = append(skips, fmt.Errorf("destination %q skipped: %s", dest.ID, why))
 			failed = append(failed, DestinationFailure{Destination: destinationLabel(dest), Err: errors.New(why)})
 			continue
 		}
@@ -364,8 +373,8 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 		}
 		return WrittenArchive{Name: name, Destinations: writtenTo, Failed: failed, SecretsSealed: sealed}, nil
 	}
-	if skipped {
-		return WrittenArchive{}, errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)
+	if len(skips) > 0 {
+		return WrittenArchive{}, errors.Join(append(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, skips...), failures...)...)
 	}
 	return WrittenArchive{}, errors.Join(failures...)
 }
@@ -437,6 +446,34 @@ func (s *Service) admitDestination(ctx context.Context, dest Destination) (relea
 		return noop, fmt.Sprintf("the pool is not mounted at %q", s.poolRoot())
 	}
 	return release, ""
+}
+
+// admitWrite is admitDestination for a caller that writes: a destination
+// under the pool root is also refused while a migration is unfinished: the
+// pool is read-only while it is pending (doc 05 §4), where the write would
+// fail with EROFS, and is left alone until the migration finishes. Reading
+// from the pool stays admitted.
+func (s *Service) admitWrite(ctx context.Context, dest Destination) (release func(), reason string) {
+	if s.MigrationUnfinished != nil && s.isPoolDestination(dest) {
+		unfinished, err := s.MigrationUnfinished(ctx)
+		switch {
+		case err != nil:
+			return func() {}, fmt.Sprintf("confirming no migration is pending: %v", err)
+		case unfinished:
+			return func() {}, "the pool is not written to until the Unraid migration is finished"
+		}
+	}
+	return s.admitDestination(ctx, dest)
+}
+
+func (s *Service) isPoolDestination(dest Destination) bool {
+	if dest.isRemote() {
+		return false
+	}
+	if _, ok := externalMountPoint(dest.Path, s.externalRoot()); ok {
+		return false
+	}
+	return underPoolRoot(dest.Path, s.poolRoot())
 }
 
 // writeDestination writes the archive (and, when dest encrypts, its
