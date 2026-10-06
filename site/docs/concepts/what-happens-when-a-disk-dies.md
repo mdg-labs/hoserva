@@ -56,7 +56,7 @@ You replace the failed disk with **Replace disk** on **Storage → Pool overview
 
 A step-by-step guide for swapping the disk is not published yet. Until then, do not remove a disk from a running array, and do not start a recovery before you have checked when parity last synced.
 
-If you need to get back a single file that was deleted by mistake, and not a whole disk, use `hoserva fix --confirm --path /mnt/user/<share>/<file>`. It restores that one file and leaves every other change since the last sync alone.
+If you need to get back a single file that was deleted by mistake, and not a whole disk, use `hoserva fix --confirm --path /mnt/user/<share>/<file>`. It restores that one file and leaves every other change since the last sync alone. [Recovering files](../guides/recovering-files.mdx) walks through it.
 
 :::danger[Guided recovery restores the whole array]
 **Do not use the Guided recovery to replace a failed disk.** The **Guided recovery** on **Storage → Parity** always starts a fix of the whole array. It rewrites every file that changed or was deleted since the last sync, not only the failed disk's files, so changes you made since that sync are overwritten. To replace a failed disk, use **Replace disk**. For a single file, use the command above.
@@ -66,4 +66,5 @@ If you need to get back a single file that was deleted by mistake, and not a who
 
 - [How parity works](../concepts/how-parity-works.mdx)
 - [Parity is not backup](../concepts/parity-is-not-backup.md)
+- [Recovering files](../guides/recovering-files.mdx)
 - [How pooling works](../concepts/how-pooling-works.md)

@@ -1,0 +1,121 @@
+---
+title: Recovering files
+description: Get back a file you deleted or damaged by mistake from parity, before the next sync makes the loss permanent.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+A deleted or damaged file can be recovered from parity only until the next sync, and the nightly sync, which runs at 02:00 by default, makes the deletion permanent. This page shows how to get a file back in that window, and what parity cannot give back. Think of it as an undelete with a deadline.
+
+Use it when you removed or overwrote something by mistake and the next sync has not run yet. To rebuild a whole failed disk, read [What happens when a disk dies](../concepts/what-happens-when-a-disk-dies.md) first.
+
+## Why is there a time limit?
+
+Parity is a snapshot of your files taken at the last sync, not a history. A sync makes parity match the disks as they are at that moment, so a file deleted before the sync is gone from parity too. [How parity works](../concepts/how-parity-works.mdx) explains why parity is updated by a schedule.
+
+## When does the threshold guard hold the sync?
+
+The threshold guard checks the changes before every sync and holds it when:
+
+- more than 500 files were removed, or
+- more than 10% of the files in the array were removed or changed, or
+- a data disk that held files now holds none.
+
+Deleting one folder by mistake usually stays well below these limits, so the guard does not stop that night's sync. Do not count on it: the guard is there for mass deletions such as ransomware or a share that unmounted.
+
+When the guard does hold a sync, Hoserva sends a notification, **Storage → Parity** shows **Threshold guard is blocking sync**, and `hoserva sync` refuses to run until you add `--force`. Nothing is written to parity while the sync is held, so you have time to recover.
+
+:::danger[Do not force a held sync before you have recovered the files]
+**Run `hoserva sync --force` only after you have recovered what you need.** A sync past the guard overwrites the parity that holds the deleted files, and they cannot be recovered afterwards.
+:::
+
+## Before you start
+
+- Check when parity last synced on **Storage → Parity**. Only files that existed at that sync can be recovered.
+- Do not run a sync yourself. Each sync, manual or scheduled, ends the window.
+- Note the file's path in the pool, for example `/mnt/user/documents/tax.pdf`.
+
+To see what changed since the last sync, select **Run diff** under **Changes since last sync**. It checks every data disk against parity, so it wakes all of them, and its **Removed** group lists files deleted since the last sync. `hoserva sync --dry-run` runs the same check without syncing, but it queues a job and prints that job, not a list of removed files.
+
+## Recover the files
+
+<Tabs groupId="interface">
+  <TabItem value="web" label="Web UI" default>
+    The **Guided recovery** on **Storage → Parity** is a fix of the whole array. It cannot recover a single file or a single disk.
+
+    :::danger[Guided recovery reverts every change since the last sync]
+    **Use it only if you want the whole array back as it was at the last sync.** It rewrites every file that changed or was deleted since then, on every disk. A file you edited since the last sync goes back to its older version. To recover one file or one disk, use the CLI tab.
+    :::
+
+    1. Open **Storage → Parity**.
+    2. Select **Guided fix**. The **Guided recovery** dialog opens.
+    3. Step through **What are you recovering?**, **Preconditions** and **What cannot be recovered**, using **Next**. The last of those shows a warning that files written after the last successful sync are not on parity. It does not list them.
+    4. At **Confirm fix**, select **Start fix job**.
+
+    The fix runs as a job. Follow it in **Jobs**.
+  </TabItem>
+  <TabItem value="cli" label="CLI">
+    To recover one file, name it with `--path`:
+
+    ```bash
+    hoserva fix --confirm --path /mnt/user/documents/tax.pdf
+    ```
+
+    The path must be one file, written as an absolute path under `/mnt/user`. It cannot hold `*`, `?`, `[`, `]` or `\`, and a folder is refused. Every other change since the last sync stays as it is.
+
+    :::danger[A disk or whole-array fix reverts every change since the last sync]
+    **Use `--disk` or no flag only if you want that disk, or the whole array, back as it was at the last sync.** The fix rewrites every file that changed or was deleted since then, so a file you edited since the last sync goes back to its older version. To recover single files, use `--path`.
+    :::
+
+    To recover everything on one data disk, give its number. `--disk 2` means the disk mounted at `/mnt/disk2`:
+
+    ```bash
+    hoserva fix --confirm --disk 2
+    ```
+
+    With neither flag, the fix covers the whole array:
+
+    ```bash
+    hoserva fix --confirm
+    ```
+
+    `--path` and `--disk` cannot be combined.
+
+    The command queues a job and prints it. Follow it in **Jobs** or with `hoserva jobs`.
+  </TabItem>
+</Tabs>
+
+A restored file gets back the owner and permissions Hoserva recorded at the last sync.
+
+## What cannot be recovered?
+
+- **Files written after the last sync.** They were never in parity.
+- **Files that are only on the cache disk**, such as a share set to **Cache only**, or new files the mover has not yet moved to the array. The cache is outside parity. See [Cache and mover](../concepts/cache-and-mover.mdx).
+- **Anything deleted before a sync that already ran.** Once a sync has covered the deletion, the file is gone from parity. Only a backup made elsewhere helps then; see [Parity is not backup](../concepts/parity-is-not-backup.md).
+
+## Troubleshooting
+
+### The fix job fails and says it restored nothing
+
+The path is not in parity, or the file needs no restoring. Check these causes:
+
+- The path is misspelt, or its capitalisation differs. Paths are case-sensitive.
+- The path is a folder and not a file.
+- The file was created after the last sync.
+- The file lives only on the cache disk.
+- The file is intact. A fix of an intact file has nothing to do.
+
+### The fix job fails and mentions unrecoverable blocks
+
+Some data could not be rebuilt. A common cause is another file that shares its parity positions with the one you asked for and changed after the last sync. What the fix could rebuild stays restored, and partial copies are left next to the files as `<name>.unrecoverable`. Check the job's error for the count and the first names.
+
+### The sync is held and I do not know why
+
+Open **Storage → Parity** and select **Run diff**. Look at the **Removed** group before you decide anything. If the removals are not what you meant, recover first, as described above.
+
+## Next steps
+
+- [How parity works](../concepts/how-parity-works.mdx)
+- [Parity is not backup](../concepts/parity-is-not-backup.md)
+- [What happens when a disk dies](../concepts/what-happens-when-a-disk-dies.md)
