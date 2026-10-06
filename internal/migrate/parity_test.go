@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -24,6 +25,25 @@ type parityEnv struct {
 	finishing bool
 	data      []store.ArrayDisk
 	recorded  []store.RecordedDisk
+	free      map[string]int64
+	statErr   map[string]error
+}
+
+// freeStatter answers each data disk's free space from the test's own table, as
+// statfs would for the disk's mount.
+type freeStatter struct{ e *parityEnv }
+
+func (f freeStatter) StatSpace(_ context.Context, path string) (pool.SpaceStat, error) {
+	f.e.mu.Lock()
+	defer f.e.mu.Unlock()
+	if err, ok := f.e.statErr[path]; ok {
+		return pool.SpaceStat{}, err
+	}
+	free, ok := f.e.free[path]
+	if !ok {
+		return pool.SpaceStat{}, errors.New("no such mount in the test")
+	}
+	return pool.SpaceStat{TotalBytes: 4 * disk.TB, FreeBytes: free}, nil
 }
 
 type listProvider struct {
@@ -45,10 +65,12 @@ func newParityEnv(t *testing.T) *parityEnv {
 		{Role: store.ArrayRoleParity, RoleIndex: 1, Serial: "PAR1", Device: "/dev/sdb"},
 		{Role: store.ArrayRoleCache, RoleIndex: 1, Serial: "CAC1", Device: "/dev/nvme0n1"},
 	}
+	e.free = map[string]int64{"/mnt/disk1": 400 * disk.GB, "/mnt/disk2": 900 * disk.GB}
 	e.s = &Service{
 		Dir:      t.TempDir(),
 		Sessions: newSessions(t),
 		Scanner:  &Scanner{Disks: listProvider{list: func() []disk.Disk { return e.machine() }}},
+		Space:    freeStatter{e},
 		Pending: func(context.Context) (bool, error) {
 			e.mu.Lock()
 			defer e.mu.Unlock()
@@ -354,4 +376,73 @@ func TestCheckBootCacheNotMirrored_ACachePartitionWhoseDiskCannotBeIdentifiedIsR
 	if err := CheckBootCacheNotMirrored(review, disks("CAC1"), plan("CAC1")); err != nil {
 		t.Errorf("a cache partition of an identified disk that is not an Unraid boot device: %v, want nil", err)
 	}
+}
+
+// Every directory the point of no return makes through /mnt/user (each share's
+// mount point) fails with ENOSPC when no data
+// disk has the catch-all's minfreespace free, and by then the parity disk and
+// the cache are already erased. The gate refuses first, naming the floor, and
+// offers no confirmation.
+func TestPlanParityInit_RefusesWhenNoDataDiskHasTheCatchAllsMinFreeSpace(t *testing.T) {
+	ctx := context.Background()
+	t.Run("every data disk is below the default floor", func(t *testing.T) {
+		e := newParityEnv(t)
+		e.free = map[string]int64{"/mnt/disk1": 40 * disk.GB, "/mnt/disk2": 12 * disk.GB}
+		if _, err := e.s.PlanParityInit(ctx); !errors.Is(err, ErrPoolBelowMinFreeSpace) || !strings.Contains(err.Error(), "50G") {
+			t.Fatalf("PlanParityInit = %v, want ErrPoolBelowMinFreeSpace naming the 50G default", err)
+		}
+		if _, err := e.s.ExpectedParityConfirmation(ctx); !errors.Is(err, ErrPoolBelowMinFreeSpace) {
+			t.Errorf("ExpectedParityConfirmation = %v, want ErrPoolBelowMinFreeSpace: no confirmation is offered", err)
+		}
+		info, err := e.s.ParityInit(ctx)
+		if err != nil || info == nil || info.Confirmation != "" || len(info.Erases) != 0 || !strings.Contains(info.Problem, "minimum free space") {
+			t.Errorf("ParityInit = %+v, %v, want a problem and no confirmation", info, err)
+		}
+	})
+
+	t.Run("one data disk has the floor free", func(t *testing.T) {
+		e := newParityEnv(t)
+		e.free = map[string]int64{"/mnt/disk1": 12 * disk.GB, "/mnt/disk2": 50 * disk.GB}
+		if _, err := e.s.PlanParityInit(ctx); err != nil {
+			t.Fatalf("PlanParityInit = %v, want it offered: the second disk holds the floor exactly", err)
+		}
+		if info, err := e.s.ParityInit(ctx); err != nil || info == nil || info.Problem != "" || info.Confirmation == "" {
+			t.Errorf("ParityInit = %+v, %v, want the confirmation offered", info, err)
+		}
+	})
+
+	t.Run("a floor the service was given", func(t *testing.T) {
+		e := newParityEnv(t)
+		e.free = map[string]int64{"/mnt/disk1": 40 * disk.GB, "/mnt/disk2": 12 * disk.GB}
+		e.s.MinFreeSpace = "10G"
+		if _, err := e.s.PlanParityInit(ctx); err != nil {
+			t.Fatalf("PlanParityInit with a 10G floor = %v, want it offered", err)
+		}
+		e.s.MinFreeSpace = "41G"
+		if _, err := e.s.PlanParityInit(ctx); !errors.Is(err, ErrPoolBelowMinFreeSpace) {
+			t.Fatalf("PlanParityInit with a 41G floor = %v, want ErrPoolBelowMinFreeSpace", err)
+		}
+	})
+
+	t.Run("a disk or a floor that cannot be read is not read as having room", func(t *testing.T) {
+		e := newParityEnv(t)
+		e.statErr = map[string]error{"/mnt/disk2": errors.New("statfs failed")}
+		if _, err := e.s.PlanParityInit(ctx); err == nil || errors.Is(err, ErrPoolBelowMinFreeSpace) || !strings.Contains(err.Error(), "statfs failed") {
+			t.Fatalf("PlanParityInit with an unreadable disk = %v, want the read error", err)
+		}
+		e = newParityEnv(t)
+		e.s.MinFreeSpace = "lots"
+		if _, err := e.s.PlanParityInit(ctx); err == nil {
+			t.Fatal("PlanParityInit with an unreadable floor was offered")
+		}
+	})
+
+	t.Run("only data disks count", func(t *testing.T) {
+		e := newParityEnv(t)
+		e.data = append(e.data, store.ArrayDisk{Role: store.ArrayRoleParity, RoleIndex: 1, Serial: "PAR9", Mountpoint: "/mnt/parity1"})
+		e.free = map[string]int64{"/mnt/disk1": 40 * disk.GB, "/mnt/disk2": 12 * disk.GB, "/mnt/parity1": 3 * disk.TB}
+		if _, err := e.s.PlanParityInit(ctx); !errors.Is(err, ErrPoolBelowMinFreeSpace) {
+			t.Fatalf("PlanParityInit = %v, want the parity disk's room not counted", err)
+		}
+	})
 }

@@ -993,8 +993,13 @@ type Handler interface {
 	// import is pending its point of no return (or an initialisation is unfinished), and with 400
 	// `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
 	// cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
-	// is not a mirrored pair, and whenever a second Unraid boot device is attached). The job resolves
-	// every disk again from a fresh inventory by identity immediately before the first format and refuses,
+	// is not a mirrored pair, and whenever a second Unraid boot device is attached), and with 409
+	// `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free
+	// (doc 02 §1): once the disks are writable mergerfs would answer ENOSPC to every directory the job
+	// makes through `/mnt/user`, after the former parity disk and the cache were erased. The gate reads
+	// each data disk's free space once and the error names the floor and the disk with the most room; make
+	// room on a data disk (in Unraid, or by undoing the import) and import again. The job resolves every
+	// disk again from a fresh inventory by identity immediately before the first format and refuses,
 	// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
 	// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
 	// formatted disks are recorded leaves the migration in `initializing`: running this again with the

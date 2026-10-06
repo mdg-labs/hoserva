@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -299,4 +300,69 @@ func TestDetectRebalanceSuggestion_NoneWhenTheOnlyDiskIsConstrained(t *testing.T
 	if _, ok := DetectRebalanceSuggestion(KeepFoldersTogether, space); ok {
 		t.Fatal("DetectRebalanceSuggestion: want no suggestion when the constrained disk is the only (and thus largest) one")
 	}
+}
+
+// A directory made through the catch-all needs one branch with at least
+// minfreespace free: CheckCreatable refuses exactly when none has.
+func TestCheckCreatable(t *testing.T) {
+	ctx := context.Background()
+	const g = 1 << 30
+	disks := []string{"/mnt/disk1", "/mnt/disk2"}
+	statter := func(free1, free2 int64) fakeSpaceStatter {
+		return fakeSpaceStatter{stats: map[string]SpaceStat{
+			"/mnt/disk1": {TotalBytes: 100 * g, FreeBytes: free1},
+			"/mnt/disk2": {TotalBytes: 100 * g, FreeBytes: free2},
+		}}
+	}
+
+	for name, tc := range map[string]struct {
+		free1, free2 int64
+		min          string
+		refused      bool
+	}{
+		"every disk below the floor":      {10 * g, 20 * g, "50G", true},
+		"every disk empty of room":        {0, 0, "50G", true},
+		"one byte below the floor":        {50*g - 1, 1, "50G", true},
+		"the larger disk at the floor":    {1 * g, 50 * g, "50G", false},
+		"one disk above the floor":        {10 * g, 80 * g, "50G", false},
+		"a floor lower than every disk":   {10 * g, 20 * g, "1G", false},
+		"a floor of zero never refuses":   {0, 0, "0", false},
+		"a floor in bytes, one above all": {10, 20, "21", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := CheckCreatable(ctx, statter(tc.free1, tc.free2), disks, tc.min)
+			if tc.refused != errors.Is(err, ErrBelowMinFreeSpace) {
+				t.Fatalf("CheckCreatable = %v, want refused=%v", err, tc.refused)
+			}
+			if !tc.refused && err != nil {
+				t.Fatalf("CheckCreatable = %v, want nil", err)
+			}
+		})
+	}
+
+	t.Run("the refusal names the floor and the most room any disk has", func(t *testing.T) {
+		err := CheckCreatable(ctx, statter(10*g, 20*g), disks, "50G")
+		if err == nil || !strings.Contains(err.Error(), "50G") || !strings.Contains(err.Error(), "/mnt/disk2") {
+			t.Fatalf("CheckCreatable = %v, want the floor and the disk with the most room named", err)
+		}
+	})
+
+	t.Run("a disk that cannot be read is not read as having room", func(t *testing.T) {
+		statErr := errors.New("statfs failed")
+		s := statter(80*g, 80*g)
+		s.errs = map[string]error{"/mnt/disk2": statErr}
+		err := CheckCreatable(ctx, s, disks, "50G")
+		if !errors.Is(err, statErr) || errors.Is(err, ErrBelowMinFreeSpace) {
+			t.Fatalf("CheckCreatable = %v, want the read error and not a below-floor refusal", err)
+		}
+	})
+
+	t.Run("no disks and an unreadable floor are errors", func(t *testing.T) {
+		if err := CheckCreatable(ctx, statter(80*g, 80*g), nil, "50G"); !errors.Is(err, ErrNoDataDisks) {
+			t.Fatalf("no disks: %v, want ErrNoDataDisks", err)
+		}
+		if err := CheckCreatable(ctx, statter(80*g, 80*g), disks, "lots"); err == nil || errors.Is(err, ErrBelowMinFreeSpace) {
+			t.Fatalf("an invalid floor: %v, want a parse error", err)
+		}
+	})
 }

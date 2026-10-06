@@ -62,6 +62,8 @@ Key options Hoserva sets — **starting values**, validated against Debian 13's 
 | `cache.files` | `partial` | Sane default for mixed workloads |
 | `cache.entry`, `cache.attr`, `cache.negative_entry`, `cache.statfs` | one "Responsiveness vs. quiet disks" setting | Doc 08 §1; `cache.statfs` favours accuracy (doc 09 §5) |
 
+**Which `minfreespace` the catch-all uses.** The catch-all at `/mnt/user` uses the array's own `minfreespace`, the one value `createArray` takes (default 50G, `array_settings.min_free_space`); a share's own `minfreespace` (doc 09 §1) applies to that share's mount only, and no setting changes the array's afterwards. The Unraid import records the default for the array it adopts. mergerfs skips a branch with less than `minfreespace` free for every create operation and answers ENOSPC when it skips all of them, even for an empty directory: with every data disk below the floor nothing can be made through `/mnt/user`, whatever a share's own floor says. The point of no return's gate (`PlanParityInit`, doc 05 §4 step 17) therefore first checks, with one `statfs(2)` per data disk (`pool.CheckCreatable`), that some data disk has the floor free, and refuses up front with the largest room found when none has, so that step never fails part-way on it. The check covers that gate only: other places that make a directory through `/mnt/user` (the config backup's destination, share mount points made when the array becomes ready) do not call it. The floor is not lowered to make room, because it is also what keeps parity headroom (§2).
+
 ### Create policies, in plain language
 
 mergerfs policy names are opaque. The UI must translate, per share (Q11):

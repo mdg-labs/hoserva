@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -150,6 +151,14 @@ type Service struct {
 	// parity and cache disks it left unformatted. The point of no return resolves
 	// them again from a fresh inventory (PlanParityInit).
 	Record func(ctx context.Context) ([]store.ArrayDisk, []store.RecordedDisk, error)
+	// Space reads each data disk's free space for the point of no return's check
+	// that the catch-all pool can create directories (PlanParityInit); nil uses
+	// statfs(2).
+	Space pool.SpaceStatter
+	// MinFreeSpace is the catch-all pool's minfreespace, in mergerfs's own syntax.
+	// Empty is doc 02 §1's default, which the import records for the array it
+	// adopts and nothing changes afterwards.
+	MinFreeSpace string
 	// Finishing reports whether a parity initialisation stopped after the former
 	// parity and cache disks were formatted and recorded, with the rest of it left
 	// (store.ArrayStore.MigrationFinishing). Nil means it never is.

@@ -10,8 +10,17 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
+
+// freeSpace answers every data disk's free space with one figure, as statfs
+// would for the adopted disks' mounts.
+type freeSpace int64
+
+func (f freeSpace) StatSpace(context.Context, string) (pool.SpaceStat, error) {
+	return pool.SpaceStat{TotalBytes: 4 * disk.TB, FreeBytes: int64(f)}, nil
+}
 
 // parityFix is an import fixture whose array is adopted and pending its point of
 // no return, with the migration_parity job recording its params.
@@ -32,6 +41,7 @@ func newParityFix(t *testing.T) *parityFix {
 		return disks, rec, err
 	}
 	f.svc.Finishing = f.h.ArrayStore.MigrationFinishing
+	f.svc.Space = freeSpace(500 * disk.GB)
 	f.h.Scheduler.SetMigrationPending(f.h.ArrayStore.MigrationUnfinished)
 	f.registry.Register(job.TypeMigrationParity, false, func(_ context.Context, rc *job.RunContext) error {
 		f.queued = append(f.queued, rc.Params())
@@ -121,6 +131,33 @@ func TestHandler_InitializeMigrationParity_IsRefusedWithoutAPassingVerify(t *tes
 		}
 	}
 	f.assertNothingQueued(t, "without a passing verify")
+}
+
+// A pool whose every data disk is below its minfreespace could not create the
+// share directories once the disks are writable, after the parity disk and the
+// cache were erased: the API refuses it as a conflict with the reason, offers no
+// confirmation and queues nothing, whatever the request carries.
+func TestHandler_InitializeMigrationParity_IsRefusedWhenNoDataDiskHasThePoolsMinFreeSpace(t *testing.T) {
+	ctx := context.Background()
+	f := newParityFix(t)
+	f.adopt(t)
+	f.setVerify(t, migrate.VerifyPassed)
+	f.svc.Space = freeSpace(20 * disk.GB)
+
+	for _, confirmation := range []string{"", "ERASE /dev/sdb"} {
+		_, err := f.h.InitializeMigrationParity(ctx, &apiv1.MigrationInitializeParityRequest{Confirmation: confirmation})
+		if st, code := statusOf(f.h, err); st != 409 || code != "pool_below_min_free_space" {
+			t.Errorf("confirmation %q = %d %s, want 409 pool_below_min_free_space", confirmation, st, code)
+		}
+	}
+	m, err := f.h.GetMigration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pi, ok := m.ParityInit.Get(); !ok || pi.Confirmation.IsSet() || !pi.Problem.IsSet() || len(pi.Erases) != 0 {
+		t.Errorf("parityInit = %+v, want a problem and no confirmation", pi)
+	}
+	f.assertNothingQueued(t, "a pool below its minimum free space")
 }
 
 func TestHandler_InitializeMigrationParity_NeedsTheExactTypedConfirmationGetMigrationGives(t *testing.T) {

@@ -110,6 +110,14 @@ func (refusingSnapraid) Start(context.Context, string, ...string) (parity.Proces
 	return nil, errors.New("the test runs no snapraid")
 }
 
+// roomOnEveryDisk answers every data disk's free space with more than the pool's
+// minfreespace, as statfs would for mounted disks with room.
+type roomOnEveryDisk struct{}
+
+func (roomOnEveryDisk) StatSpace(context.Context, string) (pool.SpaceStat, error) {
+	return pool.SpaceStat{TotalBytes: 1 << 40, FreeBytes: 500 << 30}, nil
+}
+
 type parityWiring struct {
 	*importWiring
 	table    *mountScripts
@@ -140,6 +148,7 @@ func wireParity(t *testing.T) *parityWiring {
 	im.runner.Script("findmnt", []string{"-n", "-o", "OPTIONS", "/mnt/disk2"}, []byte("ro,nosuid,nodev,noexec,noatime\n"), nil)
 	im.runner.Script("blkid", []string{"-p", "-s", "UUID", "-o", "value", "/dev/sdb"}, []byte(pwParityUUID+"\n"), nil)
 	w.scheduler.SetMigrationPending(w.arrays.MigrationUnfinished)
+	w.handler.Migration.Space = roomOnEveryDisk{}
 
 	table := &mountScripts{runner: im.runner, arrays: w.arrays}
 	shares := store.NewShareStore(w.db)

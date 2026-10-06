@@ -11919,7 +11919,8 @@ type MigrationParityInit struct {
 	Confirmation OptString `json:"confirmation"`
 	// Every device the point of no return erases; empty when `finishing`.
 	Erases []MigrationParityErase `json:"erases"`
-	// Why it cannot be offered now (a disk missing, swapped or not allowed); no `confirmation` is given.
+	// Why it cannot be offered now (a disk missing, swapped or not allowed, or no data disk with the
+	// pool's `minfreespace` free); no `confirmation` is given.
 	Problem OptString `json:"problem"`
 	// The unprotected window in doc 05 §5's terms: the array has no redundancy from the moment Unraid's
 	// array stopped until the initial sync completes.

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -30,6 +31,11 @@ var (
 	// internal boot device and the capture does not say the boot pool is not a
 	// mirrored pair.
 	ErrMirroredBootPool = errors.New("the cache is a partition of an Unraid boot device that may be one of a mirrored pair, which is never formatted: choose another cache or none")
+	// ErrPoolBelowMinFreeSpace is returned when no adopted data disk has the
+	// catch-all pool's minfreespace free: every directory the step makes through
+	// /mnt/user would fail with ENOSPC after the former parity disk and the cache
+	// were erased.
+	ErrPoolBelowMinFreeSpace = errors.New("the pool could not create the share directories the migration needs once the point of no return is crossed")
 )
 
 // ParityInitWindow is the unprotected window in doc 05 §5's terms, stated at the
@@ -150,7 +156,42 @@ func (s *Service) PlanParityInit(ctx context.Context) (disk.AdoptionPlan, error)
 	if err := CheckBootCacheNotMirrored(sess.Report.Review, listed, plan.Plan); err != nil {
 		return disk.AdoptionPlan{}, err
 	}
+	if err := s.checkPoolCreatable(ctx, data); err != nil {
+		return disk.AdoptionPlan{}, err
+	}
 	return plan.Plan, nil
+}
+
+// checkPoolCreatable refuses (ErrPoolBelowMinFreeSpace) unless some adopted data
+// disk has the catch-all's minfreespace free (doc 02 §1): once the disks are
+// mounted read-write, mergerfs places a new directory only on a branch with that
+// much room, and answers ENOSPC for the share mount points the point of no
+// return makes when none has. It is one statfs(2) of each data disk, made at the
+// user's request, and a disk that cannot be read refuses it as well.
+func (s *Service) checkPoolCreatable(ctx context.Context, data []store.ArrayDisk) error {
+	var mounts []string
+	for _, d := range data {
+		if d.Role == store.ArrayRoleData {
+			mounts = append(mounts, d.Mountpoint)
+		}
+	}
+	statter := s.Space
+	if statter == nil {
+		statter = pool.StatfsSpaceStatter{}
+	}
+	floor := s.MinFreeSpace
+	if floor == "" {
+		floor = pool.DefaultOptions().MinFreeSpace
+	}
+	if err := pool.CheckCreatable(ctx, statter, mounts, floor); err != nil {
+		var below *pool.BelowMinFreeSpaceError
+		if errors.As(err, &below) {
+			return fmt.Errorf("%w: no data disk has the pool's minimum free space of %s, and %s has the most, %s: make room on a data disk (in Unraid, or by undoing the import) and import again",
+				ErrPoolBelowMinFreeSpace, below.MinFreeSpace, below.LargestPath, formatBytes(below.LargestFreeBytes))
+		}
+		return fmt.Errorf("checking the data disks' free space: %w", err)
+	}
+	return nil
 }
 
 // CheckBootCacheNotMirrored refuses (ErrMirroredBootPool) a cache that is a
