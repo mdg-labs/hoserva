@@ -43,12 +43,13 @@ const (
 // any attached Unraid stick, and tells it by its filesystem and label alone.
 func mockFlashDisk() apiv1.DiskInventoryEntry {
 	return apiv1.DiskInventoryEntry{
-		Device:     mockFlashDevice,
-		SizeBytes:  mockFlashSize,
-		Model:      apiv1.NewOptString(mockFlashModel),
-		Serial:     apiv1.NewOptString(mockFlashSerial),
-		Filesystem: apiv1.NewOptString(disk.UnraidStickFilesystem),
-		Label:      apiv1.NewOptString(disk.UnraidStickLabel),
+		Device:      mockFlashDevice,
+		SizeBytes:   mockFlashSize,
+		Model:       apiv1.NewOptString(mockFlashModel),
+		Serial:      apiv1.NewOptString(mockFlashSerial),
+		Filesystem:  apiv1.NewOptString(disk.UnraidStickFilesystem),
+		Label:       apiv1.NewOptString(disk.UnraidStickLabel),
+		UnraidStick: apiv1.NewOptBool(true),
 		// Production reports a filesystem-bearing disk as containing data.
 		ContainsData: apiv1.NewOptBool(true),
 	}

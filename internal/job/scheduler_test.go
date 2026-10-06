@@ -1481,3 +1481,35 @@ func TestScheduler_AppActionDrainGivesUpWhenTheContextEnds(t *testing.T) {
 		t.Fatalf("DrainAppActions with a held action = %v, want the context's deadline", err)
 	}
 }
+
+// CheckAdmission reports the refusal Submit would give, from the same checks,
+// and never creates a job.
+func TestCheckAdmission_ReportsSubmitsRefusalWithoutSubmitting(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	if err := s.CheckAdmission(ctx, TypeShareRelocation); err != nil {
+		t.Fatalf("CheckAdmission on an idle scheduler = %v, want nil", err)
+	}
+
+	s.SetMigrationPending(func(context.Context) (bool, error) { return true, nil })
+	if err := s.CheckAdmission(ctx, TypeShareRelocation); !errors.Is(err, ErrMigrationInProgress) {
+		t.Fatalf("CheckAdmission with a migration pending = %v, want ErrMigrationInProgress", err)
+	}
+	s.SetMigrationPending(func(context.Context) (bool, error) { return false, nil })
+
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	if err := s.CheckAdmission(ctx, TypeShareRelocation); !errors.Is(err, ErrMaintenanceMode) {
+		t.Fatalf("CheckAdmission in maintenance mode = %v, want ErrMaintenanceMode", err)
+	}
+
+	jobs, err := s.store.List(ctx, ListFilter{})
+	if err != nil {
+		t.Fatalf("listing jobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("CheckAdmission created %d job(s), want none", len(jobs))
+	}
+}

@@ -48,12 +48,18 @@ function renderCachePage() {
   );
 }
 
+const emptyPrecheck = { dockerAvailable: true, containers: [], openPaths: [] };
+
 function mockSystemData(overrides?: {
   shares?: unknown[];
   pool?: unknown;
   jobs?: unknown[];
+  precheck?: () => unknown;
 }): void {
   mockGet.mockImplementation((path: string) => {
+    if (path === "/shares/{name}/relocation-precheck") {
+      return Promise.resolve(overrides?.precheck ? overrides.precheck() : { data: emptyPrecheck, response: { ok: true } });
+    }
     if (path === "/status") {
       return Promise.resolve({
         data: { healthy: true, summary: "OK", maintenanceMode: false },
@@ -214,6 +220,122 @@ describe("CachePage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: button }));
 
     expect(await within(dialog).findByText("network down")).toBeInTheDocument();
+  });
+
+  async function openRelocationDialog(): Promise<HTMLElement> {
+    fireEvent.click(await screen.findByRole("combobox", { name: /media/ }));
+    const option = await screen.findByRole("option", { name: "Array only" });
+    fireEvent.pointerDown(option, { pointerType: "mouse" });
+    fireEvent.pointerUp(option, { pointerType: "mouse" });
+    fireEvent.click(option);
+    return screen.findByRole("dialog");
+  }
+
+  const activeContainer = {
+    id: "c1",
+    name: "database",
+    state: "running",
+    active: true,
+    mounts: ["/mnt/user/media/db"],
+  };
+
+  it("lists the containers using the share and holds the relocation until they are stopped", async () => {
+    let stopped = false;
+    mockSystemData({
+      precheck: () => ({
+        data: {
+          dockerAvailable: true,
+          containers: [stopped ? { ...activeContainer, state: "exited", active: false } : activeContainer],
+          openPaths: ["db/live.db"],
+        },
+        response: { ok: true },
+      }),
+    });
+    mockPost.mockImplementation(() => {
+      stopped = true;
+      return Promise.resolve({ data: { id: "c1", name: "database", state: "exited" }, response: { ok: true } });
+    });
+
+    renderCachePage();
+    const dialog = await openRelocationDialog();
+
+    expect(await within(dialog).findByText("database")).toBeInTheDocument();
+    expect(within(dialog).getByText("/mnt/user/media/db")).toBeInTheDocument();
+    expect(within(dialog).getByText("db/live.db")).toBeInTheDocument();
+    const relocate = within(dialog).getByRole("button", { name: "Change mode and relocate" });
+    expect(relocate).toBeDisabled();
+    expect(mockGet).toHaveBeenCalledWith(
+      "/shares/{name}/relocation-precheck",
+      expect.objectContaining({ params: { path: { name: "media" } } }),
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop database" }));
+
+    await vi.waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith("/apps/{id}/stop", { params: { path: { id: "c1" } } });
+      expect(within(dialog).getByRole("button", { name: "Change mode and relocate" })).toBeEnabled();
+    });
+    expect(within(dialog).queryByRole("button", { name: "Stop database" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the relocation held and offers a retry when the check fails", async () => {
+    let failing = true;
+    mockSystemData({
+      precheck: () =>
+        failing
+          ? { error: { code: "internal_error", message: "precheck unavailable" }, response: { ok: false } }
+          : { data: emptyPrecheck, response: { ok: true } },
+    });
+
+    renderCachePage();
+    const dialog = await openRelocationDialog();
+
+    expect(await within(dialog).findByText("precheck unavailable")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Change mode and relocate" })).toBeDisabled();
+
+    failing = false;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Try again" }));
+
+    expect(await within(dialog).findByText("No container uses this share and none of its files is open.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Change mode and relocate" })).toBeEnabled();
+  });
+
+  it("shows a refused check, not an empty list, and keeps the relocation held while the array is stopped", async () => {
+    mockSystemData({
+      precheck: () => ({
+        error: { code: "maintenance_mode", message: "maintenance mode is active — no new jobs are accepted" },
+        response: { ok: false },
+      }),
+    });
+
+    renderCachePage();
+    const dialog = await openRelocationDialog();
+
+    expect(await within(dialog).findByText("maintenance mode is active — no new jobs are accepted")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Change mode and relocate" })).toBeDisabled();
+    expect(within(dialog).queryByText(/No container uses this share/)).not.toBeInTheDocument();
+  });
+
+  it("shows a failed stop in the dialog and keeps the relocation held", async () => {
+    mockSystemData({ precheck: () => ({ data: { dockerAvailable: true, containers: [activeContainer], openPaths: [] }, response: { ok: true } }) });
+    mockPost.mockResolvedValue({ error: { code: "internal_error", message: "docker refused" }, response: { ok: false } });
+
+    renderCachePage();
+    const dialog = await openRelocationDialog();
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Stop database" }));
+
+    expect(await within(dialog).findByText("docker refused")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Change mode and relocate" })).toBeDisabled();
+  });
+
+  it("says so when Docker is not reachable instead of reporting no containers", async () => {
+    mockSystemData({ precheck: () => ({ data: { dockerAvailable: false, containers: [], openPaths: [] }, response: { ok: true } }) });
+
+    renderCachePage();
+    const dialog = await openRelocationDialog();
+
+    expect(await within(dialog).findByText(/Docker is not reachable/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/No container uses this share/)).not.toBeInTheDocument();
   });
 
   it("shows a load error instead of cache content when /shares fails", async () => {

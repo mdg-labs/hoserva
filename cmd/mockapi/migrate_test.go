@@ -854,7 +854,7 @@ func TestMockMigration_ImportOverAnOrdinaryArrayIsArrayExistsBeforeTheLayoutRefu
 func TestMockMigration_ThePoolIsEmptyUntilTheImportAdoptsIt(t *testing.T) {
 	ctx := context.Background()
 	h, _ := newHandler("migration-pending")
-	if pool, _ := h.GetPool(ctx); pool.Mounted || len(pool.Disks) != 0 {
+	if pool, _ := h.GetPool(ctx); pool.Mounted || len(mockPoolMembers(pool)) != 0 {
 		t.Fatalf("pool before the import = %+v, want no array", pool)
 	}
 	if _, err := h.StartMigrationScan(ctx, contractScanRequest(contractFlashZip("7.3.2", nil), false)); err != nil {
@@ -863,7 +863,7 @@ func TestMockMigration_ThePoolIsEmptyUntilTheImportAdoptsIt(t *testing.T) {
 	if _, err := h.StartMigrationImport(ctx, &apiv1.MigrationImportRequest{Confirm: true, Roles: mockImportAll()}); err != nil {
 		t.Fatal(err)
 	}
-	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(pool.Disks) == 0 {
+	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(mockPoolMembers(pool)) == 0 {
 		t.Errorf("pool after the import = %+v, want the adopted pool", pool)
 	}
 }
@@ -1087,7 +1087,7 @@ func TestMockMigration_InitializeParityNeedsAPassingVerifyAndTheTypedConfirmatio
 	if m.Phase != apiv1.MigrationPhaseScanned || m.ParityInit.IsSet() || m.Verify.IsSet() {
 		t.Errorf("after the point of no return: phase = %s, parityInit = %v, verify = %v", m.Phase, m.ParityInit.IsSet(), m.Verify.IsSet())
 	}
-	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(pool.Disks) == 0 {
+	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(mockPoolMembers(pool)) == 0 {
 		t.Errorf("pool after the point of no return = %+v, want the array", pool)
 	}
 	// Past it nothing is pending: a second run is refused, and a job that
@@ -1197,7 +1197,7 @@ func TestMockMigration_StoppedParityInitReportsInitializingUntilFinished(t *test
 	if err := m.Validate(); err != nil {
 		t.Errorf("the initializing migration fails the spec's validation: %v", err)
 	}
-	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(pool.Disks) == 0 {
+	if pool, _ := h.GetPool(ctx); !pool.Mounted || len(mockPoolMembers(pool)) == 0 {
 		t.Errorf("pool after the stopped run = %+v, want the recorded array", pool)
 	}
 	if listed, _ := h.ListJobs(ctx, apiv1.ListJobsParams{Class: apiv1.NewOptJobClass(apiv1.JobClassParity)}); len(listed.Jobs) != 0 {

@@ -1068,6 +1068,30 @@ func (UnimplementedHandler) GetSharePermissions(ctx context.Context, params GetS
 	return r, ht.ErrNotImplemented
 }
 
+// GetShareRelocationPrecheck implements getShareRelocationPrecheck operation.
+//
+// What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose
+// mounts use the share and every file of the share some process currently holds open, across the cache
+// and every array branch. A container uses the share when a mount's host path is the share's pool
+// path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the
+// pool, on the cache or on a data disk; the match is made on the path as written, never through a
+// symlink, so it reads no data disk. `active` is true for a container that is running, paused or
+// restarting — one that can hold files open and that a relocation must not run beside. Listing the
+// open files enumerates the share on the cache and on every array branch, so this is an explicit call
+// that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no
+// containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of
+// the share, so it is the same whichever way the share will move. No answer is given in the cases
+// `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no
+// cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is
+// stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409
+// `database_restore_in_progress` during a database restore. These are the scheduler's own admission
+// checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
+//
+// GET /shares/{name}/relocation-precheck
+func (UnimplementedHandler) GetShareRelocationPrecheck(ctx context.Context, params GetShareRelocationPrecheckParams) (r *ShareRelocationPrecheck, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetStack implements getStack operation.
 //
 // One stack's row with its stored `docker-compose.yml` text in `compose`, and `manuallyEdited`. Its

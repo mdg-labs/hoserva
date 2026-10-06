@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -279,6 +282,66 @@ func (h *handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	}
 	h.jobs[j.ID] = j
 	return &j, nil
+}
+
+// GetShareRelocationPrecheck is getShareRelocationPrecheck's mock: the
+// refusals StartShareRelocation makes before it queues a job (no such share,
+// no cache disk, maintenance mode, an unfinished migration), and the
+// containers of this instance's own list whose mounts use the share, found
+// with the same lookup production uses. The mock holds no files, so it never
+// reports an open one.
+func (h *handler) GetShareRelocationPrecheck(ctx context.Context, params apiv1.GetShareRelocationPrecheckParams) (*apiv1.ShareRelocationPrecheck, error) {
+	h.mu.Lock()
+	_, ok := h.shares[string(params.Name)]
+	scenario := h.scenario
+	maintenance := h.maintenance
+	h.mu.Unlock()
+	if !ok {
+		return nil, errShareNotFound(params.Name)
+	}
+	if err := mockRequireCacheDisk(scenario); err != nil {
+		return nil, err
+	}
+	if maintenance {
+		return nil, errMaintenanceMode()
+	}
+	if h.migration.unfinished() {
+		return nil, errMigrationInProgress()
+	}
+
+	roots := []string{filepath.Join(pool.CatchAllPath, string(params.Name))}
+	for _, d := range mockArrayDisks(scenario) {
+		if d.Role == store.ArrayRoleData || d.Role == store.ArrayRoleCache {
+			roots = append(roots, filepath.Join(d.Mountpoint, string(params.Name)))
+		}
+	}
+
+	h.appsMu.Lock()
+	down := h.appsDown
+	containers := make([]container.Container, 0, len(h.apps))
+	for _, app := range h.apps {
+		c := container.Container{ID: app.ID, Name: app.Name, State: string(app.State)}
+		for _, m := range app.Mounts {
+			c.Mounts = append(c.Mounts, container.Mount{Source: m.Source.Or(""), Destination: m.Destination})
+		}
+		containers = append(containers, c)
+	}
+	h.appsMu.Unlock()
+
+	out := &apiv1.ShareRelocationPrecheck{DockerAvailable: down == "", Containers: []apiv1.ShareRelocationContainer{}, OpenPaths: []string{}}
+	if down != "" {
+		return out, nil
+	}
+	for _, u := range container.UsingPaths(containers, roots) {
+		out.Containers = append(out.Containers, apiv1.ShareRelocationContainer{
+			ID:     u.Container.ID,
+			Name:   u.Container.Name,
+			State:  apiv1.AppState(u.Container.State),
+			Active: u.Active,
+			Mounts: u.Sources,
+		})
+	}
+	return out, nil
 }
 
 func (h *handler) BrowseShare(ctx context.Context, params apiv1.BrowseShareParams) (*apiv1.ShareBrowseResult, error) {

@@ -107,6 +107,8 @@ export function buildDiscoveryColumns(
         <StatusBadge tone="info">{t("storageSetup.discovery.sparePartition")}</StatusBadge>
       ) : disk.boot ? (
         <StatusBadge tone="outline">{t("storageSetup.discovery.bootDisk")}</StatusBadge>
+      ) : disk.unraidStick ? (
+        <StatusBadge tone="outline">{t("storageSetup.discovery.unraidStick")}</StatusBadge>
       ) : disk.weakIdentity ? (
         <StatusBadge tone="warning">{t("storageSetup.discovery.weakIdentity")}</StatusBadge>
       ) : (

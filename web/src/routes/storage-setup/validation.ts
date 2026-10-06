@@ -48,10 +48,11 @@ function bootCachePartitions(disks: DiskEntry[]): DiskEntry[] {
     );
 }
 
-// The disks a role can be assigned to: every non-boot disk, plus each boot
+// The disks a role can be assigned to: every non-boot disk the API does not
+// flag as the Unraid stick (it refuses every role for it), plus each boot
 // disk's spare partitions, which can only be the cache (doc 01 §6).
 export function assignableDisks(disks: DiskEntry[]): DiskEntry[] {
-  return [...disks.filter((disk) => !disk.boot), ...bootCachePartitions(disks)];
+  return [...disks.filter((disk) => !disk.boot && !disk.unraidStick), ...bootCachePartitions(disks)];
 }
 
 // The discovery step's rows: every disk, each boot disk followed by the

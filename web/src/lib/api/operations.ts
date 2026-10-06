@@ -529,6 +529,13 @@ export function postShareRelocate(name: string, to: "cache" | "array") {
   return hoservaClient.POST("/shares/{name}/relocate", { params: { path: { name } }, body: { to } });
 }
 
+export function getShareRelocationPrecheck(name: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/shares/{name}/relocation-precheck", {
+    params: { path: { name } },
+    signal,
+  });
+}
+
 export function putSharePermissions(name: string, body: UpdateSharePermissionsRequest) {
   return hoservaClient.PUT("/shares/{name}/permissions", { params: { path: { name } }, body });
 }

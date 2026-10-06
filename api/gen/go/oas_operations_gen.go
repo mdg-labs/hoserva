@@ -82,6 +82,7 @@ const (
 	GetSetupStatusOperation                    OperationName = "GetSetupStatus"
 	GetShareOperation                          OperationName = "GetShare"
 	GetSharePermissionsOperation               OperationName = "GetSharePermissions"
+	GetShareRelocationPrecheckOperation        OperationName = "GetShareRelocationPrecheck"
 	GetStackOperation                          OperationName = "GetStack"
 	GetStackConfigOperation                    OperationName = "GetStackConfig"
 	GetStackTemplateUpdateOperation            OperationName = "GetStackTemplateUpdate"

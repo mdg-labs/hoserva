@@ -21,6 +21,8 @@ import { getShares, patchShare, postMoverRun, postShareRelocate } from "@/lib/ap
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
+import { useRelocationPrecheck } from "@/routes/shares/relocation-precheck";
+import { RelocationPrecheckPanel } from "@/routes/shares/relocation-precheck-panel";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
@@ -99,7 +101,6 @@ export function CachePage(): React.ReactElement {
   // still in flight, which would let Cancel close the dialog mid-handler
   // and still let a queued relocate go through (issue #271 finding).
   const [modeDialogHandlerBusy, setModeDialogHandlerBusy] = useState(false);
-  const modeDialogBusy = modeDialogHandlerBusy || cacheModeMutation.pending || relocateMutation.pending;
 
   const shares = sharesQuery.data?.shares ?? null;
   const loadError = systemError ?? sharesQuery.error;
@@ -120,6 +121,10 @@ export function CachePage(): React.ReactElement {
 
   const relocationDirection =
     pendingShare && pendingMode ? shareRelocationDirection(pendingShare.cacheMode, pendingMode) : null;
+  const precheck = useRelocationPrecheck(
+    modeDialogOpen && pendingShare && relocationDirection !== null ? pendingShare.name : null,
+  );
+  const modeDialogBusy = modeDialogHandlerBusy || cacheModeMutation.pending || relocateMutation.pending || precheck.busy;
 
   function openModeDialog(share: Share, nextMode: ShareCacheMode): void {
     if (nextMode === share.cacheMode) {
@@ -179,7 +184,7 @@ export function CachePage(): React.ReactElement {
   }
 
   async function handleSaveModeAndRelocate(): Promise<void> {
-    if (!pendingShare || !pendingMode || !relocationDirection) {
+    if (!pendingShare || !pendingMode || !relocationDirection || !precheck.canRelocate) {
       return;
     }
     setModeDialogHandlerBusy(true);
@@ -404,7 +409,11 @@ export function CachePage(): React.ReactElement {
               {t("shares.detail.cache.changeModeOnly")}
             </Button>
             {relocationDirection ? (
-              <Button loading={modeDialogBusy} onClick={() => void handleSaveModeAndRelocate()}>
+              <Button
+                loading={modeDialogBusy}
+                disabled={!precheck.canRelocate}
+                onClick={() => void handleSaveModeAndRelocate()}
+              >
                 {t("shares.detail.cache.relocateNow")}
               </Button>
             ) : null}
@@ -421,6 +430,7 @@ export function CachePage(): React.ReactElement {
             })}
           </p>
         ) : null}
+        <RelocationPrecheckPanel precheck={precheck} />
       </FormOverlay>
     </div>
   );

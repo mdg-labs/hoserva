@@ -6307,6 +6307,12 @@ type DiskInventoryEntry struct {
 	Boot         bool      `json:"boot"`
 	Failed       OptBool   `json:"failed"`
 	WeakIdentity OptBool   `json:"weakIdentity"`
+	// True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3).
+	// Hoserva only reads it for a migration and never assigns it a role: every role assignment, and
+	// registering, mounting, formatting or enabling it as a backup destination as an external disk, is
+	// refused with `409 unraid_stick`, so a client offers it no role. Ejecting a stick registered before
+	// it was recognised still works, so it can be taken offline.
+	UnraidStick OptBool `json:"unraidStick"`
 	// Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk
 	// (doc 02 §1, §4, doc 03 §3.1).
 	Filesystem OptString `json:"filesystem"`
@@ -6369,6 +6375,11 @@ func (s *DiskInventoryEntry) GetFailed() OptBool {
 // GetWeakIdentity returns the value of WeakIdentity.
 func (s *DiskInventoryEntry) GetWeakIdentity() OptBool {
 	return s.WeakIdentity
+}
+
+// GetUnraidStick returns the value of UnraidStick.
+func (s *DiskInventoryEntry) GetUnraidStick() OptBool {
+	return s.UnraidStick
 }
 
 // GetFilesystem returns the value of Filesystem.
@@ -6439,6 +6450,11 @@ func (s *DiskInventoryEntry) SetFailed(val OptBool) {
 // SetWeakIdentity sets the value of WeakIdentity.
 func (s *DiskInventoryEntry) SetWeakIdentity(val OptBool) {
 	s.WeakIdentity = val
+}
+
+// SetUnraidStick sets the value of UnraidStick.
+func (s *DiskInventoryEntry) SetUnraidStick(val OptBool) {
+	s.UnraidStick = val
 }
 
 // SetFilesystem sets the value of Filesystem.
@@ -19344,8 +19360,11 @@ type PoolDiskEntry struct {
 	MountPoint string            `json:"mountPoint"`
 	Role       PoolDiskEntryRole `json:"role"`
 	State      DiskState         `json:"state"`
-	SizeBytes  OptNilInt64       `json:"sizeBytes"`
-	UsedBytes  OptNilInt64       `json:"usedBytes"`
+	// True when this disk is the Unraid USB stick (see `DiskInventoryEntry.unraidStick`). It is reported
+	// as `unassigned` but no array operation accepts it, so a client offers it no role.
+	UnraidStick OptBool     `json:"unraidStick"`
+	SizeBytes   OptNilInt64 `json:"sizeBytes"`
+	UsedBytes   OptNilInt64 `json:"usedBytes"`
 	// Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null
 	// for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
 	FreeBytes OptNilInt64 `json:"freeBytes"`
@@ -19382,6 +19401,11 @@ func (s *PoolDiskEntry) GetRole() PoolDiskEntryRole {
 // GetState returns the value of State.
 func (s *PoolDiskEntry) GetState() DiskState {
 	return s.State
+}
+
+// GetUnraidStick returns the value of UnraidStick.
+func (s *PoolDiskEntry) GetUnraidStick() OptBool {
+	return s.UnraidStick
 }
 
 // GetSizeBytes returns the value of SizeBytes.
@@ -19432,6 +19456,11 @@ func (s *PoolDiskEntry) SetRole(val PoolDiskEntryRole) {
 // SetState sets the value of State.
 func (s *PoolDiskEntry) SetState(val DiskState) {
 	s.State = val
+}
+
+// SetUnraidStick sets the value of UnraidStick.
+func (s *PoolDiskEntry) SetUnraidStick(val OptBool) {
+	s.UnraidStick = val
 }
 
 // SetSizeBytes sets the value of SizeBytes.
@@ -21261,6 +21290,110 @@ func (s *SharePermissionsResult) SetUsers(val []UserPermissionEntry) {
 // SetGroups sets the value of Groups.
 func (s *SharePermissionsResult) SetGroups(val []GroupPermissionEntry) {
 	s.Groups = val
+}
+
+// Ref: #/components/schemas/ShareRelocationContainer
+type ShareRelocationContainer struct {
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	State AppState `json:"state"`
+	// True for a running, paused or restarting container. Stopping it (`stopApp`) is what clears it for a
+	// relocation.
+	Active bool `json:"active"`
+	// The host paths of this container's mounts that use the share.
+	Mounts []string `json:"mounts"`
+}
+
+// GetID returns the value of ID.
+func (s *ShareRelocationContainer) GetID() string {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *ShareRelocationContainer) GetName() string {
+	return s.Name
+}
+
+// GetState returns the value of State.
+func (s *ShareRelocationContainer) GetState() AppState {
+	return s.State
+}
+
+// GetActive returns the value of Active.
+func (s *ShareRelocationContainer) GetActive() bool {
+	return s.Active
+}
+
+// GetMounts returns the value of Mounts.
+func (s *ShareRelocationContainer) GetMounts() []string {
+	return s.Mounts
+}
+
+// SetID sets the value of ID.
+func (s *ShareRelocationContainer) SetID(val string) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *ShareRelocationContainer) SetName(val string) {
+	s.Name = val
+}
+
+// SetState sets the value of State.
+func (s *ShareRelocationContainer) SetState(val AppState) {
+	s.State = val
+}
+
+// SetActive sets the value of Active.
+func (s *ShareRelocationContainer) SetActive(val bool) {
+	s.Active = val
+}
+
+// SetMounts sets the value of Mounts.
+func (s *ShareRelocationContainer) SetMounts(val []string) {
+	s.Mounts = val
+}
+
+// Ref: #/components/schemas/ShareRelocationPrecheck
+type ShareRelocationPrecheck struct {
+	// False when Docker is not reachable; `containers` is then empty because there is nothing to list, not
+	// because none uses the share.
+	DockerAvailable bool                       `json:"dockerAvailable"`
+	Containers      []ShareRelocationContainer `json:"containers"`
+	// Every file, relative to the share root, that some process holds open on the cache or on an array
+	// branch. A file a client or container reaches through the pool shows as held open by mergerfs itself,
+	// so a name is never attributed to it.
+	OpenPaths []string `json:"openPaths"`
+}
+
+// GetDockerAvailable returns the value of DockerAvailable.
+func (s *ShareRelocationPrecheck) GetDockerAvailable() bool {
+	return s.DockerAvailable
+}
+
+// GetContainers returns the value of Containers.
+func (s *ShareRelocationPrecheck) GetContainers() []ShareRelocationContainer {
+	return s.Containers
+}
+
+// GetOpenPaths returns the value of OpenPaths.
+func (s *ShareRelocationPrecheck) GetOpenPaths() []string {
+	return s.OpenPaths
+}
+
+// SetDockerAvailable sets the value of DockerAvailable.
+func (s *ShareRelocationPrecheck) SetDockerAvailable(val bool) {
+	s.DockerAvailable = val
+}
+
+// SetContainers sets the value of Containers.
+func (s *ShareRelocationPrecheck) SetContainers(val []ShareRelocationContainer) {
+	s.Containers = val
+}
+
+// SetOpenPaths sets the value of OpenPaths.
+func (s *ShareRelocationPrecheck) SetOpenPaths(val []string) {
+	s.OpenPaths = val
 }
 
 // Ref: #/components/schemas/ShareSMB

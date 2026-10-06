@@ -466,18 +466,16 @@ func finishRelocateDelete(ctx context.Context, share Share, me parity.ManifestEn
 	return entry
 }
 
-// PrecheckResult is what a caller shows before starting a relocation
-// (doc 09 §2: "Containers using the share are listed before starting,
-// with an offer to stop them — relocating a live database is the same
-// hazard as moving an open file"). OpenPaths is every file, relative to
-// share, that some process currently holds open across both the cache
-// and array sides — this package's only available signal, since
-// internal/container does not exist yet (doc 06 §3) and a client or
-// container reached through the union mount shows up as held open by
-// mergerfs itself, never attributably by name (openchecker.go's own doc
-// comment). A caller that already knows which containers bind-mount this
-// share can cross-reference that list against OpenPaths itself; this
-// package has no way to do that lookup on its own.
+// PrecheckResult is the open-file half of what a caller shows before
+// starting a relocation (doc 09 §2: "Containers using the share are listed
+// before starting, with an offer to stop them — relocating a live database is
+// the same hazard as moving an open file"). OpenPaths is every file, relative
+// to share, that some process currently holds open across both the cache and
+// array sides. A client or container reached through the union mount shows up
+// as held open by mergerfs itself, never attributably by name (openchecker.go's
+// own doc comment), so this package does not name containers: the API's
+// getShareRelocationPrecheck combines this result with internal/container's
+// lookup of the containers whose mounts use the share.
 type PrecheckResult struct {
 	OpenPaths []string
 }

@@ -642,12 +642,14 @@ func shareCmd() *cobra.Command {
 	cmd.AddCommand(rmData)
 
 	var relocateTo string
+	var ignoreRunningContainers bool
 	relocate := &cobra.Command{
 		Use:   "relocate NAME --to cache|array",
 		Short: "Move a share's files between the cache and the array (doc 09 §2)",
 		Long: "Queues a one-shot move of the whole share. To the array it behaves as a mover run limited to this share; to the cache it copies, verifies, " +
-			"syncs and only then deletes the array copies. Stop the containers that use the share first: " +
-			"relocating a live database is the same hazard as moving an open file.",
+			"syncs and only then deletes the array copies. Before queueing it lists the containers whose mounts use the share and the files held open, " +
+			"and refuses to start while a listed container is running, paused or restarting: relocating a live database is the same hazard as moving an open file. " +
+			"Stop them with `hoserva app stop`, or pass --ignore-running-containers to relocate anyway. The check reads the share's files, which may wake disks.",
 		Example: "  hoserva share relocate media --to cache",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -655,12 +657,27 @@ func shareCmd() *cobra.Command {
 			if to != apiv1.StartShareRelocationRequestToCache && to != apiv1.StartShareRelocationRequestToArray {
 				return fmt.Errorf("share relocate requires --to cache or --to array")
 			}
+			name := apiv1.ShareName(args[0])
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			precheck, err := c.GetShareRelocationPrecheck(apiCtx(), apiv1.GetShareRelocationPrecheckParams{Name: name})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			running := printRelocationPrecheck(cmd.ErrOrStderr(), precheck)
+			if len(running) > 0 && !ignoreRunningContainers {
+				return fmt.Errorf("share relocate: containers using %s are running (%s); stop them (hoserva app stop ID) or pass --ignore-running-containers",
+					args[0], strings.Join(running, ", "))
+			}
 			return runAPI(func(c *apiv1.Client) (any, error) {
-				return c.StartShareRelocation(apiCtx(), &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: apiv1.ShareName(args[0])})
+				return c.StartShareRelocation(apiCtx(), &apiv1.StartShareRelocationRequest{To: to}, apiv1.StartShareRelocationParams{Name: name})
 			})(cmd, args)
 		},
 	}
 	relocate.Flags().StringVar(&relocateTo, "to", "", "Direction: cache or array (required)")
+	relocate.Flags().BoolVar(&ignoreRunningContainers, "ignore-running-containers", false, "Relocate even though running containers use the share")
 	cmd.AddCommand(relocate)
 
 	cmd.AddCommand(&cobra.Command{
@@ -1644,6 +1661,26 @@ func rebootCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm reboot (required)")
 	return cmd
+}
+
+// printRelocationPrecheck writes what a relocation of the share would collide
+// with to w and returns the names of the listed containers that are active.
+func printRelocationPrecheck(w io.Writer, p *apiv1.ShareRelocationPrecheck) []string {
+	var active []string
+	if !p.DockerAvailable {
+		_, _ = fmt.Fprintln(w, "Docker is not reachable, so containers using the share cannot be listed.")
+	}
+	for _, c := range p.Containers {
+		state := string(c.State)
+		if c.Active {
+			active = append(active, c.Name)
+		}
+		_, _ = fmt.Fprintf(w, "container %s (%s) uses the share: %s\n", c.Name, state, strings.Join(c.Mounts, ", "))
+	}
+	for _, f := range p.OpenPaths {
+		_, _ = fmt.Fprintf(w, "open file: %s\n", f)
+	}
+	return active
 }
 
 func runAPI(fn func(*apiv1.Client) (any, error)) func(*cobra.Command, []string) error {

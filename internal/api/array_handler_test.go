@@ -306,6 +306,41 @@ func TestHandler_ListDisks_DiscoveryFieldsAndStandbySMART(t *testing.T) {
 	}
 }
 
+func TestHandler_ListDisksAndGetPool_FlagTheUnraidStick(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, Filesystem: "xfs", Label: "UNRAID"})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 16 * disk.GB, Filesystem: "vfat", Label: "UNRAID"})
+	p.AddDisk("/dev/sdd", disk.Disk{Size: 16 * disk.GB, Filesystem: "vfat", Label: "BACKUP"})
+	h.Disks = p
+
+	listed, err := h.ListDisks(ctx)
+	if err != nil {
+		t.Fatalf("ListDisks: %v", err)
+	}
+	wantStick := map[string]bool{"/dev/sdb": false, "/dev/sdc": true, "/dev/sdd": false}
+	for _, d := range listed.Disks {
+		v, ok := d.UnraidStick.Get()
+		if !ok || v != wantStick[d.Device] {
+			t.Errorf("ListDisks %s unraidStick = (%v, %v), want %v", d.Device, v, ok, wantStick[d.Device])
+		}
+	}
+
+	pool, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(pool.Disks) != 3 {
+		t.Fatalf("GetPool lists %d disks, want 3", len(pool.Disks))
+	}
+	for _, d := range pool.Disks {
+		if d.UnraidStick.Or(false) != wantStick[d.Device] {
+			t.Errorf("GetPool %s unraidStick = %v, want %v", d.Device, d.UnraidStick.Or(false), wantStick[d.Device])
+		}
+	}
+}
+
 // seqLogService / seqLogMount are ArraySequence fakes for the API-layer
 // Q70 tests: they record Stop/Start/Mount/Unmount into a shared log so a
 // failed service stop can be shown not to have been skipped past on the

@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
 // contractCase is one row of the #272 contract table: run sends the same
@@ -118,6 +120,57 @@ func TestContract_StorageServicesReleasedWithNoArray(t *testing.T) {
 		if !set || released {
 			t.Errorf("%s storageServicesReleased = (%v, set=%v), want (false, set=true) with no array", name, released, set)
 		}
+	}
+}
+
+// TestContract_PoolListsTheSameUnassignedDisks compares the part of getPool's
+// body the status-code contract above cannot: every present disk that is not
+// an array member is listed as unassigned, with the same fields and the
+// unraidStick flag, so the pool page's Add, Replace and Upgrade pickers offer
+// the spare disk against the mock as they do against production. A scenario's
+// array is what its rig seeds, and the rig seeds production with
+// migration-pending's adopted array while the mock has no array members there
+// until an import adopts it, so that scenario cannot be compared here; the
+// migration-pending subtest of
+// TestMockGetPool_FreshInstallListsTheDisksAsUnassigned covers it.
+func TestContract_PoolListsTheSameUnassignedDisks(t *testing.T) {
+	ctx := context.Background()
+	unassigned := func(t *testing.T, h apiv1.Handler) []apiv1.PoolDiskEntry {
+		t.Helper()
+		status, err := h.GetPool(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []apiv1.PoolDiskEntry
+		for _, e := range status.Disks {
+			if e.Role == apiv1.PoolDiskEntryRoleUnassigned {
+				out = append(out, e)
+			}
+		}
+		slices.SortFunc(out, func(a, b apiv1.PoolDiskEntry) int { return strings.Compare(a.Device, b.Device) })
+		return out
+	}
+	for _, scenario := range fixtures.Scenarios {
+		if scenario == "migration-pending" {
+			continue
+		}
+		t.Run(scenario, func(t *testing.T) {
+			prod, mock := newContractRig(t, scenario)
+			got, want := unassigned(t, mock), unassigned(t, prod)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("mock lists %+v as unassigned, production %+v", got, want)
+			}
+			if scenario == "healthy" {
+				var spare, stick bool
+				for _, e := range got {
+					spare = spare || e.Device == "/dev/sdf" && !e.UnraidStick.Or(false)
+					stick = stick || e.Device == mockFlashDevice && e.UnraidStick.Or(false)
+				}
+				if !spare || !stick {
+					t.Fatalf("unassigned disks %+v: want the spare /dev/sdf and the flagged stick %s", got, mockFlashDevice)
+				}
+			}
+		})
 	}
 }
 

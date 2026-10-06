@@ -619,6 +619,7 @@ func run(cfg config) error {
 	handler.Network = networkSvc
 	handler.ACME = acmeService
 	handler.Shares = shareService
+	wireShareRelocationPrecheck(handler, shareStore, arrayStore)
 	catalogChecks := startTemplates(handler, absStateDir, apps, shareNames(shareService), notifyService, store.NewCatalogSettingsStore(db), store.NewCatalogSourceStore(db))
 	handler.MoverResults = moverResults
 	wireBackup(handler, backupService)

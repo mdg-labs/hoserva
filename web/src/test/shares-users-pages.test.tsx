@@ -270,7 +270,10 @@ describe("ShareDetailPage danger zone", () => {
 });
 
 describe("ShareDetailPage cache tab", () => {
+  let relocationPrecheck: () => unknown;
+
   beforeEach(() => {
+    relocationPrecheck = () => ({ data: { dockerAvailable: true, containers: [], openPaths: [] }, response: { ok: true } });
     cleanup();
     mockMatchMedia();
     mockGet.mockReset();
@@ -297,6 +300,9 @@ describe("ShareDetailPage cache tab", () => {
       if (path === "/shares/{name}/permissions") {
         return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
       }
+      if (path === "/shares/{name}/relocation-precheck") {
+        return Promise.resolve(relocationPrecheck());
+      }
       return Promise.resolve({ data: null, response: { ok: false } });
     });
   });
@@ -320,6 +326,37 @@ describe("ShareDetailPage cache tab", () => {
     expect(
       within(dialog).queryByText(/relocation job to move them is not available/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("lists the containers using the share and holds the relocation while one runs", async () => {
+    relocationPrecheck = () => ({
+      data: {
+        dockerAvailable: true,
+        containers: [{ id: "c1", name: "database", state: "running", active: true, mounts: ["/mnt/cache/media/db"] }],
+        openPaths: [],
+      },
+      response: { ok: true },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media?tab=cache"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Cache" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Array only/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("database")).toBeInTheDocument();
+    expect(within(dialog).getByText("/mnt/cache/media/db")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Stop database" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Change mode and relocate" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Change mode only" })).toBeEnabled();
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("keeps the relocation dialog open when relocate fails after the mode is saved", async () => {

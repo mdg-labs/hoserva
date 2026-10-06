@@ -997,3 +997,40 @@ func TestStartShareRelocation_RefusedWhileTheArrayIsStopped(t *testing.T) {
 		t.Fatalf("a refused relocation queued %d job(s)", n)
 	}
 }
+
+// The mock's own seeded containers decide the precheck: jellyfin runs with its
+// appdata on the cache, so a relocation of the appdata share lists it as
+// active, and stopping it through stopApp (what the UI offers) clears it.
+func TestGetShareRelocationPrecheck_ListsTheContainersUsingTheShare(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t, "healthy")
+	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "appdata", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeCacheOnly)}); err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	params := apiv1.GetShareRelocationPrecheckParams{Name: "appdata"}
+
+	got, err := client.GetShareRelocationPrecheck(ctx, params)
+	if err != nil {
+		t.Fatalf("GetShareRelocationPrecheck: %v", err)
+	}
+	active := map[string]bool{}
+	for _, c := range got.Containers {
+		active[c.Name] = c.Active
+	}
+	if !got.DockerAvailable || len(active) != 3 || !active["jellyfin"] || !active["postgres"] || active["transcoder"] {
+		t.Fatalf("precheck = %+v, want jellyfin and postgres active and the exited transcoder listed", got)
+	}
+
+	if _, err := client.StopApp(ctx, apiv1.StopAppParams{ID: "jellyfin"}); err != nil {
+		t.Fatalf("StopApp: %v", err)
+	}
+	got, err = client.GetShareRelocationPrecheck(ctx, params)
+	if err != nil {
+		t.Fatalf("GetShareRelocationPrecheck after stopping: %v", err)
+	}
+	for _, c := range got.Containers {
+		if c.Name == "jellyfin" && c.Active {
+			t.Fatal("jellyfin is still listed as active after stopApp")
+		}
+	}
+}

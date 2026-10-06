@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -326,4 +328,230 @@ func TestHandler_StartShareRelocation_RefusedAtSubmitWhileGated(t *testing.T) {
 			})
 		}
 	}
+}
+
+type precheckFixture struct {
+	h    *api.Handler
+	docs cache.Share
+	open *cache.FakeOpenChecker
+	apps *container.FakeProvider
+}
+
+// newPrecheckFixture wires the relocation handler the way main.go does for
+// getShareRelocationPrecheck: a share store, a container provider and the
+// share-resolution hook, with a fake open-file checker in place of /proc.
+func newPrecheckFixture(t *testing.T) *precheckFixture {
+	t.Helper()
+	ctx := context.Background()
+	h, _, _ := newShareRelocationTestHandler(t)
+	if _, err := h.Shares.Create(ctx, share.CreateInput{Name: "docs", CacheMode: pool.CacheThenMove}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	base := t.TempDir()
+	docs := cache.Share{
+		Name:      "docs",
+		CachePath: filepath.Join(base, "cache", "docs"),
+		Branches:  []string{filepath.Join(base, "disk1", "docs")},
+	}
+	for _, f := range []string{
+		filepath.Join(docs.CachePath, "live.db"),
+		filepath.Join(docs.Branches[0], "old.pdf"),
+		filepath.Join(docs.Branches[0], "idle.txt"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open := cache.NewFakeOpenChecker()
+	apps := container.NewFakeProvider()
+	h.Container = apps
+	h.RelocationOpen = open
+	h.RelocationShare = func(context.Context, string) (cache.Share, error) { return docs, nil }
+	return &precheckFixture{h: h, docs: docs, open: open, apps: apps}
+}
+
+// TestHandler_GetShareRelocationPrecheck_ListsContainersAndOpenFiles proves a
+// container that bind-mounts the share, by its pool path, its cache path or an
+// array branch, is listed with whether it is active, and that the open files
+// Precheck finds come back share-relative. A container that mounts something
+// else is not listed.
+func TestHandler_GetShareRelocationPrecheck_ListsContainersAndOpenFiles(t *testing.T) {
+	ctx := context.Background()
+	f := newPrecheckFixture(t)
+	f.apps.AddContainer(container.Container{ID: "a1", Name: "pool-user", State: "running", Mounts: []container.Mount{{Source: "/mnt/user/docs/db", Destination: "/data"}}})
+	f.apps.AddContainer(container.Container{ID: "a2", Name: "cache-user", State: "exited", Mounts: []container.Mount{{Source: f.docs.CachePath, Destination: "/data"}}})
+	f.apps.AddContainer(container.Container{ID: "a3", Name: "branch-user", State: "paused", Mounts: []container.Mount{{Source: filepath.Join(f.docs.Branches[0], "sub"), Destination: "/data"}}})
+	f.apps.AddContainer(container.Container{ID: "a4", Name: "elsewhere", State: "running", Mounts: []container.Mount{{Source: "/mnt/user/media", Destination: "/data"}}})
+	f.open.SetOpen(filepath.Join(f.docs.CachePath, "live.db"), true)
+
+	got, err := f.h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "docs"})
+	if err != nil {
+		t.Fatalf("GetShareRelocationPrecheck: %v", err)
+	}
+	if !got.DockerAvailable {
+		t.Fatal("dockerAvailable = false with a reachable provider")
+	}
+	type row struct {
+		name   string
+		active bool
+	}
+	var rows []row
+	for _, c := range got.Containers {
+		rows = append(rows, row{c.Name, c.Active})
+	}
+	want := []row{{"pool-user", true}, {"cache-user", false}, {"branch-user", true}}
+	if len(rows) != len(want) {
+		t.Fatalf("containers = %+v, want %+v", rows, want)
+	}
+	for i := range want {
+		if rows[i] != want[i] {
+			t.Fatalf("containers = %+v, want %+v", rows, want)
+		}
+	}
+	if len(got.Containers[0].Mounts) != 1 || got.Containers[0].Mounts[0] != "/mnt/user/docs/db" {
+		t.Fatalf("pool-user mounts = %v", got.Containers[0].Mounts)
+	}
+	if len(got.OpenPaths) != 1 || got.OpenPaths[0] != "live.db" {
+		t.Fatalf("openPaths = %v, want [live.db]", got.OpenPaths)
+	}
+}
+
+// TestHandler_GetShareRelocationPrecheck_NothingUsingTheShare pins the empty
+// answer: reachable Docker, no matching mount and no open file give empty
+// lists, not nulls, and dockerAvailable true.
+func TestHandler_GetShareRelocationPrecheck_NothingUsingTheShare(t *testing.T) {
+	f := newPrecheckFixture(t)
+	f.apps.AddContainer(container.Container{ID: "a4", Name: "elsewhere", State: "running", Mounts: []container.Mount{{Source: "/mnt/user/media", Destination: "/data"}}})
+
+	got, err := f.h.GetShareRelocationPrecheck(context.Background(), apiv1.GetShareRelocationPrecheckParams{Name: "docs"})
+	if err != nil {
+		t.Fatalf("GetShareRelocationPrecheck: %v", err)
+	}
+	if !got.DockerAvailable || got.Containers == nil || len(got.Containers) != 0 || got.OpenPaths == nil || len(got.OpenPaths) != 0 {
+		t.Fatalf("answer = %+v, want available with empty non-nil lists", got)
+	}
+}
+
+// TestHandler_GetShareRelocationPrecheck_DockerState separates "Docker is not
+// reachable" (available=false, no error) from a listing failure, which fails
+// the request instead of reading as "no container uses the share".
+func TestHandler_GetShareRelocationPrecheck_DockerState(t *testing.T) {
+	params := apiv1.GetShareRelocationPrecheckParams{Name: "docs"}
+
+	t.Run("not configured", func(t *testing.T) {
+		f := newPrecheckFixture(t)
+		f.h.Container = nil
+		got, err := f.h.GetShareRelocationPrecheck(context.Background(), params)
+		if err != nil || got.DockerAvailable {
+			t.Fatalf("answer = %+v, %v; want dockerAvailable=false and no error", got, err)
+		}
+	})
+	t.Run("unreachable", func(t *testing.T) {
+		f := newPrecheckFixture(t)
+		f.apps.SetUnavailable(nil)
+		got, err := f.h.GetShareRelocationPrecheck(context.Background(), params)
+		if err != nil || got.DockerAvailable {
+			t.Fatalf("answer = %+v, %v; want dockerAvailable=false and no error", got, err)
+		}
+	})
+	t.Run("listing fails", func(t *testing.T) {
+		f := newPrecheckFixture(t)
+		f.apps.SetUnavailable(errors.New("engine returned 500"))
+		got, err := f.h.GetShareRelocationPrecheck(context.Background(), params)
+		if err == nil {
+			t.Fatalf("a failed listing answered %+v with no error", got)
+		}
+	})
+}
+
+// TestHandler_GetShareRelocationPrecheck_Refusals pins the refusals shared
+// with startShareRelocation: an unknown share, an array with no cache disk,
+// the scheduler's maintenance-mode and unfinished-migration admission checks
+// and a daemon whose resolution hook is not wired never answer 200.
+func TestHandler_GetShareRelocationPrecheck_Refusals(t *testing.T) {
+	ctx := context.Background()
+	params := apiv1.GetShareRelocationPrecheckParams{Name: "docs"}
+
+	t.Run("unknown share", func(t *testing.T) {
+		f := newPrecheckFixture(t)
+		_, err := f.h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "nope"})
+		if status := apiError(t, f.h, err); status.StatusCode != 404 {
+			t.Fatalf("status = %d, want 404", status.StatusCode)
+		}
+	})
+	t.Run("no cache disk", func(t *testing.T) {
+		h, _, _ := newShareRelocationTestHandlerWithCache(t, false)
+		if _, err := h.Shares.Create(ctx, share.CreateInput{Name: "docs", CacheMode: pool.ArrayOnly}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		h.RelocationShare = func(context.Context, string) (cache.Share, error) { return cache.Share{Name: "docs"}, nil }
+		_, err := h.GetShareRelocationPrecheck(ctx, params)
+		status := apiError(t, h, err)
+		if status.StatusCode != 409 || status.Response.Code != "no_cache_disk" {
+			t.Fatalf("answer = %d %q, want 409 no_cache_disk", status.StatusCode, status.Response.Code)
+		}
+	})
+	t.Run("scheduler gates", func(t *testing.T) {
+		gates := []struct {
+			name     string
+			enter    func(t *testing.T, s *job.Scheduler)
+			wantCode string
+		}{
+			{
+				name: "maintenance_mode",
+				enter: func(t *testing.T, s *job.Scheduler) {
+					if err := s.EnterMaintenance(ctx); err != nil {
+						t.Fatalf("EnterMaintenance: %v", err)
+					}
+				},
+				wantCode: "maintenance_mode",
+			},
+			{
+				name: "migration_in_progress",
+				enter: func(_ *testing.T, s *job.Scheduler) {
+					s.SetMigrationPending(func(context.Context) (bool, error) { return true, nil })
+				},
+				wantCode: "migration_in_progress",
+			},
+		}
+		for _, g := range gates {
+			t.Run(g.name, func(t *testing.T) {
+				f := newPrecheckFixture(t)
+				g.enter(t, f.h.Scheduler)
+				got, err := f.h.GetShareRelocationPrecheck(ctx, params)
+				if err == nil {
+					t.Fatalf("answered %+v while the scheduler refuses a relocation", got)
+				}
+				status := apiError(t, f.h, err)
+				if status.StatusCode != 409 || status.Response.Code != g.wantCode {
+					t.Fatalf("answer = %d %q, want 409 %s", status.StatusCode, status.Response.Code, g.wantCode)
+				}
+				jobs, err := f.h.Store.List(ctx, job.ListFilter{})
+				if err != nil {
+					t.Fatalf("listing jobs: %v", err)
+				}
+				if len(jobs) != 0 {
+					t.Fatalf("the precheck queued %d job(s), want none", len(jobs))
+				}
+			})
+		}
+	})
+	t.Run("resolution hook not wired", func(t *testing.T) {
+		f := newPrecheckFixture(t)
+		f.h.RelocationShare = nil
+		_, err := f.h.GetShareRelocationPrecheck(ctx, params)
+		if status := apiError(t, f.h, err); status.StatusCode != 501 {
+			t.Fatalf("status = %d, want 501", status.StatusCode)
+		}
+	})
+	t.Run("resolution fails", func(t *testing.T) {
+		f := newPrecheckFixture(t)
+		f.h.RelocationShare = func(context.Context, string) (cache.Share, error) { return cache.Share{}, errors.New("boom") }
+		if got, err := f.h.GetShareRelocationPrecheck(ctx, params); err == nil {
+			t.Fatalf("a failed resolution answered %+v", got)
+		}
+	})
 }

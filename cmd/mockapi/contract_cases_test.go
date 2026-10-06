@@ -2401,6 +2401,20 @@ var contractCases = []contractCase{
 	},
 	{
 		op:   "StartShareRelocation",
+		name: "refused_while_a_migration_is_unfinished",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			if err := contractStartMigration(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "StartShareRelocation",
 		name: "unknown_share",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToArray}, apiv1.StartShareRelocationParams{Name: "nope"})
@@ -2428,6 +2442,65 @@ var contractCases = []contractCase{
 				return err
 			}
 			_, err := h.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToCache}, apiv1.StartShareRelocationParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "GetShareRelocationPrecheck",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			_, err := h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "GetShareRelocationPrecheck",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "GetShareRelocationPrecheck",
+		name: "refused_while_a_migration_is_unfinished",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			if err := contractStartMigration(ctx, h); err != nil {
+				return err
+			}
+			_, err := h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "media"})
+			return err
+		},
+	},
+	{
+		op:   "GetShareRelocationPrecheck",
+		name: "unknown_share",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "nope"})
+			return err
+		},
+	},
+	{
+		op:       "GetShareRelocationPrecheck",
+		name:     "without_a_cache_disk_is_refused",
+		scenario: "rebuilding",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			_, err := h.GetShareRelocationPrecheck(ctx, apiv1.GetShareRelocationPrecheckParams{Name: "media"})
 			return err
 		},
 	},

@@ -113,6 +113,7 @@ existing line by adding its PR number.
 - **doc-drift** — a dispatch prompt tells an agent to do what its agent definition forbids (run scripts outside its workspace), so the agent cannot obey both — PR 491, 546
 - **doc-drift** — a skill adopts another skill's rule (hold back a commit on a fresh `blockedBy`) without the check that makes it hold (`git log origin/dev..dev` before every push), so the next push publishes what was held — PR 546
 - **doc-drift** — one operation's description states a boundary rule more loosely than the code applies it ("not older than" where the check is strictly a later second), while another operation states it correctly — PR 644
+- **spec-drift** — a schema description promises a blanket refusal ("every operation on it is refused") that one operation deliberately does not apply (eject stays allowed so a registered disk can be taken offline), so a client treats the allowed call as refused — PR 659
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **doc-drift** — a design doc's command table lists only one of a command's alternative forms (`--flash-backup` without `--flash-device`) — PR 575

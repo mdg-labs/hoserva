@@ -268,6 +268,15 @@ type Handler struct {
 	DiskRunner disk.Runner
 	// Shares is the share model (#46). Nil returns 501 from share operations.
 	Shares *share.Service
+	// RelocationShare resolves a share name into the cache and array paths
+	// the relocation job itself would move (cmd/hoservad), so the
+	// relocation precheck lists open files over exactly the files the job
+	// would touch. Nil returns 501 from getShareRelocationPrecheck.
+	RelocationShare func(ctx context.Context, name string) (cache.Share, error)
+	// RelocationOpen is the open-file checker the relocation precheck
+	// consults. Nil uses the real /proc-scanning checker; a test injects a
+	// fake so it never walks the host's /proc.
+	RelocationOpen cache.OpenChecker
 	// MoverResults is the persisted last mover run and cache usage
 	// breakdown (#273). Nil returns null from those operations — the same
 	// honest "never computed" shape a fresh install has.

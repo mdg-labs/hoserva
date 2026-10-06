@@ -1987,6 +1987,7 @@
     },
     "discovery": {
       "bootDisk": "Boot disk",
+      "unraidStick": "Unraid USB stick — kept as it is, it cannot be given a role",
       "weakIdentity": "Weak identity",
       "available": "Available",
       "sparePartition": "Spare partition — can hold the cache"
@@ -3068,7 +3069,24 @@
         "confirmDescription": "This changes where new files are placed. Existing files stay where they are unless you choose to relocate them.",
         "changeModeOnly": "Change mode only",
         "relocateNow": "Change mode and relocate",
-        "modeChangeSummary": "{{share}}: {{from}} → {{to}}"
+        "modeChangeSummary": "{{share}}: {{from}} → {{to}}",
+        "precheck": {
+          "loadError": "Could not check what is using this share",
+          "retry": "Try again",
+          "noDocker": "Docker is not reachable, so the containers using this share cannot be listed.",
+          "nothingInUse": "No container uses this share and none of its files is open.",
+          "containersTitle": "Containers are using this share",
+          "containersDescription": "Relocating a live database is the same hazard as moving an open file. Stop the running ones first, then relocate.",
+          "stoppedContainersTitle": "Stopped containers use this share",
+          "stoppedContainersDescription": "They are not running, so they do not hold files open. Start them again after the relocation.",
+          "stop": "Stop",
+          "stopLabel": "Stop {{name}}",
+          "openFilesTitle": "Files that are open right now",
+          "openFilesDescription": "A relocation leaves an open file where it is.",
+          "moreOpenFiles_one": "and {{count}} more file",
+          "moreOpenFiles_other": "and {{count}} more files",
+          "relocateBlocked": "Relocating is available once no container using the share is running."
+        }
       },
       "smb": {
         "title": "SMB",
