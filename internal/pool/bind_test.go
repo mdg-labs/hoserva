@@ -14,7 +14,8 @@ import (
 
 // bindTable is a fake mount table for the branch binds: `mount --bind`
 // mounts its target with bindOpts, `umount` removes it, and every call is
-// recorded in order. Every other call succeeds without effect.
+// recorded in order. Every other call succeeds without effect. The source
+// of each bind passed to newBindTable reads as a mounted disk.
 type bindTable struct {
 	mu       sync.Mutex
 	mounted  map[string][]string
@@ -22,8 +23,12 @@ type bindTable struct {
 	calls    []string
 }
 
-func newBindTable() *bindTable {
-	return &bindTable{mounted: map[string][]string{}, bindOpts: []string{"rw", "nosymfollow"}}
+func newBindTable(mountedSources ...disk.BranchBind) *bindTable {
+	t := &bindTable{mounted: map[string][]string{}, bindOpts: []string{"rw", "nosymfollow"}}
+	for _, b := range mountedSources {
+		t.mounted[b.Source] = []string{"rw"}
+	}
+	return t
 }
 
 func (b *bindTable) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -81,7 +86,7 @@ func notMounted(string) (bool, error) { return false, nil }
 func TestMounter_Mount_BindsEveryBranchNosymfollowBeforeMergerfs(t *testing.T) {
 	b1, b2 := testBind(t, "disk1"), testBind(t, "disk2")
 	mnt := bindMount(t, b1, b2)
-	table := newBindTable()
+	table := newBindTable(b1, b2)
 	m := Mounter{Runner: table, IsMountpoint: notMounted, MountTarget: table.target}
 
 	if err := m.Mount(context.Background(), mnt); err != nil {
@@ -100,7 +105,7 @@ func TestMounter_Mount_BindsEveryBranchNosymfollowBeforeMergerfs(t *testing.T) {
 
 func TestMounter_Mount_KeepsABindStillOnItsSourceWithNosymfollow(t *testing.T) {
 	b := testBind(t, "disk1")
-	table := newBindTable()
+	table := newBindTable(b)
 	table.mounted[b.Where] = []string{"rw", "nosymfollow"}
 	m := Mounter{Runner: table, IsMountpoint: notMounted, MountTarget: table.target, SameFile: func(string, string) (bool, error) { return true, nil }}
 
@@ -128,7 +133,7 @@ func TestMounter_Mount_RebindsAStaleOrSymfollowingBind(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := testBind(t, "disk1")
-			table := newBindTable()
+			table := newBindTable(b)
 			table.mounted[b.Where] = tc.opts
 			m := Mounter{Runner: table, IsMountpoint: notMounted, MountTarget: table.target, SameFile: func(string, string) (bool, error) { return tc.same, nil }}
 
@@ -147,7 +152,7 @@ func TestMounter_Mount_RebindsAStaleOrSymfollowingBind(t *testing.T) {
 func TestMounter_Mount_LeavesOutTheBindOfAMissingSource(t *testing.T) {
 	present := testBind(t, "disk1")
 	missing := disk.BranchBind{Source: filepath.Join(t.TempDir(), "gone"), Where: filepath.Join(t.TempDir(), "branches", "gone")}
-	table := newBindTable()
+	table := newBindTable(present)
 	m := Mounter{Runner: table, IsMountpoint: notMounted, MountTarget: table.target}
 
 	if err := m.Mount(context.Background(), bindMount(t, present, missing)); err != nil {
@@ -177,13 +182,45 @@ func TestMounter_Mount_UnmountsTheBindOfASourceThatIsGone(t *testing.T) {
 	}
 }
 
+// A data disk that is not mounted still leaves its mountpoint directory on
+// the root filesystem. That directory is never bound, and a bind left over
+// from when the disk was mounted is unmounted, so the mover never places a
+// file on the root filesystem through it.
+func TestMounter_Mount_LeavesOutTheBindOfASourceThatIsNotMounted(t *testing.T) {
+	for name, leftover := range map[string]bool{"no bind": false, "leftover bind": true} {
+		t.Run(name, func(t *testing.T) {
+			present, unmounted := testBind(t, "disk1"), testBind(t, "disk2")
+			table := newBindTable(present)
+			if leftover {
+				table.mounted[unmounted.Where] = []string{"rw", "nosymfollow"}
+			}
+			m := Mounter{Runner: table, IsMountpoint: notMounted, MountTarget: table.target, SameFile: func(string, string) (bool, error) { return true, nil }}
+
+			if err := m.Mount(context.Background(), bindMount(t, present, unmounted)); err != nil {
+				t.Fatalf("Mount: %v", err)
+			}
+			for _, c := range table.Calls() {
+				if strings.HasPrefix(c, "mount ") && strings.Contains(c, unmounted.Where) {
+					t.Fatalf("calls %q: the bare mountpoint of a disk that is not mounted was bound", table.Calls())
+				}
+			}
+			if _, ok := table.mounted[unmounted.Where]; ok {
+				t.Fatalf("calls %q: a bind of a disk that is not mounted was kept", table.Calls())
+			}
+			if _, ok := table.mounted[present.Where]; !ok {
+				t.Fatalf("the mounted disk's bind is not mounted: %v", table.mounted)
+			}
+		})
+	}
+}
+
 // A bind the kernel did not give nosymfollow (a mount(8) that ignores the
 // flag on a bind) is never used: it is unmounted, and the mount refused
 // before mergerfs runs.
 func TestMounter_Mount_RefusesABindWithoutNosymfollow(t *testing.T) {
 	b := testBind(t, "disk1")
 	mnt := bindMount(t, b)
-	table := newBindTable()
+	table := newBindTable(b)
 	table.bindOpts = []string{"rw"}
 	m := Mounter{Runner: table, IsMountpoint: notMounted, MountTarget: table.target}
 
@@ -206,7 +243,7 @@ func TestMounter_Mount_RefusesABindWithoutNosymfollow(t *testing.T) {
 func TestMounter_Mount_BindsBeforeUpdatingALiveMount(t *testing.T) {
 	b := testBind(t, "disk1")
 	mnt := bindMount(t, b)
-	table := newBindTable()
+	table := newBindTable(b)
 	var order []string
 	m := Mounter{
 		Runner: runnerFunc(func(name string, args ...string) ([]byte, error) {

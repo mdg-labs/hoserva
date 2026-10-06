@@ -226,8 +226,10 @@ func (m Mounter) onSource(b disk.BranchBind) bool {
 
 // bindBranch brings b up the way its systemd unit does (disk.BranchBind.
 // Render), for the direct mounts the loop-device lab makes: b.Source bound
-// at b.Where with nosymfollow. A source that does not exist leaves the bind
-// absent, and with it that branch, as a disk whose mountpoint is gone would.
+// at b.Where with nosymfollow. A source that does not exist, or that is not
+// a mount point (a data disk that is not mounted, whose bare mountpoint
+// directory is on the root filesystem), leaves the bind absent, and with it
+// that branch, as the unit's BindsTo= on the disk's mount does.
 // A bind already at b.Where is kept only while it is still b.Source's own
 // directory with nosymfollow in force; one left over from a disk that was
 // since unmounted or remounted is unmounted and bound again, so it never
@@ -248,6 +250,16 @@ func (m Mounter) bindBranch(ctx context.Context, b disk.BranchBind) error {
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("pool: checking %s for its mover branch: %w", b.Source, err)
+	}
+	if _, sourceMounted, err := target(b.Source); err != nil {
+		return fmt.Errorf("pool: checking whether %s is mounted for its mover branch: %w", b.Source, err)
+	} else if !sourceMounted {
+		if mounted {
+			if _, err := m.Runner.Run(ctx, "umount", b.Where); err != nil {
+				return fmt.Errorf("pool: unmounting the mover branch at %s, whose source %s is not mounted: %w", b.Where, b.Source, err)
+			}
+		}
+		return nil
 	}
 	if mounted {
 		if m.onSource(b) && slices.Contains(opts, "nosymfollow") {
