@@ -31,25 +31,25 @@ func trimTrailingSlashes(u *url.URL) {
 type Invoker interface {
 	// AcknowledgeDegradedArray invokes acknowledgeDegradedArray operation.
 	//
-	// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
-	// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
-	// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
-	// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
-	// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
-	// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
-	// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
-	// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
-	// nothing is currently missing — acknowledging a degraded state that does not exist would let a
-	// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
-	// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
-	// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
-	// confirming the pool fails — so this never reports success over services that never came up — in
-	// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
-	// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
-	// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
-	// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
-	// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
-	// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+	// Records the user's explicit choice to proceed while the array is degraded
+	// (`hoserva array acknowledge-degraded`): the daemon acknowledges the missing disk on its live storage
+	// gate and then runs the exact not-ready to ready transition a returning disk reaches: mounting and
+	// confirming the pool, then starting every enabled, unmasked service unit that depends on it (Samba,
+	// NFS, Docker, libvirtd), never through a shell and never by a second mechanism. The acknowledgement
+	// itself survives every later rebuild of the daemon's array sequence (a share change, a disk-topology
+	// change, a daemon reload) for as long as the same disk stays missing. Refused with
+	// `array_not_degraded` (409) when nothing is currently missing — acknowledging a degraded state that
+	// does not exist would let a stale acknowledgement outlive the situation it was about. Refused with
+	// `array_services_not_started` (409) when the acknowledgement itself succeeds but the transition it
+	// triggers does not actually start anything — the array is in maintenance mode
+	// (`hoserva array stop`), or mounting or confirming the pool fails — so this never reports success
+	// over services that never came up — in that refusal case `arrayDegradedAcknowledged` on a later
+	// `getStatus` still reports true (the acknowledgement stands) while `storageServicesReleased` stays
+	// false, so a client must check both before ever telling the user services are running.
+	// `arrayDegraded` on the returned status stays true for as long as the disk is still missing —
+	// acknowledging never reports a degraded array as healthy — and `arrayDegradedAcknowledged` becomes
+	// true instead, the field the persistent banner and top-bar pill use to show "acknowledged, running
+	// degraded" rather than clearing the warning outright.
 	//
 	// POST /array/degraded/acknowledge
 	AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error)
@@ -68,46 +68,44 @@ type Invoker interface {
 	AcknowledgeMigrationChecklistItem(ctx context.Context, params AcknowledgeMigrationChecklistItemParams) (*MigrationChecklistItem, error)
 	// AddCatalogSource invokes addCatalogSource operation.
 	//
-	// Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
-	// from beneath `url` in the same format as the curated catalog and installed, and only then is the
-	// source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva
-	// contacts the URL only because the user added it, and only again when the user refreshes it. The URL
-	// must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source`
-	// otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is
-	// size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519
-	// key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that
-	// key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature
-	// is requested and every entry it supplies is badged `signed` false. A template of an unsigned source
-	// still goes through the same privilege summary and warnings at install. Refused with 409
-	// `catalog_source_exists` when a source with that URL (the curated one included) exists, 502
-	// `catalog_source_unreachable` when the archive could not be fetched, and 422
-	// `catalog_source_rejected` when the archive was fetched but refused (a signature that does not
-	// verify, a malformed archive).
+	// Adds a catalog source URL of the user's own: the archive `catalog.tar.zst` is fetched from beneath
+	// `url` in the same format as the curated catalog and installed, and only then is the source recorded,
+	// so a source that cannot be fetched or verified leaves nothing behind. Hoserva contacts the URL only
+	// because the user added it, and only again when the user refreshes it. The URL must be an `https`
+	// address with no credentials, query or fragment (400 `invalid_catalog_source` otherwise, before
+	// anything is fetched), a redirect must stay on the same host, and the archive is size-capped as the
+	// curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519 key) the archive's
+	// detached signature `catalog.tar.zst.sig` is required and must verify against that key, and the
+	// source is `signed`. With no `publicKey` the source is accepted unsigned: no signature is requested
+	// and every entry it supplies is badged `signed` false. A template of an unsigned source still goes
+	// through the same privilege summary and warnings at install. Refused with 409 `catalog_source_exists`
+	// when a source with that URL (the curated one included) exists, 502 `catalog_source_unreachable` when
+	// the archive could not be fetched, and 422 `catalog_source_rejected` when the archive was fetched but
+	// refused (a signature that does not verify, a malformed archive).
 	//
 	// POST /catalog-sources
 	AddCatalogSource(ctx context.Context, request *AddCatalogSourceRequest) (*CatalogSource, error)
 	// AddDisk invokes addDisk operation.
 	//
-	// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
-	// units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation
-	// must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused
-	// with `confirmation_required` and formats nothing.
+	// Queues a Topology job that formats or adopts the disk, then regenerates mount units, the pool and
+	// `snapraid.conf` from SQLite. The confirmation must be the exact string the matching `planDiskAdd`
+	// call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
 	//
 	// POST /disks/array/add
 	AddDisk(ctx context.Context, request *AddDiskRequest) (*Job, error)
 	// ApplyHostConfig invokes applyHostConfig operation.
 	//
-	// Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
-	// imported into the database or left unmanaged under the drift model (doc 01 §2). Existing host files
-	// are never overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker`
-	// when containers or images exist, or when there is no cache disk (Q62).
+	// Each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
+	// imported into the database or left unmanaged under the drift model. Existing host files are never
+	// overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker` when
+	// containers or images exist, or when there is no cache disk.
 	//
 	// POST /doctor/host-config
 	ApplyHostConfig(ctx context.Context, request *ApplyHostConfigRequest) (*ApplyHostConfigResult, error)
 	// ApplyNetworkSettings invokes applyNetworkSettings operation.
 	//
 	// Address, DNS and gateway changes are written to one managed ifupdown file under
-	// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+	// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert: unless
 	// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
 	// daemon dies), the previous file is restored. Access scope and listen port apply without that window
 	// — access scope takes effect immediately; a listen-port change is persisted and used on the next
@@ -118,48 +116,47 @@ type Invoker interface {
 	// ApplyUpdate invokes applyUpdate operation.
 	//
 	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
-	// runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a
-	// Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum
-	// does not match is never installed, and a notification is raised.
+	// runs a config backup, and installs it in a transient systemd unit. Refused while a Parity,
+	// Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not
+	// match is never installed, and a notification is raised.
 	//
 	// POST /settings/updates/apply
 	ApplyUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// BrowseShare invokes browseShare operation.
 	//
 	// Lists one directory of the share, including the holding disk per entry from mergerfs
-	// `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never
-	// polled.
+	// `user.mergerfs.basepath`. This is an explicit call and may wake disks — it is never polled.
 	//
 	// GET /shares/{name}/browse
 	BrowseShare(ctx context.Context, params BrowseShareParams) (*ShareBrowseResult, error)
 	// CancelDiskRemoval invokes cancelDiskRemoval operation.
 	//
-	// Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool
-	// live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no
-	// data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is
-	// not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so
-	// the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when
-	// it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns
-	// the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating`
-	// disk whose evacuation job has already ended (no longer queued, running or interrupted — including
-	// a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it
-	// ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of
-	// sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an
-	// internal error, and the removal state is left cleared — the same as the disk-topology jobs' own
-	// live-apply failures — rather than silently reporting success with the disk still no-create.
+	// Clears `mountpoint`'s removal state synchronously — no job — and re-applies the pool live so the
+	// disk's branches go back to RW. Refused with `disk_slot_not_found` (404) when no data disk occupies
+	// `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is not currently in
+	// removal; when it is `unpooled` or `unlisted` — it has already left the pool, so the only way
+	// forward is `finishDiskRemoval`, never back; or when it is `evacuating` and its evacuation job is
+	// still queued, running or interrupted — that job owns the state, so cancel it (`cancelJob`)
+	// instead. An `evacuating` disk whose evacuation job has already ended (no longer queued, running or
+	// interrupted — including a job the store no longer has a record of) is cancelled the same as an
+	// `evacuated` one: the copy it ran already stopped, and cancelling here is how the disk gets back to
+	// ordinary use instead of sitting stuck until it is evacuated again. A live-update failure while
+	// re-applying the pool is an internal error, and the removal state is left cleared — the same as the
+	// disk-topology jobs' own live-apply failures — rather than silently reporting success with the disk
+	// still no-create.
 	//
 	// POST /disks/array/remove/cancel
 	CancelDiskRemoval(ctx context.Context, request *CancelDiskRemovalRequest) error
 	// CancelJob invokes cancelJob operation.
 	//
-	// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
-	// cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing.
-	// A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a
-	// data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its
-	// checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered
-	// with the running job and records its outcome once it has unmounted everything. A queued or
-	// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
-	// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
+	// Only meaningful where the underlying tool supports cancellation; a job that cannot be cancelled
+	// reports that in its `cancellable` field rather than accepting this call and doing nothing. A queued
+	// or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a data-disk
+	// upgrade this is the abort: refused with `job_not_cancellable` once its checkpoint is at releasing,
+	// whether queued, running or interrupted. A running upgrade is answered with the running job and
+	// records its outcome once it has unmounted everything. A queued or interrupted upgrade is unwound
+	// first; if that fails it stays interrupted and the call is refused with
+	// `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
 	// second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same
 	// job is still repairing its log; retry in a moment.
 	//
@@ -167,18 +164,18 @@ type Invoker interface {
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
 	// CheckForUpdate invokes checkForUpdate operation.
 	//
-	// Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even
-	// when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+	// Fetches the signed release index for the configured channel. A user-initiated check runs even when
+	// the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
 	// CheckMigrationContainer invokes checkMigrationContainer operation.
 	//
-	// The data check of step 20 (doc 05 §4): for each bind mount of the stack's containers whose host
-	// path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory
-	// counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is
-	// `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when
-	// asked and never on a timer, and records that a check ran since the latest start, which
+	// The data check of step 20: for each bind mount of the stack's containers whose host path is under
+	// `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory counts as empty
+	// when it holds no entry, a file when it has no byte; a path that cannot be read is `unreadable`,
+	// never `ok`. It reads one directory entry of each path (which can spin a disk up), when asked and
+	// never on a timer, and records that a check ran since the latest start, which
 	// `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check
 	// and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409
 	// `no_container` while the stack has no container (its start has not created one), 409
@@ -188,12 +185,12 @@ type Invoker interface {
 	CheckMigrationContainer(ctx context.Context, params CheckMigrationContainerParams) (*MigrationContainerCheck, error)
 	// ConfigureLetsEncrypt invokes configureLetsEncrypt operation.
 	//
-	// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
-	// `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never
-	// claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces
-	// the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true.
-	// A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls
-	// back to a new self-signed cert.
+	// Stores the domain and DNS-01 provider credentials (encrypted at rest) and queues an `acme_issue` job
+	// that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never claimed. HTTP-01 and
+	// TLS-ALPN-01 are not offered. On success the issued certificate replaces the self-signed cert on
+	// `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true. A failed issue or renew
+	// keeps serving the existing certificate and notifies; it never silently falls back to a new
+	// self-signed cert.
 	//
 	// POST /settings/network/lets-encrypt
 	ConfigureLetsEncrypt(ctx context.Context, request *ConfigureLetsEncryptRequest) (*Job, error)
@@ -212,10 +209,10 @@ type Invoker interface {
 	ConfirmMigrationContainer(ctx context.Context, request OptMigrationContainerConfirmRequest, params ConfirmMigrationContainerParams) (*MigrationContainerStack, error)
 	// ConfirmNetworkSettings invokes confirmNetworkSettings operation.
 	//
-	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
-	// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
-	// the window expires, or if the daemon died before confirm, the previous configuration has already
-	// been restored and this returns `network_confirm_expired`.
+	// Called over the new configuration during the confirm-or-revert window. Keeps the managed ifupdown
+	// file. An unreachable address cannot be confirmed because this request never arrives. After the
+	// window expires, or if the daemon died before confirm, the previous configuration has already been
+	// restored and this returns `network_confirm_expired`.
 	//
 	// POST /settings/network/confirm
 	ConfirmNetworkSettings(ctx context.Context) (*NetworkSettings, error)
@@ -228,78 +225,74 @@ type Invoker interface {
 	ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error
 	// ConvertUnraidTemplate invokes convertUnraidTemplate operation.
 	//
-	// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
-	// created, written or run: the result is the generated `compose` beside the `source` XML as it was
-	// sent, every warning, and the privilege summary computed from the generated Compose content, so the
-	// caller reads all of it before it acts on any of it. Every part of the template that is not
-	// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
-	// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
-	// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
-	// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
-	// warning carrying the `docker network create` command, with placeholders for what the template does
-	// not say; two entries for the same target with different values are a `conflict`; the possibility of
-	// state inside the source container that no template expresses is always a `writable_layer` warning.
-	// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
-	// `note` never count against it). A body that is not an Unraid container template is refused with 400
+	// Converts one Unraid container template to a Compose file for review. Nothing is created, written or
+	// run: the result is the generated `compose` beside the `source` XML as it was sent, every warning,
+	// and the privilege summary computed from the generated Compose content, so the caller reads all of it
+	// before it acts on any of it. Every part of the template that is not translated is reported, never
+	// dropped: an `<ExtraParams>` flag outside the translate table is listed in a comment at the top of
+	// the service and as an `untranslated_flag` warning; a host path outside the pool and the cache
+	// (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and listed as a
+	// `flagged_path` warning; a custom network the template names is a `missing_network` warning carrying
+	// the `docker network create` command, with placeholders for what the template does not say; two
+	// entries for the same target with different values are a `conflict`; the possibility of state inside
+	// the source container that no template expresses is always a `writable_layer` warning. `clean` is
+	// true when no warning is of the classes that need manual action (`writable_layer` and `note` never
+	// count against it). A body that is not an Unraid container template is refused with 400
 	// `invalid_unraid_template`.
 	//
 	// POST /apps/convert
 	ConvertUnraidTemplate(ctx context.Context, request *UnraidConvertRequest) (*UnraidConversion, error)
 	// CreateApiToken invokes createApiToken operation.
 	//
-	// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
-	// The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring
-	// how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no
-	// API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an
-	// account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast
-	// radius), never widen it.
+	// A personal API token, scoped to admin or viewer, for scripting and the remote CLI over TCP. The raw
+	// token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring how a
+	// session cookie is handled. Refused for a share-only account (share-only has no API access at all),
+	// and refused when role exceeds the account's own role: a token can narrow an account's access (an
+	// admin can hand out a viewer-scoped token to reduce a script's own blast radius), never widen it.
 	//
 	// POST /users/{username}/tokens
 	CreateApiToken(ctx context.Context, request *CreateApiTokenRequest, params CreateApiTokenParams) (*ApiTokenCreated, error)
 	// CreateArray invokes createArray operation.
 	//
-	// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
-	// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
-	// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
-	// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
-	// calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with
-	// one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports
-	// in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition
-	// and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or
-	// `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported
-	// spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's
-	// rollback (doc 05 §4 step 11), is refused in every role with `unraid_stick` (409). Refused with 409
-	// `migration_in_progress` while an Unraid import is pending its point of no return
-	// (`startMigrationImport`).
+	// Queues a Topology job that formats or adopts the assigned disks. The request is the wizard's role
+	// assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed
+	// confirmation string array setup uses. A wrong or missing confirmation is refused with
+	// `confirmation_required` and formats nothing. A device is a whole, non-boot disk, with one exception:
+	// the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's
+	// `cachePartitions` — Hoserva formats that blank partition and never writes the boot disk's
+	// partition table. A partition of the boot disk assigned to `data` or `parity` is refused with
+	// `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused
+	// with `unmanaged_device`. The Unraid USB stick, which is the user's rollback, is refused in every
+	// role with `unraid_stick` (409). Refused with 409 `migration_in_progress` while an Unraid import is
+	// pending its point of no return (`startMigrationImport`).
 	//
 	// POST /disks/array
 	CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error)
 	// CreateBackupDestination invokes createBackupDestination operation.
 	//
 	// A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is
-	// always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup
-	// passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command
-	// (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key
-	// before they reach the database. Local destinations work without rclone.
+	// always encrypted. It is refused with 400 `backup_passphrase_required` while no backup passphrase is
+	// set, and with 424 `rclone_missing` — whose `message` carries the install command — when rclone
+	// is not installed. Credentials in `secrets` are sealed under the machine key before they reach the
+	// database. Local destinations work without rclone.
 	//
 	// POST /backup/destinations
 	CreateBackupDestination(ctx context.Context, request *CreateBackupDestinationRequest) (*BackupDestination, error)
 	// CreateFirstAdmin invokes createFirstAdmin operation.
 	//
 	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
-	// race between two concurrent requests can never create two admins (#22). Signs the new admin in on
-	// success, exactly like login.
+	// race between two concurrent requests can never create two admins. Signs the new admin in on success,
+	// exactly like login.
 	//
 	// POST /setup/admin
 	CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error)
 	// CreateMigrationStacks invokes createMigrationStacks operation.
 	//
-	// Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped, through the stack layer
-	// (`createStack`) for each selected template or Compose Manager project of the scan, from the
-	// generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`.
-	// Nothing is started and nothing is written outside the stacks directory. A stack is named after the
-	// template's `<Name>` (or the project's name), lowercased with every character a stack name may not
-	// hold turned into `-`.
+	// Step 19 of the migration: creates a Compose stack, stopped, through the stack layer (`createStack`)
+	// for each selected template or Compose Manager project of the scan, from the generated Compose the
+	// preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`. Nothing is started and
+	// nothing is written outside the stacks directory. A stack is named after the template's `<Name>` (or
+	// the project's name), lowercased with every character a stack name may not hold turned into `-`.
 	//
 	// Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is
 	// past its point of no return (the initialisation has finished: an array exists and no import is
@@ -308,9 +301,9 @@ type Invoker interface {
 	// `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash
 	// Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read;
 	// and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual
-	// action (Q36) unless its selection says `acknowledged`. After that each stack is created on its own
-	// and the answer has one result per selection, in the order they are made (Unraid's autostart order
-	// first): a stack that could not be created says why in `error`, with the code `createStack` gives
+	// action unless its selection says `acknowledged`. After that each stack is created on its own and the
+	// answer has one result per selection, in the order they are made (Unraid's autostart order first): a
+	// stack that could not be created says why in `error`, with the code `createStack` gives
 	// (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A
 	// selection whose stack already exists from this migration is `already_created`, so the same request
 	// can be sent again: that includes a stack this request made for the selection whose record was never
@@ -321,27 +314,26 @@ type Invoker interface {
 	CreateMigrationStacks(ctx context.Context, request *MigrationStacksRequest) (*MigrationStacksCreated, error)
 	// CreateNotificationChannel invokes createNotificationChannel operation.
 	//
-	// A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the
-	// database and is never returned by any later read — `hasSecret` on the response is the only trace
-	// of it.
+	// A credential supplied in `secret` is encrypted with the machine key before it reaches the database
+	// and is never returned by any later read — `hasSecret` on the response is the only trace of it.
 	//
 	// POST /notifications/channels
 	CreateNotificationChannel(ctx context.Context, request *CreateNotificationChannelRequest) (*NotificationChannel, error)
 	// CreateShare invokes createShare operation.
 	//
-	// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
-	// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
-	// doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
-	// mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
-	// writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no
-	// return: a new share would need a directory on every adopted disk, and those are not written until
-	// then. The import creates its own shares (`startMigrationImport`).
+	// Persists the share, creates its directory tree on the branches its cache mode uses, writes the
+	// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf`. Refused
+	// with 409 `maintenance_mode` while the array is stopped: create would mkdir under bare disk
+	// mountpoints on the root filesystem, and the next array start would hide those writes. Refused with
+	// 409 `migration_in_progress` while an Unraid import is pending its point of no return: a new share
+	// would need a directory on every adopted disk, and those are not written until then. The import
+	// creates its own shares (`startMigrationImport`).
 	//
 	// POST /shares
 	CreateShare(ctx context.Context, request *CreateShareRequest) (*Share, error)
 	// CreateStack invokes createStack operation.
 	//
-	// Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`,
+	// Stores the stack's row (`.env` sealed under the machine key) and generates `docker-compose.yml`,
 	// `.env` and `meta.json` into the directory named after the stack, then checks the result with
 	// `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that
 	// name exists. A directory of that name already under the stacks directory (what a removed stack's own
@@ -359,17 +351,17 @@ type Invoker interface {
 	CreateStack(ctx context.Context, request *CreateStackRequest) (*Stack, error)
 	// CreateUser invokes createUser operation.
 	//
-	// Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin
-	// promotes it. No password is set by this call — setUserPassword provisions the UI credential and
-	// the Samba account together, in a separate action. Never creates an admin account
-	// (users_one_admin_idx allows exactly one, created only by createFirstAdmin).
+	// Defaults to the share-only role when omitted: a new account has no UI login until an admin promotes
+	// it. No password is set by this call — setUserPassword provisions the UI credential and the Samba
+	// account together, in a separate action. Never creates an admin account (users_one_admin_idx allows
+	// exactly one, created only by createFirstAdmin).
 	//
 	// POST /users
 	CreateUser(ctx context.Context, request *CreateUserRequest) (*UserSummary, error)
 	// CreateUserGroup invokes createUserGroup operation.
 	//
-	// A named collection of accounts, purely for bulk share-permission assignment (Q27, doc 03 §7) —
-	// distinct from the fixed `users` system group (GID 100, Q26) that every share's files belong to.
+	// A named collection of accounts, purely for bulk share-permission assignment — distinct from the
+	// fixed `users` system group (GID 100) that every share's files belong to.
 	//
 	// POST /user-groups
 	CreateUserGroup(ctx context.Context, request *CreateUserGroupRequest) (*UserGroup, error)
@@ -394,27 +386,27 @@ type Invoker interface {
 	DeleteRegistryCredential(ctx context.Context, params DeleteRegistryCredentialParams) error
 	// DeleteShare invokes deleteShare operation.
 	//
-	// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
-	// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused
-	// with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share
-	// mounts against bare disk mountpoints on the root filesystem.
+	// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk.
+	// `confirm: true` is required. Deleting the data is `deleteShareData`. Refused with 409
+	// `maintenance_mode` while the array is stopped: delete would unmount and rewrite share mounts against
+	// bare disk mountpoints on the root filesystem.
 	//
 	// DELETE /shares/{name}
 	DeleteShare(ctx context.Context, request *ConfirmShareRequest, params DeleteShareParams) error
 	// DeleteShareData invokes deleteShareData operation.
 	//
 	// Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
-	// the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
-	// place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an
-	// Unraid import is pending its point of no return: the adopted disks are not written until then.
+	// the parity file, not disks that do not hold this share. The definition is left in place.
+	// `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an Unraid
+	// import is pending its point of no return: the adopted disks are not written until then.
 	//
 	// POST /shares/{name}/data/delete
 	DeleteShareData(ctx context.Context, request *DeleteShareDataRequest, params DeleteShareDataParams) error
 	// DeleteShareFile invokes deleteShareFile operation.
 	//
-	// Deletes one file or empty directory within the share, given a path relative to the share root (doc
-	// 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the
-	// share's root, including through a symlink. `confirm: true` is required.
+	// Deletes one file or empty directory within the share, given a path relative to the share root.
+	// Refuses the share root itself and any path that would resolve outside the share's root, including
+	// through a symlink. `confirm: true` is required.
 	//
 	// DELETE /shares/{name}/browse
 	DeleteShareFile(ctx context.Context, request *ConfirmShareRequest, params DeleteShareFileParams) error
@@ -441,84 +433,82 @@ type Invoker interface {
 	DisableLetsEncrypt(ctx context.Context) (*NetworkSettings, error)
 	// DisableUserTotp invokes disableUserTotp operation.
 	//
-	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
-	// and announced through every notification channel.
+	// Root-only over the Unix socket. Checked against the peer's uid 0 specifically. Audit-logged and
+	// announced through every notification channel.
 	//
 	// POST /users/{username}/disable-totp
 	DisableUserTotp(ctx context.Context, params DisableUserTotpParams) error
 	// EjectExternalDisk invokes ejectExternalDisk operation.
 	//
-	// Unmounts `/mnt/disks/<label>`, then spins the disk down (Q72).
+	// Unmounts `/mnt/disks/<label>`, then spins the disk down.
 	//
 	// POST /disks/external/{label}/eject
 	EjectExternalDisk(ctx context.Context, params EjectExternalDiskParams) (*ExternalDisk, error)
 	// EnrollTotp invokes enrollTotp operation.
 	//
-	// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
-	// — the account's existing active credential, if any, is untouched until confirmTotp activates the
-	// new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already
-	// active on this account, replacing it requires proving the caller still holds the account: exactly
-	// one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP
-	// is active is refused (totp_reverify_required); supplying both is refused too
-	// (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would
-	// spend two for the price of one request. Neither is required for a first enrolment.
+	// Generates a new secret (RFC 6238), stored encrypted with the machine key but not yet active — the
+	// account's existing active credential, if any, is untouched until confirmTotp activates the new one.
+	// Enrolling again before confirming replaces the still-pending secret. Once TOTP is already active on
+	// this account, replacing it requires proving the caller still holds the account: exactly one of the
+	// current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP is active is
+	// refused (totp_reverify_required); supplying both is refused too (totp_reverify_ambiguous), since
+	// each is one guess at the active credential and honouring both would spend two for the price of one
+	// request. Neither is required for a first enrolment.
 	//
 	// POST /auth/totp/enroll
 	EnrollTotp(ctx context.Context, request *TotpEnrollRequest) (*TotpEnrollResponse, error)
 	// EvacuateDisk invokes evacuateDisk operation.
 	//
-	// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one,
-	// `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching
-	// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying
-	// anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite,
-	// D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure
-	// to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance`
-	// unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this
-	// disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would
-	// otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole
-	// plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share
-	// branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk
-	// `evacuated` before reporting success. A wrong or missing confirmation is refused
-	// (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused
-	// (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused
-	// (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused
-	// (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal
-	// state belongs to the job that set it: cancelling that job — queued, running or interrupted —
-	// clears it and puts the disk back to taking writes, and cancelling any other job never does. A job
-	// that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
-	// that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
-	// no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
-	// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
+	// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, as
+	// `startRebalance` does) and, once `confirmation` matches the exact phrase the matching
+	// `planDiskEvacuation` call returned, queues a resumable evacuation job. Before copying anything —
+	// and again on every resume — the job marks the disk `evacuating` (persisted in SQLite) and applies
+	// no-create to its own branch in every pool mount, live; a failure to apply that fails the job before
+	// any copy. It then runs the plan unchanged: copy and verify every batch, sync through the threshold
+	// guard (each such sync naming this disk in the guard's own zero-files exemption, since the batch that
+	// finally empties it would otherwise trip that rule), delete the batch's sources, sync again — then,
+	// once the whole plan finishes without being interrupted, a post-check confirms the disk's own share
+	// branches hold nothing but empty directories and the job marks the disk `evacuated` before reporting
+	// success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs,
+	// a disk already `unpooled` or `unlisted` is refused (`disk_leaving_array`, 409) as
+	// `planDiskEvacuation` refuses it, a second disk is refused (`disk_removal_in_progress`) while one is
+	// already in removal, and any new evacuation is refused (`evacuation_pending`) while another
+	// evacuation job is queued, running or interrupted. The removal state belongs to the job that set it:
+	// cancelling that job — queued, running or interrupted — clears it and puts the disk back to
+	// taking writes, and cancelling any other job never does. A job that fails leaves the disk
+	// `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success
+	// here means the disk's data as this job saw it is safely off it and it is no longer taking new
+	// writes, not that it is empty of every file or safe to physically remove: the mergerfs branch-list
+	// removal, SnapRAID removal and unmount are `finishDiskRemoval`'s.
 	//
 	// POST /disks/array/evacuate
 	EvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (*Job, error)
 	// ExportConfig invokes exportConfig operation.
 	//
-	// Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+	// Builds and returns the `hoserva-config-*.tar.zst` configuration archive.
 	//
 	// POST /config/export
 	ExportConfig(ctx context.Context) (ExportConfigOK, error)
 	// FinishDiskRemoval invokes finishDiskRemoval operation.
 	//
-	// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
-	// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
-	// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
-	// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
-	// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
-	// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
-	// array without the disk still has a data disk and room for every content-file copy (Q18), that the
-	// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
-	// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
-	// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
-	// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
-	// guard with only this disk exempt from the zero-files rule, while its data line is still in
-	// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
-	// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
-	// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
-	// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
-	// leaves the disk in the last state it reached, and running this operation again carries on from there
-	// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
-	// and mounted, with nothing synced.
+	// Queues a Topology job that takes an evacuated data disk out of the array. The confirmation is the
+	// same `REMOVE <mountpoint>` phrase `planDiskEvacuation` returned for the disk. Refused synchronously
+	// with `disk_slot_not_found` when no data disk occupies `mountpoint`, `disk_not_evacuated` when its
+	// removal state is not `evacuated`, `unpooled` or `unlisted`, and `confirmation_required` for a wrong
+	// or missing confirmation; `not_configured` when the daemon has no parity engine. Before changing
+	// anything the job checks all of that again, that the array without the disk still has a data disk and
+	// room for every content-file copy, that the disk is mounted by its own filesystem, and that nothing
+	// but empty directories and SnapRAID's own content files is left anywhere on it. It then marks the
+	// disk `unpooled` and takes it out of every pool mount, live (a failed live update fails the job);
+	// removes the empty directories the evacuation left, since SnapRAID records those too (rmdir only);
+	// runs a sync through the threshold guard with only this disk exempt from the zero-files rule, while
+	// its data line is still in snapraid.conf, and confirms SnapRAID tracks no file on it; marks it
+	// `unlisted`, regenerates snapraid.conf without it and checks SnapRAID accepts the result; then stops
+	// its mount unit, removes the unit file and deletes the disk from the array. The job's result names
+	// the disk as safe to physically remove; its filesystem is never wiped. A job that fails or is
+	// interrupted leaves the disk in the last state it reached, and running this operation again carries
+	// on from there — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`,
+	// still listed and mounted, with nothing synced.
 	//
 	// POST /disks/array/remove/finish
 	FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error)
@@ -536,17 +526,16 @@ type Invoker interface {
 	ForgetMigration(ctx context.Context) error
 	// FormatExternalDisk invokes formatExternalDisk operation.
 	//
-	// Formats the disk after the same typed confirmation array setup uses
-	// (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong
-	// or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB
-	// stick is refused with `unraid_stick` (409), whatever the confirmation.
+	// Formats the disk after the same typed confirmation array setup uses. The boot device is never
+	// offered. A wrong or missing confirmation is refused with `confirmation_required` and formats
+	// nothing. The Unraid USB stick is refused with `unraid_stick` (409), whatever the confirmation.
 	//
 	// POST /disks/external/{label}/format
 	FormatExternalDisk(ctx context.Context, request *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
 	// GetApp invokes getApp operation.
 	//
-	// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
-	// manages it, if any.
+	// One container's current state, health, image, tag, ports and mounts, and the stack that manages it,
+	// if any.
 	//
 	// GET /apps/{id}
 	GetApp(ctx context.Context, params GetAppParams) (*App, error)
@@ -560,8 +549,7 @@ type Invoker interface {
 	GetAppLogs(ctx context.Context, params GetAppLogsParams) (GetAppLogsOK, error)
 	// GetAppSettings invokes getAppSettings operation.
 	//
-	// How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until
-	// it is set.
+	// How long the image a container ran before an update is kept for a revert: 7 days until it is set.
 	//
 	// GET /settings/apps
 	GetAppSettings(ctx context.Context) (*AppSettings, error)
@@ -576,10 +564,10 @@ type Invoker interface {
 	//
 	// Every container with a bind-mounted directory inside the appdata location (the cache disk's
 	// `appdata` directory), each with whether the backup stops it while its directory is copied and
-	// whether it is in the backup at all (doc 10 §2). A container the operator has not configured is
-	// stopped and included. A known database image that is not stopped carries `warning`: copying a
-	// database's files while it runs can produce an archive that does not restore. 501 `not_configured`
-	// when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+	// whether it is in the backup at all. A container the operator has not configured is stopped and
+	// included. A known database image that is not stopped carries `warning`: copying a database's files
+	// while it runs can produce an archive that does not restore. 501 `not_configured` when this daemon
+	// has no Docker Engine client, and 503 when the Engine is not reachable.
 	//
 	// GET /appdata/backup
 	GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error)
@@ -596,16 +584,15 @@ type Invoker interface {
 	GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (*AppdataRestorePreview, error)
 	// GetCacheUsage invokes getCacheUsage operation.
 	//
-	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
-	// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
-	// run has computed it yet.
+	// Appdata / pending-moves / other byte breakdown for the cache disk. Computed as a by-product of each
+	// mover run, never a live directory walk on a timer. Null when no mover run has computed it yet.
 	//
 	// GET /cache/usage
 	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
 	// GetCatalogSettings invokes getCatalogSettings operation.
 	//
-	// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
-	// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+	// How the catalog checks for updates by itself: the background `refreshInterval` and whether opening
+	// the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
 	//
 	// GET /settings/catalog
 	GetCatalogSettings(ctx context.Context) (*CatalogSettings, error)
@@ -653,8 +640,8 @@ type Invoker interface {
 	GetCurrentSession(ctx context.Context) (*User, error)
 	// GetGeneralSettings invokes getGeneralSettings operation.
 	//
-	// Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase
-	// itself is never returned (Q28).
+	// Hostname, timezone and whether a backup passphrase is configured. The passphrase itself is never
+	// returned.
 	//
 	// GET /settings/general
 	GetGeneralSettings(ctx context.Context) (*GeneralSettings, error)
@@ -666,8 +653,8 @@ type Invoker interface {
 	GetJob(ctx context.Context, params GetJobParams) (*Job, error)
 	// GetJobLog invokes getJobLog operation.
 	//
-	// Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open
-	// and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
+	// Kept for 90 days. With `follow` true on a job that has not finished, the response stays open and
+	// carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
 	// decompressing on the fly prints every line at once), and ends when the job reaches a terminal state,
 	// when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a
 	// finished job is the same as omitting it.
@@ -676,51 +663,49 @@ type Invoker interface {
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
 	// GetLastMoverRun invokes getLastMoverRun operation.
 	//
-	// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
-	// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
-	// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
-	// finished.
+	// The structured result of the most recent finished mover run: files moved, bytes, duration, and every
+	// skipped entry with its reason. Persisted in SQLite by the mover job itself, not reconstructed from
+	// the job log. Null when no mover job has ever finished.
 	//
 	// GET /mover/last-run
 	GetLastMoverRun(ctx context.Context) (NilMoverRunResult, error)
 	// GetMetrics invokes getMetrics operation.
 	//
-	// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03
-	// §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days,
-	// daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an
-	// empty series, not an array-health error.
+	// Returns downsampled samples from metrics.db for one metric/subject over a time window. Resolution is
+	// chosen from the window — raw for up to 48 hours, hourly for up to 90 days, daily beyond — so
+	// clients cannot force a full raw scan. A missing or empty metrics.db yields an empty series, not an
+	// array-health error.
 	//
 	// GET /metrics
 	GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error)
 	// GetMigration invokes getMigration operation.
 	//
-	// The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows.
-	// `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running,
-	// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
-	// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
-	// scan, if there was one, is still returned). The rows name and count; they never quote a file's
-	// content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks
-	// a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled
-	// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
-	// true, once the session's report was made from a capture that says Unraid booted from an internal
-	// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
-	// no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review
-	// step shows as data: the disk mapping table, the share preview, the boot mode and the capture's
-	// state. It comes from the same scan as the rows, which stay as they are, and is absent from a report
-	// made before it existed.
+	// The one migration session: its phase and, once a scan has finished, the report as rows. `phase` is
+	// `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once
+	// a report exists and `scan_failed` when the latest scan did not finish, including when its job was
+	// cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if
+	// there was one, is still returned). The rows name and count; they never quote a file's content.
+	// `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan
+	// can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on
+	// a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the
+	// session's report was made from a capture that says Unraid booted from an internal device: the Flash
+	// Backup zip is then the only source. It is empty, with `zipOnly` false, when no such disk is attached
+	// or this daemon cannot read one. The report's `review` holds what the Review step shows as data: the
+	// disk mapping table, the share preview, the boot mode and the capture's state. It comes from the same
+	// scan as the rows, which stay as they are, and is absent from a report made before it existed.
 	//
 	// GET /migrate
 	GetMigration(ctx context.Context) (*Migration, error)
 	// GetMigrationChecklist invokes getMigrationChecklist operation.
 	//
-	// Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken
-	// from a record where one exists, so it cannot say something was done when it was not. The migration
-	// counts as finished exactly when the array record carries the time the point of no return finished
-	// (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing
-	// else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way
-	// through its point of no return, or was undone has none, and so has an array created by hand or one
-	// that finished before this record existed; then `finished` is false, `finishedAt` is absent and
-	// `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+	// Phase D's closing steps as a checklist, each item's state taken from a record where one exists, so
+	// it cannot say something was done when it was not. The migration counts as finished exactly when the
+	// array record carries the time the point of no return finished (`initializeMigrationParity`), which
+	// is written in the same statement that ends it and by nothing else: `finished` is true and
+	// `finishedAt` is that time. A migration that is pending, part-way through its point of no return, or
+	// was undone has none, and so has an array created by hand or one that finished before this record
+	// existed; then `finished` is false, `finishedAt` is absent and `items` is empty: the checklist does
+	// not apply. `getMigration` keeps no "complete" phase.
 	//
 	// `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache
 	// (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the
@@ -740,10 +725,9 @@ type Invoker interface {
 	//
 	// `user_scripts` and `restore_drill` have no record to derive from and are done by
 	// `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
-	// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
-	// `fix` job that had a `path`, which an acknowledgement records. Only those two are ever
-	// `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the
-	// scripts are empty.
+	// schedule (a script is never executed or translated); the second shows the latest succeeded `fix` job
+	// that had a `path`, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
+	// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
 	//
 	// GET /migrate/checklist
 	GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error)
@@ -777,9 +761,8 @@ type Invoker interface {
 	// GetNetworkSettings invokes getNetworkSettings operation.
 	//
 	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
-	// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
-	// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
-	// `readOnlyReason` says why.
+	// expiry, LAN-only access scope and the listen port. Editing address, DNS or gateway is only possible
+	// when the backend is ifupdown; otherwise `editable` is false and `readOnlyReason` says why.
 	//
 	// GET /settings/network
 	GetNetworkSettings(ctx context.Context) (*NetworkSettings, error)
@@ -791,47 +774,47 @@ type Invoker interface {
 	GetNotificationChannel(ctx context.Context, params GetNotificationChannelParams) (*NotificationChannel, error)
 	// GetNotificationRouting invokes getNotificationRouting operation.
 	//
-	// One entry per event type in doc 03 §8.3's fixed catalog, in the order that doc lists them — every
-	// event type appears even before it has ever been routed anywhere, with its compiled-in default
-	// severity and an empty channel list.
+	// One entry per event type in the fixed event catalog, in the catalog's own order: every event type
+	// appears even before it has ever been routed anywhere, with its compiled-in default severity and an
+	// empty channel list.
 	//
 	// GET /notifications/routing
 	GetNotificationRouting(ctx context.Context) (*GetNotificationRoutingOK, error)
 	// GetParity invokes getParity operation.
 	//
 	// Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
-	// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
-	// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+	// wake data disks. Threshold-guard state and grouped diff rows reflect the last explicit
+	// `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
 	//
 	// GET /parity
 	GetParity(ctx context.Context) (*ParitySnapshot, error)
 	// GetPool invokes getPool operation.
 	//
-	// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own
-	// `removalState` (doc 09 §4 step 2, #359) where one is in progress.
+	// Per-disk pool breakdown for `hoserva pool status`, including each disk's own `removalState` where
+	// one is in progress.
 	//
 	// GET /pool
 	GetPool(ctx context.Context) (*PoolStatus, error)
 	// GetQuietHours invokes getQuietHours operation.
 	//
-	// The current quiet hours window and the always-on critical override (doc 03 §8.3).
+	// The current quiet hours window and the always-on critical override.
 	//
 	// GET /notifications/quiet-hours
 	GetQuietHours(ctx context.Context) (*NotificationQuietHours, error)
 	// GetRestoreDrill invokes getRestoreDrill operation.
 	//
-	// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
-	// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
-	// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+	// The result of the most recent restore drill: whether the newest config archive on each enabled
+	// backup destination could be fetched, opened the way a restore opens it, and verified, and when.
+	// `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
 	// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
 	//
 	// GET /backup/drill
 	GetRestoreDrill(ctx context.Context) (*RestoreDrill, error)
 	// GetSchedules invokes getSchedules operation.
 	//
-	// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
-	// server-computed next-run times, human-readable schedule previews and conflict warnings from
-	// DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+	// The nightly maintenance chain and every separately scheduled job, with server-computed next-run
+	// times, human-readable schedule previews and conflict warnings. Chain step order is server-defined
+	// and not writable.
 	//
 	// GET /settings/schedules
 	GetSchedules(ctx context.Context) (*Schedules, error)
@@ -839,39 +822,39 @@ type Invoker interface {
 	//
 	// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
 	// the only routes that don't refuse every request with a "setup required" error while `adminExists` is
-	// false (#22).
+	// false.
 	//
 	// GET /setup/status
 	GetSetupStatus(ctx context.Context) (*SetupStatus, error)
 	// GetShare invokes getShare operation.
 	//
-	// One share by name (doc 03 §4.2).
+	// One share by name.
 	//
 	// GET /shares/{name}
 	GetShare(ctx context.Context, params GetShareParams) (*Share, error)
 	// GetSharePermissions invokes getSharePermissions operation.
 	//
-	// Every user and every user group with an explicit access level on this share (Q27, doc 03 §7). A
-	// user or group with no row here is not represented.
+	// Every user and every user group with an explicit access level on this share. A user or group with no
+	// row here is not represented.
 	//
 	// GET /shares/{name}/permissions
 	GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error)
 	// GetShareRelocationPrecheck invokes getShareRelocationPrecheck operation.
 	//
-	// What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose
-	// mounts use the share and every file of the share some process currently holds open, across the cache
-	// and every array branch. A container uses the share when a mount's host path is the share's pool
-	// path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the
-	// pool, on the cache or on a data disk; the match is made on the path as written, never through a
-	// symlink, so it reads no data disk. `active` is true for a container that is running, paused or
-	// restarting — one that can hold files open and that a relocation must not run beside. Listing the
-	// open files enumerates the share on the cache and on every array branch, so this is an explicit call
-	// that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no
-	// containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of
-	// the share, so it is the same whichever way the share will move. No answer is given in the cases
-	// `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no
-	// cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is
-	// stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409
+	// What a caller shows before it starts `startShareRelocation`: the containers whose mounts use the
+	// share and every file of the share some process currently holds open, across the cache and every
+	// array branch. A container uses the share when a mount's host path is the share's pool path, a path
+	// inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the pool, on the
+	// cache or on a data disk; the match is made on the path as written, never through a symlink, so it
+	// reads no data disk. `active` is true for a container that is running, paused or restarting — one
+	// that can hold files open and that a relocation must not run beside. Listing the open files
+	// enumerates the share on the cache and on every array branch, so this is an explicit call that may
+	// wake disks — it is never polled. `dockerAvailable` is false, with no error and no containers,
+	// whenever Docker itself is not reachable. The answer covers both sides of the share, so it is the
+	// same whichever way the share will move. No answer is given in the cases `startShareRelocation`
+	// refuses before it queues a job: 409 `no_cache_disk` while the array has no cache disk, 409
+	// `no_array` while there is no array, 409 `maintenance_mode` while the array is stopped, 409
+	// `migration_in_progress` while an Unraid migration is unfinished and 409
 	// `database_restore_in_progress` during a database restore. These are the scheduler's own admission
 	// checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
 	//
@@ -920,39 +903,38 @@ type Invoker interface {
 	GetStackTemplateUpdate(ctx context.Context, params GetStackTemplateUpdateParams) (*StackTemplateUpdate, error)
 	// GetStatus invokes getStatus operation.
 	//
-	// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+	// One-screen health summary for the dashboard and `hoserva status`.
 	//
 	// GET /status
 	GetStatus(ctx context.Context) (*SystemStatus, error)
 	// GetUPSSettings invokes getUPSSettings operation.
 	//
-	// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
-	// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
-	// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
-	// and every other field is omitted.
+	// The UPS settings: connection mode (USB or a network NUT server), driver fields, and USB-only
+	// shutdown thresholds. Passwords are never returned — only `monitorPasswordSet` /
+	// `networkPasswordSet`. When no UPS is configured, `configured` is false and every other field is
+	// omitted.
 	//
 	// GET /settings/ups
 	GetUPSSettings(ctx context.Context) (*UPSSettings, error)
 	// GetUpdateStatus invokes getUpdateStatus operation.
 	//
 	// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
-	// Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads
-	// only the signed release index on the project site — never the GitHub API and never a system-wide
-	// `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than
-	// fetched.
+	// Debian updates and whether a reboot is required. The update check reads only the signed release
+	// index on the project site — never the GitHub API and never a system-wide `apt update`. When the
+	// check is disabled, `availableVersion` is omitted rather than fetched.
 	//
 	// GET /settings/updates
 	GetUpdateStatus(ctx context.Context) (*UpdateStatus, error)
 	// GetUserSharePermissions invokes getUserSharePermissions operation.
 	//
-	// Every share this account has an explicit access level for (Q27, doc 03 §7). A share with no row
-	// here is not represented — none of the three levels is assumed.
+	// Every share this account has an explicit access level for. A share with no row here is not
+	// represented — none of the three levels is assumed.
 	//
 	// GET /users/{userId}/permissions
 	GetUserSharePermissions(ctx context.Context, params GetUserSharePermissionsParams) (*UserSharePermissionsResult, error)
 	// ImportConfig invokes importConfig operation.
 	//
-	// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
+	// Restores from a configuration archive. Requires `confirm: true` — this replaces the running
 	// configuration: the database, the custom config files (`*.custom.conf`), the installed app templates
 	// and each stack's compose and `meta.json` files, after which every managed config file is regenerated
 	// from the restored database and the result applied to the running pool. It also restores the
@@ -985,8 +967,8 @@ type Invoker interface {
 	// restored from the archive, so an import cannot return a stopped array to normal operation.
 	//
 	// On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
-	// bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
-	// disks from `state.db` and matches each against the attached disks by identity; the mapping is what
+	// bare-metal restore of another installation's archive. It takes the archive's array disks from the
+	// archived database and matches each against the attached disks by identity; the mapping is what
 	// `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without
 	// `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
 	// matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
@@ -1014,18 +996,17 @@ type Invoker interface {
 	ImportConfig(ctx context.Context, request *ImportConfigReq) (*ConfigImportReport, error)
 	// InitializeMigrationParity invokes initializeMigrationParity operation.
 	//
-	// Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a
-	// disk of the old array: queues a `migration_parity` job (topology class) that formats the former
-	// Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or
-	// partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the
-	// array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files
-	// placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level
-	// directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are
-	// available without a restart, and queues the initial `sync` as an ordinary sync job, which runs
-	// through the threshold guard like every other. The data disks are never formatted. Until the sync
-	// completes the array has no redundancy at all: `getMigration` `parityInit` states that window and
-	// what rollback means for this session's boot mode and layout, and the user is shown them before this
-	// is called.
+	// Step 17 of the migration, the point of no return and the first step that writes to a disk of the old
+	// array: queues a `migration_parity` job (topology class) that formats the former Unraid parity
+	// disk(s) XFS and the cache (a whole disk, a spare partition of the boot disk, or partition 4 of an
+	// Unraid boot + data device and never the rest of that disk), records them as the array's own, mounts
+	// the data disks read-write, generates `snapraid.conf` with its content files placed on separate
+	// devices, applies what the import deferred (each share's cache mode and its top-level directory's
+	// setgid mode and group), wires the parity engine so sync, scrub and fix are available without a
+	// restart, and queues the initial `sync` as an ordinary sync job, which runs through the threshold
+	// guard like every other. The data disks are never formatted. Until the sync completes the array has
+	// no redundancy at all: `getMigration` `parityInit` states that window and what rollback means for
+	// this session's boot mode and layout, and the user is shown them before this is called.
 	//
 	// `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names
 	// every device that will be erased, in the style of the array setup's own typed confirmation. A wrong
@@ -1036,15 +1017,15 @@ type Invoker interface {
 	// `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
 	// cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
 	// is not a mirrored pair, and whenever a second Unraid boot device is attached), and with 409
-	// `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free
-	// (doc 02 §1): once the disks are writable mergerfs would answer ENOSPC to every directory the job
-	// makes through `/mnt/user`, after the former parity disk and the cache were erased. The gate reads
-	// each data disk's free space once and the error names the floor and the disk with the most room; make
-	// room on a data disk (in Unraid, or by undoing the import) and import again. The job resolves every
-	// disk again from a fresh inventory by identity immediately before the first format and refuses,
-	// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
-	// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
-	// formatted disks are recorded leaves the migration in `initializing`: running this again with the
+	// `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free:
+	// once the disks are writable mergerfs would answer ENOSPC to every directory the job makes through
+	// `/mnt/user`, after the former parity disk and the cache were erased. The gate reads each data disk's
+	// free space once and the error names the floor and the disk with the most room; make room on a data
+	// disk (in Unraid, or by undoing the import) and import again. The job resolves every disk again from
+	// a fresh inventory by identity immediately before the first format and refuses, erasing nothing, when
+	// one is not the disk that was confirmed. A failure before the first format leaves the migration
+	// pending, with the adopted disks mounted read-only again. A failure after the formatted disks are
+	// recorded leaves the migration in `initializing`: running this again with the
 	// `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and
 	// topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
 	//
@@ -1075,7 +1056,7 @@ type Invoker interface {
 	InstallTemplate(ctx context.Context, request *TemplateInstallRequest, params InstallTemplateParams) (*TemplateInstallResult, error)
 	// ListApiTokens invokes listApiTokens operation.
 	//
-	// Every account's tokens, most recently created first (doc 03 §7).
+	// Every account's tokens, most recently created first.
 	//
 	// GET /api-tokens
 	ListApiTokens(ctx context.Context) (*ListApiTokensOK, error)
@@ -1100,14 +1081,14 @@ type Invoker interface {
 	ListAppUpdateHistory(ctx context.Context) (*ListAppUpdateHistoryOK, error)
 	// ListAppUpdates invokes listAppUpdates operation.
 	//
-	// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
-	// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
-	// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
-	// `skipped` means the registry was rate limiting requests and is asked again at the next check,
-	// `failed` that the check could not tell (including a registry whose saved credential cannot be used
-	// or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached
-	// the image yet or that it could not look: the registry wants a login and no credential is saved for
-	// it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
+	// What the daily registry check last found for each container's image: a new build of the same tag
+	// (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`).
+	// The check asks each registry for manifests and tag names only, never a pull. `skipped` means the
+	// registry was rate limiting requests and is asked again at the next check, `failed` that the check
+	// could not tell (including a registry whose saved credential cannot be used or was refused: it is
+	// never asked anonymously instead), and `not_checked` that no check has reached the image yet or that
+	// it could not look: the registry wants a login and no credential is saved for it
+	// (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
 	// update. The `message` says which. None of them means up to date. available is false, with no error,
 	// whenever Docker itself is not reachable.
 	//
@@ -1124,56 +1105,55 @@ type Invoker interface {
 	ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error)
 	// ListApps invokes listApps operation.
 	//
-	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
-	// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
-	// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
-	// every container as unmanaged. available is false, with no error, whenever Docker itself is not
-	// reachable (doc 04 §3).
+	// Every container the Docker Engine reports, managed and unmanaged alike. A container an installed
+	// stack started carries that stack's name in `stack`; one no stack manages has none. The daemon
+	// decides which, so the request fails when the stacks cannot be read rather than reporting every
+	// container as unmanaged. available is false, with no error, whenever Docker itself is not reachable.
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
 	// ListBackupDestinations invokes listBackupDestinations operation.
 	//
-	// Every place a config backup is written, with its last successful backup and whether it is stale (doc
-	// 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+	// Every place a config backup is written, with its last successful backup and whether it is stale.
+	// Credentials are never returned — `hasSecrets` is the only trace of them.
 	//
 	// GET /backup/destinations
 	ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error)
 	// ListCatalog invokes listCatalog operation.
 	//
-	// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-	// waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated
-	// catalog's. The curated catalog's entries come first, then those of each user-added source
-	// (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that
-	// order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated
-	// one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for
-	// a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of
-	// an unsigned source has `signed` false. Every entry says whether a stack of that template id already
-	// exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging
-	// are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check
-	// (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that
-	// is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`,
-	// never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when
-	// the last check is older than 15 minutes, or when none has run since the daemon started, also starts
-	// one catalog check in the background, never a second while one is running. The answer is the on-disk
-	// copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
+	// The templates of the catalog installed on disk, read from its `index.json` and never waiting on the
+	// network, with the catalog's `serial` and `generatedAt`, which are the curated catalog's. The curated
+	// catalog's entries come first, then those of each user-added source (`listCatalogSources`) in the
+	// order the sources were added; a template id a source earlier in that order already lists is never
+	// supplied by a later one, so a user-added entry cannot shadow a curated one. Every entry names the
+	// `source` it came from (`hoserva` for the curated catalog, a source id for a user-added source) and
+	// carries that source's badge as data: `sourceKind` and `signed`. An entry of an unsigned source has
+	// `signed` false. Every entry says whether a stack of that template id already exists (`installed`,
+	// from the `stacks` table). Entries are in that order. Search, filters and paging are the caller's.
+	// `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the
+	// daemon started, and are absent before any check has run. A catalog that is not installed or whose
+	// `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty
+	// list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15
+	// minutes, or when none has run since the daemon started, also starts one catalog check in the
+	// background, never a second while one is running. The answer is the on-disk copy as it is now; the
+	// finished check is announced as a `catalog` event on `/api/v1/events`.
 	//
 	// GET /catalog
 	ListCatalog(ctx context.Context) (*CatalogList, error)
 	// ListCatalogSources invokes listCatalogSources operation.
 	//
 	// The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added
-	// (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a
-	// source whose installed archive passed a signature check: always for the curated catalog, and for a
-	// user-added source only when it was added with a public key. `serial` is the installed catalog's
-	// serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive
-	// was installed or confirmed unchanged, and is absent before the first.
+	// (`kind` `user_added`) in the order they were added. `signed` is true only for a source whose
+	// installed archive passed a signature check: always for the curated catalog, and for a user-added
+	// source only when it was added with a public key. `serial` is the installed catalog's serial and is
+	// absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive was installed
+	// or confirmed unchanged, and is absent before the first.
 	//
 	// GET /catalog-sources
 	ListCatalogSources(ctx context.Context) (*CatalogSourceList, error)
 	// ListDisks invokes listDisks operation.
 	//
-	// Every block device Hoserva knows about (doc 02 §4).
+	// Every block device Hoserva knows about.
 	//
 	// GET /disks
 	ListDisks(ctx context.Context) (*ListDisksOK, error)
@@ -1181,103 +1161,100 @@ type Invoker interface {
 	//
 	// Every network the Docker Engine holds, sorted by name: the built-in `bridge`, `host` and `none` and
 	// the networks the user created (macvlan and ipvlan included). The install wizard offers the existing
-	// ones as network modes (Q37, doc 03 §5.4); Hoserva never creates a network. `available` is false,
-	// with no error, whenever Docker itself is not reachable (doc 04 §3), and then `networks` is empty
-	// without meaning there are none: a caller that needs the list must treat it as unknown. Any other
-	// failure to read the list is an error, never an empty list.
+	// ones as network modes; Hoserva never creates a network. `available` is false, with no error,
+	// whenever Docker itself is not reachable, and then `networks` is empty without meaning there are
+	// none: a caller that needs the list must treat it as unknown. Any other failure to read the list is
+	// an error, never an empty list.
 	//
 	// GET /apps/networks
 	ListDockerNetworks(ctx context.Context) (*ListDockerNetworksOK, error)
 	// ListExternalDisks invokes listExternalDisks operation.
 	//
-	// Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a
-	// pool or parity member. Registered external disks plus inventory disks that are not the boot device
-	// and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it
-	// is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
+	// Disks outside the array: Ignore-role or a later USB disk, never a pool or parity member. Registered
+	// external disks plus inventory disks that are not the boot device and not in the array. The Unraid
+	// USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it is the migration's rollback.
+	// Nothing is mounted by this call.
 	//
 	// GET /disks/external
 	ListExternalDisks(ctx context.Context) (*ListExternalDisksOK, error)
 	// ListJobs invokes listJobs operation.
 	//
-	// Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
-	// page and `hoserva logs` can scope what they render without walking the whole history.
+	// Every long-running operation is a job. Filterable by class and status so the UI's jobs page and
+	// `hoserva logs` can scope what they render without walking the whole history.
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
 	// ListMigrationContainers invokes listMigrationContainers operation.
 	//
-	// Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the latest scan. `templates`
-	// are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in
-	// Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a
-	// creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so
-	// with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are
-	// the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers
-	// created with `docker run` and their image, which nothing is generated for: they are recreated by
-	// hand. The preview of each (the generated Compose, every warning including the writable-layer
-	// warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are
-	// the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's
-	// autostart order first), each with its `state`; `awaiting` names the started stack that must be
-	// confirmed or stopped before another is started, and `next` the first stack not started yet; a stack
-	// that was started, stopped and never confirmed is offered as `next` only when none of those is left.
-	// `parityInitialized` is false until the migration is past its point of no return
-	// (`initializeMigrationParity`); the operations that create or start something refuse until then. This
-	// reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview`
-	// for a report made before scans converted templates.
+	// Phase D's container steps as data, from the latest scan. `templates` are every template of the scan
+	// grouped by `class` in the order the groups are shown (`autostart` in Unraid's own autostart order,
+	// then `running`, `stopped`, `template_only` and `unknown`); only a creatable template on Unraid's
+	// autostart list whose stack does not exist yet is `preselected`, so with no capture (class `unknown`)
+	// nothing is. Every one can still be selected. `composeProjects` are the Compose Manager projects,
+	// offered with their own `compose.yaml`; `byHand` are the containers created with `docker run` and
+	// their image, which nothing is generated for: they are recreated by hand. The preview of each (the
+	// generated Compose, every warning including the writable-layer warning) is `getMigrationTemplate`,
+	// and should be read before `createMigrationStacks`. `stacks` are the stacks `createMigrationStacks`
+	// created, in the order they are offered for starting (Unraid's autostart order first), each with its
+	// `state`; `awaiting` names the started stack that must be confirmed or stopped before another is
+	// started, and `next` the first stack not started yet; a stack that was started, stopped and never
+	// confirmed is offered as `next` only when none of those is left. `parityInitialized` is false until
+	// the migration is past its point of no return (`initializeMigrationParity`); the operations that
+	// create or start something refuse until then. This reads no disk. 404 `no_migration_report` before a
+	// scan has finished and 404 `no_template_preview` for a report made before scans converted templates.
 	//
 	// GET /migrate/containers
 	ListMigrationContainers(ctx context.Context) (*MigrationContainers, error)
 	// ListMigrationTemplates invokes listMigrationTemplates operation.
 	//
-	// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
-	// §5): every template with its class and how it converted, every Compose Manager project, and the
-	// counts the report shows. The scan converts each template in memory with the converter
-	// `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom
-	// network's `docker network create` command is exact when the capture holds that network. Nothing is
-	// created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's
-	// outcome (its status and warning classes), never its content, so this answers without the zip;
-	// `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a
-	// container on the source server (autostart, running and stopped) and, without the capture's container
-	// list, every template (`allTemplates`); a template-only template is converted and previewable but is
-	// in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed
-	// with its own `compose.yaml`, counted in `composeProjects` and never converted. 404
-	// `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made
-	// before scans converted templates (scan again).
+	// What the scan's conversion of the Flash Backup's Docker templates found: every template with its
+	// class and how it converted, every Compose Manager project, and the counts the report shows. The scan
+	// converts each template in memory with the converter `convertUnraidTemplate` runs, passing it the
+	// Docker networks of the Phase A capture, so a custom network's `docker network create` command is
+	// exact when the capture holds that network. Nothing is created, written under
+	// `/var/lib/hoserva/stacks/` or started. The session keeps only each template's outcome (its status
+	// and warning classes), never its content, so this answers without the zip; `getMigrationTemplate`
+	// builds a preview on request. `counts` cover the templates that had a container on the source server
+	// (autostart, running and stopped) and, without the capture's container list, every template
+	// (`allTemplates`); a template-only template is converted and previewable but is in `templateOnly` and
+	// not in the clean or warning counts. A Compose Manager project is previewed with its own
+	// `compose.yaml`, counted in `composeProjects` and never converted. 404 `no_migration_report` before a
+	// scan has finished, and 404 `no_template_preview` for a report made before scans converted templates
+	// (scan again).
 	//
 	// GET /migrate/templates
 	ListMigrationTemplates(ctx context.Context) (*MigrationTemplates, error)
 	// ListNotificationChannels invokes listNotificationChannels operation.
 	//
-	// Every configured alerting destination (doc 03 §8.3).
+	// Every configured alerting destination.
 	//
 	// GET /notifications/channels
 	ListNotificationChannels(ctx context.Context) (*ListNotificationChannelsOK, error)
 	// ListNotifications invokes listNotifications operation.
 	//
-	// Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never
-	// probes block devices.
+	// Unread alerts first, grouped by event type. Reads only the central database — never probes block
+	// devices.
 	//
 	// GET /notifications
 	ListNotifications(ctx context.Context) (*ListNotificationsOK, error)
 	// ListRegistryCredentials invokes listRegistryCredentials operation.
 	//
-	// The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image
-	// references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never
-	// returned: only the host is. A host listed here whose credential was cleared by a restore without the
-	// backup passphrase makes the update check report its images as `failed` until `putRegistryCredential`
-	// saves it again.
+	// The registry hosts the daily update check has a credential for, sorted, as image references name
+	// them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never returned: only the
+	// host is. A host listed here whose credential was cleared by a restore without the backup passphrase
+	// makes the update check report its images as `failed` until `putRegistryCredential` saves it again.
 	//
 	// GET /registry-credentials
 	ListRegistryCredentials(ctx context.Context) (*RegistryCredentialList, error)
 	// ListSessions invokes listSessions operation.
 	//
-	// Every session across every account, with revoke (doc 03 §7).
+	// Every session across every account, with revoke.
 	//
 	// GET /sessions
 	ListSessions(ctx context.Context) (*ListSessionsOK, error)
 	// ListShares invokes listShares operation.
 	//
-	// Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are
-	// later issues.
+	// Every configured share. Does not walk data disks.
 	//
 	// GET /shares
 	ListShares(ctx context.Context) (*ListSharesOK, error)
@@ -1290,38 +1267,36 @@ type Invoker interface {
 	ListStacks(ctx context.Context) (*ListStacksOK, error)
 	// ListUserGroups invokes listUserGroups operation.
 	//
-	// Every user group, sorted by name (Q27, doc 03 §7).
+	// Every user group, sorted by name.
 	//
 	// GET /user-groups
 	ListUserGroups(ctx context.Context) (*ListUserGroupsOK, error)
 	// ListUsers invokes listUsers operation.
 	//
-	// Every account, sorted by username (Q27, doc 03 §7).
+	// Every account, sorted by username.
 	//
 	// GET /users
 	ListUsers(ctx context.Context) (*ListUsersOK, error)
 	// ListWakeEvents invokes listWakeEvents operation.
 	//
-	// Reads persisted spin-state transitions from the central database only — never probes block devices
-	// (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped
-	// by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how
-	// often it woke.
+	// Reads persisted spin-state transitions from the central database only — never probes block
+	// devices. Returns every recorded transition plus per-device wake counts grouped by UTC day so the
+	// wake-events page can show when each disk woke, how long it stayed awake, and how often it woke.
 	//
 	// GET /disks/wake-events
 	ListWakeEvents(ctx context.Context) (*WakeEventsResponse, error)
 	// Login invokes login operation.
 	//
-	// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
-	// than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc
-	// 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an
-	// unknown username and a wrong password against a real one get the same status and error code
-	// (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the
-	// same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a
-	// sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry
-	// cap, an unknown username's lockout can lift early, where a real account's own (never capped or
-	// evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus
-	// `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable,
-	// rate-limited signal, not one this API tries to hide.
+	// Username is matched case-insensitively, using simple lowercasing rather than full Unicode case
+	// folding. Password, plus a TOTP code once the account has TOTP enrolled. Rate-limited and
+	// lockout-protected per account and per source address: an unknown username and a wrong password
+	// against a real one get the same status and error code (`invalid_credentials`), reach lockout
+	// (`rate_limited`) at the same failure threshold, and cost the same bounded argon2id-shaped work
+	// either way, for similar timing, under ordinary load — under a sustained flood large enough to fill
+	// and evict from the unknown-username table's own 10,000-entry cap, an unknown username's lockout can
+	// lift early, where a real account's own (never capped or evicted) would not. Once the password is
+	// correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an
+	// account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
 	//
 	// POST /auth/login
 	Login(ctx context.Context, request *LoginRequest) (*UserHeaders, error)
@@ -1333,99 +1308,93 @@ type Invoker interface {
 	Logout(ctx context.Context) (*LogoutNoContent, error)
 	// MarkNotificationsRead invokes markNotificationsRead operation.
 	//
-	// Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's
-	// mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+	// Marks every alert whose id is listed, or every alert when `all` is true (mark all as read). Omitted
+	// ids with `all` false is a no-op that returns the current unread count.
 	//
 	// POST /notifications/read
 	MarkNotificationsRead(ctx context.Context, request *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error)
 	// MountExternalDisk invokes mountExternalDisk operation.
 	//
-	// Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically
-	// on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick
-	// (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
+	// Mounts the disk by filesystem UUID at `/mnt/disks/<label>`. Nothing mounts automatically on plug-in.
+	// The boot device and array disks are refused, and so is the Unraid USB stick (`unraid_stick`, 409):
+	// it is only ever mounted read-only, by the migration scan.
 	//
 	// POST /disks/external/{label}/mount
 	MountExternalDisk(ctx context.Context, params MountExternalDiskParams) (*ExternalDisk, error)
 	// PlanDiskAdd invokes planDiskAdd operation.
 	//
-	// Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or
-	// serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`)
-	// and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity
-	// disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the
-	// array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data
-	// set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+	// Computes the add plan: the target disk's own identity (model, WWN or serial, size, its existing
+	// filesystem if any), its assigned mountpoint and the exact typed confirmation `addDisk` requires.
+	// Refuses a disk that would leave a parity disk smaller than the array's largest data disk, and a
+	// device already identified as one of the array's own members by WWN or serial, applying the same
+	// validation array setup runs over the resulting data set. Read-only: nothing is formatted or
+	// persisted.
 	//
 	// POST /disks/array/add/plan
 	PlanDiskAdd(ctx context.Context, request *AddDiskPlanRequest) (*AddDiskPlan, error)
 	// PlanDiskEvacuation invokes planDiskEvacuation operation.
 	//
-	// Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically
-	// a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from
-	// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
-	// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
-	// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-	// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
-	// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
-	// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
-	// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
-	// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
-	// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
-	// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
-	// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
-	// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
-	// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
+	// Computes the evacuation plan for the data disk at `mountpoint` (mechanically a rebalance targeting
+	// one specific source disk): every file an evacuation would move from that disk onto the pool's
+	// remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk`
+	// requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto,
+	// when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket
+	// or device node), when the remaining disks do not have room even after each one's own minimum free
+	// space is kept, or when the disk holds any top-level entry that is neither a configured share's own
+	// branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — there is no
+	// procedure for moving such content, so evacuation refuses to start rather than leave it behind
+	// unreported; that refusal's own 400 body, `EvacuationPlanRefusal`, names every offending path in
+	// `nonSharePaths`. Read-only: nothing is copied, synced or deleted, and this preview does not itself
+	// put the disk into its `removing`/no-create state — `evacuateDisk`'s own job does that, before its
+	// first copy, so the disk keeps taking new writes only until that job starts, never for as long as it
+	// runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 	// `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
 	// already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed
-	// or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09
-	// §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the
-	// threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this
-	// preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not
-	// performed by either.
+	// or repeated evacuation. No other disk in removal is ever a target. Evacuation moves the disk's own
+	// already-present files off it, protected through the threshold guard. The no-create switch is applied
+	// by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal
+	// and unmount are not performed by either.
 	//
 	// POST /disks/array/evacuate/plan
 	PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (PlanDiskEvacuationRes, error)
 	// PlanDiskReplace invokes planDiskReplace operation.
 	//
-	// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
-	// (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that
-	// reconstructs the slot's contents after it is formatted, and the exact typed confirmation
-	// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
-	// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
-	// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
+	// Computes the replace plan: the replacement's own identity (model, WWN or serial, size, its existing
+	// filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is
+	// formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`)
+	// unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a
+	// fresh disk inventory by identity (a healthy disk goes through the upgrade flow instead) — and a
 	// replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
 	// (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the
 	// replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the
 	// slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot
-	// — replace abandons the removal and rebuilds the disk's recorded files from parity (#384).
-	// Read-only: nothing is formatted or persisted.
+	// — replace abandons the removal and rebuilds the disk's recorded files from parity. Read-only:
+	// nothing is formatted or persisted.
 	//
 	// POST /disks/array/replace/plan
 	PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error)
 	// PlanDiskUpgrade invokes planDiskUpgrade operation.
 	//
-	// Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing
-	// array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or
-	// serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade
-	// runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed
-	// confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that
-	// would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same
-	// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
-	// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
-	// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
-	// disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any
-	// `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or
-	// persisted.
+	// Computes the upgrade plan for the existing array slot at `mountpoint`, whichever role it holds: the
+	// replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the
+	// copy/verify/remount steps a data-disk upgrade runs or the copy/verify/switch/check steps a
+	// parity-disk upgrade runs, and the exact typed confirmation `upgradeDisk` requires. For a data disk,
+	// refuses (`invalid_plan`) a replacement that would leave a parity disk smaller than it — offering
+	// the parity upgrade flow first — and any of `planDiskReplace`'s own checks. For a parity disk,
+	// `newMountpoint` is the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and
+	// verified at independently of the old one — never the old disk's own mountpoint. Refuses
+	// (`disk_leaving_array`, 409) a data disk in removal (any `removalState`): the new disk would inherit
+	// that state. Read-only: nothing is formatted or persisted.
 	//
 	// POST /disks/array/upgrade/plan
 	PlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (*DiskUpgradePlan, error)
 	// PlanRebalance invokes planRebalance operation.
 	//
-	// Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files
-	// `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to
-	// bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed
-	// confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of
-	// every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is
-	// copied, synced or deleted.
+	// Computes the rebalance plan: for every share with at least two branches, the files a rebalance would
+	// move from that share's own most-full disk to its own least-full disk to bring them within the skew
+	// tolerance, plus any path-preserving warnings, and the exact typed confirmation `startRebalance`
+	// requires. A data disk in removal (any `removalState`) is left out of every share's branches: the
+	// plan neither moves a file off it nor onto it. Read-only: nothing is copied, synced or deleted.
 	//
 	// POST /pool/rebalance/plan
 	PlanRebalance(ctx context.Context) (*RebalancePlan, error)
@@ -1528,10 +1497,10 @@ type Invoker interface {
 	// PutRegistryCredential invokes putRegistryCredential operation.
 	//
 	// Saves the username and password the update check logs in to this registry with, replacing any it
-	// already has, sealed under the machine key (Q28). The password is write-only: no operation returns it
-	// and it is never logged. The credential is sent only to this registry's own host (and, for Docker
-	// Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another
-	// host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
+	// already has, sealed under the machine key. The password is write-only: no operation returns it and
+	// it is never logged. The credential is sent only to this registry's own host (and, for Docker Hub,
+	// its token service `auth.docker.io`), only over https, and never follows a redirect to another host
+	// or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
 	// another host, is not logged in to and its images are reported `failed`. It is carried in a config
 	// archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the
 	// credential is cleared and the restore report names it. A host that is not a registry host name, or
@@ -1542,8 +1511,8 @@ type Invoker interface {
 	PutRegistryCredential(ctx context.Context, request *PutRegistryCredentialRequest, params PutRegistryCredentialParams) error
 	// RebootHost invokes rebootHost operation.
 	//
-	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
-	// then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+	// Waits for any running Parity, Array-write or Topology job, runs the clean shutdown sequence, then
+	// reboots. Hoserva never reboots on its own — this is always the user's action.
 	//
 	// POST /settings/updates/reboot
 	RebootHost(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
@@ -1563,20 +1532,20 @@ type Invoker interface {
 	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
 	// RefreshCatalog invokes refreshCatalog operation.
 	//
-	// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
-	// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
-	// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
-	// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
-	// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
-	// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
-	// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
-	// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
-	// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
-	// while a check is running share that check's request and result. A signature that does not verify
-	// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
-	// because the two files are cached separately and can briefly disagree while a catalog is being
-	// published. Every finished check, whoever started it, is announced as a `catalog` event on
-	// `/api/v1/events`. Nothing is fetched from `api.github.com`.
+	// Runs one conditional request for the latest signed catalog from the catalog host and returns how it
+	// ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged
+	// catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed
+	// catalog only if its signature verifies against the compiled-in catalog key and its serial is
+	// strictly higher (`updated`, with the number of new and of updated templates, compared by id and
+	// revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched
+	// and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`,
+	// `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure
+	// does not. A check that fails is still a completed check, answered 200. Calls made while a check is
+	// running share that check's request and result. A signature that does not verify makes the check
+	// fetch the archive and its signature once more before it reports `bad_signature`, because the two
+	// files are cached separately and can briefly disagree while a catalog is being published. Every
+	// finished check, whoever started it, is announced as a `catalog` event on `/api/v1/events`. Nothing
+	// is fetched from `api.github.com`.
 	//
 	// POST /catalog/refresh
 	RefreshCatalog(ctx context.Context) (*CatalogRefresh, error)
@@ -1595,7 +1564,7 @@ type Invoker interface {
 	RefreshCatalogSource(ctx context.Context, params RefreshCatalogSourceParams) (*CatalogRefresh, error)
 	// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 	//
-	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
+	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate and
 	// hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
 	// unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
 	// setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
@@ -1604,7 +1573,7 @@ type Invoker interface {
 	RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error)
 	// RegisterExternalDisk invokes registerExternalDisk operation.
 	//
-	// Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as
+	// Assigns a non-array, non-boot disk the Ignore/external role with a label used as
 	// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB
 	// stick (`unraid_stick`, 409).
 	//
@@ -1666,25 +1635,24 @@ type Invoker interface {
 	RemoveStack(ctx context.Context, params RemoveStackParams) (*RemoveStackResult, error)
 	// ReplaceDisk invokes replaceDisk operation.
 	//
-	// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
-	// mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the
-	// mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix`
-	// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
-	// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
-	// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-	// or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already
-	// `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is
-	// genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk
-	// rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The
-	// confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
-	// missing one is refused with `confirmation_required` and formats nothing.
+	// Queues a Topology job that formats or adopts the replacement at the same mountpoint, regenerates
+	// mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed
+	// by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from
+	// parity and the remaining disks. Identity is re-checked at format time and the boot disk is always
+	// refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk
+	// is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot still
+	// `evacuating` or already `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the
+	// slot's own disk is genuinely missing: the job clears the removal state as part of adopting the
+	// replacement, so the disk rejoins the array as an ordinary member and its recorded files rebuild from
+	// parity. The confirmation must be the exact string the matching `planDiskReplace` call returned; a
+	// wrong or missing one is refused with `confirmation_required` and formats nothing.
 	//
 	// POST /disks/array/replace
 	ReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (*Job, error)
 	// ResetUserPassword invokes resetUserPassword operation.
 	//
-	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
-	// `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+	// Root-only over the Unix socket. Checked against the peer's uid 0 specifically — the `hoserva`
+	// group and TCP are refused. Audit-logged and announced through every notification channel.
 	//
 	// POST /users/{username}/reset-password
 	ResetUserPassword(ctx context.Context, request *ResetUserPasswordRequest, params ResetUserPasswordParams) error
@@ -1713,13 +1681,13 @@ type Invoker interface {
 	// ResumeJob invokes resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
-	// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
-	// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
-	// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
+	// upgrade) persist a checkpoint to resume from. Jobs are never resumed automatically after a restart
+	// — this operation is always an explicit user action. A data-disk upgrade resumes only in
+	// maintenance mode; one resumed at its releasing checkpoint is not cancellable. Refused with
+	// `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
 	// `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a
 	// moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery
-	// hold is active (doc 02 §6, Q77).
+	// hold is active.
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
@@ -1759,9 +1727,9 @@ type Invoker interface {
 	// RollbackUpdate invokes rollbackUpdate operation.
 	//
 	// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
-	// snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is
-	// previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running;
-	// the error names that job.
+	// snapshot, and installs the previous package. There are no down migrations — rollback is previous
+	// package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error
+	// names that job.
 	//
 	// POST /settings/updates/rollback
 	RollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
@@ -1783,16 +1751,15 @@ type Invoker interface {
 	// RunDoctor invokes runDoctor operation.
 	//
 	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
-	// (`hoserva doctor`, doc 01 §3), plus existing host configuration (Samba shares, NFS exports, fstab
-	// mounts, Docker containers and images) for onboarding (Q76).
+	// (`hoserva doctor`), plus existing host configuration (Samba shares, NFS exports, fstab mounts,
+	// Docker containers and images) for onboarding.
 	//
 	// GET /doctor
 	RunDoctor(ctx context.Context) (*DoctorReport, error)
 	// RunParityDiff invokes runParityDiff operation.
 	//
-	// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
-	// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
-	// polled on a timer.
+	// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk.
+	// Returns grouped changes and threshold-guard evaluation for the parity page; never polled on a timer.
 	//
 	// POST /parity/diff
 	RunParityDiff(ctx context.Context) (*ParityDiffResult, error)
@@ -1800,11 +1767,10 @@ type Invoker interface {
 	//
 	// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
 	// the channel's own configuration, not a routed event, so it reports success or the delivery error
-	// directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
-	// notification config is the same as no notification config"). A test that succeeds is also recorded
-	// for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
-	// enabled and its latest successful test ran in a later second than the one the channel last changed
-	// in; a test that fails is not recorded.
+	// directly rather than being retried and logged like a routed notification. A test that succeeds is
+	// also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only
+	// while it is enabled and its latest successful test ran in a later second than the one the channel
+	// last changed in; a test that fails is not recorded.
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
@@ -1831,11 +1797,11 @@ type Invoker interface {
 	SetUserGroupMembers(ctx context.Context, request *SetUserGroupMembersRequest, params SetUserGroupMembersParams) (*UserGroup, error)
 	// SetUserPassword invokes setUserPassword operation.
 	//
-	// Writes the UI credential hash and the Samba passdb entry together (Q27, doc 03 §7): if the Samba
-	// write fails, the UI credential is rolled back to its previous value, and nothing is left updated on
-	// only one side. This is the ordinary admin-driven password action on `/users` — distinct from
-	// resetUserPassword (Q78), which is root-only recovery for a locked-out account over the Unix socket
-	// and never touches the Samba passdb.
+	// Writes the UI credential hash and the Samba passdb entry together: if the Samba write fails, the UI
+	// credential is rolled back to its previous value, and nothing is left updated on only one side. This
+	// is the ordinary admin-driven password action on `/users` — distinct from resetUserPassword, which
+	// is root-only recovery for a locked-out account over the Unix socket and never touches the Samba
+	// passdb.
 	//
 	// POST /users/{userId}/password
 	SetUserPassword(ctx context.Context, request *SetUserPasswordRequest, params SetUserPasswordParams) error
@@ -1881,42 +1847,40 @@ type Invoker interface {
 	StartAppdataBackup(ctx context.Context, request OptStartAppdataBackupRequest) (*Job, error)
 	// StartArray invokes startArray operation.
 	//
-	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
-	// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
-	// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
-	// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with
-	// `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at
-	// any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted.
+	// Reverses `stopArray` (`hoserva array start`): mount disks, the catch-all and share paths, then start
+	// services in the reverse of stop order, and exit maintenance mode only once every step succeeds.
+	// Refused with `storage_not_ready` when the storage gate is not ready — nothing is mounted. Also
+	// refused with `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or
+	// interrupted at any checkpoint; the error names the job to resume or cancel, and nothing is mounted.
 	// Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any
-	// service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted
-	// again and maintenance mode stays on.
+	// service starts; otherwise it is refused with `array_disk_mismatch`, the disks are unmounted again
+	// and maintenance mode stays on.
 	//
 	// POST /array/start
 	StartArray(ctx context.Context) (*SystemStatus, error)
 	// StartFix invokes startFix operation.
 	//
-	// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
-	// parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file
-	// changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2).
-	// Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under
-	// `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for,
-	// with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error
-	// gives the number of unrecoverable blocks and names the partial copies it left as
-	// `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log
-	// names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID
-	// can only rebuild what parity held at the last sync, and no more failed blocks than parity covers.
-	// With `path`, the error names the file and, when the log names the partial copy, gives one example
-	// cause: another file that shares its parity positions changed after the last sync. Any other non-zero
-	// exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to
-	// do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after
-	// the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job
-	// reports that nothing was restored.
+	// Queues a fix job (`hoserva fix`). Requires `confirm: true` — fix rewrites data from parity.
+	// Without `path` the fix covers the whole array, or the one `disk`, and brings back every file changed
+	// or deleted since the last sync; with `path` it restores only that one file. Refused with 400
+	// `invalid_fix_path` before a job is queued when `path` is not one file under `/mnt/user` or is sent
+	// together with `disk`. A fix that SnapRAID reports unrecoverable blocks for, with or without `path`,
+	// ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error gives the number of
+	// unrecoverable blocks and names the partial copies it left as `<name>.unrecoverable` on their disks,
+	// or says SnapRAID leaves them beside the file when its log names none; files it did recover stay
+	// restored. Without `path`, the error also says that SnapRAID can only rebuild what parity held at the
+	// last sync, and no more failed blocks than parity covers. With `path`, the error names the file and,
+	// when the log names the partial copy, gives one example cause: another file that shares its parity
+	// positions changed after the last sync. Any other non-zero exit fails the job too. A fix with `path`
+	// also ends `failed` when SnapRAID exits 0 with "Nothing to do": the path matched nothing in parity
+	// (misspelt, the wrong case, a directory, a file made after the last sync, a file only on the cache)
+	// or the file is intact and needs no restoring, and the job reports that nothing was restored.
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, request *StartFixRequest) (*Job, error)
 	// StartMigrationContainer invokes startMigrationContainer operation.
 	//
-	// Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack
+	// Step 20 of the migration: queues the `stack_start` job (`startStack`) for a stack
 	// `createMigrationStacks` created, and records that it was started: the start is recorded before the
 	// job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and
 	// whose job is then not recorded leaves the stack recorded as started with no job. Containers are
@@ -1937,62 +1901,62 @@ type Invoker interface {
 	StartMigrationContainer(ctx context.Context, params StartMigrationContainerParams) (*Job, error)
 	// StartMigrationDeviceScan invokes startMigrationDeviceScan operation.
 	//
-	// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
-	// stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the
-	// `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private
-	// mountpoint under the daemon's state directory for the one read made here before anything is queued
-	// and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing
-	// is copied from it. The stick is the user's rollback. Refused before anything is queued: 400
+	// Instead of the Flash Backup zip, reads Unraid's configuration from the USB stick, attached to this
+	// machine, and queues a `migration_scan` job. `device` must be one of the `flashDevices`
+	// `getMigration` offers. The stick is mounted read-only (never read-write) at a private mountpoint
+	// under the daemon's state directory for the one read made here before anything is queued and for the
+	// job's own read, and is unmounted after each; nothing is ever written to it and nothing is copied
+	// from it. The stick is the user's rollback. Refused before anything is queued: 400
 	// `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot
 	// disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the
 	// session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot
 	// pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not
 	// be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no
-	// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless
-	// `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when
-	// this daemon has no migration service or cannot read a flash device. The result is the report the
-	// same flash's zip gives.
+	// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, unless `unverifiedLayout` is
+	// true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no
+	// migration service or cannot read a flash device. The result is the report the same flash's zip
+	// gives.
 	//
 	// POST /migrate/scan/device
 	StartMigrationDeviceScan(ctx context.Context, request *StartMigrationDeviceScanReq) (*Job, error)
 	// StartMigrationImport invokes startMigrationImport operation.
 	//
-	// Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class)
-	// that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without
-	// writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID
-	// another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay`
-	// (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact.
-	// The former parity and cache disks are recorded by identity and are neither formatted, mounted nor
-	// opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity
-	// engine exists and no sync can run. While the import is pending (`getMigration` `phase` is
-	// `imported`), parity, array-write and topology jobs other than this one's own retry are refused with
-	// 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code.
-	// `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk,
-	// keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture
-	// names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by
-	// that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with
-	// 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan
-	// listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB
-	// stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever
-	// filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity
-	// disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
-	// cache only by a spare partition of it; parity is one or two disks, each at least as large as the
-	// largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
-	// is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the
-	// point of no return, which is the same check that step makes: Q18's content-file copies (the parity
-	// disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache
-	// that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that
-	// falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data
-	// disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused
-	// with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm`
-	// is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the
-	// latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for
-	// a report made before the disk table existed, 409 `array_exists` when the array is not a pending
-	// import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its
-	// read-only filesystem check immediately before mounting; a disk that changed since the request, or
-	// now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what
-	// was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded
-	// import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+	// Phase C of the migration: queues a `migration_import` job (topology class) that adopts the Unraid
+	// data disks into the pool at `/mnt/user` without formatting them and without writing a byte to them.
+	// Each data disk is mounted by its own device, never by a filesystem UUID another disk may share, with
+	// `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay` (btrfs), and the catch-all pool
+	// over them is read-only, with the share directory structure intact. The former parity and cache disks
+	// are recorded by identity and are neither formatted, mounted nor opened: formatting them is the point
+	// of no return. No `snapraid.conf` is generated, so no parity engine exists and no sync can run. While
+	// the import is pending (`getMigration` `phase` is `imported`), parity, array-write and topology jobs
+	// other than this one's own retry are refused with 409 `migration_in_progress`, a scan included, and
+	// `forgetMigration` is refused with the same code. `roles` is the disk-role mapping the user confirmed
+	// against the serial table, one entry per disk, keyed by `serial` or `wwn`; the `review` of
+	// `getMigration` proposes a role for each disk the capture names. A cache on a spare partition of the
+	// boot disk (`listDisks` `cachePartitions`) is keyed by that partition's `byId` and `partUuid`
+	// instead, with no serial or WWN. The mapping is refused with 400 `invalid_import_roles`, before
+	// anything is queued, unless every role names a disk the scan listed and this machine still has; a
+	// disk the scan refused, an Unraid boot device or the Unraid USB stick has no role but `ignore`; a
+	// disk `disks.ini` records as parity is never `data`, whatever filesystem it reports, and a disk it
+	// records as data is never `parity` or `cache`; a weak-identity disk is never parity; the disk this
+	// machine boots from is never parity or data and is the cache only by a spare partition of it; parity
+	// is one or two disks, each at least as large as the largest data disk; and every data disk has a
+	// filesystem Hoserva adopts whose UUID is not another data disk's; and the layout must be one
+	// `snapraid.conf` can be rendered for at the point of no return, which is the same check that step
+	// makes: the content-file copies (the parity disks + 2, on distinct devices) need the boot device, a
+	// cache that is a device of its own (a cache that is a partition of the boot disk is the boot device's
+	// copy) and enough data disks. A layout that falls short is refused with 400 `invalid_import_roles`,
+	// naming the shortfall and what to add (a data disk or a cache device), never left to fail at step 17.
+	// The Unraid USB stick in any role is refused with 409 `unraid_stick`. Also refused before queueing:
+	// 409 `confirmation_required` unless `confirm` is true, 404 `no_migration_report` before a scan, 409
+	// `scan_not_finished` while a scan runs or the latest one failed, 409 `migration_no_go` when the
+	// report's verdict is no-go, 409 `scan_outdated` for a report made before the disk table existed, 409
+	// `array_exists` when the array is not a pending import's, and 501 `not_configured`. The job reads
+	// every data disk's identity again and re-runs its read-only filesystem check immediately before
+	// mounting; a disk that changed since the request, or now fails, is refused and nothing is mounted. A
+	// failure after the array is recorded unmounts what was mounted, deletes the record and leaves no
+	// pool; a retry of the same mapping applies a recorded import again. Nothing is read from the Unraid
+	// flash: the import uses the report the scan stored.
 	//
 	// With `undo` true the request takes back an import that is pending its point of no return instead
 	// (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a
@@ -2004,81 +1968,80 @@ type Invoker interface {
 	// (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's
 	// report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused,
 	// and the disks can be imported again with a mapping that works. It is the way out of an import whose
-	// layout the point of no return would refuse (Q18). Refused before anything is queued with 409
+	// layout the point of no return would refuse. Refused before anything is queued with 409
 	// `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given,
 	// and 409 `no_import_pending` unless an import is pending its point of no return: an array that has
 	// been through it is never touched. Without `undo`, `roles` is required and an empty one is refused
 	// with 400 `invalid_import_roles`.
 	//
-	// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
-	// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its
-	// allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as
-	// `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no
-	// return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read
-	// and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of,
-	// such as High-water allocation or a split level, is in `migration.notes`. The shares are exported
-	// read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces,
-	// for instance) is reported in the job's log with the reason and never renamed, and the scan's report
-	// flags it. Each account is created share-only without a password: passwords are never read from the
-	// flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is
-	// all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or
-	// account that already exists is left as it is.
+	// Once the disks are adopted the job seeds the scan's shares and accounts, and writes nothing to an
+	// adopted disk to do it. Each share the scan kept is created, its allocation method mapped to a create
+	// policy, its Unraid cache setting recorded as `migration.targetCacheMode` while the share is
+	// array-only (no cache exists before the point of no return), its floor as `minFreeSpace`, its export
+	// and security settings as SMB settings and its read and write lists as per-user access for the
+	// imported accounts; what Hoserva has no equivalent of, such as High-water allocation or a split
+	// level, is in `migration.notes`. The shares are exported read-only over SMB while the import is
+	// pending. A share whose name Hoserva does not accept (spaces, for instance) is reported in the job's
+	// log with the reason and never renamed, and the scan's report flags it. Each account is created
+	// share-only without a password: passwords are never read from the flash, and each one is set by the
+	// user with `setUserPassword` (the job's log lists them). The job is all-or-nothing: a share or
+	// account that cannot be created undoes the adoption too. A share or account that already exists is
+	// left as it is.
 	//
 	// POST /migrate/import
 	StartMigrationImport(ctx context.Context, request *MigrationImportRequest) (*Job, error)
 	// StartMigrationScan invokes startMigrationScan operation.
 	//
-	// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
-	// no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root
-	// only, as the session's source; it is never modified and never extracted: entries are read in memory.
-	// A scan replaces the previous session's report and zip once it finishes. Refused before anything is
-	// queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry
-	// path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB,
-	// refused as soon as the request body, which is the zip and its multipart framing, passes that size
-	// plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
-	// (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
-	// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409
-	// `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`),
-	// and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides
-	// only the layout refusal; the override is recorded in the report and printed at its top. The scan
-	// reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also
-	// reads every data disk the capture records, through a read-only mount at a private mountpoint under
-	// the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem
-	// check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by
-	// name in the report and the scan goes on with the rest. Each data disk's files are listed and a
-	// sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every
-	// file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it
-	// succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
+	// Takes the Flash Backup zip and queues a `migration_scan` job (topology class, so no storage job runs
+	// beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's
+	// source; it is never modified and never extracted: entries are read in memory. A scan replaces the
+	// previous session's report and zip once it finishes. Refused before anything is queued, with nothing
+	// kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or
+	// starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as
+	// the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400
+	// `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version
+	// other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, unless `unverifiedLayout` is
+	// true). 409 `scan_in_progress` while a scan runs, 409 `migration_in_progress` while an import is
+	// pending its point of no return (`startMigrationImport`), and 501 `not_configured` when this daemon
+	// has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is
+	// recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories
+	// and SMART without waking a disk in standby. It also reads every data disk the capture records,
+	// through a read-only mount at a private mountpoint under the daemon's state directory (XFS without
+	// replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a
+	// ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on
+	// with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify
+	// phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and
+	// no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job
+	// reports its progress and can be cancelled.
 	//
 	// POST /migrate/scan
 	StartMigrationScan(ctx context.Context, request *StartMigrationScanReq) (*Job, error)
 	// StartMigrationVerify invokes startMigrationVerify operation.
 	//
-	// Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a
-	// `migration_verify` job (topology class, read-only, and admitted while the import is pending) that
-	// walks every adopted data disk through its read-only mount and every share through the read-only pool
-	// at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it
-	// compares the file, symlink and special-file counts, the total bytes, every file's size, every
-	// symlink's target and every special file's type, and it hashes again exactly the files the baseline
-	// hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are
-	// the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first
-	// disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or
-	// directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the
-	// result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A
-	// disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is
-	// written to a source disk. The result is in `getMigration`; the job reports its progress and can be
-	// cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending`
-	// unless an import is pending its point of no return (`startMigrationImport`), 409
-	// `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+	// Step 16 of the migration, the last checkpoint before parity is touched: queues a `migration_verify`
+	// job (topology class, read-only, and admitted while the import is pending) that walks every adopted
+	// data disk through its read-only mount and every share through the read-only pool at `/mnt/user`, and
+	// compares what it finds with the scan's baseline. For each disk and each share it compares the file,
+	// symlink and special-file counts, the total bytes, every file's size, every symlink's target and
+	// every special file's type, and it hashes again exactly the files the baseline hashed
+	// (`fullChecksums` of the scan decides how many that is). The expected figures of a share are the
+	// union of the disks' baselines: a path two disks hold is shown once by the pool, from the first disk,
+	// and is listed in `duplicates`, never as missing or extra. Any difference, and any file or directory
+	// that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the result in
+	// `verify`; a verify can be run again, and a run clears the earlier result when it starts. A disk or
+	// the pool that the kernel's mount table does not show read-only is not read. Nothing is written to a
+	// source disk. The result is in `getMigration`; the job reports its progress and can be cancelled,
+	// which leaves a failed result. Refused before anything is queued: 409 `no_import_pending` unless an
+	// import is pending its point of no return (`startMigrationImport`), 409 `no_migration_baseline` when
+	// the scan recorded no baseline, and 501 `not_configured`.
 	//
 	// POST /migrate/verify
 	StartMigrationVerify(ctx context.Context) (*Job, error)
 	// StartMover invokes startMover operation.
 	//
-	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-	// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
-	// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
-	// until power returns.
+	// Queues a mover job (`hoserva mover run`, the manual trigger) — the same mover job the cache-usage
+	// threshold and the nightly chain submit; there is no second way to start the mover. Refused with 409
+	// `on_battery` while the on-battery hold is active — the mover is paused until power returns.
 	//
 	// POST /mover/run
 	StartMover(ctx context.Context) (*Job, error)
@@ -2086,12 +2049,12 @@ type Invoker interface {
 	//
 	// Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit
 	// or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the
-	// exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job
-	// that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the
-	// threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run
-	// makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan
-	// leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation
-	// is refused (`confirmation_required`) before anything runs.
+	// exact phrase the matching `planRebalance` call returned, queues a resumable rebalance job that runs
+	// that plan unchanged: copy and verify every batch, sync through the threshold guard, delete the
+	// batch's sources, sync again, batched so no trailing sync this run makes can ever trip the guard
+	// after sources are already gone. The recomputed plan leaves out a data disk in removal the same way
+	// `planRebalance` does. A wrong or missing confirmation is refused (`confirmation_required`) before
+	// anything runs.
 	//
 	// POST /pool/rebalance
 	StartRebalance(ctx context.Context, request *StartRebalanceRequest) (*Job, error)
@@ -2110,21 +2073,21 @@ type Invoker interface {
 	StartRestoreDrill(ctx context.Context) (*Job, error)
 	// StartScrub invokes startScrub operation.
 	//
-	// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
-	// `allBlocks` scrubs every block.
+	// Queues a scrub job (`hoserva scrub`). By default it skips blocks newer than 10 days; `allBlocks`
+	// scrubs every block.
 	//
 	// POST /parity/scrub
 	StartScrub(ctx context.Context, request *StartScrubRequest) (*Job, error)
 	// StartShareRelocation invokes startShareRelocation operation.
 	//
-	// Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09
-	// §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
-	// mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
-	// copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
-	// There is no second relocation-invocation path. A relocation in either direction needs the array's
-	// cache disk, so it is refused with 409 `no_cache_disk` before any job is queued while the array has
-	// no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology
-	// fails the request rather than assuming a cache.
+	// Queues a `share_relocation` job moving name's files between its cache path and the array —
+	// `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to
+	// this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync-
+	// delete-sync order, through the same threshold guard every other sync goes through. There is no
+	// second relocation-invocation path. A relocation in either direction needs the array's cache disk, so
+	// it is refused with 409 `no_cache_disk` before any job is queued while the array has no cache disk,
+	// and with 409 `no_array` while there is no array; a failure to read the array topology fails the
+	// request rather than assuming a cache.
 	//
 	// POST /shares/{name}/relocate
 	StartShareRelocation(ctx context.Context, request *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)
@@ -2143,9 +2106,9 @@ type Invoker interface {
 	StartStack(ctx context.Context, params StartStackParams) (*Job, error)
 	// StartSync invokes startSync operation.
 	//
-	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-	// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
-	// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
+	// Queues a sync job through the threshold guard. A non-dry-run sync past a tripped guard requires
+	// `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the on-battery hold is
+	// active — scheduled syncs are held until power returns.
 	//
 	// POST /parity/sync
 	StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error)
@@ -2158,28 +2121,27 @@ type Invoker interface {
 	StopApp(ctx context.Context, params StopAppParams) (*App, error)
 	// StopArray invokes stopArray operation.
 	//
-	// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt
-	// non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share
-	// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
-	// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
-	// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
-	// is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending (doc 02 §4
-	// E7): the array is already stopped for it, and nothing is stopped, signalled or unmounted.
+	// Enters maintenance mode (`hoserva array stop`): refuse new jobs and interrupt non-resumable jobs,
+	// shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all
+	// and data disks — the same list the Stop array confirmation dialog shows. Parity is not written. A
+	// failure leaves maintenance mode active so nothing new starts against a half-stopped array.
+	// `confirm: true` is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is
+	// pending: the array is already stopped for it, and nothing is stopped, signalled or unmounted.
 	//
 	// POST /array/stop
 	StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error)
 	// TestBackupDestination invokes testBackupDestination operation.
 	//
-	// Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup
-	// destination is decoration). A destination that cannot be reached is a `200` with `success` false and
-	// the reason; a missing rclone is a `424` `rclone_missing`.
+	// Writes a small file to the destination, reads it back and deletes it. A destination that cannot be
+	// reached is a `200` with `success` false and the reason; a missing rclone is a `424`
+	// `rclone_missing`.
 	//
 	// POST /backup/destinations/{destinationId}/test
 	TestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (*BackupDestinationTestResult, error)
 	// UnlockUser invokes unlockUser operation.
 	//
-	// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
-	// checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+	// Clears the account's login rate-limiter lockout. Root-only over the Unix socket, checked against the
+	// peer's uid 0 specifically. Audit-logged like the other recovery commands.
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
@@ -2232,8 +2194,8 @@ type Invoker interface {
 	UpdateCatalogSettings(ctx context.Context, request *CatalogSettingsUpdate) (*CatalogSettings, error)
 	// UpdateExternalDisk invokes updateExternalDisk operation.
 	//
-	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
-	// Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
+	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination. Enabling it on
+	// the Unraid USB stick is refused with `unraid_stick` (409).
 	//
 	// PATCH /disks/external/{label}
 	UpdateExternalDisk(ctx context.Context, request *UpdateExternalDiskRequest, params UpdateExternalDiskParams) (*ExternalDisk, error)
@@ -2241,15 +2203,14 @@ type Invoker interface {
 	//
 	// Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves
 	// that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is
-	// write-only and never echoed back — skipping it during onboarding is valid (Q28).
+	// write-only and never echoed back — skipping it during onboarding is valid.
 	//
 	// PUT /settings/general
 	UpdateGeneralSettings(ctx context.Context, request *UpdateGeneralSettingsRequest) (*GeneralSettings, error)
 	// UpdateMaintenanceChainSchedule invokes updateMaintenanceChainSchedule operation.
 	//
-	// Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step
-	// order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state
-	// unchanged.
+	// Persists the chain's start time, weekly scrub day and per-step enabled flags. Step order is fixed
+	// and cannot be changed. Omitted step entries leave that step's enabled state unchanged.
 	//
 	// PUT /settings/schedules/chain
 	UpdateMaintenanceChainSchedule(ctx context.Context, request *UpdateMaintenanceChainScheduleRequest) (*Schedules, error)
@@ -2258,7 +2219,7 @@ type Invoker interface {
 	// A full replace, like the request body of createNotificationChannel: every type-specific field the
 	// request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing
 	// credential, `null` clears it, a string replaces it — since this is the one field a response never
-	// echoes back for a client to resend unchanged (Q28).
+	// echoes back for a client to resend unchanged.
 	//
 	// PUT /notifications/channels/{channelId}
 	UpdateNotificationChannel(ctx context.Context, request *UpdateNotificationChannelRequest, params UpdateNotificationChannelParams) (*NotificationChannel, error)
@@ -2267,41 +2228,41 @@ type Invoker interface {
 	// A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds,
 	// and the severity becomes exactly severity — including reverting to the compiled-in default when
 	// the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for
-	// `sync_succeeded`'s opt-in, off-by-default event (doc 03 §8.3).
+	// `sync_succeeded`'s opt-in, off-by-default event.
 	//
 	// PUT /notifications/routing/{eventType}
 	UpdateNotificationRoute(ctx context.Context, request *UpdateNotificationRouteRequest, params UpdateNotificationRouteParams) (*NotificationRoutingEntry, error)
 	// UpdateQuietHours invokes updateQuietHours operation.
 	//
-	// `criticalAlwaysDelivers` is not part of the request body: doc 03 §8.3's override that critical
-	// alerts always deliver cannot be disabled, so there is nothing for a client to set — the response
-	// always reports it `true`.
+	// `criticalAlwaysDelivers` is not part of the request body: the override that makes critical alerts
+	// always deliver cannot be disabled, so there is nothing for a client to set — the response always
+	// reports it `true`.
 	//
 	// PUT /notifications/quiet-hours
 	UpdateQuietHours(ctx context.Context, request *UpdateQuietHoursRequest) (*NotificationQuietHours, error)
 	// UpdateScheduledJob invokes updateScheduledJob operation.
 	//
 	// Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly
-	// chain (doc 03 §8.4).
+	// chain.
 	//
 	// PUT /settings/schedules/jobs/{jobId}
 	UpdateScheduledJob(ctx context.Context, request *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error)
 	// UpdateShare invokes updateShare operation.
 	//
 	// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
-	// `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
-	// the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
-	// filesystem. While an Unraid import is pending its point of no return it creates no directory on any
-	// adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a
-	// cache mode here replaces the one the import recorded as the share's target.
+	// `smb.conf`. Does not relocate existing files. Refused with 409 `maintenance_mode` while the array is
+	// stopped: update would mkdir and remount under bare disk mountpoints on the root filesystem. While an
+	// Unraid import is pending its point of no return it creates no directory on any adopted disk, and a
+	// cache mode that needs a cache is refused because none exists yet; choosing a cache mode here
+	// replaces the one the import recorded as the share's target.
 	//
 	// PATCH /shares/{name}
 	UpdateShare(ctx context.Context, request *UpdateShareRequest, params UpdateShareParams) (*Share, error)
 	// UpdateSharePermissions invokes updateSharePermissions operation.
 	//
 	// A full replace: this share's access is set to exactly the users and groups listed, and every user or
-	// group previously granted an explicit level but missing from the request loses its row entirely (doc
-	// 03 §7: "editable from either side" — this is the share-side editor).
+	// group previously granted an explicit level but missing from the request loses its row entirely
+	// (access is editable from either the share or the user; this is the share-side editor).
 	//
 	// PUT /shares/{name}/permissions
 	UpdateSharePermissions(ctx context.Context, request *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error)
@@ -2348,25 +2309,23 @@ type Invoker interface {
 	UpdateStackConfig(ctx context.Context, request *UpdateStackConfigRequest, params UpdateStackConfigParams) (*StackConfig, error)
 	// UpdateUPSSettings invokes updateUPSSettings operation.
 	//
-	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
-	// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
-	// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
-	// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
-	// missing `nut` group return 409.
+	// Persists UPS settings to SQLite, generates the NUT configuration, and reloads the NUT units.
+	// Passwords are write-only: omit to keep an existing secret; a first configure must supply the
+	// password the connection mode needs. USB-only thresholds are ignored for network mode. Validation
+	// failures return 400; unmanaged or existing host NUT files and a missing `nut` group return 409.
 	//
 	// PUT /settings/ups
 	UpdateUPSSettings(ctx context.Context, request *UpdateUPSSettingsRequest) (*UPSSettings, error)
 	// UpdateUpdateSettings invokes updateUpdateSettings operation.
 	//
-	// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
-	// Q67). Omitted fields are left unchanged.
+	// Persists the update channel (stable / beta) and whether the outbound update check is enabled.
+	// Omitted fields are left unchanged.
 	//
 	// PUT /settings/updates
 	UpdateUpdateSettings(ctx context.Context, request *UpdateUpdateSettingsRequest) (*UpdateStatus, error)
 	// UpdateUser invokes updateUser operation.
 	//
-	// Viewer or share-only only (Q27) — the sole admin account is never reachable through this
-	// operation.
+	// Viewer or share-only only — the sole admin account is never reachable through this operation.
 	//
 	// PATCH /users/{userId}
 	UpdateUser(ctx context.Context, request *UpdateUserRequest, params UpdateUserParams) (*UserSummary, error)
@@ -2374,25 +2333,25 @@ type Invoker interface {
 	//
 	// A full replace: the account's access is set to exactly the shares and levels listed, and every share
 	// this account previously had an explicit level for but that is missing from the request loses its row
-	// entirely (doc 03 §7: "editable from either side" — this is the user-side editor).
+	// entirely (access is editable from either the share or the user; this is the user-side editor).
 	//
 	// PUT /users/{userId}/permissions
 	UpdateUserSharePermissions(ctx context.Context, request *UpdateUserSharePermissionsRequest, params UpdateUserSharePermissionsParams) (*UserSharePermissionsResult, error)
 	// UpgradeDisk invokes upgradeDisk operation.
 	//
-	// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
-	// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
-	// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data
-	// disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk
-	// upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed
-	// (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+	// Starts a resumable Topology job (a data-disk or a parity-disk upgrade, resolved from the slot's
+	// role). The confirmation must be the exact string the matching `planDiskUpgrade` call returned; a
+	// wrong or missing one is refused with `confirmation_required` and formats nothing. A data disk in
+	// removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk upgrade
+	// follows a fixed state machine: it is admitted only once `stopArray` has completed (otherwise
+	// `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
 	// `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
 	// and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
 	// show no removed or updated files, and only then names the new disk in SQLite; the array stays
 	// stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with
 	// `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte,
-	// switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71).
-	// The old disk is never written to or released until its verification gate passes.
+	// switches the configuration and passes `snapraid check` before releasing the old parity disk. The old
+	// disk is never written to or released until its verification gate passes.
 	//
 	// POST /disks/array/upgrade
 	UpgradeDisk(ctx context.Context, request *UpgradeDiskRequest) (*Job, error)
@@ -2441,25 +2400,25 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 
 // AcknowledgeDegradedArray invokes acknowledgeDegradedArray operation.
 //
-// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
-// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
-// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
-// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
-// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
-// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
-// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
-// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
-// nothing is currently missing — acknowledging a degraded state that does not exist would let a
-// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
-// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
-// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
-// confirming the pool fails — so this never reports success over services that never came up — in
-// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
-// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
-// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
-// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
-// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
-// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+// Records the user's explicit choice to proceed while the array is degraded
+// (`hoserva array acknowledge-degraded`): the daemon acknowledges the missing disk on its live storage
+// gate and then runs the exact not-ready to ready transition a returning disk reaches: mounting and
+// confirming the pool, then starting every enabled, unmasked service unit that depends on it (Samba,
+// NFS, Docker, libvirtd), never through a shell and never by a second mechanism. The acknowledgement
+// itself survives every later rebuild of the daemon's array sequence (a share change, a disk-topology
+// change, a daemon reload) for as long as the same disk stays missing. Refused with
+// `array_not_degraded` (409) when nothing is currently missing — acknowledging a degraded state that
+// does not exist would let a stale acknowledgement outlive the situation it was about. Refused with
+// `array_services_not_started` (409) when the acknowledgement itself succeeds but the transition it
+// triggers does not actually start anything — the array is in maintenance mode
+// (`hoserva array stop`), or mounting or confirming the pool fails — so this never reports success
+// over services that never came up — in that refusal case `arrayDegradedAcknowledged` on a later
+// `getStatus` still reports true (the acknowledgement stands) while `storageServicesReleased` stays
+// false, so a client must check both before ever telling the user services are running.
+// `arrayDegraded` on the returned status stays true for as long as the disk is still missing —
+// acknowledging never reports a degraded array as healthy — and `arrayDegradedAcknowledged` becomes
+// true instead, the field the persistent banner and top-bar pill use to show "acknowledged, running
+// degraded" rather than clearing the warning outright.
 //
 // POST /array/degraded/acknowledge
 func (c *Client) AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error) {
@@ -2735,21 +2694,20 @@ func (c *Client) sendAcknowledgeMigrationChecklistItem(ctx context.Context, para
 
 // AddCatalogSource invokes addCatalogSource operation.
 //
-// Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched
-// from beneath `url` in the same format as the curated catalog and installed, and only then is the
-// source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva
-// contacts the URL only because the user added it, and only again when the user refreshes it. The URL
-// must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source`
-// otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is
-// size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519
-// key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that
-// key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature
-// is requested and every entry it supplies is badged `signed` false. A template of an unsigned source
-// still goes through the same privilege summary and warnings at install. Refused with 409
-// `catalog_source_exists` when a source with that URL (the curated one included) exists, 502
-// `catalog_source_unreachable` when the archive could not be fetched, and 422
-// `catalog_source_rejected` when the archive was fetched but refused (a signature that does not
-// verify, a malformed archive).
+// Adds a catalog source URL of the user's own: the archive `catalog.tar.zst` is fetched from beneath
+// `url` in the same format as the curated catalog and installed, and only then is the source recorded,
+// so a source that cannot be fetched or verified leaves nothing behind. Hoserva contacts the URL only
+// because the user added it, and only again when the user refreshes it. The URL must be an `https`
+// address with no credentials, query or fragment (400 `invalid_catalog_source` otherwise, before
+// anything is fetched), a redirect must stay on the same host, and the archive is size-capped as the
+// curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519 key) the archive's
+// detached signature `catalog.tar.zst.sig` is required and must verify against that key, and the
+// source is `signed`. With no `publicKey` the source is accepted unsigned: no signature is requested
+// and every entry it supplies is badged `signed` false. A template of an unsigned source still goes
+// through the same privilege summary and warnings at install. Refused with 409 `catalog_source_exists`
+// when a source with that URL (the curated one included) exists, 502 `catalog_source_unreachable` when
+// the archive could not be fetched, and 422 `catalog_source_rejected` when the archive was fetched but
+// refused (a signature that does not verify, a malformed archive).
 //
 // POST /catalog-sources
 func (c *Client) AddCatalogSource(ctx context.Context, request *AddCatalogSourceRequest) (*CatalogSource, error) {
@@ -2877,10 +2835,9 @@ func (c *Client) sendAddCatalogSource(ctx context.Context, request *AddCatalogSo
 
 // AddDisk invokes addDisk operation.
 //
-// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
-// units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation
-// must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused
-// with `confirmation_required` and formats nothing.
+// Queues a Topology job that formats or adopts the disk, then regenerates mount units, the pool and
+// `snapraid.conf` from SQLite. The confirmation must be the exact string the matching `planDiskAdd`
+// call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
 //
 // POST /disks/array/add
 func (c *Client) AddDisk(ctx context.Context, request *AddDiskRequest) (*Job, error) {
@@ -3008,10 +2965,10 @@ func (c *Client) sendAddDisk(ctx context.Context, request *AddDiskRequest) (res 
 
 // ApplyHostConfig invokes applyHostConfig operation.
 //
-// Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
-// imported into the database or left unmanaged under the drift model (doc 01 §2). Existing host files
-// are never overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker`
-// when containers or images exist, or when there is no cache disk (Q62).
+// Each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
+// imported into the database or left unmanaged under the drift model. Existing host files are never
+// overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker` when
+// containers or images exist, or when there is no cache disk.
 //
 // POST /doctor/host-config
 func (c *Client) ApplyHostConfig(ctx context.Context, request *ApplyHostConfigRequest) (*ApplyHostConfigResult, error) {
@@ -3140,7 +3097,7 @@ func (c *Client) sendApplyHostConfig(ctx context.Context, request *ApplyHostConf
 // ApplyNetworkSettings invokes applyNetworkSettings operation.
 //
 // Address, DNS and gateway changes are written to one managed ifupdown file under
-// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert: unless
 // `confirmNetworkSettings` is called over the new configuration before the window expires (or the
 // daemon dies), the previous file is restored. Access scope and listen port apply without that window
 // — access scope takes effect immediately; a listen-port change is persisted and used on the next
@@ -3273,9 +3230,9 @@ func (c *Client) sendApplyNetworkSettings(ctx context.Context, request *ApplyNet
 // ApplyUpdate invokes applyUpdate operation.
 //
 // Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
-// runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a
-// Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum
-// does not match is never installed, and a notification is raised.
+// runs a config backup, and installs it in a transient systemd unit. Refused while a Parity,
+// Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not
+// match is never installed, and a notification is raised.
 //
 // POST /settings/updates/apply
 func (c *Client) ApplyUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error) {
@@ -3404,8 +3361,7 @@ func (c *Client) sendApplyUpdate(ctx context.Context, request *ConfirmUpdateRequ
 // BrowseShare invokes browseShare operation.
 //
 // Lists one directory of the share, including the holding disk per entry from mergerfs
-// `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never
-// polled.
+// `user.mergerfs.basepath`. This is an explicit call and may wake disks — it is never polled.
 //
 // GET /shares/{name}/browse
 func (c *Client) BrowseShare(ctx context.Context, params BrowseShareParams) (*ShareBrowseResult, error) {
@@ -3573,19 +3529,19 @@ func (c *Client) sendBrowseShare(ctx context.Context, params BrowseShareParams) 
 
 // CancelDiskRemoval invokes cancelDiskRemoval operation.
 //
-// Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool
-// live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no
-// data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is
-// not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so
-// the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when
-// it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns
-// the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating`
-// disk whose evacuation job has already ended (no longer queued, running or interrupted — including
-// a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it
-// ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of
-// sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an
-// internal error, and the removal state is left cleared — the same as the disk-topology jobs' own
-// live-apply failures — rather than silently reporting success with the disk still no-create.
+// Clears `mountpoint`'s removal state synchronously — no job — and re-applies the pool live so the
+// disk's branches go back to RW. Refused with `disk_slot_not_found` (404) when no data disk occupies
+// `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is not currently in
+// removal; when it is `unpooled` or `unlisted` — it has already left the pool, so the only way
+// forward is `finishDiskRemoval`, never back; or when it is `evacuating` and its evacuation job is
+// still queued, running or interrupted — that job owns the state, so cancel it (`cancelJob`)
+// instead. An `evacuating` disk whose evacuation job has already ended (no longer queued, running or
+// interrupted — including a job the store no longer has a record of) is cancelled the same as an
+// `evacuated` one: the copy it ran already stopped, and cancelling here is how the disk gets back to
+// ordinary use instead of sitting stuck until it is evacuated again. A live-update failure while
+// re-applying the pool is an internal error, and the removal state is left cleared — the same as the
+// disk-topology jobs' own live-apply failures — rather than silently reporting success with the disk
+// still no-create.
 //
 // POST /disks/array/remove/cancel
 func (c *Client) CancelDiskRemoval(ctx context.Context, request *CancelDiskRemovalRequest) error {
@@ -3713,14 +3669,14 @@ func (c *Client) sendCancelDiskRemoval(ctx context.Context, request *CancelDiskR
 
 // CancelJob invokes cancelJob operation.
 //
-// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
-// cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing.
-// A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a
-// data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its
-// checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered
-// with the running job and records its outcome once it has unmounted everything. A queued or
-// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
-// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
+// Only meaningful where the underlying tool supports cancellation; a job that cannot be cancelled
+// reports that in its `cancellable` field rather than accepting this call and doing nothing. A queued
+// or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a data-disk
+// upgrade this is the abort: refused with `job_not_cancellable` once its checkpoint is at releasing,
+// whether queued, running or interrupted. A running upgrade is answered with the running job and
+// records its outcome once it has unmounted everything. A queued or interrupted upgrade is unwound
+// first; if that fails it stays interrupted and the call is refused with
+// `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
 // second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same
 // job is still repairing its log; retry in a moment.
 //
@@ -3866,8 +3822,8 @@ func (c *Client) sendCancelJob(ctx context.Context, params CancelJobParams) (res
 
 // CheckForUpdate invokes checkForUpdate operation.
 //
-// Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even
-// when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+// Fetches the signed release index for the configured channel. A user-initiated check runs even when
+// the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
 //
 // POST /settings/updates/check
 func (c *Client) CheckForUpdate(ctx context.Context) (*UpdateStatus, error) {
@@ -3992,11 +3948,11 @@ func (c *Client) sendCheckForUpdate(ctx context.Context) (res *UpdateStatus, err
 
 // CheckMigrationContainer invokes checkMigrationContainer operation.
 //
-// The data check of step 20 (doc 05 §4): for each bind mount of the stack's containers whose host
-// path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory
-// counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is
-// `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when
-// asked and never on a timer, and records that a check ran since the latest start, which
+// The data check of step 20: for each bind mount of the stack's containers whose host path is under
+// `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory counts as empty
+// when it holds no entry, a file when it has no byte; a path that cannot be read is `unreadable`,
+// never `ok`. It reads one directory entry of each path (which can spin a disk up), when asked and
+// never on a timer, and records that a check ran since the latest start, which
 // `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check
 // and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409
 // `no_container` while the stack has no container (its start has not created one), 409
@@ -4144,12 +4100,12 @@ func (c *Client) sendCheckMigrationContainer(ctx context.Context, params CheckMi
 
 // ConfigureLetsEncrypt invokes configureLetsEncrypt operation.
 //
-// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
-// `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never
-// claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces
-// the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true.
-// A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls
-// back to a new self-signed cert.
+// Stores the domain and DNS-01 provider credentials (encrypted at rest) and queues an `acme_issue` job
+// that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never claimed. HTTP-01 and
+// TLS-ALPN-01 are not offered. On success the issued certificate replaces the self-signed cert on
+// `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true. A failed issue or renew
+// keeps serving the existing certificate and notifies; it never silently falls back to a new
+// self-signed cert.
 //
 // POST /settings/network/lets-encrypt
 func (c *Client) ConfigureLetsEncrypt(ctx context.Context, request *ConfigureLetsEncryptRequest) (*Job, error) {
@@ -4431,10 +4387,10 @@ func (c *Client) sendConfirmMigrationContainer(ctx context.Context, request OptM
 
 // ConfirmNetworkSettings invokes confirmNetworkSettings operation.
 //
-// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
-// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
-// the window expires, or if the daemon died before confirm, the previous configuration has already
-// been restored and this returns `network_confirm_expired`.
+// Called over the new configuration during the confirm-or-revert window. Keeps the managed ifupdown
+// file. An unreachable address cannot be confirmed because this request never arrives. After the
+// window expires, or if the daemon died before confirm, the previous configuration has already been
+// restored and this returns `network_confirm_expired`.
 //
 // POST /settings/network/confirm
 func (c *Client) ConfirmNetworkSettings(ctx context.Context) (*NetworkSettings, error) {
@@ -4688,19 +4644,19 @@ func (c *Client) sendConfirmTotp(ctx context.Context, request *TotpConfirmReques
 
 // ConvertUnraidTemplate invokes convertUnraidTemplate operation.
 //
-// Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is
-// created, written or run: the result is the generated `compose` beside the `source` XML as it was
-// sent, every warning, and the privilege summary computed from the generated Compose content, so the
-// caller reads all of it before it acts on any of it. Every part of the template that is not
-// translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed
-// in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside
-// the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and
-// listed as a `flagged_path` warning; a custom network the template names is a `missing_network`
-// warning carrying the `docker network create` command, with placeholders for what the template does
-// not say; two entries for the same target with different values are a `conflict`; the possibility of
-// state inside the source container that no template expresses is always a `writable_layer` warning.
-// `clean` is true when no warning is of the classes that need manual action (`writable_layer` and
-// `note` never count against it). A body that is not an Unraid container template is refused with 400
+// Converts one Unraid container template to a Compose file for review. Nothing is created, written or
+// run: the result is the generated `compose` beside the `source` XML as it was sent, every warning,
+// and the privilege summary computed from the generated Compose content, so the caller reads all of it
+// before it acts on any of it. Every part of the template that is not translated is reported, never
+// dropped: an `<ExtraParams>` flag outside the translate table is listed in a comment at the top of
+// the service and as an `untranslated_flag` warning; a host path outside the pool and the cache
+// (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and listed as a
+// `flagged_path` warning; a custom network the template names is a `missing_network` warning carrying
+// the `docker network create` command, with placeholders for what the template does not say; two
+// entries for the same target with different values are a `conflict`; the possibility of state inside
+// the source container that no template expresses is always a `writable_layer` warning. `clean` is
+// true when no warning is of the classes that need manual action (`writable_layer` and `note` never
+// count against it). A body that is not an Unraid container template is refused with 400
 // `invalid_unraid_template`.
 //
 // POST /apps/convert
@@ -4829,12 +4785,11 @@ func (c *Client) sendConvertUnraidTemplate(ctx context.Context, request *UnraidC
 
 // CreateApiToken invokes createApiToken operation.
 //
-// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
-// The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring
-// how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no
-// API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an
-// account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast
-// radius), never widen it.
+// A personal API token, scoped to admin or viewer, for scripting and the remote CLI over TCP. The raw
+// token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring how a
+// session cookie is handled. Refused for a share-only account (share-only has no API access at all),
+// and refused when role exceeds the account's own role: a token can narrow an account's access (an
+// admin can hand out a viewer-scoped token to reduce a script's own blast radius), never widen it.
 //
 // POST /users/{username}/tokens
 func (c *Client) CreateApiToken(ctx context.Context, request *CreateApiTokenRequest, params CreateApiTokenParams) (*ApiTokenCreated, error) {
@@ -4981,19 +4936,17 @@ func (c *Client) sendCreateApiToken(ctx context.Context, request *CreateApiToken
 
 // CreateArray invokes createArray operation.
 //
-// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
-// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
-// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
-// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
-// calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with
-// one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports
-// in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition
-// and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or
-// `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported
-// spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's
-// rollback (doc 05 §4 step 11), is refused in every role with `unraid_stick` (409). Refused with 409
-// `migration_in_progress` while an Unraid import is pending its point of no return
-// (`startMigrationImport`).
+// Queues a Topology job that formats or adopts the assigned disks. The request is the wizard's role
+// assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed
+// confirmation string array setup uses. A wrong or missing confirmation is refused with
+// `confirmation_required` and formats nothing. A device is a whole, non-boot disk, with one exception:
+// the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's
+// `cachePartitions` — Hoserva formats that blank partition and never writes the boot disk's
+// partition table. A partition of the boot disk assigned to `data` or `parity` is refused with
+// `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused
+// with `unmanaged_device`. The Unraid USB stick, which is the user's rollback, is refused in every
+// role with `unraid_stick` (409). Refused with 409 `migration_in_progress` while an Unraid import is
+// pending its point of no return (`startMigrationImport`).
 //
 // POST /disks/array
 func (c *Client) CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error) {
@@ -5122,10 +5075,10 @@ func (c *Client) sendCreateArray(ctx context.Context, request *CreateArrayReques
 // CreateBackupDestination invokes createBackupDestination operation.
 //
 // A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is
-// always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup
-// passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command
-// (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key
-// before they reach the database. Local destinations work without rclone.
+// always encrypted. It is refused with 400 `backup_passphrase_required` while no backup passphrase is
+// set, and with 424 `rclone_missing` — whose `message` carries the install command — when rclone
+// is not installed. Credentials in `secrets` are sealed under the machine key before they reach the
+// database. Local destinations work without rclone.
 //
 // POST /backup/destinations
 func (c *Client) CreateBackupDestination(ctx context.Context, request *CreateBackupDestinationRequest) (*BackupDestination, error) {
@@ -5254,8 +5207,8 @@ func (c *Client) sendCreateBackupDestination(ctx context.Context, request *Creat
 // CreateFirstAdmin invokes createFirstAdmin operation.
 //
 // Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
-// race between two concurrent requests can never create two admins (#22). Signs the new admin in on
-// success, exactly like login.
+// race between two concurrent requests can never create two admins. Signs the new admin in on success,
+// exactly like login.
 //
 // POST /setup/admin
 func (c *Client) CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error) {
@@ -5338,12 +5291,11 @@ func (c *Client) sendCreateFirstAdmin(ctx context.Context, request *CreateFirstA
 
 // CreateMigrationStacks invokes createMigrationStacks operation.
 //
-// Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped, through the stack layer
-// (`createStack`) for each selected template or Compose Manager project of the scan, from the
-// generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`.
-// Nothing is started and nothing is written outside the stacks directory. A stack is named after the
-// template's `<Name>` (or the project's name), lowercased with every character a stack name may not
-// hold turned into `-`.
+// Step 19 of the migration: creates a Compose stack, stopped, through the stack layer (`createStack`)
+// for each selected template or Compose Manager project of the scan, from the generated Compose the
+// preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`. Nothing is started and
+// nothing is written outside the stacks directory. A stack is named after the template's `<Name>` (or
+// the project's name), lowercased with every character a stack name may not hold turned into `-`.
 //
 // Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is
 // past its point of no return (the initialisation has finished: an array exists and no import is
@@ -5352,9 +5304,9 @@ func (c *Client) sendCreateFirstAdmin(ctx context.Context, request *CreateFirstA
 // `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash
 // Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read;
 // and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual
-// action (Q36) unless its selection says `acknowledged`. After that each stack is created on its own
-// and the answer has one result per selection, in the order they are made (Unraid's autostart order
-// first): a stack that could not be created says why in `error`, with the code `createStack` gives
+// action unless its selection says `acknowledged`. After that each stack is created on its own and the
+// answer has one result per selection, in the order they are made (Unraid's autostart order first): a
+// stack that could not be created says why in `error`, with the code `createStack` gives
 // (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A
 // selection whose stack already exists from this migration is `already_created`, so the same request
 // can be sent again: that includes a stack this request made for the selection whose record was never
@@ -5487,9 +5439,8 @@ func (c *Client) sendCreateMigrationStacks(ctx context.Context, request *Migrati
 
 // CreateNotificationChannel invokes createNotificationChannel operation.
 //
-// A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the
-// database and is never returned by any later read — `hasSecret` on the response is the only trace
-// of it.
+// A credential supplied in `secret` is encrypted with the machine key before it reaches the database
+// and is never returned by any later read — `hasSecret` on the response is the only trace of it.
 //
 // POST /notifications/channels
 func (c *Client) CreateNotificationChannel(ctx context.Context, request *CreateNotificationChannelRequest) (*NotificationChannel, error) {
@@ -5617,13 +5568,13 @@ func (c *Client) sendCreateNotificationChannel(ctx context.Context, request *Cre
 
 // CreateShare invokes createShare operation.
 //
-// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
-// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
-// doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
-// mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
-// writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no
-// return: a new share would need a directory on every adopted disk, and those are not written until
-// then. The import creates its own shares (`startMigrationImport`).
+// Persists the share, creates its directory tree on the branches its cache mode uses, writes the
+// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf`. Refused
+// with 409 `maintenance_mode` while the array is stopped: create would mkdir under bare disk
+// mountpoints on the root filesystem, and the next array start would hide those writes. Refused with
+// 409 `migration_in_progress` while an Unraid import is pending its point of no return: a new share
+// would need a directory on every adopted disk, and those are not written until then. The import
+// creates its own shares (`startMigrationImport`).
 //
 // POST /shares
 func (c *Client) CreateShare(ctx context.Context, request *CreateShareRequest) (*Share, error) {
@@ -5751,7 +5702,7 @@ func (c *Client) sendCreateShare(ctx context.Context, request *CreateShareReques
 
 // CreateStack invokes createStack operation.
 //
-// Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`,
+// Stores the stack's row (`.env` sealed under the machine key) and generates `docker-compose.yml`,
 // `.env` and `meta.json` into the directory named after the stack, then checks the result with
 // `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that
 // name exists. A directory of that name already under the stacks directory (what a removed stack's own
@@ -5891,10 +5842,10 @@ func (c *Client) sendCreateStack(ctx context.Context, request *CreateStackReques
 
 // CreateUser invokes createUser operation.
 //
-// Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin
-// promotes it. No password is set by this call — setUserPassword provisions the UI credential and
-// the Samba account together, in a separate action. Never creates an admin account
-// (users_one_admin_idx allows exactly one, created only by createFirstAdmin).
+// Defaults to the share-only role when omitted: a new account has no UI login until an admin promotes
+// it. No password is set by this call — setUserPassword provisions the UI credential and the Samba
+// account together, in a separate action. Never creates an admin account (users_one_admin_idx allows
+// exactly one, created only by createFirstAdmin).
 //
 // POST /users
 func (c *Client) CreateUser(ctx context.Context, request *CreateUserRequest) (*UserSummary, error) {
@@ -6022,8 +5973,8 @@ func (c *Client) sendCreateUser(ctx context.Context, request *CreateUserRequest)
 
 // CreateUserGroup invokes createUserGroup operation.
 //
-// A named collection of accounts, purely for bulk share-permission assignment (Q27, doc 03 §7) —
-// distinct from the fixed `users` system group (GID 100, Q26) that every share's files belong to.
+// A named collection of accounts, purely for bulk share-permission assignment — distinct from the
+// fixed `users` system group (GID 100) that every share's files belong to.
 //
 // POST /user-groups
 func (c *Client) CreateUserGroup(ctx context.Context, request *CreateUserGroupRequest) (*UserGroup, error) {
@@ -6581,10 +6532,10 @@ func (c *Client) sendDeleteRegistryCredential(ctx context.Context, params Delete
 
 // DeleteShare invokes deleteShare operation.
 //
-// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
-// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused
-// with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share
-// mounts against bare disk mountpoints on the root filesystem.
+// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk.
+// `confirm: true` is required. Deleting the data is `deleteShareData`. Refused with 409
+// `maintenance_mode` while the array is stopped: delete would unmount and rewrite share mounts against
+// bare disk mountpoints on the root filesystem.
 //
 // DELETE /shares/{name}
 func (c *Client) DeleteShare(ctx context.Context, request *ConfirmShareRequest, params DeleteShareParams) error {
@@ -6734,9 +6685,9 @@ func (c *Client) sendDeleteShare(ctx context.Context, request *ConfirmShareReque
 // DeleteShareData invokes deleteShareData operation.
 //
 // Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
-// the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
-// place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an
-// Unraid import is pending its point of no return: the adopted disks are not written until then.
+// the parity file, not disks that do not hold this share. The definition is left in place.
+// `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an Unraid
+// import is pending its point of no return: the adopted disks are not written until then.
 //
 // POST /shares/{name}/data/delete
 func (c *Client) DeleteShareData(ctx context.Context, request *DeleteShareDataRequest, params DeleteShareDataParams) error {
@@ -6886,9 +6837,9 @@ func (c *Client) sendDeleteShareData(ctx context.Context, request *DeleteShareDa
 
 // DeleteShareFile invokes deleteShareFile operation.
 //
-// Deletes one file or empty directory within the share, given a path relative to the share root (doc
-// 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the
-// share's root, including through a symlink. `confirm: true` is required.
+// Deletes one file or empty directory within the share, given a path relative to the share root.
+// Refuses the share root itself and any path that would resolve outside the share's root, including
+// through a symlink. `confirm: true` is required.
 //
 // DELETE /shares/{name}/browse
 func (c *Client) DeleteShareFile(ctx context.Context, request *ConfirmShareRequest, params DeleteShareFileParams) error {
@@ -7470,8 +7421,8 @@ func (c *Client) sendDisableLetsEncrypt(ctx context.Context) (res *NetworkSettin
 
 // DisableUserTotp invokes disableUserTotp operation.
 //
-// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
-// and announced through every notification channel.
+// Root-only over the Unix socket. Checked against the peer's uid 0 specifically. Audit-logged and
+// announced through every notification channel.
 //
 // POST /users/{username}/disable-totp
 func (c *Client) DisableUserTotp(ctx context.Context, params DisableUserTotpParams) error {
@@ -7615,7 +7566,7 @@ func (c *Client) sendDisableUserTotp(ctx context.Context, params DisableUserTotp
 
 // EjectExternalDisk invokes ejectExternalDisk operation.
 //
-// Unmounts `/mnt/disks/<label>`, then spins the disk down (Q72).
+// Unmounts `/mnt/disks/<label>`, then spins the disk down.
 //
 // POST /disks/external/{label}/eject
 func (c *Client) EjectExternalDisk(ctx context.Context, params EjectExternalDiskParams) (*ExternalDisk, error) {
@@ -7762,14 +7713,14 @@ func (c *Client) sendEjectExternalDisk(ctx context.Context, params EjectExternal
 
 // EnrollTotp invokes enrollTotp operation.
 //
-// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
-// — the account's existing active credential, if any, is untouched until confirmTotp activates the
-// new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already
-// active on this account, replacing it requires proving the caller still holds the account: exactly
-// one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP
-// is active is refused (totp_reverify_required); supplying both is refused too
-// (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would
-// spend two for the price of one request. Neither is required for a first enrolment.
+// Generates a new secret (RFC 6238), stored encrypted with the machine key but not yet active — the
+// account's existing active credential, if any, is untouched until confirmTotp activates the new one.
+// Enrolling again before confirming replaces the still-pending secret. Once TOTP is already active on
+// this account, replacing it requires proving the caller still holds the account: exactly one of the
+// current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP is active is
+// refused (totp_reverify_required); supplying both is refused too (totp_reverify_ambiguous), since
+// each is one guess at the active credential and honouring both would spend two for the price of one
+// request. Neither is required for a first enrolment.
 //
 // POST /auth/totp/enroll
 func (c *Client) EnrollTotp(ctx context.Context, request *TotpEnrollRequest) (*TotpEnrollResponse, error) {
@@ -7897,28 +7848,27 @@ func (c *Client) sendEnrollTotp(ctx context.Context, request *TotpEnrollRequest)
 
 // EvacuateDisk invokes evacuateDisk operation.
 //
-// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one,
-// `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching
-// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying
-// anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite,
-// D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure
-// to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance`
-// unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this
-// disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would
-// otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole
-// plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share
-// branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk
-// `evacuated` before reporting success. A wrong or missing confirmation is refused
-// (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused
-// (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused
-// (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused
-// (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal
-// state belongs to the job that set it: cancelling that job — queued, running or interrupted —
-// clears it and puts the disk back to taking writes, and cancelling any other job never does. A job
-// that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
-// that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
-// no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
-// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
+// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, as
+// `startRebalance` does) and, once `confirmation` matches the exact phrase the matching
+// `planDiskEvacuation` call returned, queues a resumable evacuation job. Before copying anything —
+// and again on every resume — the job marks the disk `evacuating` (persisted in SQLite) and applies
+// no-create to its own branch in every pool mount, live; a failure to apply that fails the job before
+// any copy. It then runs the plan unchanged: copy and verify every batch, sync through the threshold
+// guard (each such sync naming this disk in the guard's own zero-files exemption, since the batch that
+// finally empties it would otherwise trip that rule), delete the batch's sources, sync again — then,
+// once the whole plan finishes without being interrupted, a post-check confirms the disk's own share
+// branches hold nothing but empty directories and the job marks the disk `evacuated` before reporting
+// success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs,
+// a disk already `unpooled` or `unlisted` is refused (`disk_leaving_array`, 409) as
+// `planDiskEvacuation` refuses it, a second disk is refused (`disk_removal_in_progress`) while one is
+// already in removal, and any new evacuation is refused (`evacuation_pending`) while another
+// evacuation job is queued, running or interrupted. The removal state belongs to the job that set it:
+// cancelling that job — queued, running or interrupted — clears it and puts the disk back to
+// taking writes, and cancelling any other job never does. A job that fails leaves the disk
+// `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success
+// here means the disk's data as this job saw it is safely off it and it is no longer taking new
+// writes, not that it is empty of every file or safe to physically remove: the mergerfs branch-list
+// removal, SnapRAID removal and unmount are `finishDiskRemoval`'s.
 //
 // POST /disks/array/evacuate
 func (c *Client) EvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (*Job, error) {
@@ -8046,7 +7996,7 @@ func (c *Client) sendEvacuateDisk(ctx context.Context, request *EvacuateDiskRequ
 
 // ExportConfig invokes exportConfig operation.
 //
-// Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+// Builds and returns the `hoserva-config-*.tar.zst` configuration archive.
 //
 // POST /config/export
 func (c *Client) ExportConfig(ctx context.Context) (ExportConfigOK, error) {
@@ -8171,25 +8121,24 @@ func (c *Client) sendExportConfig(ctx context.Context) (res ExportConfigOK, err 
 
 // FinishDiskRemoval invokes finishDiskRemoval operation.
 //
-// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
-// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
-// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
-// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
-// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
-// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
-// array without the disk still has a data disk and room for every content-file copy (Q18), that the
-// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
-// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
-// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
-// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
-// guard with only this disk exempt from the zero-files rule, while its data line is still in
-// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
-// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
-// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
-// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
-// leaves the disk in the last state it reached, and running this operation again carries on from there
-// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
-// and mounted, with nothing synced.
+// Queues a Topology job that takes an evacuated data disk out of the array. The confirmation is the
+// same `REMOVE <mountpoint>` phrase `planDiskEvacuation` returned for the disk. Refused synchronously
+// with `disk_slot_not_found` when no data disk occupies `mountpoint`, `disk_not_evacuated` when its
+// removal state is not `evacuated`, `unpooled` or `unlisted`, and `confirmation_required` for a wrong
+// or missing confirmation; `not_configured` when the daemon has no parity engine. Before changing
+// anything the job checks all of that again, that the array without the disk still has a data disk and
+// room for every content-file copy, that the disk is mounted by its own filesystem, and that nothing
+// but empty directories and SnapRAID's own content files is left anywhere on it. It then marks the
+// disk `unpooled` and takes it out of every pool mount, live (a failed live update fails the job);
+// removes the empty directories the evacuation left, since SnapRAID records those too (rmdir only);
+// runs a sync through the threshold guard with only this disk exempt from the zero-files rule, while
+// its data line is still in snapraid.conf, and confirms SnapRAID tracks no file on it; marks it
+// `unlisted`, regenerates snapraid.conf without it and checks SnapRAID accepts the result; then stops
+// its mount unit, removes the unit file and deletes the disk from the array. The job's result names
+// the disk as safe to physically remove; its filesystem is never wiped. A job that fails or is
+// interrupted leaves the disk in the last state it reached, and running this operation again carries
+// on from there — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`,
+// still listed and mounted, with nothing synced.
 //
 // POST /disks/array/remove/finish
 func (c *Client) FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error) {
@@ -8448,10 +8397,9 @@ func (c *Client) sendForgetMigration(ctx context.Context) (res *ForgetMigrationN
 
 // FormatExternalDisk invokes formatExternalDisk operation.
 //
-// Formats the disk after the same typed confirmation array setup uses
-// (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong
-// or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB
-// stick is refused with `unraid_stick` (409), whatever the confirmation.
+// Formats the disk after the same typed confirmation array setup uses. The boot device is never
+// offered. A wrong or missing confirmation is refused with `confirmation_required` and formats
+// nothing. The Unraid USB stick is refused with `unraid_stick` (409), whatever the confirmation.
 //
 // POST /disks/external/{label}/format
 func (c *Client) FormatExternalDisk(ctx context.Context, request *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error) {
@@ -8601,8 +8549,8 @@ func (c *Client) sendFormatExternalDisk(ctx context.Context, request *FormatExte
 
 // GetApp invokes getApp operation.
 //
-// One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that
-// manages it, if any.
+// One container's current state, health, image, tag, ports and mounts, and the stack that manages it,
+// if any.
 //
 // GET /apps/{id}
 func (c *Client) GetApp(ctx context.Context, params GetAppParams) (*App, error) {
@@ -8929,8 +8877,7 @@ func (c *Client) sendGetAppLogs(ctx context.Context, params GetAppLogsParams) (r
 
 // GetAppSettings invokes getAppSettings operation.
 //
-// How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until
-// it is set.
+// How long the image a container ran before an update is kept for a revert: 7 days until it is set.
 //
 // GET /settings/apps
 func (c *Client) GetAppSettings(ctx context.Context) (*AppSettings, error) {
@@ -9202,10 +9149,10 @@ func (c *Client) sendGetAppStats(ctx context.Context, params GetAppStatsParams) 
 //
 // Every container with a bind-mounted directory inside the appdata location (the cache disk's
 // `appdata` directory), each with whether the backup stops it while its directory is copied and
-// whether it is in the backup at all (doc 10 §2). A container the operator has not configured is
-// stopped and included. A known database image that is not stopped carries `warning`: copying a
-// database's files while it runs can produce an archive that does not restore. 501 `not_configured`
-// when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+// whether it is in the backup at all. A container the operator has not configured is stopped and
+// included. A known database image that is not stopped carries `warning`: copying a database's files
+// while it runs can produce an archive that does not restore. 501 `not_configured` when this daemon
+// has no Docker Engine client, and 503 when the Engine is not reachable.
 //
 // GET /appdata/backup
 func (c *Client) GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error) {
@@ -9478,9 +9425,8 @@ func (c *Client) sendGetAppdataRestorePreview(ctx context.Context, params GetApp
 
 // GetCacheUsage invokes getCacheUsage operation.
 //
-// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
-// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
-// run has computed it yet.
+// Appdata / pending-moves / other byte breakdown for the cache disk. Computed as a by-product of each
+// mover run, never a live directory walk on a timer. Null when no mover run has computed it yet.
 //
 // GET /cache/usage
 func (c *Client) GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error) {
@@ -9605,8 +9551,8 @@ func (c *Client) sendGetCacheUsage(ctx context.Context) (res NilCacheUsageBreakd
 
 // GetCatalogSettings invokes getCatalogSettings operation.
 //
-// How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and
-// whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+// How the catalog checks for updates by itself: the background `refreshInterval` and whether opening
+// the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
 //
 // GET /settings/catalog
 func (c *Client) GetCatalogSettings(ctx context.Context) (*CatalogSettings, error) {
@@ -10323,8 +10269,8 @@ func (c *Client) sendGetCurrentSession(ctx context.Context) (res *User, err erro
 
 // GetGeneralSettings invokes getGeneralSettings operation.
 //
-// Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase
-// itself is never returned (Q28).
+// Hostname, timezone and whether a backup passphrase is configured. The passphrase itself is never
+// returned.
 //
 // GET /settings/general
 func (c *Client) GetGeneralSettings(ctx context.Context) (*GeneralSettings, error) {
@@ -10592,8 +10538,8 @@ func (c *Client) sendGetJob(ctx context.Context, params GetJobParams) (res *Job,
 
 // GetJobLog invokes getJobLog operation.
 //
-// Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open
-// and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
+// Kept for 90 days. With `follow` true on a job that has not finished, the response stays open and
+// carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
 // decompressing on the fly prints every line at once), and ends when the job reaches a terminal state,
 // when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a
 // finished job is the same as omitting it.
@@ -10761,10 +10707,9 @@ func (c *Client) sendGetJobLog(ctx context.Context, params GetJobLogParams) (res
 
 // GetLastMoverRun invokes getLastMoverRun operation.
 //
-// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
-// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
-// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
-// finished.
+// The structured result of the most recent finished mover run: files moved, bytes, duration, and every
+// skipped entry with its reason. Persisted in SQLite by the mover job itself, not reconstructed from
+// the job log. Null when no mover job has ever finished.
 //
 // GET /mover/last-run
 func (c *Client) GetLastMoverRun(ctx context.Context) (NilMoverRunResult, error) {
@@ -10889,10 +10834,10 @@ func (c *Client) sendGetLastMoverRun(ctx context.Context) (res NilMoverRunResult
 
 // GetMetrics invokes getMetrics operation.
 //
-// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03
-// §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days,
-// daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an
-// empty series, not an array-health error.
+// Returns downsampled samples from metrics.db for one metric/subject over a time window. Resolution is
+// chosen from the window — raw for up to 48 hours, hourly for up to 90 days, daily beyond — so
+// clients cannot force a full raw scan. A missing or empty metrics.db yields an empty series, not an
+// array-health error.
 //
 // GET /metrics
 func (c *Client) GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error) {
@@ -11080,20 +11025,19 @@ func (c *Client) sendGetMetrics(ctx context.Context, params GetMetricsParams) (r
 
 // GetMigration invokes getMigration operation.
 //
-// The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows.
-// `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running,
-// `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when
-// its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier
-// scan, if there was one, is still returned). The rows name and count; they never quote a file's
-// content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks
-// a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled
-// `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is
-// true, once the session's report was made from a capture that says Unraid booted from an internal
-// device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when
-// no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review
-// step shows as data: the disk mapping table, the share preview, the boot mode and the capture's
-// state. It comes from the same scan as the rows, which stay as they are, and is absent from a report
-// made before it existed.
+// The one migration session: its phase and, once a scan has finished, the report as rows. `phase` is
+// `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once
+// a report exists and `scan_failed` when the latest scan did not finish, including when its job was
+// cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if
+// there was one, is still returned). The rows name and count; they never quote a file's content.
+// `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan
+// can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on
+// a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the
+// session's report was made from a capture that says Unraid booted from an internal device: the Flash
+// Backup zip is then the only source. It is empty, with `zipOnly` false, when no such disk is attached
+// or this daemon cannot read one. The report's `review` holds what the Review step shows as data: the
+// disk mapping table, the share preview, the boot mode and the capture's state. It comes from the same
+// scan as the rows, which stay as they are, and is absent from a report made before it existed.
 //
 // GET /migrate
 func (c *Client) GetMigration(ctx context.Context) (*Migration, error) {
@@ -11218,14 +11162,14 @@ func (c *Client) sendGetMigration(ctx context.Context) (res *Migration, err erro
 
 // GetMigrationChecklist invokes getMigrationChecklist operation.
 //
-// Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken
-// from a record where one exists, so it cannot say something was done when it was not. The migration
-// counts as finished exactly when the array record carries the time the point of no return finished
-// (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing
-// else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way
-// through its point of no return, or was undone has none, and so has an array created by hand or one
-// that finished before this record existed; then `finished` is false, `finishedAt` is absent and
-// `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+// Phase D's closing steps as a checklist, each item's state taken from a record where one exists, so
+// it cannot say something was done when it was not. The migration counts as finished exactly when the
+// array record carries the time the point of no return finished (`initializeMigrationParity`), which
+// is written in the same statement that ends it and by nothing else: `finished` is true and
+// `finishedAt` is that time. A migration that is pending, part-way through its point of no return, or
+// was undone has none, and so has an array created by hand or one that finished before this record
+// existed; then `finished` is false, `finishedAt` is absent and `items` is empty: the checklist does
+// not apply. `getMigration` keeps no "complete" phase.
 //
 // `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache
 // (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the
@@ -11245,10 +11189,9 @@ func (c *Client) sendGetMigration(ctx context.Context) (res *Migration, err erro
 //
 // `user_scripts` and `restore_drill` have no record to derive from and are done by
 // `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and
-// schedule (a script is never executed or translated, Q83); the second shows the latest succeeded
-// `fix` job that had a `path`, which an acknowledgement records. Only those two are ever
-// `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the
-// scripts are empty.
+// schedule (a script is never executed or translated); the second shows the latest succeeded `fix` job
+// that had a `path`, which an acknowledgement records. Only those two are ever `acknowledgeable`. The
+// checklist needs no scan: without a report the offers, the agents and the scripts are empty.
 //
 // GET /migrate/checklist
 func (c *Client) GetMigrationChecklist(ctx context.Context) (*MigrationChecklist, error) {
@@ -11657,9 +11600,8 @@ func (c *Client) sendGetMigrationTemplate(ctx context.Context, params GetMigrati
 // GetNetworkSettings invokes getNetworkSettings operation.
 //
 // Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
-// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
-// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
-// `readOnlyReason` says why.
+// expiry, LAN-only access scope and the listen port. Editing address, DNS or gateway is only possible
+// when the backend is ifupdown; otherwise `editable` is false and `readOnlyReason` says why.
 //
 // GET /settings/network
 func (c *Client) GetNetworkSettings(ctx context.Context) (*NetworkSettings, error) {
@@ -11927,9 +11869,9 @@ func (c *Client) sendGetNotificationChannel(ctx context.Context, params GetNotif
 
 // GetNotificationRouting invokes getNotificationRouting operation.
 //
-// One entry per event type in doc 03 §8.3's fixed catalog, in the order that doc lists them — every
-// event type appears even before it has ever been routed anywhere, with its compiled-in default
-// severity and an empty channel list.
+// One entry per event type in the fixed event catalog, in the catalog's own order: every event type
+// appears even before it has ever been routed anywhere, with its compiled-in default severity and an
+// empty channel list.
 //
 // GET /notifications/routing
 func (c *Client) GetNotificationRouting(ctx context.Context) (*GetNotificationRoutingOK, error) {
@@ -12055,8 +11997,8 @@ func (c *Client) sendGetNotificationRouting(ctx context.Context) (res *GetNotifi
 // GetParity invokes getParity operation.
 //
 // Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
-// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
-// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+// wake data disks. Threshold-guard state and grouped diff rows reflect the last explicit
+// `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
 //
 // GET /parity
 func (c *Client) GetParity(ctx context.Context) (*ParitySnapshot, error) {
@@ -12181,8 +12123,8 @@ func (c *Client) sendGetParity(ctx context.Context) (res *ParitySnapshot, err er
 
 // GetPool invokes getPool operation.
 //
-// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own
-// `removalState` (doc 09 §4 step 2, #359) where one is in progress.
+// Per-disk pool breakdown for `hoserva pool status`, including each disk's own `removalState` where
+// one is in progress.
 //
 // GET /pool
 func (c *Client) GetPool(ctx context.Context) (*PoolStatus, error) {
@@ -12307,7 +12249,7 @@ func (c *Client) sendGetPool(ctx context.Context) (res *PoolStatus, err error) {
 
 // GetQuietHours invokes getQuietHours operation.
 //
-// The current quiet hours window and the always-on critical override (doc 03 §8.3).
+// The current quiet hours window and the always-on critical override.
 //
 // GET /notifications/quiet-hours
 func (c *Client) GetQuietHours(ctx context.Context) (*NotificationQuietHours, error) {
@@ -12432,9 +12374,9 @@ func (c *Client) sendGetQuietHours(ctx context.Context) (res *NotificationQuietH
 
 // GetRestoreDrill invokes getRestoreDrill operation.
 //
-// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
-// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
-// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+// The result of the most recent restore drill: whether the newest config archive on each enabled
+// backup destination could be fetched, opened the way a restore opens it, and verified, and when.
+// `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
 // service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
 //
 // GET /backup/drill
@@ -12560,9 +12502,9 @@ func (c *Client) sendGetRestoreDrill(ctx context.Context) (res *RestoreDrill, er
 
 // GetSchedules invokes getSchedules operation.
 //
-// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
-// server-computed next-run times, human-readable schedule previews and conflict warnings from
-// DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+// The nightly maintenance chain and every separately scheduled job, with server-computed next-run
+// times, human-readable schedule previews and conflict warnings. Chain step order is server-defined
+// and not writable.
 //
 // GET /settings/schedules
 func (c *Client) GetSchedules(ctx context.Context) (*Schedules, error) {
@@ -12689,7 +12631,7 @@ func (c *Client) sendGetSchedules(ctx context.Context) (res *Schedules, err erro
 //
 // Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
 // the only routes that don't refuse every request with a "setup required" error while `adminExists` is
-// false (#22).
+// false.
 //
 // GET /setup/status
 func (c *Client) GetSetupStatus(ctx context.Context) (*SetupStatus, error) {
@@ -12769,7 +12711,7 @@ func (c *Client) sendGetSetupStatus(ctx context.Context) (res *SetupStatus, err 
 
 // GetShare invokes getShare operation.
 //
-// One share by name (doc 03 §4.2).
+// One share by name.
 //
 // GET /shares/{name}
 func (c *Client) GetShare(ctx context.Context, params GetShareParams) (*Share, error) {
@@ -12915,8 +12857,8 @@ func (c *Client) sendGetShare(ctx context.Context, params GetShareParams) (res *
 
 // GetSharePermissions invokes getSharePermissions operation.
 //
-// Every user and every user group with an explicit access level on this share (Q27, doc 03 §7). A
-// user or group with no row here is not represented.
+// Every user and every user group with an explicit access level on this share. A user or group with no
+// row here is not represented.
 //
 // GET /shares/{name}/permissions
 func (c *Client) GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (*SharePermissionsResult, error) {
@@ -13063,20 +13005,20 @@ func (c *Client) sendGetSharePermissions(ctx context.Context, params GetSharePer
 
 // GetShareRelocationPrecheck invokes getShareRelocationPrecheck operation.
 //
-// What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose
-// mounts use the share and every file of the share some process currently holds open, across the cache
-// and every array branch. A container uses the share when a mount's host path is the share's pool
-// path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the
-// pool, on the cache or on a data disk; the match is made on the path as written, never through a
-// symlink, so it reads no data disk. `active` is true for a container that is running, paused or
-// restarting — one that can hold files open and that a relocation must not run beside. Listing the
-// open files enumerates the share on the cache and on every array branch, so this is an explicit call
-// that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no
-// containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of
-// the share, so it is the same whichever way the share will move. No answer is given in the cases
-// `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no
-// cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is
-// stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409
+// What a caller shows before it starts `startShareRelocation`: the containers whose mounts use the
+// share and every file of the share some process currently holds open, across the cache and every
+// array branch. A container uses the share when a mount's host path is the share's pool path, a path
+// inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the pool, on the
+// cache or on a data disk; the match is made on the path as written, never through a symlink, so it
+// reads no data disk. `active` is true for a container that is running, paused or restarting — one
+// that can hold files open and that a relocation must not run beside. Listing the open files
+// enumerates the share on the cache and on every array branch, so this is an explicit call that may
+// wake disks — it is never polled. `dockerAvailable` is false, with no error and no containers,
+// whenever Docker itself is not reachable. The answer covers both sides of the share, so it is the
+// same whichever way the share will move. No answer is given in the cases `startShareRelocation`
+// refuses before it queues a job: 409 `no_cache_disk` while the array has no cache disk, 409
+// `no_array` while there is no array, 409 `maintenance_mode` while the array is stopped, 409
+// `migration_in_progress` while an Unraid migration is unfinished and 409
 // `database_restore_in_progress` during a database restore. These are the scheduler's own admission
 // checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
 //
@@ -13679,7 +13621,7 @@ func (c *Client) sendGetStackTemplateUpdate(ctx context.Context, params GetStack
 
 // GetStatus invokes getStatus operation.
 //
-// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+// One-screen health summary for the dashboard and `hoserva status`.
 //
 // GET /status
 func (c *Client) GetStatus(ctx context.Context) (*SystemStatus, error) {
@@ -13804,10 +13746,10 @@ func (c *Client) sendGetStatus(ctx context.Context) (res *SystemStatus, err erro
 
 // GetUPSSettings invokes getUPSSettings operation.
 //
-// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
-// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
-// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
-// and every other field is omitted.
+// The UPS settings: connection mode (USB or a network NUT server), driver fields, and USB-only
+// shutdown thresholds. Passwords are never returned — only `monitorPasswordSet` /
+// `networkPasswordSet`. When no UPS is configured, `configured` is false and every other field is
+// omitted.
 //
 // GET /settings/ups
 func (c *Client) GetUPSSettings(ctx context.Context) (*UPSSettings, error) {
@@ -13933,10 +13875,9 @@ func (c *Client) sendGetUPSSettings(ctx context.Context) (res *UPSSettings, err 
 // GetUpdateStatus invokes getUpdateStatus operation.
 //
 // Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
-// Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads
-// only the signed release index on the project site — never the GitHub API and never a system-wide
-// `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than
-// fetched.
+// Debian updates and whether a reboot is required. The update check reads only the signed release
+// index on the project site — never the GitHub API and never a system-wide `apt update`. When the
+// check is disabled, `availableVersion` is omitted rather than fetched.
 //
 // GET /settings/updates
 func (c *Client) GetUpdateStatus(ctx context.Context) (*UpdateStatus, error) {
@@ -14061,8 +14002,8 @@ func (c *Client) sendGetUpdateStatus(ctx context.Context) (res *UpdateStatus, er
 
 // GetUserSharePermissions invokes getUserSharePermissions operation.
 //
-// Every share this account has an explicit access level for (Q27, doc 03 §7). A share with no row
-// here is not represented — none of the three levels is assumed.
+// Every share this account has an explicit access level for. A share with no row here is not
+// represented — none of the three levels is assumed.
 //
 // GET /users/{userId}/permissions
 func (c *Client) GetUserSharePermissions(ctx context.Context, params GetUserSharePermissionsParams) (*UserSharePermissionsResult, error) {
@@ -14206,7 +14147,7 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 
 // ImportConfig invokes importConfig operation.
 //
-// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
+// Restores from a configuration archive. Requires `confirm: true` — this replaces the running
 // configuration: the database, the custom config files (`*.custom.conf`), the installed app templates
 // and each stack's compose and `meta.json` files, after which every managed config file is regenerated
 // from the restored database and the result applied to the running pool. It also restores the
@@ -14239,8 +14180,8 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // restored from the archive, so an import cannot return a stopped array to normal operation.
 //
 // On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
-// bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
-// disks from `state.db` and matches each against the attached disks by identity; the mapping is what
+// bare-metal restore of another installation's archive. It takes the archive's array disks from the
+// archived database and matches each against the attached disks by identity; the mapping is what
 // `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without
 // `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
 // matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
@@ -14390,18 +14331,17 @@ func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq)
 
 // InitializeMigrationParity invokes initializeMigrationParity operation.
 //
-// Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a
-// disk of the old array: queues a `migration_parity` job (topology class) that formats the former
-// Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or
-// partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the
-// array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files
-// placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level
-// directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are
-// available without a restart, and queues the initial `sync` as an ordinary sync job, which runs
-// through the threshold guard like every other. The data disks are never formatted. Until the sync
-// completes the array has no redundancy at all: `getMigration` `parityInit` states that window and
-// what rollback means for this session's boot mode and layout, and the user is shown them before this
-// is called.
+// Step 17 of the migration, the point of no return and the first step that writes to a disk of the old
+// array: queues a `migration_parity` job (topology class) that formats the former Unraid parity
+// disk(s) XFS and the cache (a whole disk, a spare partition of the boot disk, or partition 4 of an
+// Unraid boot + data device and never the rest of that disk), records them as the array's own, mounts
+// the data disks read-write, generates `snapraid.conf` with its content files placed on separate
+// devices, applies what the import deferred (each share's cache mode and its top-level directory's
+// setgid mode and group), wires the parity engine so sync, scrub and fix are available without a
+// restart, and queues the initial `sync` as an ordinary sync job, which runs through the threshold
+// guard like every other. The data disks are never formatted. Until the sync completes the array has
+// no redundancy at all: `getMigration` `parityInit` states that window and what rollback means for
+// this session's boot mode and layout, and the user is shown them before this is called.
 //
 // `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names
 // every device that will be erased, in the style of the array setup's own typed confirmation. A wrong
@@ -14412,15 +14352,15 @@ func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq)
 // `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a
 // cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool
 // is not a mirrored pair, and whenever a second Unraid boot device is attached), and with 409
-// `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free
-// (doc 02 §1): once the disks are writable mergerfs would answer ENOSPC to every directory the job
-// makes through `/mnt/user`, after the former parity disk and the cache were erased. The gate reads
-// each data disk's free space once and the error names the floor and the disk with the most room; make
-// room on a data disk (in Unraid, or by undoing the import) and import again. The job resolves every
-// disk again from a fresh inventory by identity immediately before the first format and refuses,
-// erasing nothing, when one is not the disk that was confirmed. A failure before the first format
-// leaves the migration pending, with the adopted disks mounted read-only again. A failure after the
-// formatted disks are recorded leaves the migration in `initializing`: running this again with the
+// `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free:
+// once the disks are writable mergerfs would answer ENOSPC to every directory the job makes through
+// `/mnt/user`, after the former parity disk and the cache were erased. The gate reads each data disk's
+// free space once and the error names the floor and the disk with the most room; make room on a data
+// disk (in Unraid, or by undoing the import) and import again. The job resolves every disk again from
+// a fresh inventory by identity immediately before the first format and refuses, erasing nothing, when
+// one is not the disk that was confirmed. A failure before the first format leaves the migration
+// pending, with the adopted disks mounted read-only again. A failure after the formatted disks are
+// recorded leaves the migration in `initializing`: running this again with the
 // `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and
 // topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
 //
@@ -14714,7 +14654,7 @@ func (c *Client) sendInstallTemplate(ctx context.Context, request *TemplateInsta
 
 // ListApiTokens invokes listApiTokens operation.
 //
-// Every account's tokens, most recently created first (doc 03 §7).
+// Every account's tokens, most recently created first.
 //
 // GET /api-tokens
 func (c *Client) ListApiTokens(ctx context.Context) (*ListApiTokensOK, error) {
@@ -15096,14 +15036,14 @@ func (c *Client) sendListAppUpdateHistory(ctx context.Context) (res *ListAppUpda
 
 // ListAppUpdates invokes listAppUpdates operation.
 //
-// What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build
-// of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by
-// `availableTag`). The check asks each registry for manifests and tag names only, never a pull.
-// `skipped` means the registry was rate limiting requests and is asked again at the next check,
-// `failed` that the check could not tell (including a registry whose saved credential cannot be used
-// or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached
-// the image yet or that it could not look: the registry wants a login and no credential is saved for
-// it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
+// What the daily registry check last found for each container's image: a new build of the same tag
+// (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`).
+// The check asks each registry for manifests and tag names only, never a pull. `skipped` means the
+// registry was rate limiting requests and is asked again at the next check, `failed` that the check
+// could not tell (including a registry whose saved credential cannot be used or was refused: it is
+// never asked anonymously instead), and `not_checked` that no check has reached the image yet or that
+// it could not look: the registry wants a login and no credential is saved for it
+// (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to
 // update. The `message` says which. None of them means up to date. available is false, with no error,
 // whenever Docker itself is not reachable.
 //
@@ -15379,11 +15319,10 @@ func (c *Client) sendListAppdataArchives(ctx context.Context, params ListAppdata
 
 // ListApps invokes listApps operation.
 //
-// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an
-// installed stack started carries that stack's name in `stack`; one no stack manages has none. The
-// daemon decides which, so the request fails when the stacks cannot be read rather than reporting
-// every container as unmanaged. available is false, with no error, whenever Docker itself is not
-// reachable (doc 04 §3).
+// Every container the Docker Engine reports, managed and unmanaged alike. A container an installed
+// stack started carries that stack's name in `stack`; one no stack manages has none. The daemon
+// decides which, so the request fails when the stacks cannot be read rather than reporting every
+// container as unmanaged. available is false, with no error, whenever Docker itself is not reachable.
 //
 // GET /apps
 func (c *Client) ListApps(ctx context.Context) (*ListAppsOK, error) {
@@ -15508,8 +15447,8 @@ func (c *Client) sendListApps(ctx context.Context) (res *ListAppsOK, err error) 
 
 // ListBackupDestinations invokes listBackupDestinations operation.
 //
-// Every place a config backup is written, with its last successful backup and whether it is stale (doc
-// 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+// Every place a config backup is written, with its last successful backup and whether it is stale.
+// Credentials are never returned — `hasSecrets` is the only trace of them.
 //
 // GET /backup/destinations
 func (c *Client) ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error) {
@@ -15634,22 +15573,22 @@ func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBacku
 
 // ListCatalog invokes listCatalog operation.
 //
-// The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never
-// waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated
-// catalog's. The curated catalog's entries come first, then those of each user-added source
-// (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that
-// order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated
-// one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for
-// a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of
-// an unsigned source has `signed` false. Every entry says whether a stack of that template id already
-// exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging
-// are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check
-// (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that
-// is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`,
-// never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when
-// the last check is older than 15 minutes, or when none has run since the daemon started, also starts
-// one catalog check in the background, never a second while one is running. The answer is the on-disk
-// copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
+// The templates of the catalog installed on disk, read from its `index.json` and never waiting on the
+// network, with the catalog's `serial` and `generatedAt`, which are the curated catalog's. The curated
+// catalog's entries come first, then those of each user-added source (`listCatalogSources`) in the
+// order the sources were added; a template id a source earlier in that order already lists is never
+// supplied by a later one, so a user-added entry cannot shadow a curated one. Every entry names the
+// `source` it came from (`hoserva` for the curated catalog, a source id for a user-added source) and
+// carries that source's badge as data: `sourceKind` and `signed`. An entry of an unsigned source has
+// `signed` false. Every entry says whether a stack of that template id already exists (`installed`,
+// from the `stacks` table). Entries are in that order. Search, filters and paging are the caller's.
+// `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the
+// daemon started, and are absent before any check has run. A catalog that is not installed or whose
+// `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty
+// list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15
+// minutes, or when none has run since the daemon started, also starts one catalog check in the
+// background, never a second while one is running. The answer is the on-disk copy as it is now; the
+// finished check is announced as a `catalog` event on `/api/v1/events`.
 //
 // GET /catalog
 func (c *Client) ListCatalog(ctx context.Context) (*CatalogList, error) {
@@ -15775,11 +15714,11 @@ func (c *Client) sendListCatalog(ctx context.Context) (res *CatalogList, err err
 // ListCatalogSources invokes listCatalogSources operation.
 //
 // The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added
-// (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a
-// source whose installed archive passed a signature check: always for the curated catalog, and for a
-// user-added source only when it was added with a public key. `serial` is the installed catalog's
-// serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive
-// was installed or confirmed unchanged, and is absent before the first.
+// (`kind` `user_added`) in the order they were added. `signed` is true only for a source whose
+// installed archive passed a signature check: always for the curated catalog, and for a user-added
+// source only when it was added with a public key. `serial` is the installed catalog's serial and is
+// absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive was installed
+// or confirmed unchanged, and is absent before the first.
 //
 // GET /catalog-sources
 func (c *Client) ListCatalogSources(ctx context.Context) (*CatalogSourceList, error) {
@@ -15904,7 +15843,7 @@ func (c *Client) sendListCatalogSources(ctx context.Context) (res *CatalogSource
 
 // ListDisks invokes listDisks operation.
 //
-// Every block device Hoserva knows about (doc 02 §4).
+// Every block device Hoserva knows about.
 //
 // GET /disks
 func (c *Client) ListDisks(ctx context.Context) (*ListDisksOK, error) {
@@ -16031,10 +15970,10 @@ func (c *Client) sendListDisks(ctx context.Context) (res *ListDisksOK, err error
 //
 // Every network the Docker Engine holds, sorted by name: the built-in `bridge`, `host` and `none` and
 // the networks the user created (macvlan and ipvlan included). The install wizard offers the existing
-// ones as network modes (Q37, doc 03 §5.4); Hoserva never creates a network. `available` is false,
-// with no error, whenever Docker itself is not reachable (doc 04 §3), and then `networks` is empty
-// without meaning there are none: a caller that needs the list must treat it as unknown. Any other
-// failure to read the list is an error, never an empty list.
+// ones as network modes; Hoserva never creates a network. `available` is false, with no error,
+// whenever Docker itself is not reachable, and then `networks` is empty without meaning there are
+// none: a caller that needs the list must treat it as unknown. Any other failure to read the list is
+// an error, never an empty list.
 //
 // GET /apps/networks
 func (c *Client) ListDockerNetworks(ctx context.Context) (*ListDockerNetworksOK, error) {
@@ -16159,10 +16098,10 @@ func (c *Client) sendListDockerNetworks(ctx context.Context) (res *ListDockerNet
 
 // ListExternalDisks invokes listExternalDisks operation.
 //
-// Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a
-// pool or parity member. Registered external disks plus inventory disks that are not the boot device
-// and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it
-// is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
+// Disks outside the array: Ignore-role or a later USB disk, never a pool or parity member. Registered
+// external disks plus inventory disks that are not the boot device and not in the array. The Unraid
+// USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it is the migration's rollback.
+// Nothing is mounted by this call.
 //
 // GET /disks/external
 func (c *Client) ListExternalDisks(ctx context.Context) (*ListExternalDisksOK, error) {
@@ -16287,8 +16226,8 @@ func (c *Client) sendListExternalDisks(ctx context.Context) (res *ListExternalDi
 
 // ListJobs invokes listJobs operation.
 //
-// Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
-// page and `hoserva logs` can scope what they render without walking the whole history.
+// Every long-running operation is a job. Filterable by class and status so the UI's jobs page and
+// `hoserva logs` can scope what they render without walking the whole history.
 //
 // GET /jobs
 func (c *Client) ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error) {
@@ -16468,23 +16407,22 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 
 // ListMigrationContainers invokes listMigrationContainers operation.
 //
-// Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the latest scan. `templates`
-// are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in
-// Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a
-// creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so
-// with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are
-// the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers
-// created with `docker run` and their image, which nothing is generated for: they are recreated by
-// hand. The preview of each (the generated Compose, every warning including the writable-layer
-// warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are
-// the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's
-// autostart order first), each with its `state`; `awaiting` names the started stack that must be
-// confirmed or stopped before another is started, and `next` the first stack not started yet; a stack
-// that was started, stopped and never confirmed is offered as `next` only when none of those is left.
-// `parityInitialized` is false until the migration is past its point of no return
-// (`initializeMigrationParity`); the operations that create or start something refuse until then. This
-// reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview`
-// for a report made before scans converted templates.
+// Phase D's container steps as data, from the latest scan. `templates` are every template of the scan
+// grouped by `class` in the order the groups are shown (`autostart` in Unraid's own autostart order,
+// then `running`, `stopped`, `template_only` and `unknown`); only a creatable template on Unraid's
+// autostart list whose stack does not exist yet is `preselected`, so with no capture (class `unknown`)
+// nothing is. Every one can still be selected. `composeProjects` are the Compose Manager projects,
+// offered with their own `compose.yaml`; `byHand` are the containers created with `docker run` and
+// their image, which nothing is generated for: they are recreated by hand. The preview of each (the
+// generated Compose, every warning including the writable-layer warning) is `getMigrationTemplate`,
+// and should be read before `createMigrationStacks`. `stacks` are the stacks `createMigrationStacks`
+// created, in the order they are offered for starting (Unraid's autostart order first), each with its
+// `state`; `awaiting` names the started stack that must be confirmed or stopped before another is
+// started, and `next` the first stack not started yet; a stack that was started, stopped and never
+// confirmed is offered as `next` only when none of those is left. `parityInitialized` is false until
+// the migration is past its point of no return (`initializeMigrationParity`); the operations that
+// create or start something refuse until then. This reads no disk. 404 `no_migration_report` before a
+// scan has finished and 404 `no_template_preview` for a report made before scans converted templates.
 //
 // GET /migrate/containers
 func (c *Client) ListMigrationContainers(ctx context.Context) (*MigrationContainers, error) {
@@ -16609,20 +16547,20 @@ func (c *Client) sendListMigrationContainers(ctx context.Context) (res *Migratio
 
 // ListMigrationTemplates invokes listMigrationTemplates operation.
 //
-// What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04
-// §5): every template with its class and how it converted, every Compose Manager project, and the
-// counts the report shows. The scan converts each template in memory with the converter
-// `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom
-// network's `docker network create` command is exact when the capture holds that network. Nothing is
-// created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's
-// outcome (its status and warning classes), never its content, so this answers without the zip;
-// `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a
-// container on the source server (autostart, running and stopped) and, without the capture's container
-// list, every template (`allTemplates`); a template-only template is converted and previewable but is
-// in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed
-// with its own `compose.yaml`, counted in `composeProjects` and never converted. 404
-// `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made
-// before scans converted templates (scan again).
+// What the scan's conversion of the Flash Backup's Docker templates found: every template with its
+// class and how it converted, every Compose Manager project, and the counts the report shows. The scan
+// converts each template in memory with the converter `convertUnraidTemplate` runs, passing it the
+// Docker networks of the Phase A capture, so a custom network's `docker network create` command is
+// exact when the capture holds that network. Nothing is created, written under
+// `/var/lib/hoserva/stacks/` or started. The session keeps only each template's outcome (its status
+// and warning classes), never its content, so this answers without the zip; `getMigrationTemplate`
+// builds a preview on request. `counts` cover the templates that had a container on the source server
+// (autostart, running and stopped) and, without the capture's container list, every template
+// (`allTemplates`); a template-only template is converted and previewable but is in `templateOnly` and
+// not in the clean or warning counts. A Compose Manager project is previewed with its own
+// `compose.yaml`, counted in `composeProjects` and never converted. 404 `no_migration_report` before a
+// scan has finished, and 404 `no_template_preview` for a report made before scans converted templates
+// (scan again).
 //
 // GET /migrate/templates
 func (c *Client) ListMigrationTemplates(ctx context.Context) (*MigrationTemplates, error) {
@@ -16747,7 +16685,7 @@ func (c *Client) sendListMigrationTemplates(ctx context.Context) (res *Migration
 
 // ListNotificationChannels invokes listNotificationChannels operation.
 //
-// Every configured alerting destination (doc 03 §8.3).
+// Every configured alerting destination.
 //
 // GET /notifications/channels
 func (c *Client) ListNotificationChannels(ctx context.Context) (*ListNotificationChannelsOK, error) {
@@ -16872,8 +16810,8 @@ func (c *Client) sendListNotificationChannels(ctx context.Context) (res *ListNot
 
 // ListNotifications invokes listNotifications operation.
 //
-// Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never
-// probes block devices.
+// Unread alerts first, grouped by event type. Reads only the central database — never probes block
+// devices.
 //
 // GET /notifications
 func (c *Client) ListNotifications(ctx context.Context) (*ListNotificationsOK, error) {
@@ -16998,11 +16936,10 @@ func (c *Client) sendListNotifications(ctx context.Context) (res *ListNotificati
 
 // ListRegistryCredentials invokes listRegistryCredentials operation.
 //
-// The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image
-// references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never
-// returned: only the host is. A host listed here whose credential was cleared by a restore without the
-// backup passphrase makes the update check report its images as `failed` until `putRegistryCredential`
-// saves it again.
+// The registry hosts the daily update check has a credential for, sorted, as image references name
+// them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never returned: only the
+// host is. A host listed here whose credential was cleared by a restore without the backup passphrase
+// makes the update check report its images as `failed` until `putRegistryCredential` saves it again.
 //
 // GET /registry-credentials
 func (c *Client) ListRegistryCredentials(ctx context.Context) (*RegistryCredentialList, error) {
@@ -17127,7 +17064,7 @@ func (c *Client) sendListRegistryCredentials(ctx context.Context) (res *Registry
 
 // ListSessions invokes listSessions operation.
 //
-// Every session across every account, with revoke (doc 03 §7).
+// Every session across every account, with revoke.
 //
 // GET /sessions
 func (c *Client) ListSessions(ctx context.Context) (*ListSessionsOK, error) {
@@ -17252,8 +17189,7 @@ func (c *Client) sendListSessions(ctx context.Context) (res *ListSessionsOK, err
 
 // ListShares invokes listShares operation.
 //
-// Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are
-// later issues.
+// Every configured share. Does not walk data disks.
 //
 // GET /shares
 func (c *Client) ListShares(ctx context.Context) (*ListSharesOK, error) {
@@ -17504,7 +17440,7 @@ func (c *Client) sendListStacks(ctx context.Context) (res *ListStacksOK, err err
 
 // ListUserGroups invokes listUserGroups operation.
 //
-// Every user group, sorted by name (Q27, doc 03 §7).
+// Every user group, sorted by name.
 //
 // GET /user-groups
 func (c *Client) ListUserGroups(ctx context.Context) (*ListUserGroupsOK, error) {
@@ -17629,7 +17565,7 @@ func (c *Client) sendListUserGroups(ctx context.Context) (res *ListUserGroupsOK,
 
 // ListUsers invokes listUsers operation.
 //
-// Every account, sorted by username (Q27, doc 03 §7).
+// Every account, sorted by username.
 //
 // GET /users
 func (c *Client) ListUsers(ctx context.Context) (*ListUsersOK, error) {
@@ -17754,10 +17690,9 @@ func (c *Client) sendListUsers(ctx context.Context) (res *ListUsersOK, err error
 
 // ListWakeEvents invokes listWakeEvents operation.
 //
-// Reads persisted spin-state transitions from the central database only — never probes block devices
-// (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped
-// by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how
-// often it woke.
+// Reads persisted spin-state transitions from the central database only — never probes block
+// devices. Returns every recorded transition plus per-device wake counts grouped by UTC day so the
+// wake-events page can show when each disk woke, how long it stayed awake, and how often it woke.
 //
 // GET /disks/wake-events
 func (c *Client) ListWakeEvents(ctx context.Context) (*WakeEventsResponse, error) {
@@ -17882,17 +17817,16 @@ func (c *Client) sendListWakeEvents(ctx context.Context) (res *WakeEventsRespons
 
 // Login invokes login operation.
 //
-// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
-// than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc
-// 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an
-// unknown username and a wrong password against a real one get the same status and error code
-// (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the
-// same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a
-// sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry
-// cap, an unknown username's lockout can lift early, where a real account's own (never capped or
-// evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus
-// `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable,
-// rate-limited signal, not one this API tries to hide.
+// Username is matched case-insensitively, using simple lowercasing rather than full Unicode case
+// folding. Password, plus a TOTP code once the account has TOTP enrolled. Rate-limited and
+// lockout-protected per account and per source address: an unknown username and a wrong password
+// against a real one get the same status and error code (`invalid_credentials`), reach lockout
+// (`rate_limited`) at the same failure threshold, and cost the same bounded argon2id-shaped work
+// either way, for similar timing, under ordinary load — under a sustained flood large enough to fill
+// and evict from the unknown-username table's own 10,000-entry cap, an unknown username's lockout can
+// lift early, where a real account's own (never capped or evicted) would not. Once the password is
+// correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an
+// account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
 //
 // POST /auth/login
 func (c *Client) Login(ctx context.Context, request *LoginRequest) (*UserHeaders, error) {
@@ -18100,8 +18034,8 @@ func (c *Client) sendLogout(ctx context.Context) (res *LogoutNoContent, err erro
 
 // MarkNotificationsRead invokes markNotificationsRead operation.
 //
-// Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's
-// mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+// Marks every alert whose id is listed, or every alert when `all` is true (mark all as read). Omitted
+// ids with `all` false is a no-op that returns the current unread count.
 //
 // POST /notifications/read
 func (c *Client) MarkNotificationsRead(ctx context.Context, request *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error) {
@@ -18229,9 +18163,9 @@ func (c *Client) sendMarkNotificationsRead(ctx context.Context, request *MarkNot
 
 // MountExternalDisk invokes mountExternalDisk operation.
 //
-// Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically
-// on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick
-// (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
+// Mounts the disk by filesystem UUID at `/mnt/disks/<label>`. Nothing mounts automatically on plug-in.
+// The boot device and array disks are refused, and so is the Unraid USB stick (`unraid_stick`, 409):
+// it is only ever mounted read-only, by the migration scan.
 //
 // POST /disks/external/{label}/mount
 func (c *Client) MountExternalDisk(ctx context.Context, params MountExternalDiskParams) (*ExternalDisk, error) {
@@ -18378,12 +18312,12 @@ func (c *Client) sendMountExternalDisk(ctx context.Context, params MountExternal
 
 // PlanDiskAdd invokes planDiskAdd operation.
 //
-// Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or
-// serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`)
-// and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity
-// disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the
-// array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data
-// set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+// Computes the add plan: the target disk's own identity (model, WWN or serial, size, its existing
+// filesystem if any), its assigned mountpoint and the exact typed confirmation `addDisk` requires.
+// Refuses a disk that would leave a parity disk smaller than the array's largest data disk, and a
+// device already identified as one of the array's own members by WWN or serial, applying the same
+// validation array setup runs over the resulting data set. Read-only: nothing is formatted or
+// persisted.
 //
 // POST /disks/array/add/plan
 func (c *Client) PlanDiskAdd(ctx context.Context, request *AddDiskPlanRequest) (*AddDiskPlan, error) {
@@ -18511,28 +18445,26 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 
 // PlanDiskEvacuation invokes planDiskEvacuation operation.
 //
-// Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically
-// a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from
-// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
-// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
-// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
-// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
-// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
-// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
-// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
-// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
-// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
-// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
-// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
-// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
+// Computes the evacuation plan for the data disk at `mountpoint` (mechanically a rebalance targeting
+// one specific source disk): every file an evacuation would move from that disk onto the pool's
+// remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk`
+// requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto,
+// when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket
+// or device node), when the remaining disks do not have room even after each one's own minimum free
+// space is kept, or when the disk holds any top-level entry that is neither a configured share's own
+// branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — there is no
+// procedure for moving such content, so evacuation refuses to start rather than leave it behind
+// unreported; that refusal's own 400 body, `EvacuationPlanRefusal`, names every offending path in
+// `nonSharePaths`. Read-only: nothing is copied, synced or deleted, and this preview does not itself
+// put the disk into its `removing`/no-create state — `evacuateDisk`'s own job does that, before its
+// first copy, so the disk keeps taking new writes only until that job starts, never for as long as it
+// runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 // `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
 // already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed
-// or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09
-// §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the
-// threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this
-// preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not
-// performed by either.
+// or repeated evacuation. No other disk in removal is ever a target. Evacuation moves the disk's own
+// already-present files off it, protected through the threshold guard. The no-create switch is applied
+// by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal
+// and unmount are not performed by either.
 //
 // POST /disks/array/evacuate/plan
 func (c *Client) PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (PlanDiskEvacuationRes, error) {
@@ -18660,18 +18592,17 @@ func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDi
 
 // PlanDiskReplace invokes planDiskReplace operation.
 //
-// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
-// (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that
-// reconstructs the slot's contents after it is formatted, and the exact typed confirmation
-// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
-// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
-// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
+// Computes the replace plan: the replacement's own identity (model, WWN or serial, size, its existing
+// filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is
+// formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`)
+// unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a
+// fresh disk inventory by identity (a healthy disk goes through the upgrade flow instead) — and a
 // replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
 // (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the
 // replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the
 // slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot
-// — replace abandons the removal and rebuilds the disk's recorded files from parity (#384).
-// Read-only: nothing is formatted or persisted.
+// — replace abandons the removal and rebuilds the disk's recorded files from parity. Read-only:
+// nothing is formatted or persisted.
 //
 // POST /disks/array/replace/plan
 func (c *Client) PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error) {
@@ -18799,18 +18730,16 @@ func (c *Client) sendPlanDiskReplace(ctx context.Context, request *ReplaceDiskPl
 
 // PlanDiskUpgrade invokes planDiskUpgrade operation.
 //
-// Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing
-// array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or
-// serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade
-// runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed
-// confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that
-// would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same
-// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
-// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
-// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
-// disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any
-// `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or
-// persisted.
+// Computes the upgrade plan for the existing array slot at `mountpoint`, whichever role it holds: the
+// replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the
+// copy/verify/remount steps a data-disk upgrade runs or the copy/verify/switch/check steps a
+// parity-disk upgrade runs, and the exact typed confirmation `upgradeDisk` requires. For a data disk,
+// refuses (`invalid_plan`) a replacement that would leave a parity disk smaller than it — offering
+// the parity upgrade flow first — and any of `planDiskReplace`'s own checks. For a parity disk,
+// `newMountpoint` is the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and
+// verified at independently of the old one — never the old disk's own mountpoint. Refuses
+// (`disk_leaving_array`, 409) a data disk in removal (any `removalState`): the new disk would inherit
+// that state. Read-only: nothing is formatted or persisted.
 //
 // POST /disks/array/upgrade/plan
 func (c *Client) PlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (*DiskUpgradePlan, error) {
@@ -18938,12 +18867,11 @@ func (c *Client) sendPlanDiskUpgrade(ctx context.Context, request *DiskUpgradePl
 
 // PlanRebalance invokes planRebalance operation.
 //
-// Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files
-// `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to
-// bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed
-// confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of
-// every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is
-// copied, synced or deleted.
+// Computes the rebalance plan: for every share with at least two branches, the files a rebalance would
+// move from that share's own most-full disk to its own least-full disk to bring them within the skew
+// tolerance, plus any path-preserving warnings, and the exact typed confirmation `startRebalance`
+// requires. A data disk in removal (any `removalState`) is left out of every share's branches: the
+// plan neither moves a file off it nor onto it. Read-only: nothing is copied, synced or deleted.
 //
 // POST /pool/rebalance/plan
 func (c *Client) PlanRebalance(ctx context.Context) (*RebalancePlan, error) {
@@ -19550,10 +19478,10 @@ func (c *Client) sendPreviewTemplateInstall(ctx context.Context, request *Templa
 // PutRegistryCredential invokes putRegistryCredential operation.
 //
 // Saves the username and password the update check logs in to this registry with, replacing any it
-// already has, sealed under the machine key (Q28). The password is write-only: no operation returns it
-// and it is never logged. The credential is sent only to this registry's own host (and, for Docker
-// Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another
-// host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
+// already has, sealed under the machine key. The password is write-only: no operation returns it and
+// it is never logged. The credential is sent only to this registry's own host (and, for Docker Hub,
+// its token service `auth.docker.io`), only over https, and never follows a redirect to another host
+// or scheme; a registry whose address would send it in plain HTTP, or whose token service is on
 // another host, is not logged in to and its images are reported `failed`. It is carried in a config
 // archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the
 // credential is cleared and the restore report names it. A host that is not a registry host name, or
@@ -19704,8 +19632,8 @@ func (c *Client) sendPutRegistryCredential(ctx context.Context, request *PutRegi
 
 // RebootHost invokes rebootHost operation.
 //
-// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
-// then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+// Waits for any running Parity, Array-write or Topology job, runs the clean shutdown sequence, then
+// reboots. Hoserva never reboots on its own — this is always the user's action.
 //
 // POST /settings/updates/reboot
 func (c *Client) RebootHost(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error) {
@@ -19985,20 +19913,20 @@ func (c *Client) sendRecreateApp(ctx context.Context, params RecreateAppParams) 
 
 // RefreshCatalog invokes refreshCatalog operation.
 //
-// Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65)
-// and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is
-// off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive
-// replaces the installed catalog only if its signature verifies against the compiled-in catalog key
-// and its serial is strictly higher (`updated`, with the number of new and of updated templates,
-// compared by id and revision against the catalog it replaced). Any other outcome keeps the installed
-// catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification
-// (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and
-// a network failure does not. A check that fails is still a completed check, answered 200. Calls made
-// while a check is running share that check's request and result. A signature that does not verify
-// makes the check fetch the archive and its signature once more before it reports `bad_signature`,
-// because the two files are cached separately and can briefly disagree while a catalog is being
-// published. Every finished check, whoever started it, is announced as a `catalog` event on
-// `/api/v1/events`. Nothing is fetched from `api.github.com`.
+// Runs one conditional request for the latest signed catalog from the catalog host and returns how it
+// ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged
+// catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed
+// catalog only if its signature verifies against the compiled-in catalog key and its serial is
+// strictly higher (`updated`, with the number of new and of updated templates, compared by id and
+// revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched
+// and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`,
+// `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure
+// does not. A check that fails is still a completed check, answered 200. Calls made while a check is
+// running share that check's request and result. A signature that does not verify makes the check
+// fetch the archive and its signature once more before it reports `bad_signature`, because the two
+// files are cached separately and can briefly disagree while a catalog is being published. Every
+// finished check, whoever started it, is announced as a `catalog` event on `/api/v1/events`. Nothing
+// is fetched from `api.github.com`.
 //
 // POST /catalog/refresh
 func (c *Client) RefreshCatalog(ctx context.Context) (*CatalogRefresh, error) {
@@ -20274,7 +20202,7 @@ func (c *Client) sendRefreshCatalogSource(ctx context.Context, params RefreshCat
 
 // RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 //
-// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
+// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate and
 // hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
 // unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
 // setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
@@ -20402,7 +20330,7 @@ func (c *Client) sendRegenerateTLSCertificate(ctx context.Context) (res *Network
 
 // RegisterExternalDisk invokes registerExternalDisk operation.
 //
-// Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as
+// Assigns a non-array, non-boot disk the Ignore/external role with a label used as
 // `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB
 // stick (`unraid_stick`, 409).
 //
@@ -21039,18 +20967,17 @@ func (c *Client) sendRemoveStack(ctx context.Context, params RemoveStackParams) 
 
 // ReplaceDisk invokes replaceDisk operation.
 //
-// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
-// mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the
-// mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix`
-// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
-// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
-// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-// or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already
-// `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is
-// genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk
-// rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The
-// confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
-// missing one is refused with `confirmation_required` and formats nothing.
+// Queues a Topology job that formats or adopts the replacement at the same mountpoint, regenerates
+// mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed
+// by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from
+// parity and the remaining disks. Identity is re-checked at format time and the boot disk is always
+// refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk
+// is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot still
+// `evacuating` or already `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the
+// slot's own disk is genuinely missing: the job clears the removal state as part of adopting the
+// replacement, so the disk rejoins the array as an ordinary member and its recorded files rebuild from
+// parity. The confirmation must be the exact string the matching `planDiskReplace` call returned; a
+// wrong or missing one is refused with `confirmation_required` and formats nothing.
 //
 // POST /disks/array/replace
 func (c *Client) ReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (*Job, error) {
@@ -21178,8 +21105,8 @@ func (c *Client) sendReplaceDisk(ctx context.Context, request *ReplaceDiskReques
 
 // ResetUserPassword invokes resetUserPassword operation.
 //
-// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
-// `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+// Root-only over the Unix socket. Checked against the peer's uid 0 specifically — the `hoserva`
+// group and TCP are refused. Audit-logged and announced through every notification channel.
 //
 // POST /users/{username}/reset-password
 func (c *Client) ResetUserPassword(ctx context.Context, request *ResetUserPasswordRequest, params ResetUserPasswordParams) error {
@@ -21609,13 +21536,13 @@ func (c *Client) sendRestoreAppdata(ctx context.Context, request *RestoreAppdata
 // ResumeJob invokes resumeJob operation.
 //
 // Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
-// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
-// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
-// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
+// upgrade) persist a checkpoint to resume from. Jobs are never resumed automatically after a restart
+// — this operation is always an explicit user action. A data-disk upgrade resumes only in
+// maintenance mode; one resumed at its releasing checkpoint is not cancellable. Refused with
+// `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
 // `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a
 // moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery
-// hold is active (doc 02 §6, Q77).
+// hold is active.
 //
 // POST /jobs/{jobId}/resume
 func (c *Client) ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error) {
@@ -22205,9 +22132,9 @@ func (c *Client) sendRevokeSession(ctx context.Context, params RevokeSessionPara
 // RollbackUpdate invokes rollbackUpdate operation.
 //
 // Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
-// snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is
-// previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running;
-// the error names that job.
+// snapshot, and installs the previous package. There are no down migrations — rollback is previous
+// package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error
+// names that job.
 //
 // POST /settings/updates/rollback
 func (c *Client) RollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error) {
@@ -22470,8 +22397,8 @@ func (c *Client) sendRunConfigBackup(ctx context.Context) (res *Job, err error) 
 // RunDoctor invokes runDoctor operation.
 //
 // Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
-// (`hoserva doctor`, doc 01 §3), plus existing host configuration (Samba shares, NFS exports, fstab
-// mounts, Docker containers and images) for onboarding (Q76).
+// (`hoserva doctor`), plus existing host configuration (Samba shares, NFS exports, fstab mounts,
+// Docker containers and images) for onboarding.
 //
 // GET /doctor
 func (c *Client) RunDoctor(ctx context.Context) (*DoctorReport, error) {
@@ -22596,9 +22523,8 @@ func (c *Client) sendRunDoctor(ctx context.Context) (res *DoctorReport, err erro
 
 // RunParityDiff invokes runParityDiff operation.
 //
-// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
-// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
-// polled on a timer.
+// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk.
+// Returns grouped changes and threshold-guard evaluation for the parity page; never polled on a timer.
 //
 // POST /parity/diff
 func (c *Client) RunParityDiff(ctx context.Context) (*ParityDiffResult, error) {
@@ -22725,11 +22651,10 @@ func (c *Client) sendRunParityDiff(ctx context.Context) (res *ParityDiffResult, 
 //
 // Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
 // the channel's own configuration, not a routed event, so it reports success or the delivery error
-// directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
-// notification config is the same as no notification config"). A test that succeeds is also recorded
-// for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is
-// enabled and its latest successful test ran in a later second than the one the channel last changed
-// in; a test that fails is not recorded.
+// directly rather than being retried and logged like a routed notification. A test that succeeds is
+// also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only
+// while it is enabled and its latest successful test ran in a later second than the one the channel
+// last changed in; a test that fails is not recorded.
 //
 // POST /notifications/channels/{channelId}/test
 func (c *Client) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error) {
@@ -23316,11 +23241,11 @@ func (c *Client) sendSetUserGroupMembers(ctx context.Context, request *SetUserGr
 
 // SetUserPassword invokes setUserPassword operation.
 //
-// Writes the UI credential hash and the Samba passdb entry together (Q27, doc 03 §7): if the Samba
-// write fails, the UI credential is rolled back to its previous value, and nothing is left updated on
-// only one side. This is the ordinary admin-driven password action on `/users` — distinct from
-// resetUserPassword (Q78), which is root-only recovery for a locked-out account over the Unix socket
-// and never touches the Samba passdb.
+// Writes the UI credential hash and the Samba passdb entry together: if the Samba write fails, the UI
+// credential is rolled back to its previous value, and nothing is left updated on only one side. This
+// is the ordinary admin-driven password action on `/users` — distinct from resetUserPassword, which
+// is root-only recovery for a locked-out account over the Unix socket and never touches the Samba
+// passdb.
 //
 // POST /users/{userId}/password
 func (c *Client) SetUserPassword(ctx context.Context, request *SetUserPasswordRequest, params SetUserPasswordParams) error {
@@ -23889,15 +23814,14 @@ func (c *Client) sendStartAppdataBackup(ctx context.Context, request OptStartApp
 
 // StartArray invokes startArray operation.
 //
-// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
-// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
-// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
-// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with
-// `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at
-// any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted.
+// Reverses `stopArray` (`hoserva array start`): mount disks, the catch-all and share paths, then start
+// services in the reverse of stop order, and exit maintenance mode only once every step succeeds.
+// Refused with `storage_not_ready` when the storage gate is not ready — nothing is mounted. Also
+// refused with `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or
+// interrupted at any checkpoint; the error names the job to resume or cancel, and nothing is mounted.
 // Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any
-// service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted
-// again and maintenance mode stays on.
+// service starts; otherwise it is refused with `array_disk_mismatch`, the disks are unmounted again
+// and maintenance mode stays on.
 //
 // POST /array/start
 func (c *Client) StartArray(ctx context.Context) (*SystemStatus, error) {
@@ -24022,22 +23946,21 @@ func (c *Client) sendStartArray(ctx context.Context) (res *SystemStatus, err err
 
 // StartFix invokes startFix operation.
 //
-// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
-// parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file
-// changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2).
-// Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under
-// `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for,
-// with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error
-// gives the number of unrecoverable blocks and names the partial copies it left as
-// `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log
-// names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID
-// can only rebuild what parity held at the last sync, and no more failed blocks than parity covers.
-// With `path`, the error names the file and, when the log names the partial copy, gives one example
-// cause: another file that shares its parity positions changed after the last sync. Any other non-zero
-// exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to
-// do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after
-// the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job
-// reports that nothing was restored.
+// Queues a fix job (`hoserva fix`). Requires `confirm: true` — fix rewrites data from parity.
+// Without `path` the fix covers the whole array, or the one `disk`, and brings back every file changed
+// or deleted since the last sync; with `path` it restores only that one file. Refused with 400
+// `invalid_fix_path` before a job is queued when `path` is not one file under `/mnt/user` or is sent
+// together with `disk`. A fix that SnapRAID reports unrecoverable blocks for, with or without `path`,
+// ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error gives the number of
+// unrecoverable blocks and names the partial copies it left as `<name>.unrecoverable` on their disks,
+// or says SnapRAID leaves them beside the file when its log names none; files it did recover stay
+// restored. Without `path`, the error also says that SnapRAID can only rebuild what parity held at the
+// last sync, and no more failed blocks than parity covers. With `path`, the error names the file and,
+// when the log names the partial copy, gives one example cause: another file that shares its parity
+// positions changed after the last sync. Any other non-zero exit fails the job too. A fix with `path`
+// also ends `failed` when SnapRAID exits 0 with "Nothing to do": the path matched nothing in parity
+// (misspelt, the wrong case, a directory, a file made after the last sync, a file only on the cache)
+// or the file is intact and needs no restoring, and the job reports that nothing was restored.
 //
 // POST /parity/fix
 func (c *Client) StartFix(ctx context.Context, request *StartFixRequest) (*Job, error) {
@@ -24165,7 +24088,7 @@ func (c *Client) sendStartFix(ctx context.Context, request *StartFixRequest) (re
 
 // StartMigrationContainer invokes startMigrationContainer operation.
 //
-// Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack
+// Step 20 of the migration: queues the `stack_start` job (`startStack`) for a stack
 // `createMigrationStacks` created, and records that it was started: the start is recorded before the
 // job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and
 // whose job is then not recorded leaves the stack recorded as started with no job. Containers are
@@ -24324,21 +24247,21 @@ func (c *Client) sendStartMigrationContainer(ctx context.Context, params StartMi
 
 // StartMigrationDeviceScan invokes startMigrationDeviceScan operation.
 //
-// The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB
-// stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the
-// `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private
-// mountpoint under the daemon's state directory for the one read made here before anything is queued
-// and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing
-// is copied from it. The stick is the user's rollback. Refused before anything is queued: 400
+// Instead of the Flash Backup zip, reads Unraid's configuration from the USB stick, attached to this
+// machine, and queues a `migration_scan` job. `device` must be one of the `flashDevices`
+// `getMigration` offers. The stick is mounted read-only (never read-write) at a private mountpoint
+// under the daemon's state directory for the one read made here before anything is queued and for the
+// job's own read, and is unmounted after each; nothing is ever written to it and nothing is copied
+// from it. The stick is the user's rollback. Refused before anything is queued: 400
 // `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot
 // disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the
 // session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot
 // pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not
 // be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no
-// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless
-// `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when
-// this daemon has no migration service or cannot read a flash device. The result is the report the
-// same flash's zip gives.
+// usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, unless `unverifiedLayout` is
+// true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no
+// migration service or cannot read a flash device. The result is the report the same flash's zip
+// gives.
 //
 // POST /migrate/scan/device
 func (c *Client) StartMigrationDeviceScan(ctx context.Context, request *StartMigrationDeviceScanReq) (*Job, error) {
@@ -24466,42 +24389,42 @@ func (c *Client) sendStartMigrationDeviceScan(ctx context.Context, request *Star
 
 // StartMigrationImport invokes startMigrationImport operation.
 //
-// Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class)
-// that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without
-// writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID
-// another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay`
-// (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact.
-// The former parity and cache disks are recorded by identity and are neither formatted, mounted nor
-// opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity
-// engine exists and no sync can run. While the import is pending (`getMigration` `phase` is
-// `imported`), parity, array-write and topology jobs other than this one's own retry are refused with
-// 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code.
-// `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk,
-// keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture
-// names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by
-// that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with
-// 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan
-// listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB
-// stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever
-// filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity
-// disk is never parity (Q21); the disk this machine boots from is never parity or data and is the
-// cache only by a spare partition of it; parity is one or two disks, each at least as large as the
-// largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID
-// is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the
-// point of no return, which is the same check that step makes: Q18's content-file copies (the parity
-// disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache
-// that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that
-// falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data
-// disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused
-// with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm`
-// is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the
-// latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for
-// a report made before the disk table existed, 409 `array_exists` when the array is not a pending
-// import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its
-// read-only filesystem check immediately before mounting; a disk that changed since the request, or
-// now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what
-// was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded
-// import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+// Phase C of the migration: queues a `migration_import` job (topology class) that adopts the Unraid
+// data disks into the pool at `/mnt/user` without formatting them and without writing a byte to them.
+// Each data disk is mounted by its own device, never by a filesystem UUID another disk may share, with
+// `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay` (btrfs), and the catch-all pool
+// over them is read-only, with the share directory structure intact. The former parity and cache disks
+// are recorded by identity and are neither formatted, mounted nor opened: formatting them is the point
+// of no return. No `snapraid.conf` is generated, so no parity engine exists and no sync can run. While
+// the import is pending (`getMigration` `phase` is `imported`), parity, array-write and topology jobs
+// other than this one's own retry are refused with 409 `migration_in_progress`, a scan included, and
+// `forgetMigration` is refused with the same code. `roles` is the disk-role mapping the user confirmed
+// against the serial table, one entry per disk, keyed by `serial` or `wwn`; the `review` of
+// `getMigration` proposes a role for each disk the capture names. A cache on a spare partition of the
+// boot disk (`listDisks` `cachePartitions`) is keyed by that partition's `byId` and `partUuid`
+// instead, with no serial or WWN. The mapping is refused with 400 `invalid_import_roles`, before
+// anything is queued, unless every role names a disk the scan listed and this machine still has; a
+// disk the scan refused, an Unraid boot device or the Unraid USB stick has no role but `ignore`; a
+// disk `disks.ini` records as parity is never `data`, whatever filesystem it reports, and a disk it
+// records as data is never `parity` or `cache`; a weak-identity disk is never parity; the disk this
+// machine boots from is never parity or data and is the cache only by a spare partition of it; parity
+// is one or two disks, each at least as large as the largest data disk; and every data disk has a
+// filesystem Hoserva adopts whose UUID is not another data disk's; and the layout must be one
+// `snapraid.conf` can be rendered for at the point of no return, which is the same check that step
+// makes: the content-file copies (the parity disks + 2, on distinct devices) need the boot device, a
+// cache that is a device of its own (a cache that is a partition of the boot disk is the boot device's
+// copy) and enough data disks. A layout that falls short is refused with 400 `invalid_import_roles`,
+// naming the shortfall and what to add (a data disk or a cache device), never left to fail at step 17.
+// The Unraid USB stick in any role is refused with 409 `unraid_stick`. Also refused before queueing:
+// 409 `confirmation_required` unless `confirm` is true, 404 `no_migration_report` before a scan, 409
+// `scan_not_finished` while a scan runs or the latest one failed, 409 `migration_no_go` when the
+// report's verdict is no-go, 409 `scan_outdated` for a report made before the disk table existed, 409
+// `array_exists` when the array is not a pending import's, and 501 `not_configured`. The job reads
+// every data disk's identity again and re-runs its read-only filesystem check immediately before
+// mounting; a disk that changed since the request, or now fails, is refused and nothing is mounted. A
+// failure after the array is recorded unmounts what was mounted, deletes the record and leaves no
+// pool; a retry of the same mapping applies a recorded import again. Nothing is read from the Unraid
+// flash: the import uses the report the scan stored.
 //
 // With `undo` true the request takes back an import that is pending its point of no return instead
 // (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a
@@ -24513,25 +24436,25 @@ func (c *Client) sendStartMigrationDeviceScan(ctx context.Context, request *Star
 // (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's
 // report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused,
 // and the disks can be imported again with a mapping that works. It is the way out of an import whose
-// layout the point of no return would refuse (Q18). Refused before anything is queued with 409
+// layout the point of no return would refuse. Refused before anything is queued with 409
 // `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given,
 // and 409 `no_import_pending` unless an import is pending its point of no return: an array that has
 // been through it is never touched. Without `undo`, `roles` is required and an empty one is refused
 // with 400 `invalid_import_roles`.
 //
-// Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and
-// 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its
-// allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as
-// `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no
-// return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read
-// and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of,
-// such as High-water allocation or a split level, is in `migration.notes`. The shares are exported
-// read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces,
-// for instance) is reported in the job's log with the reason and never renamed, and the scan's report
-// flags it. Each account is created share-only without a password: passwords are never read from the
-// flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is
-// all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or
-// account that already exists is left as it is.
+// Once the disks are adopted the job seeds the scan's shares and accounts, and writes nothing to an
+// adopted disk to do it. Each share the scan kept is created, its allocation method mapped to a create
+// policy, its Unraid cache setting recorded as `migration.targetCacheMode` while the share is
+// array-only (no cache exists before the point of no return), its floor as `minFreeSpace`, its export
+// and security settings as SMB settings and its read and write lists as per-user access for the
+// imported accounts; what Hoserva has no equivalent of, such as High-water allocation or a split
+// level, is in `migration.notes`. The shares are exported read-only over SMB while the import is
+// pending. A share whose name Hoserva does not accept (spaces, for instance) is reported in the job's
+// log with the reason and never renamed, and the scan's report flags it. Each account is created
+// share-only without a password: passwords are never read from the flash, and each one is set by the
+// user with `setUserPassword` (the job's log lists them). The job is all-or-nothing: a share or
+// account that cannot be created undoes the adoption too. A share or account that already exists is
+// left as it is.
 //
 // POST /migrate/import
 func (c *Client) StartMigrationImport(ctx context.Context, request *MigrationImportRequest) (*Job, error) {
@@ -24659,27 +24582,27 @@ func (c *Client) sendStartMigrationImport(ctx context.Context, request *Migratio
 
 // StartMigrationScan invokes startMigrationScan operation.
 //
-// Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so
-// no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root
-// only, as the session's source; it is never modified and never extracted: entries are read in memory.
-// A scan replaces the previous session's report and zip once it finishes. Refused before anything is
-// queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry
-// path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB,
-// refused as soon as the request body, which is the zip and its multipart framing, passes that size
-// plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout`
-// (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24,
-// unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409
-// `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`),
-// and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides
-// only the layout refusal; the override is recorded in the report and printed at its top. The scan
-// reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also
-// reads every data disk the capture records, through a read-only mount at a private mountpoint under
-// the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem
-// check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by
-// name in the report and the scan goes on with the rest. Each data disk's files are listed and a
-// sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every
-// file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it
-// succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
+// Takes the Flash Backup zip and queues a `migration_scan` job (topology class, so no storage job runs
+// beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's
+// source; it is never modified and never extracted: entries are read in memory. A scan replaces the
+// previous session's report and zip once it finishes. Refused before anything is queued, with nothing
+// kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or
+// starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as
+// the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400
+// `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version
+// other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, unless `unverifiedLayout` is
+// true). 409 `scan_in_progress` while a scan runs, 409 `migration_in_progress` while an import is
+// pending its point of no return (`startMigrationImport`), and 501 `not_configured` when this daemon
+// has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is
+// recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories
+// and SMART without waking a disk in standby. It also reads every data disk the capture records,
+// through a read-only mount at a private mountpoint under the daemon's state directory (XFS without
+// replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a
+// ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on
+// with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify
+// phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and
+// no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job
+// reports its progress and can be cancelled.
 //
 // POST /migrate/scan
 func (c *Client) StartMigrationScan(ctx context.Context, request *StartMigrationScanReq) (*Job, error) {
@@ -24807,22 +24730,22 @@ func (c *Client) sendStartMigrationScan(ctx context.Context, request *StartMigra
 
 // StartMigrationVerify invokes startMigrationVerify operation.
 //
-// Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a
-// `migration_verify` job (topology class, read-only, and admitted while the import is pending) that
-// walks every adopted data disk through its read-only mount and every share through the read-only pool
-// at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it
-// compares the file, symlink and special-file counts, the total bytes, every file's size, every
-// symlink's target and every special file's type, and it hashes again exactly the files the baseline
-// hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are
-// the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first
-// disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or
-// directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the
-// result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A
-// disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is
-// written to a source disk. The result is in `getMigration`; the job reports its progress and can be
-// cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending`
-// unless an import is pending its point of no return (`startMigrationImport`), 409
-// `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+// Step 16 of the migration, the last checkpoint before parity is touched: queues a `migration_verify`
+// job (topology class, read-only, and admitted while the import is pending) that walks every adopted
+// data disk through its read-only mount and every share through the read-only pool at `/mnt/user`, and
+// compares what it finds with the scan's baseline. For each disk and each share it compares the file,
+// symlink and special-file counts, the total bytes, every file's size, every symlink's target and
+// every special file's type, and it hashes again exactly the files the baseline hashed
+// (`fullChecksums` of the scan decides how many that is). The expected figures of a share are the
+// union of the disks' baselines: a path two disks hold is shown once by the pool, from the first disk,
+// and is listed in `duplicates`, never as missing or extra. Any difference, and any file or directory
+// that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the result in
+// `verify`; a verify can be run again, and a run clears the earlier result when it starts. A disk or
+// the pool that the kernel's mount table does not show read-only is not read. Nothing is written to a
+// source disk. The result is in `getMigration`; the job reports its progress and can be cancelled,
+// which leaves a failed result. Refused before anything is queued: 409 `no_import_pending` unless an
+// import is pending its point of no return (`startMigrationImport`), 409 `no_migration_baseline` when
+// the scan recorded no baseline, and 501 `not_configured`.
 //
 // POST /migrate/verify
 func (c *Client) StartMigrationVerify(ctx context.Context) (*Job, error) {
@@ -24947,10 +24870,9 @@ func (c *Client) sendStartMigrationVerify(ctx context.Context) (res *Job, err er
 
 // StartMover invokes startMover operation.
 //
-// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
-// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
-// until power returns.
+// Queues a mover job (`hoserva mover run`, the manual trigger) — the same mover job the cache-usage
+// threshold and the nightly chain submit; there is no second way to start the mover. Refused with 409
+// `on_battery` while the on-battery hold is active — the mover is paused until power returns.
 //
 // POST /mover/run
 func (c *Client) StartMover(ctx context.Context) (*Job, error) {
@@ -25077,12 +24999,12 @@ func (c *Client) sendStartMover(ctx context.Context) (res *Job, err error) {
 //
 // Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit
 // or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the
-// exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job
-// that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the
-// threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run
-// makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan
-// leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation
-// is refused (`confirmation_required`) before anything runs.
+// exact phrase the matching `planRebalance` call returned, queues a resumable rebalance job that runs
+// that plan unchanged: copy and verify every batch, sync through the threshold guard, delete the
+// batch's sources, sync again, batched so no trailing sync this run makes can ever trip the guard
+// after sources are already gone. The recomputed plan leaves out a data disk in removal the same way
+// `planRebalance` does. A wrong or missing confirmation is refused (`confirmation_required`) before
+// anything runs.
 //
 // POST /pool/rebalance
 func (c *Client) StartRebalance(ctx context.Context, request *StartRebalanceRequest) (*Job, error) {
@@ -25342,8 +25264,8 @@ func (c *Client) sendStartRestoreDrill(ctx context.Context) (res *Job, err error
 
 // StartScrub invokes startScrub operation.
 //
-// Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days;
-// `allBlocks` scrubs every block.
+// Queues a scrub job (`hoserva scrub`). By default it skips blocks newer than 10 days; `allBlocks`
+// scrubs every block.
 //
 // POST /parity/scrub
 func (c *Client) StartScrub(ctx context.Context, request *StartScrubRequest) (*Job, error) {
@@ -25471,14 +25393,14 @@ func (c *Client) sendStartScrub(ctx context.Context, request *StartScrubRequest)
 
 // StartShareRelocation invokes startShareRelocation operation.
 //
-// Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09
-// §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
-// mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
-// copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
-// There is no second relocation-invocation path. A relocation in either direction needs the array's
-// cache disk, so it is refused with 409 `no_cache_disk` before any job is queued while the array has
-// no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology
-// fails the request rather than assuming a cache.
+// Queues a `share_relocation` job moving name's files between its cache path and the array —
+// `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to
+// this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync-
+// delete-sync order, through the same threshold guard every other sync goes through. There is no
+// second relocation-invocation path. A relocation in either direction needs the array's cache disk, so
+// it is refused with 409 `no_cache_disk` before any job is queued while the array has no cache disk,
+// and with 409 `no_array` while there is no array; a failure to read the array topology fails the
+// request rather than assuming a cache.
 //
 // POST /shares/{name}/relocate
 func (c *Client) StartShareRelocation(ctx context.Context, request *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error) {
@@ -25779,9 +25701,9 @@ func (c *Client) sendStartStack(ctx context.Context, params StartStackParams) (r
 
 // StartSync invokes startSync operation.
 //
-// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
-// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
+// Queues a sync job through the threshold guard. A non-dry-run sync past a tripped guard requires
+// `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the on-battery hold is
+// active — scheduled syncs are held until power returns.
 //
 // POST /parity/sync
 func (c *Client) StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error) {
@@ -26054,13 +25976,12 @@ func (c *Client) sendStopApp(ctx context.Context, params StopAppParams) (res *Ap
 
 // StopArray invokes stopArray operation.
 //
-// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt
-// non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share
-// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
-// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
-// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
-// is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending (doc 02 §4
-// E7): the array is already stopped for it, and nothing is stopped, signalled or unmounted.
+// Enters maintenance mode (`hoserva array stop`): refuse new jobs and interrupt non-resumable jobs,
+// shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all
+// and data disks — the same list the Stop array confirmation dialog shows. Parity is not written. A
+// failure leaves maintenance mode active so nothing new starts against a half-stopped array.
+// `confirm: true` is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is
+// pending: the array is already stopped for it, and nothing is stopped, signalled or unmounted.
 //
 // POST /array/stop
 func (c *Client) StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error) {
@@ -26188,9 +26109,9 @@ func (c *Client) sendStopArray(ctx context.Context, request *StopArrayRequest) (
 
 // TestBackupDestination invokes testBackupDestination operation.
 //
-// Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup
-// destination is decoration). A destination that cannot be reached is a `200` with `success` false and
-// the reason; a missing rclone is a `424` `rclone_missing`.
+// Writes a small file to the destination, reads it back and deletes it. A destination that cannot be
+// reached is a `200` with `success` false and the reason; a missing rclone is a `424`
+// `rclone_missing`.
 //
 // POST /backup/destinations/{destinationId}/test
 func (c *Client) TestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (*BackupDestinationTestResult, error) {
@@ -26334,8 +26255,8 @@ func (c *Client) sendTestBackupDestination(ctx context.Context, params TestBacku
 
 // UnlockUser invokes unlockUser operation.
 //
-// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
-// checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+// Clears the account's login rate-limiter lockout. Root-only over the Unix socket, checked against the
+// peer's uid 0 specifically. Audit-logged like the other recovery commands.
 //
 // POST /users/{username}/unlock
 func (c *Client) UnlockUser(ctx context.Context, params UnlockUserParams) error {
@@ -27048,8 +26969,8 @@ func (c *Client) sendUpdateCatalogSettings(ctx context.Context, request *Catalog
 
 // UpdateExternalDisk invokes updateExternalDisk operation.
 //
-// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
-// Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
+// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination. Enabling it on
+// the Unraid USB stick is refused with `unraid_stick` (409).
 //
 // PATCH /disks/external/{label}
 func (c *Client) UpdateExternalDisk(ctx context.Context, request *UpdateExternalDiskRequest, params UpdateExternalDiskParams) (*ExternalDisk, error) {
@@ -27200,7 +27121,7 @@ func (c *Client) sendUpdateExternalDisk(ctx context.Context, request *UpdateExte
 //
 // Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves
 // that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is
-// write-only and never echoed back — skipping it during onboarding is valid (Q28).
+// write-only and never echoed back — skipping it during onboarding is valid.
 //
 // PUT /settings/general
 func (c *Client) UpdateGeneralSettings(ctx context.Context, request *UpdateGeneralSettingsRequest) (*GeneralSettings, error) {
@@ -27328,9 +27249,8 @@ func (c *Client) sendUpdateGeneralSettings(ctx context.Context, request *UpdateG
 
 // UpdateMaintenanceChainSchedule invokes updateMaintenanceChainSchedule operation.
 //
-// Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step
-// order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state
-// unchanged.
+// Persists the chain's start time, weekly scrub day and per-step enabled flags. Step order is fixed
+// and cannot be changed. Omitted step entries leave that step's enabled state unchanged.
 //
 // PUT /settings/schedules/chain
 func (c *Client) UpdateMaintenanceChainSchedule(ctx context.Context, request *UpdateMaintenanceChainScheduleRequest) (*Schedules, error) {
@@ -27461,7 +27381,7 @@ func (c *Client) sendUpdateMaintenanceChainSchedule(ctx context.Context, request
 // A full replace, like the request body of createNotificationChannel: every type-specific field the
 // request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing
 // credential, `null` clears it, a string replaces it — since this is the one field a response never
-// echoes back for a client to resend unchanged (Q28).
+// echoes back for a client to resend unchanged.
 //
 // PUT /notifications/channels/{channelId}
 func (c *Client) UpdateNotificationChannel(ctx context.Context, request *UpdateNotificationChannelRequest, params UpdateNotificationChannelParams) (*NotificationChannel, error) {
@@ -27610,7 +27530,7 @@ func (c *Client) sendUpdateNotificationChannel(ctx context.Context, request *Upd
 // A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds,
 // and the severity becomes exactly severity — including reverting to the compiled-in default when
 // the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for
-// `sync_succeeded`'s opt-in, off-by-default event (doc 03 §8.3).
+// `sync_succeeded`'s opt-in, off-by-default event.
 //
 // PUT /notifications/routing/{eventType}
 func (c *Client) UpdateNotificationRoute(ctx context.Context, request *UpdateNotificationRouteRequest, params UpdateNotificationRouteParams) (*NotificationRoutingEntry, error) {
@@ -27756,9 +27676,9 @@ func (c *Client) sendUpdateNotificationRoute(ctx context.Context, request *Updat
 
 // UpdateQuietHours invokes updateQuietHours operation.
 //
-// `criticalAlwaysDelivers` is not part of the request body: doc 03 §8.3's override that critical
-// alerts always deliver cannot be disabled, so there is nothing for a client to set — the response
-// always reports it `true`.
+// `criticalAlwaysDelivers` is not part of the request body: the override that makes critical alerts
+// always deliver cannot be disabled, so there is nothing for a client to set — the response always
+// reports it `true`.
 //
 // PUT /notifications/quiet-hours
 func (c *Client) UpdateQuietHours(ctx context.Context, request *UpdateQuietHoursRequest) (*NotificationQuietHours, error) {
@@ -27887,7 +27807,7 @@ func (c *Client) sendUpdateQuietHours(ctx context.Context, request *UpdateQuietH
 // UpdateScheduledJob invokes updateScheduledJob operation.
 //
 // Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly
-// chain (doc 03 §8.4).
+// chain.
 //
 // PUT /settings/schedules/jobs/{jobId}
 func (c *Client) UpdateScheduledJob(ctx context.Context, request *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error) {
@@ -28034,11 +27954,11 @@ func (c *Client) sendUpdateScheduledJob(ctx context.Context, request *UpdateSche
 // UpdateShare invokes updateShare operation.
 //
 // Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
-// `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
-// the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
-// filesystem. While an Unraid import is pending its point of no return it creates no directory on any
-// adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a
-// cache mode here replaces the one the import recorded as the share's target.
+// `smb.conf`. Does not relocate existing files. Refused with 409 `maintenance_mode` while the array is
+// stopped: update would mkdir and remount under bare disk mountpoints on the root filesystem. While an
+// Unraid import is pending its point of no return it creates no directory on any adopted disk, and a
+// cache mode that needs a cache is refused because none exists yet; choosing a cache mode here
+// replaces the one the import recorded as the share's target.
 //
 // PATCH /shares/{name}
 func (c *Client) UpdateShare(ctx context.Context, request *UpdateShareRequest, params UpdateShareParams) (*Share, error) {
@@ -28188,8 +28108,8 @@ func (c *Client) sendUpdateShare(ctx context.Context, request *UpdateShareReques
 // UpdateSharePermissions invokes updateSharePermissions operation.
 //
 // A full replace: this share's access is set to exactly the users and groups listed, and every user or
-// group previously granted an explicit level but missing from the request loses its row entirely (doc
-// 03 §7: "editable from either side" — this is the share-side editor).
+// group previously granted an explicit level but missing from the request loses its row entirely
+// (access is editable from either the share or the user; this is the share-side editor).
 //
 // PUT /shares/{name}/permissions
 func (c *Client) UpdateSharePermissions(ctx context.Context, request *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error) {
@@ -28682,11 +28602,10 @@ func (c *Client) sendUpdateStackConfig(ctx context.Context, request *UpdateStack
 
 // UpdateUPSSettings invokes updateUPSSettings operation.
 //
-// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
-// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
-// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
-// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
-// missing `nut` group return 409.
+// Persists UPS settings to SQLite, generates the NUT configuration, and reloads the NUT units.
+// Passwords are write-only: omit to keep an existing secret; a first configure must supply the
+// password the connection mode needs. USB-only thresholds are ignored for network mode. Validation
+// failures return 400; unmanaged or existing host NUT files and a missing `nut` group return 409.
 //
 // PUT /settings/ups
 func (c *Client) UpdateUPSSettings(ctx context.Context, request *UpdateUPSSettingsRequest) (*UPSSettings, error) {
@@ -28814,8 +28733,8 @@ func (c *Client) sendUpdateUPSSettings(ctx context.Context, request *UpdateUPSSe
 
 // UpdateUpdateSettings invokes updateUpdateSettings operation.
 //
-// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
-// Q67). Omitted fields are left unchanged.
+// Persists the update channel (stable / beta) and whether the outbound update check is enabled.
+// Omitted fields are left unchanged.
 //
 // PUT /settings/updates
 func (c *Client) UpdateUpdateSettings(ctx context.Context, request *UpdateUpdateSettingsRequest) (*UpdateStatus, error) {
@@ -28943,8 +28862,7 @@ func (c *Client) sendUpdateUpdateSettings(ctx context.Context, request *UpdateUp
 
 // UpdateUser invokes updateUser operation.
 //
-// Viewer or share-only only (Q27) — the sole admin account is never reachable through this
-// operation.
+// Viewer or share-only only — the sole admin account is never reachable through this operation.
 //
 // PATCH /users/{userId}
 func (c *Client) UpdateUser(ctx context.Context, request *UpdateUserRequest, params UpdateUserParams) (*UserSummary, error) {
@@ -29092,7 +29010,7 @@ func (c *Client) sendUpdateUser(ctx context.Context, request *UpdateUserRequest,
 //
 // A full replace: the account's access is set to exactly the shares and levels listed, and every share
 // this account previously had an explicit level for but that is missing from the request loses its row
-// entirely (doc 03 §7: "editable from either side" — this is the user-side editor).
+// entirely (access is editable from either the share or the user; this is the user-side editor).
 //
 // PUT /users/{userId}/permissions
 func (c *Client) UpdateUserSharePermissions(ctx context.Context, request *UpdateUserSharePermissionsRequest, params UpdateUserSharePermissionsParams) (*UserSharePermissionsResult, error) {
@@ -29239,19 +29157,19 @@ func (c *Client) sendUpdateUserSharePermissions(ctx context.Context, request *Up
 
 // UpgradeDisk invokes upgradeDisk operation.
 //
-// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
-// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
-// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data
-// disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk
-// upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed
-// (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+// Starts a resumable Topology job (a data-disk or a parity-disk upgrade, resolved from the slot's
+// role). The confirmation must be the exact string the matching `planDiskUpgrade` call returned; a
+// wrong or missing one is refused with `confirmation_required` and formats nothing. A data disk in
+// removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk upgrade
+// follows a fixed state machine: it is admitted only once `stopArray` has completed (otherwise
+// `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
 // `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
 // and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
 // show no removed or updated files, and only then names the new disk in SQLite; the array stays
 // stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with
 // `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte,
-// switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71).
-// The old disk is never written to or released until its verification gate passes.
+// switches the configuration and passes `snapraid check` before releasing the old parity disk. The old
+// disk is never written to or released until its verification gate passes.
 //
 // POST /disks/array/upgrade
 func (c *Client) UpgradeDisk(ctx context.Context, request *UpgradeDiskRequest) (*Job, error) {

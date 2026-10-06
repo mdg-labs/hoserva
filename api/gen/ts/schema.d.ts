@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List jobs
-         * @description Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs page and `hoserva logs` can scope what they render without walking the whole history.
+         * @description Every long-running operation is a job. Filterable by class and status so the UI's jobs page and `hoserva logs` can scope what they render without walking the whole history.
          */
         get: operations["listJobs"];
         put?: never;
@@ -59,7 +59,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel a job
-         * @description Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing. A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered with the running job and records its outcome once it has unmounted everything. A queued or interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same job is still repairing its log; retry in a moment.
+         * @description Only meaningful where the underlying tool supports cancellation; a job that cannot be cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing. A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a data-disk upgrade this is the abort: refused with `job_not_cancellable` once its checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered with the running job and records its outcome once it has unmounted everything. A queued or interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same job is still repairing its log; retry in a moment.
          */
         post: operations["cancelJob"];
         delete?: never;
@@ -81,7 +81,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a checkpointed job
-         * @description Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a restart — this operation is always an explicit user action. A data-disk upgrade resumes only in maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable. Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77).
+         * @description Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk upgrade) persist a checkpoint to resume from. Jobs are never resumed automatically after a restart — this operation is always an explicit user action. A data-disk upgrade resumes only in maintenance mode; one resumed at its releasing checkpoint is not cancellable. Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active.
          */
         post: operations["resumeJob"];
         delete?: never;
@@ -101,7 +101,7 @@ export interface paths {
         };
         /**
          * Download a job's captured stdout/stderr
-         * @description Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client decompressing on the fly prints every line at once), and ends when the job reaches a terminal state, when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a finished job is the same as omitting it.
+         * @description Kept for 90 days. With `follow` true on a job that has not finished, the response stays open and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client decompressing on the fly prints every line at once), and ends when the job reaches a terminal state, when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a finished job is the same as omitting it.
          */
         get: operations["getJobLog"];
         put?: never;
@@ -121,8 +121,8 @@ export interface paths {
         };
         /**
          * Stream live events
-         * @description Server-Sent Events for job progress, disk state changes, container state changes and new notifications (doc 01 §5). Every event type is a schema below (`Event`'s member types).
-         *     ogen generates only SSE *clients*, not a server-side encoder for `text/event-stream` (confirmed against ogen v1.24.0 — see Q63), so `make gen` excludes this one operation from the generated `apiv1` server interface and client (`ogen.yml`'s `ignore_not_implemented`). The `Event` schema and its variants are still generated code, though: `make gen` runs ogen's `jschemagen` against `api/event-schema-root.yaml` to produce typed Go structs in `api/gen/go/events`, plus a small generated SSE-frame reader alongside them, so a Go client reads this stream only through generated types (D18, doc 01 §5). The server-side write loop for this route — framing each `Event` over `text/event-stream` — is hand-written in `internal/api` (`EventsHandler`, issue #19), mounted beside the generated router rather than inside it, since ogen generates no security hook for a route it doesn't generate a server for either; it is gated by an `Authenticate` seam #22 wires to real session/token validation. The job system publishes `job_progress` events on every state and progress change; disk/container state and notifications arrive with the issues that add those subsystems.
+         * @description Server-Sent Events for job progress, disk state changes, container state changes and new notifications. Every event type is a schema in this reference, as a member type of `Event`.
+         *     The job system publishes `job_progress` events on every state and progress change.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -142,7 +142,7 @@ export interface paths {
         };
         /**
          * Check whether the first-run admin account exists
-         * @description Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are the only routes that don't refuse every request with a "setup required" error while `adminExists` is false (#22).
+         * @description Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are the only routes that don't refuse every request with a "setup required" error while `adminExists` is false.
          */
         get: operations["getSetupStatus"];
         put?: never;
@@ -164,7 +164,7 @@ export interface paths {
         put?: never;
         /**
          * Create the first admin account
-         * @description Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a race between two concurrent requests can never create two admins (#22). Signs the new admin in on success, exactly like login.
+         * @description Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a race between two concurrent requests can never create two admins. Signs the new admin in on success, exactly like login.
          */
         post: operations["createFirstAdmin"];
         delete?: never;
@@ -184,7 +184,7 @@ export interface paths {
         put?: never;
         /**
          * Log in
-         * @description Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an unknown username and a wrong password against a real one get the same status and error code (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry cap, an unknown username's lockout can lift early, where a real account's own (never capped or evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
+         * @description Username is matched case-insensitively, using simple lowercasing rather than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled. Rate-limited and lockout-protected per account and per source address: an unknown username and a wrong password against a real one get the same status and error code (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry cap, an unknown username's lockout can lift early, where a real account's own (never capped or evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
          */
         post: operations["login"];
         delete?: never;
@@ -244,7 +244,7 @@ export interface paths {
         put?: never;
         /**
          * Start TOTP enrolment for the signed-in user
-         * @description Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active — the account's existing active credential, if any, is untouched until confirmTotp activates the new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already active on this account, replacing it requires proving the caller still holds the account: exactly one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP is active is refused (totp_reverify_required); supplying both is refused too (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would spend two for the price of one request. Neither is required for a first enrolment.
+         * @description Generates a new secret (RFC 6238), stored encrypted with the machine key but not yet active — the account's existing active credential, if any, is untouched until confirmTotp activates the new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already active on this account, replacing it requires proving the caller still holds the account: exactly one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP is active is refused (totp_reverify_required); supplying both is refused too (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would spend two for the price of one request. Neither is required for a first enrolment.
          */
         post: operations["enrollTotp"];
         delete?: never;
@@ -282,13 +282,13 @@ export interface paths {
         };
         /**
          * List notification channels
-         * @description Every configured alerting destination (doc 03 §8.3).
+         * @description Every configured alerting destination.
          */
         get: operations["listNotificationChannels"];
         put?: never;
         /**
          * Add a notification channel
-         * @description A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the database and is never returned by any later read — `hasSecret` on the response is the only trace of it.
+         * @description A credential supplied in `secret` is encrypted with the machine key before it reaches the database and is never returned by any later read — `hasSecret` on the response is the only trace of it.
          */
         post: operations["createNotificationChannel"];
         delete?: never;
@@ -313,7 +313,7 @@ export interface paths {
         get: operations["getNotificationChannel"];
         /**
          * Replace a notification channel's configuration
-         * @description A full replace, like the request body of createNotificationChannel: every type-specific field the request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing credential, `null` clears it, a string replaces it — since this is the one field a response never echoes back for a client to resend unchanged (Q28).
+         * @description A full replace, like the request body of createNotificationChannel: every type-specific field the request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing credential, `null` clears it, a string replaces it — since this is the one field a response never echoes back for a client to resend unchanged.
          */
         put: operations["updateNotificationChannel"];
         post?: never;
@@ -340,7 +340,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test notification through a channel
-         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested notification config is the same as no notification config"). A test that succeeds is also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is enabled and its latest successful test ran in a later second than the one the channel last changed in; a test that fails is not recorded.
+         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification. A test that succeeds is also recorded for the migration checklist (`getMigrationChecklist`), which counts a channel only while it is enabled and its latest successful test ran in a later second than the one the channel last changed in; a test that fails is not recorded.
          */
         post: operations["sendTestNotification"];
         delete?: never;
@@ -358,7 +358,7 @@ export interface paths {
         };
         /**
          * Get the full per-event routing matrix
-         * @description One entry per event type in doc 03 §8.3's fixed catalog, in the order that doc lists them — every event type appears even before it has ever been routed anywhere, with its compiled-in default severity and an empty channel list.
+         * @description One entry per event type in the fixed event catalog, in the catalog's own order: every event type appears even before it has ever been routed anywhere, with its compiled-in default severity and an empty channel list.
          */
         get: operations["getNotificationRouting"];
         put?: never;
@@ -381,7 +381,7 @@ export interface paths {
         get?: never;
         /**
          * Set one event type's severity and routed channels
-         * @description A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds, and the severity becomes exactly severity — including reverting to the compiled-in default when the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for `sync_succeeded`'s opt-in, off-by-default event (doc 03 §8.3).
+         * @description A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds, and the severity becomes exactly severity — including reverting to the compiled-in default when the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for `sync_succeeded`'s opt-in, off-by-default event.
          */
         put: operations["updateNotificationRoute"];
         post?: never;
@@ -400,12 +400,12 @@ export interface paths {
         };
         /**
          * Get the quiet hours configuration
-         * @description The current quiet hours window and the always-on critical override (doc 03 §8.3).
+         * @description The current quiet hours window and the always-on critical override.
          */
         get: operations["getQuietHours"];
         /**
          * Set the quiet hours window
-         * @description `criticalAlwaysDelivers` is not part of the request body: doc 03 §8.3's override that critical alerts always deliver cannot be disabled, so there is nothing for a client to set — the response always reports it `true`.
+         * @description `criticalAlwaysDelivers` is not part of the request body: the override that makes critical alerts always deliver cannot be disabled, so there is nothing for a client to set — the response always reports it `true`.
          */
         put: operations["updateQuietHours"];
         post?: never;
@@ -424,7 +424,7 @@ export interface paths {
         };
         /**
          * List in-app notification alerts
-         * @description Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never probes block devices.
+         * @description Unread alerts first, grouped by event type. Reads only the central database — never probes block devices.
          */
         get: operations["listNotifications"];
         put?: never;
@@ -446,7 +446,7 @@ export interface paths {
         put?: never;
         /**
          * Mark in-app alerts read
-         * @description Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+         * @description Marks every alert whose id is listed, or every alert when `all` is true (mark all as read). Omitted ids with `all` false is a no-op that returns the current unread count.
          */
         post: operations["markNotificationsRead"];
         delete?: never;
@@ -464,12 +464,12 @@ export interface paths {
         };
         /**
          * Get general installation settings
-         * @description Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase itself is never returned (Q28).
+         * @description Hostname, timezone and whether a backup passphrase is configured. The passphrase itself is never returned.
          */
         get: operations["getGeneralSettings"];
         /**
          * Set general installation settings
-         * @description Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is write-only and never echoed back — skipping it during onboarding is valid (Q28).
+         * @description Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is write-only and never echoed back — skipping it during onboarding is valid.
          */
         put: operations["updateGeneralSettings"];
         post?: never;
@@ -488,7 +488,7 @@ export interface paths {
         };
         /**
          * Get the container update settings
-         * @description How long the image a container ran before an update is kept for a revert (doc 04 §6): 7 days until it is set.
+         * @description How long the image a container ran before an update is kept for a revert: 7 days until it is set.
          */
         get: operations["getAppSettings"];
         /**
@@ -512,12 +512,12 @@ export interface paths {
         };
         /**
          * Get UPS / NUT settings
-         * @description Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server), driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false and every other field is omitted.
+         * @description The UPS settings: connection mode (USB or a network NUT server), driver fields, and USB-only shutdown thresholds. Passwords are never returned — only `monitorPasswordSet` / `networkPasswordSet`. When no UPS is configured, `configured` is false and every other field is omitted.
          */
         get: operations["getUPSSettings"];
         /**
          * Set UPS / NUT settings
-         * @description Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must supply the password the connection mode needs. USB-only thresholds are ignored for network mode. Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a missing `nut` group return 409.
+         * @description Persists UPS settings to SQLite, generates the NUT configuration, and reloads the NUT units. Passwords are write-only: omit to keep an existing secret; a first configure must supply the password the connection mode needs. USB-only thresholds are ignored for network mode. Validation failures return 400; unmanaged or existing host NUT files and a missing `nut` group return 409.
          */
         put: operations["updateUPSSettings"];
         post?: never;
@@ -536,12 +536,12 @@ export interface paths {
         };
         /**
          * Host network, TLS and access-scope settings
-         * @description Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or gateway is only possible when the backend is ifupdown; otherwise `editable` is false and `readOnlyReason` says why.
+         * @description Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's expiry, LAN-only access scope and the listen port. Editing address, DNS or gateway is only possible when the backend is ifupdown; otherwise `editable` is false and `readOnlyReason` says why.
          */
         get: operations["getNetworkSettings"];
         /**
          * Apply host network, access-scope or listen-port changes
-         * @description Address, DNS and gateway changes are written to one managed ifupdown file under `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless `confirmNetworkSettings` is called over the new configuration before the window expires (or the daemon dies), the previous file is restored. Access scope and listen port apply without that window — access scope takes effect immediately; a listen-port change is persisted and used on the next daemon start. Addressing fields are refused when the backend is not ifupdown.
+         * @description Address, DNS and gateway changes are written to one managed ifupdown file under `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert: unless `confirmNetworkSettings` is called over the new configuration before the window expires (or the daemon dies), the previous file is restored. Access scope and listen port apply without that window — access scope takes effect immediately; a listen-port change is persisted and used on the next daemon start. Addressing fields are refused when the backend is not ifupdown.
          */
         put: operations["applyNetworkSettings"];
         post?: never;
@@ -562,7 +562,7 @@ export interface paths {
         put?: never;
         /**
          * Keep the pending network configuration
-         * @description Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After the window expires, or if the daemon died before confirm, the previous configuration has already been restored and this returns `network_confirm_expired`.
+         * @description Called over the new configuration during the confirm-or-revert window. Keeps the managed ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After the window expires, or if the daemon died before confirm, the previous configuration has already been restored and this returns `network_confirm_expired`.
          */
         post: operations["confirmNetworkSettings"];
         delete?: never;
@@ -582,7 +582,7 @@ export interface paths {
         put?: never;
         /**
          * Regenerate the self-signed TLS certificate
-         * @description Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured, unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
+         * @description Replaces the daemon's TLS certificate with a freshly generated self-signed certificate and hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured, unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
          */
         post: operations["regenerateTLSCertificate"];
         delete?: never;
@@ -602,7 +602,7 @@ export interface paths {
         put?: never;
         /**
          * Configure Let's Encrypt DNS-01 and issue a certificate
-         * @description Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true. A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls back to a new self-signed cert.
+         * @description Stores the domain and DNS-01 provider credentials (encrypted at rest) and queues an `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never claimed. HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true. A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls back to a new self-signed cert.
          */
         post: operations["configureLetsEncrypt"];
         /**
@@ -624,7 +624,7 @@ export interface paths {
         };
         /**
          * List recurring job schedules
-         * @description The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with server-computed next-run times, human-readable schedule previews and conflict warnings from DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+         * @description The nightly maintenance chain and every separately scheduled job, with server-computed next-run times, human-readable schedule previews and conflict warnings. Chain step order is server-defined and not writable.
          */
         get: operations["getSchedules"];
         put?: never;
@@ -645,7 +645,7 @@ export interface paths {
         get?: never;
         /**
          * Update the nightly maintenance chain schedule
-         * @description Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state unchanged.
+         * @description Persists the chain's start time, weekly scrub day and per-step enabled flags. Step order is fixed and cannot be changed. Omitted step entries leave that step's enabled state unchanged.
          */
         put: operations["updateMaintenanceChainSchedule"];
         post?: never;
@@ -667,7 +667,7 @@ export interface paths {
         get?: never;
         /**
          * Update a separately scheduled job
-         * @description Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly chain (doc 03 §8.4).
+         * @description Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly chain.
          */
         put: operations["updateScheduledJob"];
         post?: never;
@@ -686,12 +686,12 @@ export interface paths {
         };
         /**
          * Hoserva and Debian update status
-         * @description Current Hoserva version, any newer release on the configured channel, update-check on/off, pending Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads only the signed release index on the project site — never the GitHub API and never a system-wide `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than fetched.
+         * @description Current Hoserva version, any newer release on the configured channel, update-check on/off, pending Debian updates and whether a reboot is required. The update check reads only the signed release index on the project site — never the GitHub API and never a system-wide `apt update`. When the check is disabled, `availableVersion` is omitted rather than fetched.
          */
         get: operations["getUpdateStatus"];
         /**
          * Set update channel and check-enabled
-         * @description Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49, Q67). Omitted fields are left unchanged.
+         * @description Persists the update channel (stable / beta) and whether the outbound update check is enabled. Omitted fields are left unchanged.
          */
         put: operations["updateUpdateSettings"];
         post?: never;
@@ -712,7 +712,7 @@ export interface paths {
         put?: never;
         /**
          * Check the signed release index for a newer Hoserva
-         * @description Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+         * @description Fetches the signed release index for the configured channel. A user-initiated check runs even when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
          */
         post: operations["checkForUpdate"];
         delete?: never;
@@ -732,7 +732,7 @@ export interface paths {
         put?: never;
         /**
          * Download, verify and install the available Hoserva release
-         * @description Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS, runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
+         * @description Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS, runs a config backup, and installs it in a transient systemd unit. Refused while a Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
          */
         post: operations["applyUpdate"];
         delete?: never;
@@ -752,7 +752,7 @@ export interface paths {
         put?: never;
         /**
          * Roll back to the previous Hoserva release and its snapshot
-         * @description Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error names that job.
+         * @description Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database snapshot, and installs the previous package. There are no down migrations — rollback is previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error names that job.
          */
         post: operations["rollbackUpdate"];
         delete?: never;
@@ -772,7 +772,7 @@ export interface paths {
         put?: never;
         /**
          * Reboot after waiting for storage jobs and a clean shutdown
-         * @description Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence, then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+         * @description Waits for any running Parity, Array-write or Topology job, runs the clean shutdown sequence, then reboots. Hoserva never reboots on its own — this is always the user's action.
          */
         post: operations["rebootHost"];
         delete?: never;
@@ -790,7 +790,7 @@ export interface paths {
         };
         /**
          * Overall system health
-         * @description One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+         * @description One-screen health summary for the dashboard and `hoserva status`.
          */
         get: operations["getStatus"];
         put?: never;
@@ -810,7 +810,7 @@ export interface paths {
         };
         /**
          * Metric time series
-         * @description Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03 §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days, daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an empty series, not an array-health error.
+         * @description Returns downsampled samples from metrics.db for one metric/subject over a time window. Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days, daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an empty series, not an array-health error.
          */
         get: operations["getMetrics"];
         put?: never;
@@ -830,7 +830,7 @@ export interface paths {
         };
         /**
          * Pool status
-         * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own `removalState` (doc 09 §4 step 2, #359) where one is in progress.
+         * @description Per-disk pool breakdown for `hoserva pool status`, including each disk's own `removalState` where one is in progress.
          */
         get: operations["getPool"];
         put?: never;
@@ -852,7 +852,7 @@ export interface paths {
         put?: never;
         /**
          * Preview rebalancing the pool
-         * @description Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is copied, synced or deleted.
+         * @description Computes the rebalance plan: for every share with at least two branches, the files a rebalance would move from that share's own most-full disk to its own least-full disk to bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is copied, synced or deleted.
          */
         post: operations["planRebalance"];
         delete?: never;
@@ -872,7 +872,7 @@ export interface paths {
         put?: never;
         /**
          * Rebalance the pool
-         * @description Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs.
+         * @description Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the exact phrase the matching `planRebalance` call returned, queues a resumable rebalance job that runs that plan unchanged: copy and verify every batch, sync through the threshold guard, delete the batch's sources, sync again, batched so no trailing sync this run makes can ever trip the guard after sources are already gone. The recomputed plan leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs.
          */
         post: operations["startRebalance"];
         delete?: never;
@@ -890,13 +890,13 @@ export interface paths {
         };
         /**
          * List shares
-         * @description Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are later issues.
+         * @description Every configured share. Does not walk data disks.
          */
         get: operations["listShares"];
         put?: never;
         /**
          * Create a share
-         * @description Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1, doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return: a new share would need a directory on every adopted disk, and those are not written until then. The import creates its own shares (`startMigrationImport`).
+         * @description Persists the share, creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf`. Refused with 409 `maintenance_mode` while the array is stopped: create would mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those writes. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return: a new share would need a directory on every adopted disk, and those are not written until then. The import creates its own shares (`startMigrationImport`).
          */
         post: operations["createShare"];
         delete?: never;
@@ -916,21 +916,21 @@ export interface paths {
         };
         /**
          * Get a share
-         * @description One share by name (doc 03 §4.2).
+         * @description One share by name.
          */
         get: operations["getShare"];
         put?: never;
         post?: never;
         /**
          * Delete a share definition
-         * @description Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share mounts against bare disk mountpoints on the root filesystem.
+         * @description Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk. `confirm: true` is required. Deleting the data is `deleteShareData`. Refused with 409 `maintenance_mode` while the array is stopped: delete would unmount and rewrite share mounts against bare disk mountpoints on the root filesystem.
          */
         delete: operations["deleteShare"];
         options?: never;
         head?: never;
         /**
          * Update a share
-         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root filesystem. While an Unraid import is pending its point of no return it creates no directory on any adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a cache mode here replaces the one the import recorded as the share's target.
+         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files. Refused with 409 `maintenance_mode` while the array is stopped: update would mkdir and remount under bare disk mountpoints on the root filesystem. While an Unraid import is pending its point of no return it creates no directory on any adopted disk, and a cache mode that needs a cache is refused because none exists yet; choosing a cache mode here replaces the one the import recorded as the share's target.
          */
         patch: operations["updateShare"];
         trace?: never;
@@ -948,7 +948,7 @@ export interface paths {
         put?: never;
         /**
          * Delete a share's files
-         * @description Deletes this share's files on the branches that hold it, and nothing else — not other shares, not the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return: the adopted disks are not written until then.
+         * @description Deletes this share's files on the branches that hold it, and nothing else — not other shares, not the parity file, not disks that do not hold this share. The definition is left in place. `confirmation` must equal the share name. Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return: the adopted disks are not written until then.
          */
         post: operations["deleteShareData"];
         delete?: never;
@@ -970,7 +970,7 @@ export interface paths {
         put?: never;
         /**
          * Relocate a share between cache and array
-         * @description Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09 §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path. A relocation in either direction needs the array's cache disk, so it is refused with 409 `no_cache_disk` before any job is queued while the array has no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology fails the request rather than assuming a cache.
+         * @description Queues a `share_relocation` job moving name's files between its cache path and the array — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path. A relocation in either direction needs the array's cache disk, so it is refused with 409 `no_cache_disk` before any job is queued while the array has no cache disk, and with 409 `no_array` while there is no array; a failure to read the array topology fails the request rather than assuming a cache.
          */
         post: operations["startShareRelocation"];
         delete?: never;
@@ -990,7 +990,7 @@ export interface paths {
         };
         /**
          * List what a share relocation would collide with
-         * @description What a caller shows before it starts `startShareRelocation` (doc 09 §2): the containers whose mounts use the share and every file of the share some process currently holds open, across the cache and every array branch. A container uses the share when a mount's host path is the share's pool path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the pool, on the cache or on a data disk; the match is made on the path as written, never through a symlink, so it reads no data disk. `active` is true for a container that is running, paused or restarting — one that can hold files open and that a relocation must not run beside. Listing the open files enumerates the share on the cache and on every array branch, so this is an explicit call that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no containers, whenever Docker itself is not reachable (doc 04 §3). The answer covers both sides of the share, so it is the same whichever way the share will move. No answer is given in the cases `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409 `database_restore_in_progress` during a database restore. These are the scheduler's own admission checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
+         * @description What a caller shows before it starts `startShareRelocation`: the containers whose mounts use the share and every file of the share some process currently holds open, across the cache and every array branch. A container uses the share when a mount's host path is the share's pool path, a path inside it, or a path that holds it (`/mnt/user`, a disk or the cache itself), on the pool, on the cache or on a data disk; the match is made on the path as written, never through a symlink, so it reads no data disk. `active` is true for a container that is running, paused or restarting — one that can hold files open and that a relocation must not run beside. Listing the open files enumerates the share on the cache and on every array branch, so this is an explicit call that may wake disks — it is never polled. `dockerAvailable` is false, with no error and no containers, whenever Docker itself is not reachable. The answer covers both sides of the share, so it is the same whichever way the share will move. No answer is given in the cases `startShareRelocation` refuses before it queues a job: 409 `no_cache_disk` while the array has no cache disk, 409 `no_array` while there is no array, 409 `maintenance_mode` while the array is stopped, 409 `migration_in_progress` while an Unraid migration is unfinished and 409 `database_restore_in_progress` during a database restore. These are the scheduler's own admission checks, queried without submitting a job. Stopping a listed container goes through `stopApp`.
          */
         get: operations["getShareRelocationPrecheck"];
         put?: never;
@@ -1012,14 +1012,14 @@ export interface paths {
         };
         /**
          * List a share directory
-         * @description Lists one directory of the share, including the holding disk per entry from mergerfs `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never polled.
+         * @description Lists one directory of the share, including the holding disk per entry from mergerfs `user.mergerfs.basepath`. This is an explicit call and may wake disks — it is never polled.
          */
         get: operations["browseShare"];
         put?: never;
         post?: never;
         /**
          * Delete a file or empty directory from the share
-         * @description Deletes one file or empty directory within the share, given a path relative to the share root (doc 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the share's root, including through a symlink. `confirm: true` is required.
+         * @description Deletes one file or empty directory within the share, given a path relative to the share root. Refuses the share root itself and any path that would resolve outside the share's root, including through a symlink. `confirm: true` is required.
          */
         delete: operations["deleteShareFile"];
         options?: never;
@@ -1038,12 +1038,12 @@ export interface paths {
         };
         /**
          * Get a share's per-user and per-group access
-         * @description Every user and every user group with an explicit access level on this share (Q27, doc 03 §7). A user or group with no row here is not represented.
+         * @description Every user and every user group with an explicit access level on this share. A user or group with no row here is not represented.
          */
         get: operations["getSharePermissions"];
         /**
          * Replace a share's per-user and per-group access
-         * @description A full replace: this share's access is set to exactly the users and groups listed, and every user or group previously granted an explicit level but missing from the request loses its row entirely (doc 03 §7: "editable from either side" — this is the share-side editor).
+         * @description A full replace: this share's access is set to exactly the users and groups listed, and every user or group previously granted an explicit level but missing from the request loses its row entirely (access is editable from either the share or the user; this is the share-side editor).
          */
         put: operations["updateSharePermissions"];
         post?: never;
@@ -1062,7 +1062,7 @@ export interface paths {
         };
         /**
          * List disks
-         * @description Every block device Hoserva knows about (doc 02 §4).
+         * @description Every block device Hoserva knows about.
          */
         get: operations["listDisks"];
         put?: never;
@@ -1082,13 +1082,13 @@ export interface paths {
         };
         /**
          * List external disks
-         * @description Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a pool or parity member. Registered external disks plus inventory disks that are not the boot device and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it is the migration's rollback (doc 05 §5). Nothing is mounted by this call.
+         * @description Disks outside the array: Ignore-role or a later USB disk, never a pool or parity member. Registered external disks plus inventory disks that are not the boot device and not in the array. The Unraid USB stick (a FAT filesystem labelled `UNRAID`) is never offered: it is the migration's rollback. Nothing is mounted by this call.
          */
         get: operations["listExternalDisks"];
         put?: never;
         /**
          * Register a disk as external
-         * @description Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB stick (`unraid_stick`, 409).
+         * @description Assigns a non-array, non-boot disk the Ignore/external role with a label used as `/mnt/disks/<label>`. Does not mount or format. The boot device is refused, and so is the Unraid USB stick (`unraid_stick`, 409).
          */
         post: operations["registerExternalDisk"];
         delete?: never;
@@ -1114,7 +1114,7 @@ export interface paths {
         head?: never;
         /**
          * Update an external disk
-         * @description Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1). Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
+         * @description Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination. Enabling it on the Unraid USB stick is refused with `unraid_stick` (409).
          */
         patch: operations["updateExternalDisk"];
         trace?: never;
@@ -1132,7 +1132,7 @@ export interface paths {
         put?: never;
         /**
          * Mount an external disk
-         * @description Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
+         * @description Mounts the disk by filesystem UUID at `/mnt/disks/<label>`. Nothing mounts automatically on plug-in. The boot device and array disks are refused, and so is the Unraid USB stick (`unraid_stick`, 409): it is only ever mounted read-only, by the migration scan.
          */
         post: operations["mountExternalDisk"];
         delete?: never;
@@ -1154,7 +1154,7 @@ export interface paths {
         put?: never;
         /**
          * Eject an external disk
-         * @description Unmounts `/mnt/disks/<label>`, then spins the disk down (Q72).
+         * @description Unmounts `/mnt/disks/<label>`, then spins the disk down.
          */
         post: operations["ejectExternalDisk"];
         delete?: never;
@@ -1176,7 +1176,7 @@ export interface paths {
         put?: never;
         /**
          * Format an external disk
-         * @description Formats the disk after the same typed confirmation array setup uses (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB stick is refused with `unraid_stick` (409), whatever the confirmation.
+         * @description Formats the disk after the same typed confirmation array setup uses. The boot device is never offered. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The Unraid USB stick is refused with `unraid_stick` (409), whatever the confirmation.
          */
         post: operations["formatExternalDisk"];
         delete?: never;
@@ -1194,7 +1194,7 @@ export interface paths {
         };
         /**
          * List spin-state wake events
-         * @description Reads persisted spin-state transitions from the central database only — never probes block devices (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how often it woke.
+         * @description Reads persisted spin-state transitions from the central database only — never probes block devices. Returns every recorded transition plus per-device wake counts grouped by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how often it woke.
          */
         get: operations["listWakeEvents"];
         put?: never;
@@ -1216,7 +1216,7 @@ export interface paths {
         put?: never;
         /**
          * Create the storage array
-         * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1). A device is a whole, non-boot disk, with one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's `cachePartitions` (doc 01 §6, doc 02 §4) — Hoserva formats that blank partition and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's rollback (doc 05 §4 step 11), is refused in every role with `unraid_stick` (409). Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return (`startMigrationImport`).
+         * @description Queues a Topology job that formats or adopts the assigned disks. The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string array setup uses. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. A device is a whole, non-boot disk, with one exception: the `cache` role may name a spare partition of the boot disk that `listDisks` reports in that disk's `cachePartitions` — Hoserva formats that blank partition and never writes the boot disk's partition table. A partition of the boot disk assigned to `data` or `parity` is refused with `boot_partition_cache_only`; a partition that is not one of the reported spare partitions is refused with `unmanaged_device`. The Unraid USB stick, which is the user's rollback, is refused in every role with `unraid_stick` (409). Refused with 409 `migration_in_progress` while an Unraid import is pending its point of no return (`startMigrationImport`).
          */
         post: operations["createArray"];
         delete?: never;
@@ -1236,7 +1236,7 @@ export interface paths {
         put?: never;
         /**
          * Preview adding a data disk
-         * @description Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`) and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+         * @description Computes the add plan: the target disk's own identity (model, WWN or serial, size, its existing filesystem if any), its assigned mountpoint and the exact typed confirmation `addDisk` requires. Refuses a disk that would leave a parity disk smaller than the array's largest data disk, and a device already identified as one of the array's own members by WWN or serial, applying the same validation array setup runs over the resulting data set. Read-only: nothing is formatted or persisted.
          */
         post: operations["planDiskAdd"];
         delete?: never;
@@ -1256,7 +1256,7 @@ export interface paths {
         put?: never;
         /**
          * Add a data disk to the running array
-         * @description Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
+         * @description Queues a Topology job that formats or adopts the disk, then regenerates mount units, the pool and `snapraid.conf` from SQLite. The confirmation must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
          */
         post: operations["addDisk"];
         delete?: never;
@@ -1276,7 +1276,7 @@ export interface paths {
         put?: never;
         /**
          * Preview replacing a data disk
-         * @description Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02 §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a replacement that would leave a parity disk smaller than the array's largest data disk. Refuses (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot — replace abandons the removal and rebuilds the disk's recorded files from parity (#384). Read-only: nothing is formatted or persisted.
+         * @description Computes the replace plan: the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (a healthy disk goes through the upgrade flow instead) — and a replacement that would leave a parity disk smaller than the array's largest data disk. Refuses (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot — replace abandons the removal and rebuilds the disk's recorded files from parity. Read-only: nothing is formatted or persisted.
          */
         post: operations["planDiskReplace"];
         delete?: never;
@@ -1296,7 +1296,7 @@ export interface paths {
         put?: never;
         /**
          * Replace a data disk
-         * @description Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
+         * @description Queues a Topology job that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks. Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk rejoins the array as an ordinary member and its recorded files rebuild from parity. The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
          */
         post: operations["replaceDisk"];
         delete?: never;
@@ -1316,7 +1316,7 @@ export interface paths {
         put?: never;
         /**
          * Preview upgrading a data or parity disk to a larger one
-         * @description Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or persisted.
+         * @description Computes the upgrade plan for the existing array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that would leave a parity disk smaller than it — offering the parity upgrade flow first — and any of `planDiskReplace`'s own checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and verified at independently of the old one — never the old disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or persisted.
          */
         post: operations["planDiskUpgrade"];
         delete?: never;
@@ -1336,7 +1336,7 @@ export interface paths {
         put?: never;
         /**
          * Upgrade a data or parity disk to a larger one
-         * @description Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to show no removed or updated files, and only then names the new disk in SQLite; the array stays stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte, switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71). The old disk is never written to or released until its verification gate passes.
+         * @description Starts a resumable Topology job (a data-disk or a parity-disk upgrade, resolved from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk upgrade follows a fixed state machine: it is admitted only once `stopArray` has completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to show no removed or updated files, and only then names the new disk in SQLite; the array stays stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte, switches the configuration and passes `snapraid check` before releasing the old parity disk. The old disk is never written to or released until its verification gate passes.
          */
         post: operations["upgradeDisk"];
         delete?: never;
@@ -1356,7 +1356,7 @@ export interface paths {
         put?: never;
         /**
          * Preview evacuating a data disk before removal
-         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even after each one's own minimum free space is kept, or when the disk holds any top-level entry that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses to start rather than leave it behind unreported (#367); that refusal's own 400 body, `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
+         * @description Computes the evacuation plan for the data disk at `mountpoint` (mechanically a rebalance targeting one specific source disk): every file an evacuation would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even after each one's own minimum free space is kept, or when the disk holds any top-level entry that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — there is no procedure for moving such content, so evacuation refuses to start rather than leave it behind unreported; that refusal's own 400 body, `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into its `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. Evacuation moves the disk's own already-present files off it, protected through the threshold guard. The no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount are not performed by either.
          */
         post: operations["planDiskEvacuation"];
         delete?: never;
@@ -1376,7 +1376,7 @@ export interface paths {
         put?: never;
         /**
          * Evacuate a data disk before removal
-         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite, D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk `evacuated` before reporting success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal state belongs to the job that set it: cancelling that job — queued, running or interrupted — clears it and puts the disk back to taking writes, and cancelling any other job never does. A job that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success here means the disk's data as this job saw it is safely off it and it is no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09 §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
+         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, as `startRebalance` does) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable evacuation job. Before copying anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite) and applies no-create to its own branch in every pool mount, live; a failure to apply that fails the job before any copy. It then runs the plan unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own zero-files exemption, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again — then, once the whole plan finishes without being interrupted, a post-check confirms the disk's own share branches hold nothing but empty directories and the job marks the disk `evacuated` before reporting success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal state belongs to the job that set it: cancelling that job — queued, running or interrupted — clears it and puts the disk back to taking writes, and cancelling any other job never does. A job that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success here means the disk's data as this job saw it is safely off it and it is no longer taking new writes, not that it is empty of every file or safe to physically remove: the mergerfs branch-list removal, SnapRAID removal and unmount are `finishDiskRemoval`'s.
          */
         post: operations["evacuateDisk"];
         delete?: never;
@@ -1396,7 +1396,7 @@ export interface paths {
         put?: never;
         /**
          * Finish removing an evacuated data disk
-         * @description Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation` returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when the daemon has no parity engine. Before changing anything the job checks all of that again, that the array without the disk still has a data disk and room for every content-file copy (Q18), that the disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every pool mount, live (step 7; a failed live update fails the job); removes the empty directories the evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold guard with only this disk exempt from the zero-files rule, while its data line is still in snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit, removes the unit file and deletes the disk from the array (step 9). The job's result names the disk as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted leaves the disk in the last state it reached, and running this operation again carries on from there — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed and mounted, with nothing synced.
+         * @description Queues a Topology job that takes an evacuated data disk out of the array. The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation` returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when the daemon has no parity engine. Before changing anything the job checks all of that again, that the array without the disk still has a data disk and room for every content-file copy, that the disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every pool mount, live (a failed live update fails the job); removes the empty directories the evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold guard with only this disk exempt from the zero-files rule, while its data line is still in snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates snapraid.conf without it and checks SnapRAID accepts the result; then stops its mount unit, removes the unit file and deletes the disk from the array. The job's result names the disk as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted leaves the disk in the last state it reached, and running this operation again carries on from there — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed and mounted, with nothing synced.
          */
         post: operations["finishDiskRemoval"];
         delete?: never;
@@ -1416,7 +1416,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel a data disk's removal and return it to normal use
-         * @description Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating` disk whose evacuation job has already ended (no longer queued, running or interrupted — including a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an internal error, and the removal state is left cleared — the same as the disk-topology jobs' own live-apply failures — rather than silently reporting success with the disk still no-create.
+         * @description Clears `mountpoint`'s removal state synchronously — no job — and re-applies the pool live so the disk's branches go back to RW. Refused with `disk_slot_not_found` (404) when no data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so the only way forward is `finishDiskRemoval`, never back; or when it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns the state, so cancel it (`cancelJob`) instead. An `evacuating` disk whose evacuation job has already ended (no longer queued, running or interrupted — including a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an internal error, and the removal state is left cleared — the same as the disk-topology jobs' own live-apply failures — rather than silently reporting success with the disk still no-create.
          */
         post: operations["cancelDiskRemoval"];
         delete?: never;
@@ -1436,7 +1436,7 @@ export interface paths {
         put?: never;
         /**
          * Stop the array
-         * @description Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true` is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending (doc 02 §4 E7): the array is already stopped for it, and nothing is stopped, signalled or unmounted.
+         * @description Enters maintenance mode (`hoserva array stop`): refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks — the same list the Stop array confirmation dialog shows. Parity is not written. A failure leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true` is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending: the array is already stopped for it, and nothing is stopped, signalled or unmounted.
          */
         post: operations["stopArray"];
         delete?: never;
@@ -1456,7 +1456,7 @@ export interface paths {
         put?: never;
         /**
          * Start the array
-         * @description Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share paths, then start services in the reverse of stop order, and exit maintenance mode only once every step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted. Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted again and maintenance mode stays on.
+         * @description Reverses `stopArray` (`hoserva array start`): mount disks, the catch-all and share paths, then start services in the reverse of stop order, and exit maintenance mode only once every step succeeds. Refused with `storage_not_ready` when the storage gate is not ready — nothing is mounted. Also refused with `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at any checkpoint; the error names the job to resume or cancel, and nothing is mounted. Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any service starts; otherwise it is refused with `array_disk_mismatch`, the disks are unmounted again and maintenance mode stays on.
          */
         post: operations["startArray"];
         delete?: never;
@@ -1476,7 +1476,7 @@ export interface paths {
         put?: never;
         /**
          * Acknowledge a degraded array
-         * @description Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69, `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c` and never a second mechanism. The acknowledgement itself survives every later rebuild of the daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when nothing is currently missing — acknowledging a degraded state that does not exist would let a stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started` (409) when the acknowledgement itself succeeds but the transition it triggers does not actually start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or confirming the pool fails — so this never reports success over services that never came up — in that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both before ever telling the user services are running. `arrayDegraded` on the returned status stays true for as long as the disk is still missing — acknowledging never reports a degraded array as healthy — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+         * @description Records the user's explicit choice to proceed while the array is degraded (`hoserva array acknowledge-degraded`): the daemon acknowledges the missing disk on its live storage gate and then runs the exact not-ready to ready transition a returning disk reaches: mounting and confirming the pool, then starting every enabled, unmasked service unit that depends on it (Samba, NFS, Docker, libvirtd), never through a shell and never by a second mechanism. The acknowledgement itself survives every later rebuild of the daemon's array sequence (a share change, a disk-topology change, a daemon reload) for as long as the same disk stays missing. Refused with `array_not_degraded` (409) when nothing is currently missing — acknowledging a degraded state that does not exist would let a stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started` (409) when the acknowledgement itself succeeds but the transition it triggers does not actually start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or confirming the pool fails — so this never reports success over services that never came up — in that refusal case `arrayDegradedAcknowledged` on a later `getStatus` still reports true (the acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both before ever telling the user services are running. `arrayDegraded` on the returned status stays true for as long as the disk is still missing — acknowledging never reports a degraded array as healthy — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
          */
         post: operations["acknowledgeDegradedArray"];
         delete?: never;
@@ -1494,7 +1494,7 @@ export interface paths {
         };
         /**
          * Parity status and guard state
-         * @description Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+         * @description Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or wake data disks. Threshold-guard state and grouped diff rows reflect the last explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
          */
         get: operations["getParity"];
         put?: never;
@@ -1516,7 +1516,7 @@ export interface paths {
         put?: never;
         /**
          * Run a SnapRAID diff
-         * @description Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never polled on a timer.
+         * @description Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk. Returns grouped changes and threshold-guard evaluation for the parity page; never polled on a timer.
          */
         post: operations["runParityDiff"];
         delete?: never;
@@ -1536,7 +1536,7 @@ export interface paths {
         put?: never;
         /**
          * Start a SnapRAID sync
-         * @description Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
+         * @description Queues a sync job through the threshold guard. A non-dry-run sync past a tripped guard requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the on-battery hold is active — scheduled syncs are held until power returns.
          */
         post: operations["startSync"];
         delete?: never;
@@ -1556,7 +1556,7 @@ export interface paths {
         put?: never;
         /**
          * Start a SnapRAID scrub
-         * @description Queues a scrub job (`hoserva scrub`, doc 01 §3). By default it skips blocks newer than 10 days; `allBlocks` scrubs every block.
+         * @description Queues a scrub job (`hoserva scrub`). By default it skips blocks newer than 10 days; `allBlocks` scrubs every block.
          */
         post: operations["startScrub"];
         delete?: never;
@@ -1576,7 +1576,7 @@ export interface paths {
         put?: never;
         /**
          * Start a SnapRAID fix
-         * @description Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file changed or deleted since the last sync; with `path` it restores only that one file (doc 02 §2). Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for, with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error gives the number of unrecoverable blocks and names the partial copies it left as `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID can only rebuild what parity held at the last sync, and no more failed blocks than parity covers. With `path`, the error names the file and, when the log names the partial copy, gives one example cause: another file that shares its parity positions changed after the last sync. Any other non-zero exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job reports that nothing was restored.
+         * @description Queues a fix job (`hoserva fix`). Requires `confirm: true` — fix rewrites data from parity. Without `path` the fix covers the whole array, or the one `disk`, and brings back every file changed or deleted since the last sync; with `path` it restores only that one file. Refused with 400 `invalid_fix_path` before a job is queued when `path` is not one file under `/mnt/user` or is sent together with `disk`. A fix that SnapRAID reports unrecoverable blocks for, with or without `path`, ends `failed`, never `succeeded`: SnapRAID exits 1, and the job's error gives the number of unrecoverable blocks and names the partial copies it left as `<name>.unrecoverable` on their disks, or says SnapRAID leaves them beside the file when its log names none; files it did recover stay restored. Without `path`, the error also says that SnapRAID can only rebuild what parity held at the last sync, and no more failed blocks than parity covers. With `path`, the error names the file and, when the log names the partial copy, gives one example cause: another file that shares its parity positions changed after the last sync. Any other non-zero exit fails the job too. A fix with `path` also ends `failed` when SnapRAID exits 0 with "Nothing to do": the path matched nothing in parity (misspelt, the wrong case, a directory, a file made after the last sync, a file only on the cache) or the file is intact and needs no restoring, and the job reports that nothing was restored.
          */
         post: operations["startFix"];
         delete?: never;
@@ -1596,7 +1596,7 @@ export interface paths {
         put?: never;
         /**
          * Start a manual mover run
-         * @description Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused until power returns.
+         * @description Queues a mover job (`hoserva mover run`, the manual trigger) — the same mover job the cache-usage threshold and the nightly chain submit; there is no second way to start the mover. Refused with 409 `on_battery` while the on-battery hold is active — the mover is paused until power returns.
          */
         post: operations["startMover"];
         delete?: never;
@@ -1614,7 +1614,7 @@ export interface paths {
         };
         /**
          * Most recent finished mover run
-         * @description The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03 §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever finished.
+         * @description The structured result of the most recent finished mover run: files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite by the mover job itself, not reconstructed from the job log. Null when no mover job has ever finished.
          */
         get: operations["getLastMoverRun"];
         put?: never;
@@ -1634,7 +1634,7 @@ export interface paths {
         };
         /**
          * Cache usage breakdown
-         * @description Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover run has computed it yet.
+         * @description Appdata / pending-moves / other byte breakdown for the cache disk. Computed as a by-product of each mover run, never a live directory walk on a timer. Null when no mover run has computed it yet.
          */
         get: operations["getCacheUsage"];
         put?: never;
@@ -1656,7 +1656,7 @@ export interface paths {
         put?: never;
         /**
          * Export a config archive
-         * @description Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+         * @description Builds and returns the `hoserva-config-*.tar.zst` configuration archive.
          */
         post: operations["exportConfig"];
         delete?: never;
@@ -1696,9 +1696,9 @@ export interface paths {
         put?: never;
         /**
          * Import a config archive
-         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration: the database, the custom config files (`*.custom.conf`), the installed app templates and each stack's compose and `meta.json` files, after which every managed config file is regenerated from the restored database and the result applied to the running pool. It also restores the passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase` if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens it, everything else is restored and the report says the `.env` files were not. When the import restores `.env` files, the pre-import archive's own `secrets.age` is sealed with the passphrase that opened the imported archive's, so it holds every `.env` the import replaces; a failure to write it refuses the import. The answer is the restore report: what was restored per category, what was not and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable, which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would restore lands on a symbolic link or on something that is not a regular file, or it names a path outside the directory it is restored into; nothing is followed). A bare-metal restore that would replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when no backup destination is enabled to take the copy of it that the pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the file categories were restored and which left as they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
+         * @description Restores from a configuration archive. Requires `confirm: true` — this replaces the running configuration: the database, the custom config files (`*.custom.conf`), the installed app templates and each stack's compose and `meta.json` files, after which every managed config file is regenerated from the restored database and the result applied to the running pool. It also restores the passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase` if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens it, everything else is restored and the report says the `.env` files were not. When the import restores `.env` files, the pre-import archive's own `secrets.age` is sealed with the passphrase that opened the imported archive's, so it holds every `.env` the import replaces; a failure to write it refuses the import. The answer is the restore report: what was restored per category, what was not and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable, which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would restore lands on a symbolic link or on something that is not a regular file, or it names a path outside the directory it is restored into; nothing is followed). A bare-metal restore that would replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when no backup destination is enabled to take the copy of it that the pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the file categories were restored and which left as they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
          *
-         *     On a fresh install, one with no array configured, whatever admin accounts it has, the import is the bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array disks from `state.db` and matches each against the attached disks by identity; the mapping is what `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer matches the attached disks. An archive from an older schema version is upgraded on a staged copy of its database by the same migration runner a normal upgrade uses; one from a newer version is refused with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts. With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME, UPS, backup destination and notification channel credentials) is sealed under this box's machine key and written back into its own table, column and row, and the stack `.env` files are restored; the passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's backup recipient replaces this box's own, so archives written from then on are encrypted to it. Without such a passphrase everything else is restored, this box keeps its own backup recipient (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409 `setup_required`.
+         *     On a fresh install, one with no array configured, whatever admin accounts it has, the import is the bare-metal restore of another installation's archive. It takes the archive's array disks from the archived database and matches each against the attached disks by identity; the mapping is what `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer matches the attached disks. An archive from an older schema version is upgraded on a staged copy of its database by the same migration runner a normal upgrade uses; one from a newer version is refused with 409 `archive_newer_version`. This box's own machine key check is kept, so `hoservad` starts. With a backup passphrase that opens the archive's `secrets.age`, every database secret in it (ACME, UPS, backup destination and notification channel credentials) is sealed under this box's machine key and written back into its own table, column and row, and the stack `.env` files are restored; the passphrase becomes this box's backup passphrase; and, when it opens `identity.age`, the archive's backup recipient replaces this box's own, so archives written from then on are encrypted to it. Without such a passphrase everything else is restored, this box keeps its own backup recipient (reported as `backup_recipient`), and every secret sealed under the archive's key is cleared and reported in `notRestored`. TOTP enrolment and any secret the archive does not carry are always cleared and reported, so the next sign-in of an account with TOTP enrols again. A `passphrase` given that does not open the archive's `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`, is refused with 400 `backup_passphrase_incorrect` before anything is written; one that opens `secrets.age` but not `identity.age` is restored, and the report says the recipient was kept. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409 `setup_required`.
          */
         post: operations["importConfig"];
         delete?: never;
@@ -1738,13 +1738,13 @@ export interface paths {
         };
         /**
          * List backup destinations
-         * @description Every place a config backup is written, with its last successful backup and whether it is stale (doc 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+         * @description Every place a config backup is written, with its last successful backup and whether it is stale. Credentials are never returned — `hasSecrets` is the only trace of them.
          */
         get: operations["listBackupDestinations"];
         put?: never;
         /**
          * Add a backup destination
-         * @description A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key before they reach the database. Local destinations work without rclone.
+         * @description A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is always encrypted. It is refused with 400 `backup_passphrase_required` while no backup passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command — when rclone is not installed. Credentials in `secrets` are sealed under the machine key before they reach the database. Local destinations work without rclone.
          */
         post: operations["createBackupDestination"];
         delete?: never;
@@ -1792,7 +1792,7 @@ export interface paths {
         put?: never;
         /**
          * Test a backup destination
-         * @description Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup destination is decoration). A destination that cannot be reached is a `200` with `success` false and the reason; a missing rclone is a `424` `rclone_missing`.
+         * @description Writes a small file to the destination, reads it back and deletes it. A destination that cannot be reached is a `200` with `success` false and the reason; a missing rclone is a `424` `rclone_missing`.
          */
         post: operations["testBackupDestination"];
         delete?: never;
@@ -1810,7 +1810,7 @@ export interface paths {
         };
         /**
          * Last restore drill
-         * @description The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each enabled backup destination could be fetched, opened the way a restore opens it, and verified, and when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+         * @description The result of the most recent restore drill: whether the newest config archive on each enabled backup destination could be fetched, opened the way a restore opens it, and verified, and when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
          */
         get: operations["getRestoreDrill"];
         put?: never;
@@ -1834,7 +1834,7 @@ export interface paths {
         };
         /**
          * The migration session and its report
-         * @description The one migration session (doc 05 §6): its phase and, once a scan has finished, the report as rows. `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if there was one, is still returned). The rows name and count; they never quote a file's content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the session's report was made from a capture that says Unraid booted from an internal device: the Flash Backup zip is then the only source (Q25). It is empty, with `zipOnly` false, when no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review step shows as data: the disk mapping table, the share preview, the boot mode and the capture's state. It comes from the same scan as the rows, which stay as they are, and is absent from a report made before it existed.
+         * @description The one migration session: its phase and, once a scan has finished, the report as rows. `phase` is `none` before any scan, `scanning` while a `migration_scan` job is queued or running, `scanned` once a report exists and `scan_failed` when the latest scan did not finish, including when its job was cancelled or dropped before it ran (its `scanError` says why; the report of an earlier scan, if there was one, is still returned). The rows name and count; they never quote a file's content. `getMigrationReport` returns the same report as a document. `flashDevices` lists the disks a scan can read as the Unraid USB stick (`startMigrationDeviceScan`): a FAT filesystem labelled `UNRAID` on a disk that is neither the boot disk nor in the array. It is empty, and `zipOnly` is true, once the session's report was made from a capture that says Unraid booted from an internal device: the Flash Backup zip is then the only source. It is empty, with `zipOnly` false, when no such disk is attached or this daemon cannot read one. The report's `review` holds what the Review step shows as data: the disk mapping table, the share preview, the boot mode and the capture's state. It comes from the same scan as the rows, which stay as they are, and is absent from a report made before it existed.
          */
         get: operations["getMigration"];
         put?: never;
@@ -1860,7 +1860,7 @@ export interface paths {
         put?: never;
         /**
          * Scan a Flash Backup zip
-         * @description Takes the Flash Backup zip (doc 05 §3, Q25) and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409 `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`), and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every data disk the capture records, through a read-only mount at a private mountpoint under the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
+         * @description Takes the Flash Backup zip and queues a `migration_scan` job (topology class, so no storage job runs beside it). The zip is kept in the daemon's state directory, readable by root only, as the session's source; it is never modified and never extracted: entries are read in memory. A scan replaces the previous session's report and zip once it finishes. Refused before anything is queued, with nothing kept: 400 `file_required` (no `file`), 400 `invalid_zip` (not a zip, an entry path with `..` or starting with `/`, or a duplicate entry), 413 `zip_too_large` (a zip over 2 GiB, refused as soon as the request body, which is the zip and its multipart framing, passes that size plus 1 MiB), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (an Unraid version other than 6.12.x or 7.x, or a flash layout Hoserva does not recognise, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, 409 `migration_in_progress` while an import is pending its point of no return (`startMigrationImport`), and 501 `not_configured` when this daemon has no migration service. `unverifiedLayout` overrides only the layout refusal; the override is recorded in the report and printed at its top. The scan reads the disks Hoserva already inventories and SMART without waking a disk in standby. It also reads every data disk the capture records, through a read-only mount at a private mountpoint under the daemon's state directory (XFS without replaying its log), after the disk's read-only filesystem check: a disk that fails a check, or is a ZFS, encrypted or multi-device btrfs disk, is refused by name in the report and the scan goes on with the rest. Each data disk's files are listed and a sample hashed, as the baseline the verify phase compares against (`fullChecksums` hashes every file). Nothing is written to a source disk, and no disk stays mounted when the job ends, whether it succeeded, failed or was cancelled. The job reports its progress and can be cancelled.
          */
         post: operations["startMigrationScan"];
         delete?: never;
@@ -1880,7 +1880,7 @@ export interface paths {
         put?: never;
         /**
          * Scan the Unraid USB stick
-         * @description The alternative to the Flash Backup zip (doc 05 §3, Q25): reads Unraid's configuration from the USB stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private mountpoint under the daemon's state directory for the one read made here before anything is queued and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing is copied from it. The stick is the user's rollback. Refused before anything is queued: 400 `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, Q24, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service or cannot read a flash device. The result is the report the same flash's zip gives.
+         * @description Instead of the Flash Backup zip, reads Unraid's configuration from the USB stick, attached to this machine, and queues a `migration_scan` job. `device` must be one of the `flashDevices` `getMigration` offers. The stick is mounted read-only (never read-write) at a private mountpoint under the daemon's state directory for the one read made here before anything is queued and for the job's own read, and is unmounted after each; nothing is ever written to it and nothing is copied from it. The stick is the user's rollback. Refused before anything is queued: 400 `invalid_flash_device` (the device is not on offer: not a FAT filesystem labelled `UNRAID`, the boot disk, an array disk, or a filesystem UUID that another disk shares), 409 `zip_only_source` (the session's capture, or the stick's own, says Unraid booted from an internal device, whose ZFS boot pool Hoserva does not read; the zip is the only source), 409 `flash_device_unreadable` (it could not be mounted read-only or unmounted, or failed while it was read), 400 `invalid_flash_backup` (no usable `config/disk.cfg`) and 400 `unsupported_layout` (as for the zip, unless `unverifiedLayout` is true). 409 `scan_in_progress` while a scan runs, and 501 `not_configured` when this daemon has no migration service or cannot read a flash device. The result is the report the same flash's zip gives.
          */
         post: operations["startMigrationDeviceScan"];
         delete?: never;
@@ -1900,11 +1900,11 @@ export interface paths {
         put?: never;
         /**
          * Adopt the Unraid data disks
-         * @description Phase C of the migration (doc 05 §4 steps 14-16): queues a `migration_import` job (topology class) that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay` (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact. The former parity and cache disks are recorded by identity and are neither formatted, mounted nor opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity engine exists and no sync can run. While the import is pending (`getMigration` `phase` is `imported`), parity, array-write and topology jobs other than this one's own retry are refused with 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code. `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk, keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity disk is never parity (Q21); the disk this machine boots from is never parity or data and is the cache only by a spare partition of it; parity is one or two disks, each at least as large as the largest data disk (Q19, Q20); and every data disk has a filesystem Hoserva adopts (Q23) whose UUID is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the point of no return, which is the same check that step makes: Q18's content-file copies (the parity disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only filesystem check immediately before mounting; a disk that changed since the request, or now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
+         * @description Phase C of the migration: queues a `migration_import` job (topology class) that adopts the Unraid data disks into the pool at `/mnt/user` without formatting them and without writing a byte to them. Each data disk is mounted by its own device, never by a filesystem UUID another disk may share, with `ro,norecovery` (XFS), `ro,noload` (ext4) or `ro,rescue=nologreplay` (btrfs), and the catch-all pool over them is read-only, with the share directory structure intact. The former parity and cache disks are recorded by identity and are neither formatted, mounted nor opened: formatting them is the point of no return. No `snapraid.conf` is generated, so no parity engine exists and no sync can run. While the import is pending (`getMigration` `phase` is `imported`), parity, array-write and topology jobs other than this one's own retry are refused with 409 `migration_in_progress`, a scan included, and `forgetMigration` is refused with the same code. `roles` is the disk-role mapping the user confirmed against the serial table, one entry per disk, keyed by `serial` or `wwn`; the `review` of `getMigration` proposes a role for each disk the capture names. A cache on a spare partition of the boot disk (`listDisks` `cachePartitions`) is keyed by that partition's `byId` and `partUuid` instead, with no serial or WWN. The mapping is refused with 400 `invalid_import_roles`, before anything is queued, unless every role names a disk the scan listed and this machine still has; a disk the scan refused, an Unraid boot device or the Unraid USB stick has no role but `ignore`; a disk `disks.ini` records as parity is never `data`, whatever filesystem it reports, and a disk it records as data is never `parity` or `cache`; a weak-identity disk is never parity; the disk this machine boots from is never parity or data and is the cache only by a spare partition of it; parity is one or two disks, each at least as large as the largest data disk; and every data disk has a filesystem Hoserva adopts whose UUID is not another data disk's; and the layout must be one `snapraid.conf` can be rendered for at the point of no return, which is the same check that step makes: the content-file copies (the parity disks + 2, on distinct devices) need the boot device, a cache that is a device of its own (a cache that is a partition of the boot disk is the boot device's copy) and enough data disks. A layout that falls short is refused with 400 `invalid_import_roles`, naming the shortfall and what to add (a data disk or a cache device), never left to fail at step 17. The Unraid USB stick in any role is refused with 409 `unraid_stick`. Also refused before queueing: 409 `confirmation_required` unless `confirm` is true, 404 `no_migration_report` before a scan, 409 `scan_not_finished` while a scan runs or the latest one failed, 409 `migration_no_go` when the report's verdict is no-go, 409 `scan_outdated` for a report made before the disk table existed, 409 `array_exists` when the array is not a pending import's, and 501 `not_configured`. The job reads every data disk's identity again and re-runs its read-only filesystem check immediately before mounting; a disk that changed since the request, or now fails, is refused and nothing is mounted. A failure after the array is recorded unmounts what was mounted, deletes the record and leaves no pool; a retry of the same mapping applies a recorded import again. Nothing is read from the Unraid flash: the import uses the report the scan stored.
          *
-         *     With `undo` true the request takes back an import that is pending its point of no return instead (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a `migration_import` job (topology class) that unmounts the read-only pool and the adopted data disks, forgets the verify result, deletes the recorded array and removes the generated mount units. `roles` is then omitted. Nothing is written to any adopted disk, and the former parity and cache disks, which the import never touched, are untouched. A mount that cannot be released keeps the record and fails the job, so the request can be made again. The shares and accounts the import created are kept (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused, and the disks can be imported again with a mapping that works. It is the way out of an import whose layout the point of no return would refuse (Q18). Refused before anything is queued with 409 `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given, and 409 `no_import_pending` unless an import is pending its point of no return: an array that has been through it is never touched. Without `undo`, `roles` is required and an empty one is refused with 400 `invalid_import_roles`.
+         *     With `undo` true the request takes back an import that is pending its point of no return instead (`getMigration` `phase` `imported`, `verifying`, `verify_failed` or `verified`): it queues a `migration_import` job (topology class) that unmounts the read-only pool and the adopted data disks, forgets the verify result, deletes the recorded array and removes the generated mount units. `roles` is then omitted. Nothing is written to any adopted disk, and the former parity and cache disks, which the import never touched, are untouched. A mount that cannot be released keeps the record and fails the job, so the request can be made again. The shares and accounts the import created are kept (they hold no data); a new import finds them and leaves them as they are. Afterwards the scan's report is still there (`getMigration` `phase` `scanned`), `forgetMigration` is no longer refused, and the disks can be imported again with a mapping that works. It is the way out of an import whose layout the point of no return would refuse. Refused before anything is queued with 409 `confirmation_required` unless `confirm` is true, 400 `invalid_import_roles` when `roles` is given, and 409 `no_import_pending` unless an import is pending its point of no return: an array that has been through it is never touched. Without `undo`, `roles` is required and an empty one is refused with 400 `invalid_import_roles`.
          *
-         *     Once the disks are adopted the job seeds the scan's shares and accounts (doc 05 §4 steps 3, 4 and 15), and writes nothing to an adopted disk to do it. Each share the scan kept is created, its allocation method mapped to a create policy (Q11), its Unraid cache setting recorded as `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of, such as High-water allocation or a split level, is in `migration.notes`. The shares are exported read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces, for instance) is reported in the job's log with the reason and never renamed, and the scan's report flags it. Each account is created share-only without a password: passwords are never read from the flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or account that already exists is left as it is.
+         *     Once the disks are adopted the job seeds the scan's shares and accounts, and writes nothing to an adopted disk to do it. Each share the scan kept is created, its allocation method mapped to a create policy, its Unraid cache setting recorded as `migration.targetCacheMode` while the share is array-only (no cache exists before the point of no return), its floor as `minFreeSpace`, its export and security settings as SMB settings and its read and write lists as per-user access for the imported accounts; what Hoserva has no equivalent of, such as High-water allocation or a split level, is in `migration.notes`. The shares are exported read-only over SMB while the import is pending. A share whose name Hoserva does not accept (spaces, for instance) is reported in the job's log with the reason and never renamed, and the scan's report flags it. Each account is created share-only without a password: passwords are never read from the flash, and each one is set by the user with `setUserPassword` (the job's log lists them). The job is all-or-nothing: a share or account that cannot be created undoes the adoption too. A share or account that already exists is left as it is.
          */
         post: operations["startMigrationImport"];
         delete?: never;
@@ -1924,7 +1924,7 @@ export interface paths {
         put?: never;
         /**
          * Verify the adopted disks against the scan's baseline
-         * @description Step 16 of the migration (doc 05 §4), the last checkpoint before parity is touched: queues a `migration_verify` job (topology class, read-only, and admitted while the import is pending) that walks every adopted data disk through its read-only mount and every share through the read-only pool at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it compares the file, symlink and special-file counts, the total bytes, every file's size, every symlink's target and every special file's type, and it hashes again exactly the files the baseline hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is written to a source disk. The result is in `getMigration`; the job reports its progress and can be cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending` unless an import is pending its point of no return (`startMigrationImport`), 409 `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
+         * @description Step 16 of the migration, the last checkpoint before parity is touched: queues a `migration_verify` job (topology class, read-only, and admitted while the import is pending) that walks every adopted data disk through its read-only mount and every share through the read-only pool at `/mnt/user`, and compares what it finds with the scan's baseline. For each disk and each share it compares the file, symlink and special-file counts, the total bytes, every file's size, every symlink's target and every special file's type, and it hashes again exactly the files the baseline hashed (`fullChecksums` of the scan decides how many that is). The expected figures of a share are the union of the disks' baselines: a path two disks hold is shown once by the pool, from the first disk, and is listed in `duplicates`, never as missing or extra. Any difference, and any file or directory that cannot be read, fails the job and leaves `getMigration` in `verify_failed` with the result in `verify`; a verify can be run again, and a run clears the earlier result when it starts. A disk or the pool that the kernel's mount table does not show read-only is not read. Nothing is written to a source disk. The result is in `getMigration`; the job reports its progress and can be cancelled, which leaves a failed result. Refused before anything is queued: 409 `no_import_pending` unless an import is pending its point of no return (`startMigrationImport`), 409 `no_migration_baseline` when the scan recorded no baseline, and 501 `not_configured`.
          */
         post: operations["startMigrationVerify"];
         delete?: never;
@@ -1944,9 +1944,9 @@ export interface paths {
         put?: never;
         /**
          * Cross the point of no return and initialise parity
-         * @description Step 17 of the migration (doc 05 §4), the point of no return and the first step that writes to a disk of the old array: queues a `migration_parity` job (topology class) that formats the former Unraid parity disk(s) XFS (Q20) and the cache (a whole disk, a spare partition of the boot disk, or partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files placed per doc 02 §2, applies what the import deferred (each share's cache mode and its top-level directory's setgid mode and group, Q26), wires the parity engine so sync, scrub and fix are available without a restart, and queues the initial `sync` as an ordinary sync job, which runs through the threshold guard like every other. The data disks are never formatted. Until the sync completes the array has no redundancy at all: `getMigration` `parityInit` states that window and what rollback means for this session's boot mode and layout, and the user is shown them before this is called.
+         * @description Step 17 of the migration, the point of no return and the first step that writes to a disk of the old array: queues a `migration_parity` job (topology class) that formats the former Unraid parity disk(s) XFS and the cache (a whole disk, a spare partition of the boot disk, or partition 4 of an Unraid boot + data device and never the rest of that disk), records them as the array's own, mounts the data disks read-write, generates `snapraid.conf` with its content files placed on separate devices, applies what the import deferred (each share's cache mode and its top-level directory's setgid mode and group), wires the parity engine so sync, scrub and fix are available without a restart, and queues the initial `sync` as an ordinary sync job, which runs through the threshold guard like every other. The data disks are never formatted. Until the sync completes the array has no redundancy at all: `getMigration` `parityInit` states that window and what rollback means for this session's boot mode and layout, and the user is shown them before this is called.
          *
-         *     `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names every device that will be erased, in the style of the array setup's own typed confirmation. A wrong or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused before anything is queued with 409 `verify_required` unless the latest verify of the adopted array passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an import is pending its point of no return (or an initialisation is unfinished), and with 400 `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool is not a mirrored pair, and whenever a second Unraid boot device is attached), and with 409 `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free (doc 02 §1): once the disks are writable mergerfs would answer ENOSPC to every directory the job makes through `/mnt/user`, after the former parity disk and the cache were erased. The gate reads each data disk's free space once and the error names the floor and the disk with the most room; make room on a data disk (in Unraid, or by undoing the import) and import again. The job resolves every disk again from a fresh inventory by identity immediately before the first format and refuses, erasing nothing, when one is not the disk that was confirmed. A failure before the first format leaves the migration pending, with the adopted disks mounted read-only again. A failure after the formatted disks are recorded leaves the migration in `initializing`: running this again with the `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
+         *     `confirmation` must be the exact string `getMigration` `parityInit.confirmation` gives: it names every device that will be erased, in the style of the array setup's own typed confirmation. A wrong or missing string is refused with 409 `confirmation_required` and nothing is formatted. Refused before anything is queued with 409 `verify_required` unless the latest verify of the adopted array passed (`startMigrationVerify`) and no import has run since, with 409 `no_import_pending` unless an import is pending its point of no return (or an initialisation is unfinished), and with 400 `invalid_import_roles` when a disk the import recorded is gone, was swapped or may not be erased (a cache that is a partition of an Unraid boot device is refused unless the capture says the boot pool is not a mirrored pair, and whenever a second Unraid boot device is attached), and with 409 `pool_below_min_free_space` when no adopted data disk has the catch-all pool's `minfreespace` free: once the disks are writable mergerfs would answer ENOSPC to every directory the job makes through `/mnt/user`, after the former parity disk and the cache were erased. The gate reads each data disk's free space once and the error names the floor and the disk with the most room; make room on a data disk (in Unraid, or by undoing the import) and import again. The job resolves every disk again from a fresh inventory by identity immediately before the first format and refuses, erasing nothing, when one is not the disk that was confirmed. A failure before the first format leaves the migration pending, with the adopted disks mounted read-only again. A failure after the formatted disks are recorded leaves the migration in `initializing`: running this again with the `parityInit.confirmation` of that phase finishes it and formats nothing. Parity, array-write and topology jobs other than this one are refused with 409 `migration_in_progress` until it finishes.
          */
         post: operations["initializeMigrationParity"];
         delete?: never;
@@ -1984,7 +1984,7 @@ export interface paths {
         };
         /**
          * The template conversion preview
-         * @description What the scan's conversion of the Flash Backup's Docker templates found (doc 05 §3 and §6, doc 04 §5): every template with its class and how it converted, every Compose Manager project, and the counts the report shows. The scan converts each template in memory with the converter `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom network's `docker network create` command is exact when the capture holds that network. Nothing is created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's outcome (its status and warning classes), never its content, so this answers without the zip; `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a container on the source server (autostart, running and stopped) and, without the capture's container list, every template (`allTemplates`); a template-only template is converted and previewable but is in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed with its own `compose.yaml`, counted in `composeProjects` and never converted. 404 `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made before scans converted templates (scan again).
+         * @description What the scan's conversion of the Flash Backup's Docker templates found: every template with its class and how it converted, every Compose Manager project, and the counts the report shows. The scan converts each template in memory with the converter `convertUnraidTemplate` runs, passing it the Docker networks of the Phase A capture, so a custom network's `docker network create` command is exact when the capture holds that network. Nothing is created, written under `/var/lib/hoserva/stacks/` or started. The session keeps only each template's outcome (its status and warning classes), never its content, so this answers without the zip; `getMigrationTemplate` builds a preview on request. `counts` cover the templates that had a container on the source server (autostart, running and stopped) and, without the capture's container list, every template (`allTemplates`); a template-only template is converted and previewable but is in `templateOnly` and not in the clean or warning counts. A Compose Manager project is previewed with its own `compose.yaml`, counted in `composeProjects` and never converted. 404 `no_migration_report` before a scan has finished, and 404 `no_template_preview` for a report made before scans converted templates (scan again).
          */
         get: operations["listMigrationTemplates"];
         put?: never;
@@ -2027,15 +2027,15 @@ export interface paths {
         };
         /**
          * What the migration's Phase D can create, and what it has created
-         * @description Phase D's container steps (doc 05 §4 steps 19 and 20) as data, from the latest scan. `templates` are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers created with `docker run` and their image, which nothing is generated for: they are recreated by hand. The preview of each (the generated Compose, every warning including the writable-layer warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's autostart order first), each with its `state`; `awaiting` names the started stack that must be confirmed or stopped before another is started, and `next` the first stack not started yet; a stack that was started, stopped and never confirmed is offered as `next` only when none of those is left. `parityInitialized` is false until the migration is past its point of no return (`initializeMigrationParity`); the operations that create or start something refuse until then. This reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview` for a report made before scans converted templates.
+         * @description Phase D's container steps as data, from the latest scan. `templates` are every template of the scan grouped by `class` in the order the groups are shown (`autostart` in Unraid's own autostart order, then `running`, `stopped`, `template_only` and `unknown`); only a creatable template on Unraid's autostart list whose stack does not exist yet is `preselected`, so with no capture (class `unknown`) nothing is. Every one can still be selected. `composeProjects` are the Compose Manager projects, offered with their own `compose.yaml`; `byHand` are the containers created with `docker run` and their image, which nothing is generated for: they are recreated by hand. The preview of each (the generated Compose, every warning including the writable-layer warning) is `getMigrationTemplate`, and should be read before `createMigrationStacks`. `stacks` are the stacks `createMigrationStacks` created, in the order they are offered for starting (Unraid's autostart order first), each with its `state`; `awaiting` names the started stack that must be confirmed or stopped before another is started, and `next` the first stack not started yet; a stack that was started, stopped and never confirmed is offered as `next` only when none of those is left. `parityInitialized` is false until the migration is past its point of no return (`initializeMigrationParity`); the operations that create or start something refuse until then. This reads no disk. 404 `no_migration_report` before a scan has finished and 404 `no_template_preview` for a report made before scans converted templates.
          */
         get: operations["listMigrationContainers"];
         put?: never;
         /**
          * Create stopped Compose stacks from the scan's templates and projects
-         * @description Step 19 of the migration (doc 05 §4): creates a Compose stack, stopped, through the stack layer (`createStack`) for each selected template or Compose Manager project of the scan, from the generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`. Nothing is started and nothing is written outside the stacks directory. A stack is named after the template's `<Name>` (or the project's name), lowercased with every character a stack name may not hold turned into `-`.
+         * @description Step 19 of the migration: creates a Compose stack, stopped, through the stack layer (`createStack`) for each selected template or Compose Manager project of the scan, from the generated Compose the preview showed (`getMigrationTemplate`), or the project's own `compose.yaml`. Nothing is started and nothing is written outside the stacks directory. A stack is named after the template's `<Name>` (or the project's name), lowercased with every character a stack name may not hold turned into `-`.
          *
-         *     Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is past its point of no return (the initialisation has finished: an array exists and no import is pending or part-way through step 17); 400 `invalid_selection` for an empty selection, a name given twice or two selections that would create one stack name; 404 `template_not_found`, `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read; and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual action (Q36) unless its selection says `acknowledged`. After that each stack is created on its own and the answer has one result per selection, in the order they are made (Unraid's autostart order first): a stack that could not be created says why in `error`, with the code `createStack` gives (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A selection whose stack already exists from this migration is `already_created`, so the same request can be sent again: that includes a stack this request made for the selection whose record was never written (the daemon stopped between the two), which is recorded now and never made again or deleted. A stack of that name the migration did not make is `stack_exists`.
+         *     Refused as a whole, before any stack is created: 409 `parity_not_initialized` until the migration is past its point of no return (the initialisation has finished: an array exists and no import is pending or part-way through step 17); 400 `invalid_selection` for an empty selection, a name given twice or two selections that would create one stack name; 404 `template_not_found`, `no_migration_report` or `no_template_preview`; 409 `template_source_unavailable` when the Flash Backup zip is not kept; 409 `template_unconvertible` for a template the converter could not read; and 409 `warnings_not_acknowledged` for a template whose conversion has warnings that need manual action unless its selection says `acknowledged`. After that each stack is created on its own and the answer has one result per selection, in the order they are made (Unraid's autostart order first): a stack that could not be created says why in `error`, with the code `createStack` gives (`stack_exists`, `invalid_stack`, ...), and the stacks before it stay created and recorded. A selection whose stack already exists from this migration is `already_created`, so the same request can be sent again: that includes a stack this request made for the selection whose record was never written (the daemon stopped between the two), which is recorded now and never made again or deleted. A stack of that name the migration did not make is `stack_exists`.
          */
         post: operations["createMigrationStacks"];
         delete?: never;
@@ -2058,7 +2058,7 @@ export interface paths {
         put?: never;
         /**
          * Start one migrated stack
-         * @description Step 20 of the migration (doc 05 §4): queues the `stack_start` job (`startStack`) for a stack `createMigrationStacks` created, and records that it was started: the start is recorded before the job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and whose job is then not recorded leaves the stack recorded as started with no job. Containers are started one at a time: this is refused with 409 `container_unconfirmed` while another migrated stack that was started is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one whose start job is still running or whose containers are running, and one recorded as started with no job. When the state of another started stack cannot be read (its start job or its containers), nothing is queued and the read failure is returned as it is, not as `container_unconfirmed`: 503 `docker_unavailable` when the Docker Engine cannot be reached, 500 otherwise. A failure to record the start is a 500. Refused before anything is queued with 409 `parity_not_initialized` until the migration is past its point of no return, 404 `migrated_stack_not_found` for a name the migration did not create, 409 `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when the stack was removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack` answers. The stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a suggestion. Run `checkMigrationContainer` once the job has succeeded.
+         * @description Step 20 of the migration: queues the `stack_start` job (`startStack`) for a stack `createMigrationStacks` created, and records that it was started: the start is recorded before the job is queued, so a start that cannot be recorded queues nothing, and a start that is queued and whose job is then not recorded leaves the stack recorded as started with no job. Containers are started one at a time: this is refused with 409 `container_unconfirmed` while another migrated stack that was started is neither confirmed (`confirmMigrationContainer`) nor stopped, which includes one whose start job is still running or whose containers are running, and one recorded as started with no job. When the state of another started stack cannot be read (its start job or its containers), nothing is queued and the read failure is returned as it is, not as `container_unconfirmed`: 503 `docker_unavailable` when the Docker Engine cannot be reached, 500 otherwise. A failure to record the start is a 500. Refused before anything is queued with 409 `parity_not_initialized` until the migration is past its point of no return, 404 `migrated_stack_not_found` for a name the migration did not create, 409 `container_confirmed` for a stack already confirmed, 404 `stack_not_found` when the stack was removed since, and 409 `array_stopped` or 503 `array_state_unknown` as `startStack` answers. The stack's `waitSeconds` is what Unraid's autostart list waited after starting it, as a suggestion. Run `checkMigrationContainer` once the job has succeeded.
          */
         post: operations["startMigrationContainer"];
         delete?: never;
@@ -2081,7 +2081,7 @@ export interface paths {
         put?: never;
         /**
          * Check that a started stack's containers see their data
-         * @description The data check of step 20 (doc 05 §4): for each bind mount of the stack's containers whose host path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when asked and never on a timer, and records that a check ran since the latest start, which `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409 `no_container` while the stack has no container (its start has not created one), 409 `parity_not_initialized` and 404 `migrated_stack_not_found` as `startMigrationContainer` does.
+         * @description The data check of step 20: for each bind mount of the stack's containers whose host path is under `/mnt/user` or `/mnt/cache`, whether the path exists and is not empty. A directory counts as empty when it holds no entry, a file when it has no byte; a path that cannot be read is `unreadable`, never `ok`. It reads one directory entry of each path (which can spin a disk up), when asked and never on a timer, and records that a check ran since the latest start, which `confirmMigrationContainer` needs. A stack with no bind mount under those paths has nothing to check and is `allOk`. Refused with 409 `container_not_started` for a stack that was not started, 409 `no_container` while the stack has no container (its start has not created one), 409 `parity_not_initialized` and 404 `migrated_stack_not_found` as `startMigrationContainer` does.
          */
         post: operations["checkMigrationContainer"];
         delete?: never;
@@ -2122,11 +2122,11 @@ export interface paths {
         };
         /**
          * The post-migration checklist
-         * @description Phase D's closing steps (doc 05 §4 steps 18 and 21 to 25) as a checklist, each item's state taken from a record where one exists, so it cannot say something was done when it was not. The migration counts as finished exactly when the array record carries the time the point of no return finished (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way through its point of no return, or was undone has none, and so has an array created by hand or one that finished before this record existed; then `finished` is false, `finishedAt` is absent and `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
+         * @description Phase D's closing steps as a checklist, each item's state taken from a record where one exists, so it cannot say something was done when it was not. The migration counts as finished exactly when the array record carries the time the point of no return finished (`initializeMigrationParity`), which is written in the same statement that ends it and by nothing else: `finished` is true and `finishedAt` is that time. A migration that is pending, part-way through its point of no return, or was undone has none, and so has an array created by hand or one that finished before this record existed; then `finished` is false, `finishedAt` is absent and `items` is empty: the checklist does not apply. `getMigration` keeps no "complete" phase.
          *
          *     `appdata_cache` is done by a succeeded `share_relocation` job for the `appdata` share to the cache (`startShareRelocation`), and `not_applicable` when the scan read the capture's disk roles and the source had no cache. `initial_sync` is done by the first succeeded `sync` that is not a dry run and was created after `finishedAt`. `full_scrub` is done by a succeeded `scrub` with `percent` 100 and `allBlocks` true that started after that sync ended, and stays `todo` until the initial sync is done. A scrub without `allBlocks` skips blocks synced within the last days, so it checks nothing right after a sync and never counts. `notifications` is done once an enabled channel's test (`sendTestNotification`) has succeeded in a later second than the one the channel last changed in; the Unraid notification agents the scan found are named so the user knows what to recreate, and no secret is carried over. `schedules` is done once the nightly chain's `mover`, `sync` and `scrub` steps are all enabled (`updateMaintenanceChainSchedule`); it offers the values the scan read from Unraid: its mover schedule as the mover schedule, its parity-check schedule as the scrub schedule (a non-correcting check maps to a scrub that only reports) and its spin-down delay as the default. Unraid's parity is updated as files are written, so there is no Unraid sync schedule to carry over: nothing is offered for `sync` and the user chooses one.
          *
-         *     `user_scripts` and `restore_drill` have no record to derive from and are done by `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and schedule (a script is never executed or translated, Q83); the second shows the latest succeeded `fix` job that had a `path`, which an acknowledgement records. Only those two are ever `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the scripts are empty.
+         *     `user_scripts` and `restore_drill` have no record to derive from and are done by `acknowledgeMigrationChecklistItem`: the first lists the User Scripts the scan found, by name and schedule (a script is never executed or translated); the second shows the latest succeeded `fix` job that had a `path`, which an acknowledgement records. Only those two are ever `acknowledgeable`. The checklist needs no scan: without a report the offers, the agents and the scripts are empty.
          */
         get: operations["getMigrationChecklist"];
         put?: never;
@@ -2168,7 +2168,7 @@ export interface paths {
         };
         /**
          * Appdata backup policy
-         * @description Every container with a bind-mounted directory inside the appdata location (the cache disk's `appdata` directory), each with whether the backup stops it while its directory is copied and whether it is in the backup at all (doc 10 §2). A container the operator has not configured is stopped and included. A known database image that is not stopped carries `warning`: copying a database's files while it runs can produce an archive that does not restore. 501 `not_configured` when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+         * @description Every container with a bind-mounted directory inside the appdata location (the cache disk's `appdata` directory), each with whether the backup stops it while its directory is copied and whether it is in the backup at all. A container the operator has not configured is stopped and included. A known database image that is not stopped carries `warning`: copying a database's files while it runs can produce an archive that does not restore. 501 `not_configured` when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
          */
         get: operations["getAppdataBackup"];
         put?: never;
@@ -2297,7 +2297,7 @@ export interface paths {
         };
         /**
          * Run prerequisite checks
-         * @description Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity (`hoserva doctor`, doc 01 §3), plus existing host configuration (Samba shares, NFS exports, fstab mounts, Docker containers and images) for onboarding (Q76).
+         * @description Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity (`hoserva doctor`), plus existing host configuration (Samba shares, NFS exports, fstab mounts, Docker containers and images) for onboarding.
          */
         get: operations["runDoctor"];
         put?: never;
@@ -2319,7 +2319,7 @@ export interface paths {
         put?: never;
         /**
          * Apply onboarding choices for existing host configuration
-         * @description Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is imported into the database or left unmanaged under the drift model (doc 01 §2). Existing host files are never overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker` when containers or images exist, or when there is no cache disk (Q62).
+         * @description Each detected Samba file, NFS exports file, fstab, Docker containers list and images list is imported into the database or left unmanaged under the drift model. Existing host files are never overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker` when containers or images exist, or when there is no cache disk.
          */
         post: operations["applyHostConfig"];
         delete?: never;
@@ -2337,7 +2337,7 @@ export interface paths {
         };
         /**
          * List containers
-         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2). A container an installed stack started carries that stack's name in `stack`; one no stack manages has none. The daemon decides which, so the request fails when the stacks cannot be read rather than reporting every container as unmanaged. available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+         * @description Every container the Docker Engine reports, managed and unmanaged alike. A container an installed stack started carries that stack's name in `stack`; one no stack manages has none. The daemon decides which, so the request fails when the stacks cannot be read rather than reporting every container as unmanaged. available is false, with no error, whenever Docker itself is not reachable.
          */
         get: operations["listApps"];
         put?: never;
@@ -2359,7 +2359,7 @@ export interface paths {
         put?: never;
         /**
          * Convert an Unraid XML template to Compose
-         * @description Converts one Unraid container template (doc 04 §5) to a Compose file for review. Nothing is created, written or run: the result is the generated `compose` beside the `source` XML as it was sent, every warning, and the privilege summary computed from the generated Compose content, so the caller reads all of it before it acts on any of it. Every part of the template that is not translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and listed as a `flagged_path` warning; a custom network the template names is a `missing_network` warning carrying the `docker network create` command, with placeholders for what the template does not say; two entries for the same target with different values are a `conflict`; the possibility of state inside the source container that no template expresses is always a `writable_layer` warning. `clean` is true when no warning is of the classes that need manual action (`writable_layer` and `note` never count against it). A body that is not an Unraid container template is refused with 400 `invalid_unraid_template`.
+         * @description Converts one Unraid container template to a Compose file for review. Nothing is created, written or run: the result is the generated `compose` beside the `source` XML as it was sent, every warning, and the privilege summary computed from the generated Compose content, so the caller reads all of it before it acts on any of it. Every part of the template that is not translated is reported, never dropped: an `<ExtraParams>` flag outside the translate table is listed in a comment at the top of the service and as an `untranslated_flag` warning; a host path outside the pool and the cache (`/boot`, `/mnt/disks/`, `/mnt/user0`, another pool) is kept as written and listed as a `flagged_path` warning; a custom network the template names is a `missing_network` warning carrying the `docker network create` command, with placeholders for what the template does not say; two entries for the same target with different values are a `conflict`; the possibility of state inside the source container that no template expresses is always a `writable_layer` warning. `clean` is true when no warning is of the classes that need manual action (`writable_layer` and `note` never count against it). A body that is not an Unraid container template is refused with 400 `invalid_unraid_template`.
          */
         post: operations["convertUnraidTemplate"];
         delete?: never;
@@ -2397,7 +2397,7 @@ export interface paths {
         };
         /**
          * List Docker networks
-         * @description Every network the Docker Engine holds, sorted by name: the built-in `bridge`, `host` and `none` and the networks the user created (macvlan and ipvlan included). The install wizard offers the existing ones as network modes (Q37, doc 03 §5.4); Hoserva never creates a network. `available` is false, with no error, whenever Docker itself is not reachable (doc 04 §3), and then `networks` is empty without meaning there are none: a caller that needs the list must treat it as unknown. Any other failure to read the list is an error, never an empty list.
+         * @description Every network the Docker Engine holds, sorted by name: the built-in `bridge`, `host` and `none` and the networks the user created (macvlan and ipvlan included). The install wizard offers the existing ones as network modes; Hoserva never creates a network. `available` is false, with no error, whenever Docker itself is not reachable, and then `networks` is empty without meaning there are none: a caller that needs the list must treat it as unknown. Any other failure to read the list is an error, never an empty list.
          */
         get: operations["listDockerNetworks"];
         put?: never;
@@ -2417,7 +2417,7 @@ export interface paths {
         };
         /**
          * Container update status
-         * @description What the daily registry check (doc 04 §6, Q81) last found for each container's image: a new build of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`). The check asks each registry for manifests and tag names only, never a pull. `skipped` means the registry was rate limiting requests and is asked again at the next check, `failed` that the check could not tell (including a registry whose saved credential cannot be used or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached the image yet or that it could not look: the registry wants a login and no credential is saved for it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to update. The `message` says which. None of them means up to date. available is false, with no error, whenever Docker itself is not reachable.
+         * @description What the daily registry check last found for each container's image: a new build of the same tag (`new_build`) is reported apart from a newer version tag (`new_version`, named by `availableTag`). The check asks each registry for manifests and tag names only, never a pull. `skipped` means the registry was rate limiting requests and is asked again at the next check, `failed` that the check could not tell (including a registry whose saved credential cannot be used or was refused: it is never asked anonymously instead), and `not_checked` that no check has reached the image yet or that it could not look: the registry wants a login and no credential is saved for it (`putRegistryCredential`) or the container is pinned to an image digest, so there is no tag to update. The `message` says which. None of them means up to date. available is false, with no error, whenever Docker itself is not reachable.
          */
         get: operations["listAppUpdates"];
         put?: never;
@@ -2461,7 +2461,7 @@ export interface paths {
         };
         /**
          * List the registries that have a saved credential
-         * @description The registry hosts the daily update check (doc 04 §6, Q81) has a credential for, sorted, as image references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never returned: only the host is. A host listed here whose credential was cleared by a restore without the backup passphrase makes the update check report its images as `failed` until `putRegistryCredential` saves it again.
+         * @description The registry hosts the daily update check has a credential for, sorted, as image references name them (`docker.io`, `ghcr.io`, `registry.example.com:5000`). A credential is never returned: only the host is. A host listed here whose credential was cleared by a restore without the backup passphrase makes the update check report its images as `failed` until `putRegistryCredential` saves it again.
          */
         get: operations["listRegistryCredentials"];
         put?: never;
@@ -2485,7 +2485,7 @@ export interface paths {
         get?: never;
         /**
          * Save a registry's credential
-         * @description Saves the username and password the update check logs in to this registry with, replacing any it already has, sealed under the machine key (Q28). The password is write-only: no operation returns it and it is never logged. The credential is sent only to this registry's own host (and, for Docker Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on another host, is not logged in to and its images are reported `failed`. It is carried in a config archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the credential is cleared and the restore report names it. A host that is not a registry host name, or an empty username or password, a username with a colon, or a value with control characters is 400 `invalid_registry_credential`.
+         * @description Saves the username and password the update check logs in to this registry with, replacing any it already has, sealed under the machine key. The password is write-only: no operation returns it and it is never logged. The credential is sent only to this registry's own host (and, for Docker Hub, its token service `auth.docker.io`), only over https, and never follows a redirect to another host or scheme; a registry whose address would send it in plain HTTP, or whose token service is on another host, is not logged in to and its images are reported `failed`. It is carried in a config archive's `secrets.age`, so a restore with the backup passphrase brings it back; without it the credential is cleared and the restore report names it. A host that is not a registry host name, or an empty username or password, a username with a colon, or a value with control characters is 400 `invalid_registry_credential`.
          */
         put: operations["putRegistryCredential"];
         post?: never;
@@ -2511,7 +2511,7 @@ export interface paths {
         };
         /**
          * Inspect a container
-         * @description One container's current state, health, image, tag, ports and mounts (doc 04 §3), and the stack that manages it, if any.
+         * @description One container's current state, health, image, tag, ports and mounts, and the stack that manages it, if any.
          */
         get: operations["getApp"];
         put?: never;
@@ -2748,7 +2748,7 @@ export interface paths {
         put?: never;
         /**
          * Create a Compose stack
-         * @description Stores the stack's row (D4, `.env` sealed under the machine key) and generates `docker-compose.yml`, `.env` and `meta.json` into the directory named after the stack, then checks the result with `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that name exists. A directory of that name already under the stacks directory (what a removed stack's own files left behind) is used as it is, and only the three generated files are written into it; it is refused with 409 `stack_dir_exists` when it holds a `docker-compose.yml`, which is never overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is stored or written, so Docker always runs with the daemon's own values for them.
+         * @description Stores the stack's row (`.env` sealed under the machine key) and generates `docker-compose.yml`, `.env` and `meta.json` into the directory named after the stack, then checks the result with `docker compose config`. Nothing is started. Refused with 409 `stack_exists` when a stack of that name exists. A directory of that name already under the stacks directory (what a removed stack's own files left behind) is used as it is, and only the three generated files are written into it; it is refused with 409 `stack_dir_exists` when it holds a `docker-compose.yml`, which is never overwritten. A name that is not 1 to 63 lowercase letters, digits, `-` or `_`, starting with a letter or digit, is refused with 400 `invalid_stack_name` before anything is touched. A Compose file that `docker compose config` rejects is refused with 400 `invalid_stack`, and leaves no row and no generated file behind. A `.env` that defines one of the variables Docker needs from the daemon's environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`) is refused with 400 `invalid_stack_env` before anything is stored or written, so Docker always runs with the daemon's own values for them.
          */
         post: operations["createStack"];
         delete?: never;
@@ -2870,7 +2870,7 @@ export interface paths {
         };
         /**
          * List the catalog's templates
-         * @description The templates of the catalog installed on disk (doc 04 §7), read from its `index.json` and never waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated catalog's. The curated catalog's entries come first, then those of each user-added source (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of an unsigned source has `signed` false. Every entry says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has run since the daemon started, also starts one catalog check in the background, never a second while one is running. The answer is the on-disk copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
+         * @description The templates of the catalog installed on disk, read from its `index.json` and never waiting on the network, with the catalog's `serial` and `generatedAt`, which are the curated catalog's. The curated catalog's entries come first, then those of each user-added source (`listCatalogSources`) in the order the sources were added; a template id a source earlier in that order already lists is never supplied by a later one, so a user-added entry cannot shadow a curated one. Every entry names the `source` it came from (`hoserva` for the curated catalog, a source id for a user-added source) and carries that source's badge as data: `sourceKind` and `signed`. An entry of an unsigned source has `signed` false. Every entry says whether a stack of that template id already exists (`installed`, from the `stacks` table). Entries are in that order. Search, filters and paging are the caller's. `lastCheckedAt` and `lastOutcome` report the most recent catalog check (`refreshCatalog`) since the daemon started, and are absent before any check has run. A catalog that is not installed or whose `index.json` cannot be read is refused with 503 `catalog_unavailable`, never answered with an empty list. With `checkOnOpen` on (`getCatalogSettings`), a call made when the last check is older than 15 minutes, or when none has run since the daemon started, also starts one catalog check in the background, never a second while one is running. The answer is the on-disk copy as it is now; the finished check is announced as a `catalog` event on `/api/v1/events`.
          */
         get: operations["listCatalog"];
         put?: never;
@@ -2890,7 +2890,7 @@ export interface paths {
         };
         /**
          * Get the catalog refresh settings
-         * @description How the catalog checks for updates by itself (doc 04 §7, Q65): the background `refreshInterval` and whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
+         * @description How the catalog checks for updates by itself: the background `refreshInterval` and whether opening the catalog starts a check (`checkOnOpen`). Every install starts at `24h` and on.
          */
         get: operations["getCatalogSettings"];
         /**
@@ -2916,7 +2916,7 @@ export interface paths {
         put?: never;
         /**
          * Check for catalog updates now
-         * @description Runs one conditional request for the latest signed catalog from the catalog host (doc 04 §7, Q65) and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed catalog only if its signature verifies against the compiled-in catalog key and its serial is strictly higher (`updated`, with the number of new and of updated templates, compared by id and revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure does not. A check that fails is still a completed check, answered 200. Calls made while a check is running share that check's request and result. A signature that does not verify makes the check fetch the archive and its signature once more before it reports `bad_signature`, because the two files are cached separately and can briefly disagree while a catalog is being published. Every finished check, whoever started it, is announced as a `catalog` event on `/api/v1/events`. Nothing is fetched from `api.github.com`.
+         * @description Runs one conditional request for the latest signed catalog from the catalog host and returns how it ended. It is an explicit user action, so it runs even when automatic refresh is off. An unchanged catalog answers `304` and downloads nothing (`unchanged`). A newer archive replaces the installed catalog only if its signature verifies against the compiled-in catalog key and its serial is strictly higher (`updated`, with the number of new and of updated templates, compared by id and revision against the catalog it replaced). Any other outcome keeps the installed catalog untouched and is `failed`, with a `reason` code and a `message`; a failed verification (`bad_signature`, `not_newer`, `bad_archive`) also raises a `catalog_check_failed` notification, and a network failure does not. A check that fails is still a completed check, answered 200. Calls made while a check is running share that check's request and result. A signature that does not verify makes the check fetch the archive and its signature once more before it reports `bad_signature`, because the two files are cached separately and can briefly disagree while a catalog is being published. Every finished check, whoever started it, is announced as a `catalog` event on `/api/v1/events`. Nothing is fetched from `api.github.com`.
          */
         post: operations["refreshCatalog"];
         delete?: never;
@@ -2934,13 +2934,13 @@ export interface paths {
         };
         /**
          * List the catalog sources
-         * @description The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added (`kind` `user_added`) in the order they were added (doc 04 §4, §7). `signed` is true only for a source whose installed archive passed a signature check: always for the curated catalog, and for a user-added source only when it was added with a public key. `serial` is the installed catalog's serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive was installed or confirmed unchanged, and is absent before the first.
+         * @description The curated catalog (`hoserva`, `kind` `curated`, always first) and every source URL the user added (`kind` `user_added`) in the order they were added. `signed` is true only for a source whose installed archive passed a signature check: always for the curated catalog, and for a user-added source only when it was added with a public key. `serial` is the installed catalog's serial and is absent when it cannot be read. `lastRefreshedAt` is the last time the source's archive was installed or confirmed unchanged, and is absent before the first.
          */
         get: operations["listCatalogSources"];
         put?: never;
         /**
          * Add a catalog source
-         * @description Adds a catalog source URL of the user's own (doc 04 §4): the archive `catalog.tar.zst` is fetched from beneath `url` in the same format as the curated catalog and installed, and only then is the source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva contacts the URL only because the user added it, and only again when the user refreshes it. The URL must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source` otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519 key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature is requested and every entry it supplies is badged `signed` false. A template of an unsigned source still goes through the same privilege summary and warnings at install. Refused with 409 `catalog_source_exists` when a source with that URL (the curated one included) exists, 502 `catalog_source_unreachable` when the archive could not be fetched, and 422 `catalog_source_rejected` when the archive was fetched but refused (a signature that does not verify, a malformed archive).
+         * @description Adds a catalog source URL of the user's own: the archive `catalog.tar.zst` is fetched from beneath `url` in the same format as the curated catalog and installed, and only then is the source recorded, so a source that cannot be fetched or verified leaves nothing behind. Hoserva contacts the URL only because the user added it, and only again when the user refreshes it. The URL must be an `https` address with no credentials, query or fragment (400 `invalid_catalog_source` otherwise, before anything is fetched), a redirect must stay on the same host, and the archive is size-capped as the curated one is. With a `publicKey` (PEM, or the base64 of the raw 32-byte Ed25519 key) the archive's detached signature `catalog.tar.zst.sig` is required and must verify against that key, and the source is `signed`. With no `publicKey` the source is accepted unsigned: no signature is requested and every entry it supplies is badged `signed` false. A template of an unsigned source still goes through the same privilege summary and warnings at install. Refused with 409 `catalog_source_exists` when a source with that URL (the curated one included) exists, 502 `catalog_source_unreachable` when the archive could not be fetched, and 422 `catalog_source_rejected` when the archive was fetched but refused (a signature that does not verify, a malformed archive).
          */
         post: operations["addCatalogSource"];
         delete?: never;
@@ -3121,13 +3121,13 @@ export interface paths {
         };
         /**
          * List accounts
-         * @description Every account, sorted by username (Q27, doc 03 §7).
+         * @description Every account, sorted by username.
          */
         get: operations["listUsers"];
         put?: never;
         /**
          * Create an account
-         * @description Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin promotes it. No password is set by this call — setUserPassword provisions the UI credential and the Samba account together, in a separate action. Never creates an admin account (users_one_admin_idx allows exactly one, created only by createFirstAdmin).
+         * @description Defaults to the share-only role when omitted: a new account has no UI login until an admin promotes it. No password is set by this call — setUserPassword provisions the UI credential and the Samba account together, in a separate action. Never creates an admin account (users_one_admin_idx allows exactly one, created only by createFirstAdmin).
          */
         post: operations["createUser"];
         delete?: never;
@@ -3157,7 +3157,7 @@ export interface paths {
         head?: never;
         /**
          * Change an account's role
-         * @description Viewer or share-only only (Q27) — the sole admin account is never reachable through this operation.
+         * @description Viewer or share-only only — the sole admin account is never reachable through this operation.
          */
         patch: operations["updateUser"];
         trace?: never;
@@ -3175,7 +3175,7 @@ export interface paths {
         put?: never;
         /**
          * Set an account's password
-         * @description Writes the UI credential hash and the Samba passdb entry together (Q27, doc 03 §7): if the Samba write fails, the UI credential is rolled back to its previous value, and nothing is left updated on only one side. This is the ordinary admin-driven password action on `/users` — distinct from resetUserPassword (Q78), which is root-only recovery for a locked-out account over the Unix socket and never touches the Samba passdb.
+         * @description Writes the UI credential hash and the Samba passdb entry together: if the Samba write fails, the UI credential is rolled back to its previous value, and nothing is left updated on only one side. This is the ordinary admin-driven password action on `/users` — distinct from resetUserPassword, which is root-only recovery for a locked-out account over the Unix socket and never touches the Samba passdb.
          */
         post: operations["setUserPassword"];
         delete?: never;
@@ -3195,12 +3195,12 @@ export interface paths {
         };
         /**
          * Get one account's per-share access
-         * @description Every share this account has an explicit access level for (Q27, doc 03 §7). A share with no row here is not represented — none of the three levels is assumed.
+         * @description Every share this account has an explicit access level for. A share with no row here is not represented — none of the three levels is assumed.
          */
         get: operations["getUserSharePermissions"];
         /**
          * Replace one account's per-share access
-         * @description A full replace: the account's access is set to exactly the shares and levels listed, and every share this account previously had an explicit level for but that is missing from the request loses its row entirely (doc 03 §7: "editable from either side" — this is the user-side editor).
+         * @description A full replace: the account's access is set to exactly the shares and levels listed, and every share this account previously had an explicit level for but that is missing from the request loses its row entirely (access is editable from either the share or the user; this is the user-side editor).
          */
         put: operations["updateUserSharePermissions"];
         post?: never;
@@ -3219,13 +3219,13 @@ export interface paths {
         };
         /**
          * List user groups
-         * @description Every user group, sorted by name (Q27, doc 03 §7).
+         * @description Every user group, sorted by name.
          */
         get: operations["listUserGroups"];
         put?: never;
         /**
          * Create a user group
-         * @description A named collection of accounts, purely for bulk share-permission assignment (Q27, doc 03 §7) — distinct from the fixed `users` system group (GID 100, Q26) that every share's files belong to.
+         * @description A named collection of accounts, purely for bulk share-permission assignment — distinct from the fixed `users` system group (GID 100) that every share's files belong to.
          */
         post: operations["createUserGroup"];
         delete?: never;
@@ -3287,7 +3287,7 @@ export interface paths {
         };
         /**
          * List active sessions
-         * @description Every session across every account, with revoke (doc 03 §7).
+         * @description Every session across every account, with revoke.
          */
         get: operations["listSessions"];
         put?: never;
@@ -3333,7 +3333,7 @@ export interface paths {
         put?: never;
         /**
          * Create a personal API token
-         * @description A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP. The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast radius), never widen it.
+         * @description A personal API token, scoped to admin or viewer, for scripting and the remote CLI over TCP. The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring how a session cookie is handled. Refused for a share-only account (share-only has no API access at all), and refused when role exceeds the account's own role: a token can narrow an account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast radius), never widen it.
          */
         post: operations["createApiToken"];
         delete?: never;
@@ -3351,7 +3351,7 @@ export interface paths {
         };
         /**
          * List personal API tokens
-         * @description Every account's tokens, most recently created first (doc 03 §7).
+         * @description Every account's tokens, most recently created first.
          */
         get: operations["listApiTokens"];
         put?: never;
@@ -3397,7 +3397,7 @@ export interface paths {
         put?: never;
         /**
          * Reset a user's password
-         * @description Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+         * @description Root-only over the Unix socket. Checked against the peer's uid 0 specifically — the `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
          */
         post: operations["resetUserPassword"];
         delete?: never;
@@ -3419,7 +3419,7 @@ export interface paths {
         put?: never;
         /**
          * Disable a user's TOTP
-         * @description Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged and announced through every notification channel.
+         * @description Root-only over the Unix socket. Checked against the peer's uid 0 specifically. Audit-logged and announced through every notification channel.
          */
         post: operations["disableUserTotp"];
         delete?: never;
@@ -3441,7 +3441,7 @@ export interface paths {
         put?: never;
         /**
          * Clear login lockout
-         * @description Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket, checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+         * @description Clears the account's login rate-limiter lockout. Root-only over the Unix socket, checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
          */
         post: operations["unlockUser"];
         delete?: never;
@@ -3455,7 +3455,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Error: {
-            /** @description A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can also return one of: `setup_required` (409 — no admin account exists yet; every operation but getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409, createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy` (503 — the bounded password-hashing worker pool is saturated; safe to retry shortly), `invalid_credentials` (401, login — an unknown username or wrong password, deliberately indistinguishable), `totp_required` (401, login — the account has TOTP enrolled and no code was supplied), `totp_invalid` (401, login and confirmTotp — a code was supplied but is wrong, expired or already used; a missing login code is `totp_required` instead, never this), `totp_reverify_required` (403, enrollTotp — TOTP is already active and the caller didn't prove they still hold the account: no password or code was supplied, or the one supplied was wrong; 403 rather than 401 since the session itself is valid, only the reverification is missing or failed), `totp_reverify_ambiguous` (400, enrollTotp — TOTP is already active and *both* the current password and a current TOTP code were supplied; supply exactly one), `totp_not_pending` (409, confirmTotp — no pending secret to confirm), `unauthorized` (401 — no credential, or one that no longer validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation), `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user for an operation that needs one), `request_too_large` (413 — the request body exceeded the server's size limit), `bad_request` (400 — the request body could not be decoded), `not_found` (404 — no such API route), `api_token_not_found` (404, revokeApiToken — no token with that id), `invalid_token_role` (400, createApiToken — the requested role is neither admin nor viewer; share-only is never a valid token role), `share_only_no_api_token` (403, createApiToken — the target account has SMB/NFS access only and no API access at all, Q27) and `token_role_exceeds_account` (403, createApiToken — the requested role is wider than the target account's own role; a token can only narrow an account's access, never widen it). */
+            /** @description A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation can also return one of: `setup_required` (409 — no admin account exists yet; every operation but getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409, createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy` (503 — the bounded password-hashing worker pool is saturated; safe to retry shortly), `invalid_credentials` (401, login — an unknown username or wrong password, deliberately indistinguishable), `totp_required` (401, login — the account has TOTP enrolled and no code was supplied), `totp_invalid` (401, login and confirmTotp — a code was supplied but is wrong, expired or already used; a missing login code is `totp_required` instead, never this), `totp_reverify_required` (403, enrollTotp — TOTP is already active and the caller didn't prove they still hold the account: no password or code was supplied, or the one supplied was wrong; 403 rather than 401 since the session itself is valid, only the reverification is missing or failed), `totp_reverify_ambiguous` (400, enrollTotp — TOTP is already active and *both* the current password and a current TOTP code were supplied; supply exactly one), `totp_not_pending` (409, confirmTotp — no pending secret to confirm), `unauthorized` (401 — no credential, or one that no longer validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation), `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user for an operation that needs one), `request_too_large` (413 — the request body exceeded the server's size limit), `bad_request` (400 — the request body could not be decoded), `not_found` (404 — no such API route), `api_token_not_found` (404, revokeApiToken — no token with that id), `invalid_token_role` (400, createApiToken — the requested role is neither admin nor viewer; share-only is never a valid token role), `share_only_no_api_token` (403, createApiToken — the target account has SMB/NFS access only and no API access at all) and `token_role_exceeds_account` (403, createApiToken — the requested role is wider than the target account's own role; a token can only narrow an account's access, never widen it). */
             code: string;
             /** @description A human-readable explanation, safe to show in the UI or CLI. */
             message: string;
@@ -3465,7 +3465,7 @@ export interface components {
             };
         };
         /**
-         * @description Q27: admin (full UI), viewer (read-only UI), or share-only (SMB/NFS only, no UI login at all — the default for a new account). A share-only account can still sign in with this role on a session that predates a role change; every operation but the public ones refuses it (RoleViewer/RoleAdmin never satisfy it), and login itself refuses a share-only account outright.
+         * @description Admin (full UI), viewer (read-only UI), or share-only (SMB/NFS only, no UI login at all — the default for a new account). A share-only account can still sign in with this role on a session that predates a role change; every operation but the public ones refuses it, and login itself refuses a share-only account outright.
          * @enum {string}
          */
         UserRole: "admin" | "viewer" | "share-only";
@@ -3490,7 +3490,7 @@ export interface components {
             /** @description Required once the account has TOTP enrolled; omitted otherwise. */
             totpCode?: string;
         };
-        /** @description Both fields are optional for a first enrolment. Once TOTP is already active on the account, exactly one must prove the caller still holds it — the current password, or a current TOTP code — or enrollTotp is refused; supplying both is refused too (doc 01 §7). */
+        /** @description Both fields are optional for a first enrolment. Once TOTP is already active on the account, exactly one must prove the caller still holds it — the current password, or a current TOTP code — or enrollTotp is refused; supplying both is refused too. */
         TotpEnrollRequest: {
             password?: string;
             code?: string;
@@ -3498,24 +3498,24 @@ export interface components {
         TotpEnrollResponse: {
             /** @description Base32-encoded TOTP secret (RFC 6238), for manual entry. */
             secret: string;
-            /** @description An otpauth:// URI, for the enrolment QR code (doc 03 §1). */
+            /** @description An otpauth:// URI, for the enrolment QR code. */
             otpauthUri: string;
         };
         TotpConfirmRequest: {
             code: string;
         };
         /**
-         * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
+         * @description Every job type, each belonging to one of the mutually exclusive job classes.
          * @enum {string}
          */
         JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "migration_scan" | "migration_import" | "migration_verify" | "migration_parity" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "stack_start" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
-         * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
+         * @description The mutually exclusive job class the scheduler enforces.
          * @enum {string}
          */
         JobClass: "parity" | "array_write" | "topology" | "service" | "vm";
         /**
-         * @description `interrupted` is set on an in-flight job by a daemon restart and is never cleared automatically (doc 01 §4) — resuming or re-running it is always an explicit user action.
+         * @description `interrupted` is set on an in-flight job by a daemon restart and is never cleared automatically — resuming or re-running it is always an explicit user action.
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
@@ -3530,7 +3530,7 @@ export interface components {
              * @description Null when the job type or tool reports no meaningful percentage.
              */
             progress?: number | null;
-            /** @description Whether this job type persists a checkpoint to resume from (Q29). */
+            /** @description Whether this job type persists a checkpoint to resume from. */
             resumable: boolean;
             /** @description Whether the underlying tool honestly supports cancelling this job. */
             cancellable: boolean;
@@ -3543,14 +3543,14 @@ export interface components {
             error?: components["schemas"]["Error"] | null;
         };
         /**
-         * @description `wrong_filesystem` (#388) is `PoolDiskEntry`-only: a disk matched to an array slot by identity (Q21: serial/WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a replacement disk that kept the original disk's serial/WWN (a cloned or reused drive) but was formatted differently, or not at all. Distinct from `missing`: the disk is genuinely present, so the pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly like a missing disk (not ready, no mount attempted for that slot) and never emits it on `DiskStateEvent`, since it is not a spindown state.
+         * @description `wrong_filesystem` is `PoolDiskEntry`-only: a disk matched to an array slot by identity (serial or WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a replacement disk that kept the original disk's serial/WWN (a cloned or reused drive) but was formatted differently, or not at all. Distinct from `missing`: the disk is genuinely present, so the pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly like a missing disk (not ready, no mount attempted for that slot) and never emits it on `DiskStateEvent`, since it is not a spindown state.
          *
-         *     `mount_failed` (#398) is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem` deliberately does not: a disk matched to a slot by identity whose filesystem UUID was never positively read at all — most commonly a genuinely blank same-serial replacement, the literal #388 scenario — so the storage gate's own identity/FSUUID check reports the array ready for it, but hoservad's own bounded attempt to mount that slot's disk still failed or timed out. Never derived from a device probe on this state's own read path (Q13) — it reflects the daemon's last actual mount attempt, recorded when it happened. The web/CLI Replace disk flow offers this slot's own device as its only replacement target, the same way it does for `wrong_filesystem`; the replace job's own one-off probe of that exact device is what actually confirms it is blank before formatting it. Never emitted on `DiskStateEvent`, since it is not a spindown state.
+         *     `mount_failed` is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem` deliberately does not: a disk matched to a slot by identity whose filesystem UUID was never positively read at all — most commonly a genuinely blank same-serial replacement — so the storage gate's own identity/FSUUID check reports the array ready for it, but hoservad's own bounded attempt to mount that slot's disk still failed or timed out. Never derived from a device probe on this state's own read path — it reflects the daemon's last actual mount attempt, recorded when it happened. The web/CLI Replace disk flow offers this slot's own device as its only replacement target, the same way it does for `wrong_filesystem`; the replace job's own one-off probe of that exact device is what actually confirms it is blank before formatting it. Never emitted on `DiskStateEvent`, since it is not a spindown state.
          * @enum {string}
          */
         DiskState: "active" | "standby" | "spinning_up" | "missing" | "failed" | "wrong_filesystem" | "mount_failed";
         /**
-         * @description doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create); `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that finished leaves the pool and the array altogether.
+         * @description The disk-removal state machine: `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time; `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (still no-create); `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount — still in snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of snapraid.conf too — only its unmount and removal from the array are left. A disk that finished leaves the pool and the array altogether.
          * @enum {string}
          */
         DiskRemovalState: "evacuating" | "evacuated" | "unpooled" | "unlisted";
@@ -3572,7 +3572,7 @@ export interface components {
             event: "disk_state";
             data: {
                 diskId: string;
-                /** @description e.g. `/dev/sdb` — as reported, never accepted back as input (doc 01 §7). */
+                /** @description e.g. `/dev/sdb` — as reported, never accepted back as input. */
                 device: string;
                 state: components["schemas"]["DiskState"];
                 /** Format: date-time */
@@ -3620,10 +3620,10 @@ export interface components {
             event: "catalog";
             data: components["schemas"]["CatalogRefresh"];
         };
-        /** @description The full set of `/api/v1/events` SSE event types (doc 01 §5). */
+        /** @description The full set of `/api/v1/events` SSE event types. */
         Event: components["schemas"]["JobProgressEvent"] | components["schemas"]["DiskStateEvent"] | components["schemas"]["ContainerStateEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["CatalogEvent"];
         /**
-         * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
+         * @description The fixed event catalog, in its own order. Each event type has a compiled-in default severity, which can be overridden per event type.
          * @enum {string}
          */
         NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "certificate_renewal_failed" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed" | "catalog_check_failed";
@@ -3634,7 +3634,7 @@ export interface components {
         NotificationWebhookHeaders: {
             [key: string]: string;
         };
-        /** @description Never carries a credential (Q28) — `hasSecret` is the only signal that one is configured. Only the properties relevant to `type` are meaningful; the rest are absent. */
+        /** @description Never carries a credential — `hasSecret` is the only signal that one is configured. Only the properties relevant to `type` are meaningful; the rest are absent. */
         NotificationChannel: {
             /** Format: uuid */
             id: string;
@@ -3667,7 +3667,7 @@ export interface components {
             name: string;
             type: components["schemas"]["NotificationChannelType"];
             enabled: boolean;
-            /** @description The channel's credential, e.g. an SMTP password, a Gotify app token, an ntfy auth token, a Discord webhook URL, or a generic webhook's auth header value. Encrypted with the machine key before it reaches the database (Q28) and never returned by any later read. */
+            /** @description The channel's credential, e.g. an SMTP password, a Gotify app token, an ntfy auth token, a Discord webhook URL, or a generic webhook's auth header value. Encrypted with the machine key before it reaches the database and never returned by any later read. */
             secret?: string;
             emailHost?: string;
             /** Format: int32 */
@@ -3749,7 +3749,7 @@ export interface components {
             /** @description 24-hour local time, e.g. "22:00". */
             start: string;
             end: string;
-            /** @description Always true (doc 03 §8.3) — critical alerts deliver regardless of quiet hours, and this cannot be disabled, so there is no request field that ever sets it otherwise. */
+            /** @description Always true — critical alerts deliver regardless of quiet hours, and this cannot be disabled, so there is no request field that ever sets it otherwise. */
             criticalAlwaysDelivers: boolean;
         };
         UpdateQuietHoursRequest: {
@@ -3762,7 +3762,7 @@ export interface components {
             hostname?: string;
             /** @description IANA timezone name, e.g. "Europe/Berlin". */
             timezone?: string;
-            /** @description Whether a backup passphrase is configured. The passphrase itself is never returned (Q28). */
+            /** @description Whether a backup passphrase is configured. The passphrase itself is never returned. */
             backupPassphraseSet: boolean;
         };
         UpdateGeneralSettingsRequest: {
@@ -3770,11 +3770,11 @@ export interface components {
             hostname?: string;
             /** @description IANA timezone name. Omitted leaves timezone unchanged. */
             timezone?: string;
-            /** @description Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase unchanged. */
+            /** @description Write-only. Sets or replaces the backup passphrase. Omitted leaves any existing passphrase unchanged. */
             backupPassphrase?: string;
         };
         /**
-         * @description Doc 03 §8.1 connection choice-cards: a USB-attached UPS Hoserva drives locally, or a remote NUT server this host monitors (Q77).
+         * @description Connection choice: a USB-attached UPS Hoserva drives locally, or a remote NUT server this host monitors.
          * @enum {string}
          */
         UPSConnection: "usb" | "network";
@@ -3786,7 +3786,7 @@ export interface components {
             driver?: string;
             /** @description Driver port for a USB UPS (commonly "auto"). */
             port?: string;
-            /** @description Whether a local monitor password is stored. The password itself is never returned (Q28). */
+            /** @description Whether a local monitor password is stored. The password itself is never returned. */
             monitorPasswordSet?: boolean;
             /** @description Remote NUT server hostname or address. */
             networkHost?: string;
@@ -3799,16 +3799,16 @@ export interface components {
             networkUpsName?: string;
             /** @description Monitoring username on the remote NUT server. */
             networkUsername?: string;
-            /** @description Whether a network monitoring password is stored. The password itself is never returned (Q28). */
+            /** @description Whether a network monitoring password is stored. The password itself is never returned. */
             networkPasswordSet?: boolean;
             /**
              * Format: int32
-             * @description USB-only. Charge percent that marks the battery low for a clean shutdown (Q77). Omitted or zero leaves NUT's driver default.
+             * @description USB-only. Charge percent that marks the battery low for a clean shutdown. Omitted or zero leaves NUT's driver default.
              */
             lowBatteryPercent?: number;
             /**
              * Format: int32
-             * @description USB-only. Estimated runtime seconds remaining that mark the battery low (Q77). Omitted or zero leaves NUT's driver default.
+             * @description USB-only. Estimated runtime seconds remaining that mark the battery low. Omitted or zero leaves NUT's driver default.
              */
             runtimeSeconds?: number;
         };
@@ -3818,7 +3818,7 @@ export interface components {
             driver?: string;
             /** @description Required for USB. Driver port (commonly "auto"). */
             port?: string;
-            /** @description Write-only. Required on first USB configure; omit on later updates to keep the stored secret (Q28). */
+            /** @description Write-only. Required on first USB configure; omit on later updates to keep the stored secret. */
             monitorPassword?: string;
             /** @description Required for network. Remote NUT server host. */
             networkHost?: string;
@@ -3831,21 +3831,21 @@ export interface components {
             networkUpsName?: string;
             /** @description Required for network. Monitoring username. */
             networkUsername?: string;
-            /** @description Write-only. Required on first network configure; omit on later updates to keep the stored secret (Q28). */
+            /** @description Write-only. Required on first network configure; omit on later updates to keep the stored secret. */
             networkPassword?: string;
             /**
              * Format: int32
-             * @description USB-only low-battery charge percent (Q77).
+             * @description USB-only low-battery charge percent.
              */
             lowBatteryPercent?: number;
             /**
              * Format: int32
-             * @description USB-only low-battery runtime seconds (Q77).
+             * @description USB-only low-battery runtime seconds.
              */
             runtimeSeconds?: number;
         };
         /**
-         * @description Detected host network backend (Q75).
+         * @description Detected host network backend.
          * @enum {string}
          */
         NetworkBackend: "ifupdown" | "networkmanager" | "systemd-networkd" | "unknown";
@@ -3886,7 +3886,7 @@ export interface components {
             remainingSeconds: number;
         };
         /**
-         * @description How the current TLS certificate was issued (Q9).
+         * @description How the current TLS certificate was issued.
          * @enum {string}
          */
         TLSCertificateKind: "self_signed" | "lets_encrypt";
@@ -3903,7 +3903,7 @@ export interface components {
             domain?: string;
         };
         /**
-         * @description DNS-01 providers in v1: Cloudflare's API and generic RFC 2136. HTTP-01 and TLS-ALPN-01 are not offered (Q9).
+         * @description DNS-01 providers in v1: Cloudflare's API and generic RFC 2136. HTTP-01 and TLS-ALPN-01 are not offered.
          * @enum {string}
          */
         DNS01Provider: "cloudflare" | "rfc2136";
@@ -3915,7 +3915,7 @@ export interface components {
             /** @description Hostname configured for DNS-01. */
             domain?: string;
             provider?: components["schemas"]["DNS01Provider"];
-            /** @description True when a DNS credential is stored (Q28); the secret itself is never returned. */
+            /** @description True when a DNS credential is stored; the secret itself is never returned. */
             hasSecret?: boolean;
             /** @description Last issue or renewal failure. Omitted after a success. */
             lastError?: string;
@@ -3924,20 +3924,20 @@ export interface components {
             /** @description Hostname the certificate will cover, challenged via DNS-01. */
             domain: string;
             provider: components["schemas"]["DNS01Provider"];
-            /** @description Cloudflare API token with Zone.DNS Edit. Write-only (Q28). Required when `provider` is cloudflare and no token is stored yet. */
+            /** @description Cloudflare API token with Zone.DNS Edit. Write-only. Required when `provider` is cloudflare and no token is stored yet. */
             cloudflareAPIToken?: string;
             /** @description RFC 2136 nameserver as host:port. Required when `provider` is rfc2136. */
             rfc2136Nameserver?: string;
             /** @description TSIG key name. Required when `provider` is rfc2136. */
             rfc2136TsigKeyName?: string;
-            /** @description TSIG secret. Write-only (Q28). Required when `provider` is rfc2136 and no secret is stored yet. */
+            /** @description TSIG secret. Write-only. Required when `provider` is rfc2136 and no secret is stored yet. */
             rfc2136TsigSecret?: string;
             /** @description TSIG algorithm. Defaults to hmac-sha256. */
             rfc2136TsigAlgorithm?: string;
         };
         NetworkSettings: {
             backend: components["schemas"]["NetworkBackend"];
-            /** @description True only when the backend is ifupdown (Q75). */
+            /** @description True only when the backend is ifupdown. */
             editable: boolean;
             /** @description Why addressing cannot be edited, when `editable` is false. */
             readOnlyReason?: string;
@@ -3945,9 +3945,9 @@ export interface components {
             pending?: components["schemas"]["NetworkPending"];
             certificate: components["schemas"]["TLSCertificateInfo"];
             letsEncrypt: components["schemas"]["LetsEncryptStatus"];
-            /** @description When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source address is accepted. */
+            /** @description When false (default), the TCP listener accepts only LAN-ish sources. When true, every source address is accepted. */
             allowAllSources: boolean;
-            /** @description TCP port the TLS UI/API currently listens on (Q9). */
+            /** @description TCP port the TLS UI/API currently listens on. */
             listenPort: number;
             /** @description True when a persisted listen-port change has not been bound yet. */
             listenPortRestartRequired?: boolean;
@@ -3965,13 +3965,13 @@ export interface components {
             gateway?: string;
             /** @description DNS nameservers. Empty array clears them. */
             dns?: string[];
-            /** @description Set the Q10 access-scope toggle. Omitted leaves it unchanged. */
+            /** @description Set the access-scope toggle. Omitted leaves it unchanged. */
             allowAllSources?: boolean;
             /** @description Persist a new listen port for the next daemon start. Omitted leaves it unchanged. */
             listenPort?: number;
         };
         /**
-         * @description Release channel the update check reads from the signed index (Q67).
+         * @description Release channel the update check reads from the signed index.
          * @enum {string}
          */
         UpdateChannel: "stable" | "beta";
@@ -3985,11 +3985,11 @@ export interface components {
             /** @description Release notes for availableVersion, if the index carries them. */
             changelog?: string;
             channel: components["schemas"]["UpdateChannel"];
-            /** @description Whether the periodic outbound update check is enabled (Q49). */
+            /** @description Whether the periodic outbound update check is enabled. */
             checkEnabled: boolean;
             /** @description Version rollback would restore, if an upgrade has been applied. */
             previousVersion?: string;
-            /** @description Whether `/run/reboot-required` is present (Q68). */
+            /** @description Whether `/run/reboot-required` is present. */
             rebootRequired: boolean;
             pendingDebianUpdates: components["schemas"]["DebianPackageUpdate"][];
             dependencies: components["schemas"]["PackageDependencyStatus"][];
@@ -4005,7 +4005,7 @@ export interface components {
             /** @description Debian package name (mergerfs, snapraid). */
             name: string;
             installedVersion: string;
-            /** @description Lowest version this Hoserva release was tested against (Q7). */
+            /** @description Lowest version this Hoserva release was tested against. */
             testedFloor: string;
             /** @description True when installedVersion is at or above testedFloor. */
             inRange: boolean;
@@ -4025,12 +4025,12 @@ export interface components {
             confirm: boolean;
         };
         /**
-         * @description One step in Q30's fixed nightly maintenance chain order.
+         * @description One step in the fixed nightly maintenance chain order.
          * @enum {string}
          */
         MaintenanceChainStepId: "mover" | "diff_guard" | "sync" | "scrub" | "config_backup";
         /**
-         * @description A recurring job scheduled outside the nightly chain (doc 03 §8.4).
+         * @description A recurring job scheduled outside the nightly chain.
          * @enum {string}
          */
         OtherScheduleJobId: "smart_self_test" | "appdata_backup" | "restore_drill" | "container_update_check";
@@ -4043,14 +4043,14 @@ export interface components {
             enabled: boolean;
         };
         MaintenanceChainSchedule: {
-            /** @description Local time the chain starts (Q30 default 02:00). */
+            /** @description Local time the chain starts (default 02:00). */
             startTime: string;
             weeklyScrubDay: components["schemas"]["Weekday"];
             /** @description Human-readable summary, e.g. "every day at 02:00". */
             schedulePreview: string;
             /** Format: date-time */
             nextRun: string;
-            /** @description Q30 order — mover, diff_guard, sync, scrub, config_backup. */
+            /** @description Order: mover, diff_guard, sync, scrub, config_backup. */
             steps: components["schemas"]["MaintenanceChainStep"][];
         };
         ScheduledJob: {
@@ -4076,7 +4076,7 @@ export interface components {
         UpdateMaintenanceChainScheduleRequest: {
             startTime?: string;
             weeklyScrubDay?: components["schemas"]["Weekday"];
-            /** @description Per-step enabled flags only — order is ignored; Q30's order is always server-defined. */
+            /** @description Per-step enabled flags only — order is ignored; the order is always server-defined. */
             steps?: components["schemas"]["MaintenanceChainStep"][];
         };
         UpdateScheduledJobRequest: {
@@ -4100,12 +4100,12 @@ export interface components {
             checks: components["schemas"]["DoctorCheck"][];
         };
         /**
-         * @description Q76 onboarding category, matching DoctorCheck.id.
+         * @description Onboarding category, matching DoctorCheck.id.
          * @enum {string}
          */
         HostConfigID: "host_samba" | "host_nfs" | "host_fstab" | "host_docker_containers" | "host_docker_images";
         /**
-         * @description import persists parsed facts in SQLite so a later generate may take ownership; leave marks the host file unmanaged so Generator never writes it (doc 01 §2).
+         * @description import persists parsed facts in SQLite so a later generate may take ownership; leave marks the host file unmanaged so Generator never writes it.
          * @enum {string}
          */
         HostConfigDecision: "import" | "leave";
@@ -4118,7 +4118,7 @@ export interface components {
         };
         ApplyHostConfigResult: {
             files: components["schemas"]["HostConfigChoice"][];
-            /** @description Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers, images or named volumes exist, when there is no cache disk, or when the caller did not accept a move. */
+            /** @description Docker's data-root after this apply. Always `/var/lib/docker` when containers, images or named volumes exist, when there is no cache disk, or when the caller did not accept a move. */
             dockerDataRoot: string;
         };
         /**
@@ -4279,7 +4279,7 @@ export interface components {
             message?: string;
         };
         /**
-         * @description `curated`: Hoserva's own catalog (doc 04 §7). `user_added`: a source URL the user added (doc 04 §4).
+         * @description `curated`: Hoserva's own catalog. `user_added`: a source URL the user added.
          * @enum {string}
          */
         CatalogSourceKind: "curated" | "user_added";
@@ -4369,7 +4369,7 @@ export interface components {
             values?: {
                 [key: string]: string;
             };
-            /** @description `bridge`, `host` or the name of an existing Docker network (Q37). It replaces the service's own `network_mode` and `networks` in the generated Compose file. A name that is not a Docker network name, or is `none`, is refused with 400 `invalid_template_input` (`details.input` is `networkMode`). A network that does not exist is a `missing_network` warning in the plan, with the exact `docker network create <name>` command, and `installTemplate` refuses it with 409 `network_missing`: Hoserva never creates networks. A failure to list the networks is an error (503 `docker_unavailable` when Docker is not reachable), never read as the network existing. Absent leaves the template's network settings as they are, and so does an empty string. Refused for a template with several services, like `cpus`, `memoryMiB` and `extraParams` (`advancedAvailable` is false). */
+            /** @description `bridge`, `host` or the name of an existing Docker network. It replaces the service's own `network_mode` and `networks` in the generated Compose file. A name that is not a Docker network name, or is `none`, is refused with 400 `invalid_template_input` (`details.input` is `networkMode`). A network that does not exist is a `missing_network` warning in the plan, with the exact `docker network create <name>` command, and `installTemplate` refuses it with 409 `network_missing`: Hoserva never creates networks. A failure to list the networks is an error (503 `docker_unavailable` when Docker is not reachable), never read as the network existing. Absent leaves the template's network settings as they are, and so does an empty string. Refused for a template with several services, like `cpus`, `memoryMiB` and `extraParams` (`advancedAvailable` is false). */
             networkMode?: string;
             /**
              * @description The restart policy of every service. Absent leaves the template's.
@@ -4383,7 +4383,7 @@ export interface components {
             cpus?: number;
             /** @description Memory limit of the service in MiB (Compose `mem_limit`), from 6 to 16777216. Absent is no limit, and 0 is not a limit but a value outside the range: 400 `invalid_template_input` (`details.input` is `memoryMiB`). */
             memoryMiB?: number;
-            /** @description At most 4096 bytes; longer is 400 `invalid_template_input`. Absent or empty adds nothing. Raw `docker run` flags, read by the parser doc 04 §5 describes for an Unraid template's `ExtraParams`: parsed into Compose fields and merged into the service, never passed to a shell. A flag outside the translate table, a word that is not a flag, or a string with shell syntax is a `untranslated_flag` warning in the plan and a comment above the service in the Compose file, never dropped silently. A flag that widens privileges (`--cap-add`, `--device`, `--pid=host`, `--security-opt`, a mount of a host path or of the Docker socket) is applied and shows in the plan's `privileges`. An entry that clashes with the template's own (a variable, label or mount at the same target with another value) is a `conflict` warning and the template's is kept. `--restart`, `--cpus` and `--memory` are refused with 400 `invalid_template_input` (`details.input` is `extraParams`) only when the request also gives `restart`, `cpus` or `memoryMiB` respectively; otherwise they translate like any other flag. A named volume a mount refers to is declared under the top-level `volumes` of the Compose file (one the template declares stays as declared). A host port a `-p` flag publishes is checked as a port input is: one the template's own ports, another flag, a container, a stack or the host already holds is refused with 409 `no_free_port` (`details.input` is `extraParams`) and is never moved, and a port that cannot be checked is refused too. Under host networking Docker ignores published ports, so none is checked. */
+            /** @description At most 4096 bytes; longer is 400 `invalid_template_input`. Absent or empty adds nothing. Raw `docker run` flags, read by the same parser that handles an Unraid template's `ExtraParams`: parsed into Compose fields and merged into the service, never passed to a shell. A flag outside the translate table, a word that is not a flag, or a string with shell syntax is a `untranslated_flag` warning in the plan and a comment above the service in the Compose file, never dropped silently. A flag that widens privileges (`--cap-add`, `--device`, `--pid=host`, `--security-opt`, a mount of a host path or of the Docker socket) is applied and shows in the plan's `privileges`. An entry that clashes with the template's own (a variable, label or mount at the same target with another value) is a `conflict` warning and the template's is kept. `--restart`, `--cpus` and `--memory` are refused with 400 `invalid_template_input` (`details.input` is `extraParams`) only when the request also gives `restart`, `cpus` or `memoryMiB` respectively; otherwise they translate like any other flag. A named volume a mount refers to is declared under the top-level `volumes` of the Compose file (one the template declares stays as declared). A host port a `-p` flag publishes is checked as a port input is: one the template's own ports, another flag, a container, a stack or the host already holds is refused with 409 `no_free_port` (`details.input` is `extraParams`) and is never moved, and a port that cannot be checked is refused too. Under host networking Docker ignores published ports, so none is checked. */
             extraParams?: string;
         };
         TemplateInput: {
@@ -4475,7 +4475,7 @@ export interface components {
             source: string;
             /** @description The generated Compose file. Not applied anywhere: a service named after the template and, where the template needs them, the top-level `networks` and `volumes` it refers to. */
             compose: string;
-            /** @description True when the Compose file needs no manual action (Q36): no warning of class `untranslated_flag`, `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. */
+            /** @description True when the Compose file needs no manual action: no warning of class `untranslated_flag`, `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. */
             clean: boolean;
             warnings: components["schemas"]["ConversionWarning"][];
             /** @description The privilege summary of the generated Compose content. Empty when it asks for nothing beyond an ordinary container. */
@@ -4533,7 +4533,7 @@ export interface components {
             readWrite: boolean;
             location?: components["schemas"]["AppMountLocation"];
         };
-        /** @description Which storage a mount's host path lies on, decided from the path alone against the daemon's known mount points (the pool at `/mnt/user`, each data disk's and the cache disk's mount point). Nothing is read from a data disk to decide it, so a listing never wakes one (doc 02 §1). */
+        /** @description Which storage a mount's host path lies on, decided from the path alone against the daemon's known mount points (the pool at `/mnt/user`, each data disk's and the cache disk's mount point). Nothing is read from a data disk to decide it, so a listing never wakes one. */
         AppMountLocation: {
             /**
              * @description `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one data disk's own mount point. `cache` is a path under the cache disk. `outside` is anywhere else, including the boot device.
@@ -4574,14 +4574,14 @@ export interface components {
             mounts: components["schemas"]["AppMount"][];
         };
         ListAppsOK: {
-            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            /** @description False when the Docker Engine is not reachable. */
             available: boolean;
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
             apps: components["schemas"]["App"][];
         };
         ListAppUpdatesOK: {
-            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            /** @description False when the Docker Engine is not reachable. */
             available: boolean;
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
@@ -4679,7 +4679,7 @@ export interface components {
             revertible: boolean;
         };
         ListAppUpdateHistoryOK: {
-            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            /** @description False when the Docker Engine is not reachable. */
             available: boolean;
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
@@ -4694,7 +4694,7 @@ export interface components {
             createdAt?: string;
         };
         ListAppImagesOK: {
-            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            /** @description False when the Docker Engine is not reachable. */
             available: boolean;
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
@@ -4706,14 +4706,14 @@ export interface components {
             driver: string;
         };
         ListDockerNetworksOK: {
-            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            /** @description False when the Docker Engine is not reachable. */
             available: boolean;
             /** @description Set alongside available=false with the reason and a remediation. */
             message?: string;
             networks: components["schemas"]["DockerNetwork"][];
         };
         /**
-         * @description Q74 retention tier used for this response.
+         * @description Retention tier used for this response.
          * @enum {string}
          */
         MetricResolution: "raw" | "hourly" | "daily";
@@ -4737,11 +4737,11 @@ export interface components {
             healthy: boolean;
             summary: string;
             maintenanceMode?: boolean;
-            /** @description True whenever any disk `hoservad` expects is currently missing by identity (doc 02 §1, Q69) — including once the user has acknowledged the degraded state through `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears; `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still waiting on the user. */
+            /** @description True whenever any disk `hoservad` expects is currently missing by identity — including once the user has acknowledged the degraded state through `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears; `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still waiting on the user. */
             arrayDegraded?: boolean;
-            /** @description True once the user has acknowledged the current degraded state (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It resets the moment the missing disk reappears, the same way the acknowledgement itself does. It can be true while `storageServicesReleased` is still false: the acknowledgement stands even when the transition it triggers does not actually start anything (maintenance mode, or a mount failure, `array_services_not_started`) — a client must never read this field alone as "services are running" (#385 finding 2). */
+            /** @description True once the user has acknowledged the current degraded state (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It resets the moment the missing disk reappears, the same way the acknowledgement itself does. It can be true while `storageServicesReleased` is still false: the acknowledgement stands even when the transition it triggers does not actually start anything (maintenance mode, or a mount failure, `array_services_not_started`) — a client must never read this field alone as "services are running". */
             arrayDegradedAcknowledged?: boolean;
-            /** @description True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt — read live from the same runtime flag (`/run/hoserva/storage-ready`) hoservad itself sets only after mounting and confirming the pool — and the array is not currently in maintenance mode. This is the field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged` alone only reports the acknowledgement, not whether it took effect (#385 finding 2). It goes false again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier acknowledgement is still set — an explicit stop takes those services back down, so a standing acknowledgement must never be read as "still running". */
+            /** @description True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt — read live from the runtime flag hoservad itself sets only after mounting and confirming the pool — and the array is not currently in maintenance mode. This is the field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged` alone only reports the acknowledgement, not whether it took effect. It goes false again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier acknowledgement is still set — an explicit stop takes those services back down, so a standing acknowledgement must never be read as "still running". */
             storageServicesReleased?: boolean;
             parityBlocked?: boolean;
             /** Format: int32 */
@@ -4761,14 +4761,14 @@ export interface components {
             usedBytes?: number | null;
             /**
              * Format: int64
-             * @description Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
+             * @description Free space from statfs(2) on this disk's mountpoint — never a directory walk. Null for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
              */
             freeBytes?: number | null;
-            /** @description True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) — the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being reported for this disk. */
+            /** @description True once this disk's free space is at or below the pool's configured minfreespace — the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being reported for this disk. */
             nearMinFreeSpace?: boolean;
-            /** @description doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in removal. */
+            /** @description The removal state of this disk. Null for a disk that is not currently in removal. */
             removalState?: components["schemas"]["DiskRemovalState"] | null;
-            /** @description The exact typed phrase `finishDiskRemoval` requires for this disk (#361), set whenever `removalState` is set. Reading it here rather than from `planDiskEvacuation` is what lets Finish removal be retried once the disk has left the pool (`unpooled`/`unlisted`) — `planDiskEvacuation` itself refuses those states with `disk_leaving_array`, since evacuating a disk that has already left the pool makes no sense, but the confirmation phrase does not depend on evacuating it again. */
+            /** @description The exact typed phrase `finishDiskRemoval` requires for this disk, set whenever `removalState` is set. Reading it here rather than from `planDiskEvacuation` is what lets Finish removal be retried once the disk has left the pool (`unpooled`/`unlisted`) — `planDiskEvacuation` itself refuses those states with `disk_leaving_array`, since evacuating a disk that has already left the pool makes no sense, but the confirmation phrase does not depend on evacuating it again. */
             finishConfirmation?: string;
         };
         PoolStatus: {
@@ -4776,19 +4776,19 @@ export interface components {
             disks: components["schemas"]["PoolDiskEntry"][];
             /**
              * Format: int64
-             * @description Sum of data-disk free space (doc 09 §5) — distinct from a `df` on the pool mount, which reports the same misleading pool-wide total this field exists to be shown alongside rather than replace. Null when no array topology is configured yet.
+             * @description Sum of data-disk free space — distinct from a `df` on the pool mount, which reports the same misleading pool-wide total this field exists to be shown alongside rather than replace. Null when no array topology is configured yet.
              */
             poolFreeBytes?: number | null;
             /**
              * Format: int64
-             * @description The largest single data disk's free space — the real answer to "what is the biggest file I can write" (doc 09 §5).
+             * @description The largest single data disk's free space — the real answer to "what is the biggest file I can write".
              */
             largestDiskFreeBytes?: number | null;
             /** @description Mountpoint of the disk largestDiskFreeBytes refers to. */
             largestDiskPath?: string | null;
         };
         SpinTransition: {
-            /** @description e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7). */
+            /** @description e.g. `/dev/sdb` — as recorded, never accepted back as input. */
             device: string;
             /** @enum {string} */
             fromState: "active" | "standby";
@@ -4826,9 +4826,9 @@ export interface components {
             boot: boolean;
             failed?: boolean;
             weakIdentity?: boolean;
-            /** @description True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3). Hoserva only reads it for a migration and never assigns it a role: every role assignment, and registering, mounting, formatting or enabling it as a backup destination as an external disk, is refused with `409 unraid_stick`, so a client offers it no role. Ejecting a stick registered before it was recognised still works, so it can be taken offline. */
+            /** @description True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`). Hoserva only reads it for a migration and never assigns it a role: every role assignment, and registering, mounting, formatting or enabling it as a backup destination as an external disk, is refused with `409 unraid_stick`, so a client offers it no role. Ejecting a stick registered before it was recognised still works, so it can be taken offline. */
             unraidStick?: boolean;
-            /** @description Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk (doc 02 §1, §4, doc 03 §3.1). */
+            /** @description Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk. */
             filesystem?: string;
             /** @description Cached filesystem label from udev (`ID_FS_LABEL`). */
             label?: string;
@@ -4836,9 +4836,9 @@ export interface components {
             smartStatus?: string;
             /** @description True when udev reports an existing filesystem on the disk. */
             containsData?: boolean;
-            /** @description True when the disk is laid out the way Unraid lays out an array or pool disk (doc 05 §3): an MBR or GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role. */
+            /** @description True when the disk is laid out the way Unraid lays out an array or pool disk: an MBR or GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role. */
             looksLikeUnraid?: boolean;
-            /** @description Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when the partition is picked. */
+            /** @description Only on the boot disk: its spare partitions that may be assigned the `cache` role. A partition is listed when it is on the boot disk, typed as Linux data, carries no filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when the partition is picked. */
             cachePartitions?: components["schemas"]["CachePartition"][];
         };
         CachePartition: {
@@ -4856,17 +4856,17 @@ export interface components {
              */
             reason: "spare_boot_partition";
         };
-        /** @description Path segment under `/mnt/disks/` (Q72). */
+        /** @description Path segment under `/mnt/disks/`. */
         ExternalDiskLabel: string;
         ExternalDisk: {
             label: components["schemas"]["ExternalDiskLabel"];
             device: string;
             /** @description /mnt/disks/<label> — mounted on request, never automatically. */
             mountPoint: string;
-            /** @description The same /mnt/disks/<label> path, exposed as a stable bind-mount source for a container (Q72, Unraid Unassigned Devices convention). */
+            /** @description The same /mnt/disks/<label> path, exposed as a stable bind-mount source for a container (Unraid Unassigned Devices convention). */
             containerPath: string;
             mounted: boolean;
-            /** @description Whether this disk's mount is a local backup destination (doc 10 §1). */
+            /** @description Whether this disk's mount is a local backup destination. */
             backupDestination: boolean;
             /** @description Always false — the boot device is never offered as external. */
             boot: boolean;
@@ -4888,21 +4888,21 @@ export interface components {
         };
         FormatExternalDiskRequest: {
             filesystem?: components["schemas"]["ArrayDiskFilesystem"];
-            /** @description Exact typed confirmation for this disk (`disk.TopologyPlan.Confirmation`): `ERASE /dev/sdX`. A wrong or missing string is refused and formats nothing. */
+            /** @description Exact typed confirmation for this disk: `ERASE /dev/sdX`. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
         };
         /**
-         * @description A role the array-setup wizard assigns (doc 03 §3.1 step 2). Ignore is omitted — those disks never appear in the plan.
+         * @description A role the array-setup wizard assigns. Ignore is omitted — those disks never appear in the plan.
          * @enum {string}
          */
         ArrayDiskRole: "parity" | "data" | "cache";
         /**
-         * @description Filesystem to format with, or to verify when adopt is true (Q23). Parity is always xfs (Q20).
+         * @description Filesystem to format with, or to verify when adopt is true. Parity is always xfs.
          * @enum {string}
          */
         ArrayDiskFilesystem: "xfs" | "ext4" | "btrfs";
         /**
-         * @description Default mergerfs create policy for new shares (doc 02 §1, Q11).
+         * @description Default mergerfs create policy for new shares.
          * @enum {string}
          */
         ArrayCreatePolicy: "mspmfs" | "mfs" | "lfs" | "ff";
@@ -4911,7 +4911,7 @@ export interface components {
             role: components["schemas"]["ArrayDiskRole"];
             filesystem?: components["schemas"]["ArrayDiskFilesystem"];
             /**
-             * @description Keep the existing filesystem instead of formatting (data and cache only; Q20 forbids this on parity).
+             * @description Keep the existing filesystem instead of formatting (data and cache only; not allowed on parity).
              * @default false
              */
             adopt: boolean;
@@ -4919,16 +4919,16 @@ export interface components {
         CreateArrayRequest: {
             disks: components["schemas"]["ArrayDiskAssignment"][];
             createPolicy?: components["schemas"]["ArrayCreatePolicy"];
-            /** @description mergerfs minfreespace in its size-suffix syntax (doc 02 §1), e.g. `50G`. Omitted uses the engine default. */
+            /** @description mergerfs minfreespace in its size-suffix syntax, e.g. `50G`. Omitted uses the engine default. */
             minFreeSpace?: string;
-            /** @description Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong or missing string is refused and formats nothing. */
+            /** @description Exact typed confirmation for this plan: `ERASE /dev/sda, /dev/sdb` listing every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
         };
         AddDiskPlanRequest: {
             device: string;
             filesystem?: components["schemas"]["ArrayDiskFilesystem"];
             /**
-             * @description Keep the existing filesystem instead of formatting (Q23).
+             * @description Keep the existing filesystem instead of formatting.
              * @default false
              */
             adopt: boolean;
@@ -4945,7 +4945,7 @@ export interface components {
             currentFilesystem?: string;
             filesystem: components["schemas"]["ArrayDiskFilesystem"];
             adopt: boolean;
-            /** @description The next free `/mnt/diskN` this disk will be mounted at (doc 02 §4 "Adding a disk" step 4). */
+            /** @description The next free `/mnt/diskN` this disk will be mounted at. */
             mountpoint: string;
             /** @description Exact typed confirmation `addDisk` requires for this plan: `ERASE <device>`, or `ADOPT ONLY — NOTHING ERASED` when adopt is true. */
             confirmation: string;
@@ -4965,7 +4965,7 @@ export interface components {
             device: string;
             filesystem?: components["schemas"]["ArrayDiskFilesystem"];
             /**
-             * @description Keep the existing filesystem instead of formatting (Q23).
+             * @description Keep the existing filesystem instead of formatting.
              * @default false
              */
             adopt: boolean;
@@ -4985,7 +4985,7 @@ export interface components {
             currentFilesystem?: string;
             filesystem: components["schemas"]["ArrayDiskFilesystem"];
             adopt: boolean;
-            /** @description The SnapRAID command this plan's own apply call runs to reconstruct the slot's contents from parity (doc 02 §4 "Replacing a failed disk" step 4), e.g. `snapraid fix -d d2`. */
+            /** @description The SnapRAID command this plan's own apply call runs to reconstruct the slot's contents from parity, e.g. `snapraid fix -d d2`. */
             rebuild: string;
             /** @description Exact typed confirmation `replaceDisk` requires for this plan: `ERASE <replacementDevice>`, or `ADOPT ONLY — NOTHING ERASED` when adopt is true. */
             confirmation: string;
@@ -5004,7 +5004,7 @@ export interface components {
             mountpoint: string;
             /** @description The replacement disk's device path. */
             device: string;
-            /** @description Data-disk upgrades only (default xfs); a parity disk is always formatted XFS (Q20) regardless of this field. */
+            /** @description Data-disk upgrades only (default xfs); a parity disk is always formatted XFS regardless of this field. */
             filesystem?: components["schemas"]["ArrayDiskFilesystem"];
         };
         DiskUpgradePlan: {
@@ -5022,7 +5022,7 @@ export interface components {
             /** @description The replacement's filesystem before this operation, if any, cached from udev. */
             currentFilesystem?: string;
             filesystem: components["schemas"]["ArrayDiskFilesystem"];
-            /** @description Parity upgrades only: the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and verified at independently of the old one (Q71), submitted back unchanged to `upgradeDisk`. */
+            /** @description Parity upgrades only: the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and verified at independently of the old one, submitted back unchanged to `upgradeDisk`. */
             newMountpoint?: string;
             /** @description The copy/verify/remount steps (data) or copy/verify/switch/check steps (parity) this plan's own apply call runs, in order. */
             steps: string[];
@@ -5038,7 +5038,7 @@ export interface components {
             /** @description Exact typed confirmation from the matching `planDiskUpgrade` call. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
         };
-        /** @description One file a rebalance or evacuation plan moves (doc 09 §3-4). */
+        /** @description One file a rebalance or evacuation plan moves. */
         RebalanceMove: {
             share: string;
             /** @description Path relative to the share root. */
@@ -5049,7 +5049,7 @@ export interface components {
             /** Format: int64 */
             sizeBytes: number;
         };
-        /** @description A condition a rebalance or evacuation plan surfaces for review before it runs (doc 09 §3's path-preserving caveat) — never something the plan itself acts on. */
+        /** @description A condition a rebalance or evacuation plan surfaces for review before it runs (the path-preserving caveat) — never something the plan itself acts on. */
         RebalanceWarning: {
             share: string;
             reason: string;
@@ -5068,12 +5068,12 @@ export interface components {
             mountpoint: string;
             moves: components["schemas"]["RebalanceMove"][];
             warnings: components["schemas"]["RebalanceWarning"][];
-            /** @description Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content doc 09 §4 has no procedure for moving (#367). Always empty on a plan this operation actually returns: any such content refuses the plan outright (`EvacuationPlanRefusal`) instead. */
+            /** @description Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content for which there is no procedure for moving it. Always empty on a plan this operation actually returns: any such content refuses the plan outright (`EvacuationPlanRefusal`) instead. */
             nonSharePaths: string[];
             /** @description Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`). */
             confirmation: string;
         };
-        /** @description `planDiskEvacuation`'s 400 refusal (#367): the shared `Error` schema has no room for `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every offending path structurally, not only in `message`. */
+        /** @description `planDiskEvacuation`'s 400 refusal: the shared `Error` schema has no room for `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every offending path structurally, not only in `message`. */
         EvacuationPlanRefusal: {
             code: string;
             message: string;
@@ -5100,7 +5100,7 @@ export interface components {
             confirmation: string;
         };
         /**
-         * @description Parity age from `snapraid status` (doc 02 §2).
+         * @description Parity age from `snapraid status`.
          * @enum {string}
          */
         ParityFreshness: "green" | "amber" | "red";
@@ -5113,7 +5113,7 @@ export interface components {
             filesBefore: number;
         };
         ParityGuardState: {
-            /** @description True when the threshold guard would block a sync (doc 02 §2). */
+            /** @description True when the threshold guard would block a sync. */
             wouldBlock: boolean;
             triggers?: components["schemas"]["ParityGuardTrigger"][];
             /**
@@ -5131,7 +5131,7 @@ export interface components {
             summary?: string;
         };
         /**
-         * @description One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+         * @description One diff group; moved-by-Hoserva is a match against the relocation manifest.
          * @enum {string}
          */
         ParityDiffCategory: "removed" | "updated" | "added" | "moved" | "copied" | "moved_by_hoserva";
@@ -5178,10 +5178,10 @@ export interface components {
         StartScrubRequest: {
             /**
              * Format: int32
-             * @description Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
+             * @description Scrub percentage cap (`hoserva scrub [--percent N]`).
              */
             percent?: number;
-            /** @description Scrub blocks of every age (`hoserva scrub --all-blocks`, SnapRAID `-o 0`). By default a scrub skips blocks scrubbed or synced within the last 10 days (doc 02 §2), so a scrub right after a sync can find nothing to check and still succeed. Set true when every block must be verified, such as the full scrub after the initial sync (doc 05 §4 step 22). Omitted means false. The scheduled scrub never sets it. */
+            /** @description Scrub blocks of every age (`hoserva scrub --all-blocks`, SnapRAID `-o 0`). By default a scrub skips blocks scrubbed or synced within the last 10 days, so a scrub right after a sync can find nothing to check and still succeed. Set true when every block must be verified, such as the full scrub after the initial sync. Omitted means false. The scheduled scrub never sets it. */
             allBlocks?: boolean;
         };
         StartFixRequest: {
@@ -5197,7 +5197,7 @@ export interface components {
         };
         StartShareRelocationRequest: {
             /**
-             * @description Relocation direction (doc 09 §2, `hoserva share relocate <share> --to cache|array`).
+             * @description Relocation direction (`hoserva share relocate <share> --to cache|array`).
              * @enum {string}
              */
             to: "cache" | "array";
@@ -5219,16 +5219,16 @@ export interface components {
             mounts: string[];
         };
         StopArrayRequest: {
-            /** @description Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks. */
+            /** @description Must be true after reviewing the stop list the Stop array confirmation dialog shows: refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks. */
             confirm: boolean;
         };
         ResetUserPasswordRequest: {
             password: string;
         };
-        /** @description A share name is a single path segment on every branch and under `/mnt/user` (`pool.ValidateShareName`). */
+        /** @description A share name is a single path segment on every branch and under `/mnt/user`. */
         ShareName: string;
         /**
-         * @description Per-share cache mode (doc 02 §3, Q12).
+         * @description Per-share cache mode.
          * @enum {string}
          */
         ShareCacheMode: "cache-then-move" | "cache-only" | "array-only";
@@ -5239,21 +5239,21 @@ export interface components {
             browseable: boolean;
             recycle: boolean;
             timeMachine: boolean;
-            /** @description Samba `fruit:time machine max size` (Q73), e.g. `500G`. Required when timeMachine is true; omitted otherwise. */
+            /** @description Samba `fruit:time machine max size`, e.g. `500G`. Required when timeMachine is true; omitted otherwise. */
             timeMachineMaxSize?: string | null;
         };
         ShareNFS: {
             enabled: boolean;
-            /** @description Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets (doc 03 §4.2). Required when enabled is true. */
+            /** @description Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets. Required when enabled is true. */
             hosts: string[];
             /**
-             * @description NFS squash option (doc 03 §4.2).
+             * @description NFS squash option.
              * @enum {string}
              */
             squash: "root_squash" | "no_root_squash" | "all_squash";
             /**
              * Format: uuid
-             * @description The fsid= value RenderNFSExports writes for this share's export line (#350, #351). Derived from the share name only; ignored on a create or update request. Always present on a response — a draft preview can use the saved share's fsid because a share cannot be renamed.
+             * @description The fsid= value written for this share's NFS export line. Derived from the share name only; ignored on a create or update request. Always present on a response — a draft preview can use the saved share's fsid because a share cannot be renamed.
              */
             readonly fsid?: string;
         };
@@ -5263,11 +5263,11 @@ export interface components {
             /** Format: int64 */
             bytes: number;
         };
-        /** @description Bytes used and per-disk distribution as of the last sync (doc 02 §1 line 78, doc 03 §4.1-4.2, #223) — computed once as a step of the sync job, from SnapRAID's own tracked state, never a live directory walk. */
+        /** @description Bytes used and per-disk distribution as of the last sync — computed once as a step of the sync job, from SnapRAID's own tracked state, never a live directory walk. */
         ShareUsage: {
             /** Format: int64 */
             totalBytes: number;
-            /** @description Which disks currently hold this share's files, and how much (doc 03 §4.2). A disk this share does not currently occupy is simply absent, not a zero entry. */
+            /** @description Which disks currently hold this share's files, and how much. A disk this share does not currently occupy is simply absent, not a zero entry. */
             perDisk: components["schemas"]["ShareDiskUsage"][];
             /**
              * Format: date-time
@@ -5275,7 +5275,7 @@ export interface components {
              */
             asOf: string;
         };
-        /** @description One file the mover chose not to move (or could not move), with why (doc 09 §2, doc 03 §3.6's skipped-because-in-use list). */
+        /** @description One file the mover chose not to move (or could not move), with why (the skipped-because-in-use list). */
         MoverSkippedEntry: {
             share: string;
             /** @description Path relative to the share root. */
@@ -5287,7 +5287,7 @@ export interface components {
             /** @description Optional human detail (error text or skip reason). */
             reason?: string;
         };
-        /** @description Structured outcome of one finished mover run (#273, doc 09 §2), persisted in SQLite rather than only in the job log. */
+        /** @description Structured outcome of one finished mover run, persisted in SQLite rather than only in the job log. */
         MoverRunResult: {
             /** Format: date-time */
             startedAt: string;
@@ -5303,7 +5303,7 @@ export interface components {
             interrupted: boolean;
             skipped: components["schemas"]["MoverSkippedEntry"][];
         };
-        /** @description Cache disk byte breakdown for the cache page (doc 03 §3.6), computed as a by-product of each mover run (Q87) — never a live directory walk on a timer (Q13). */
+        /** @description Cache disk byte breakdown for the cache page, computed as a by-product of each mover run — never a live directory walk on a timer. */
         CacheUsageBreakdown: {
             /**
              * Format: int64
@@ -5325,23 +5325,23 @@ export interface components {
         };
         Share: {
             name: components["schemas"]["ShareName"];
-            /** @description The share's mount path (`/mnt/user/<name>`, D10). */
+            /** @description The share's mount path (`/mnt/user/<name>`). */
             path: string;
             cacheMode: components["schemas"]["ShareCacheMode"];
             createPolicy: components["schemas"]["ArrayCreatePolicy"];
             smb: components["schemas"]["ShareSMB"];
             nfs: components["schemas"]["ShareNFS"];
-            /** @description Null when this share has not been through a sync since it was created — an honest "not yet synced" state (doc 03 §4.1-4.2), never a zero or placeholder that looks like real data. */
+            /** @description Null when this share has not been through a sync since it was created — an honest "not yet synced" state, never a zero or placeholder that looks like real data. */
             usage: components["schemas"]["ShareUsage"] | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
-            /** @description The share's own mergerfs `minfreespace`, such as `1000K`. Absent when the share uses the array's. An Unraid import sets it from the share's floor (doc 09 §1). */
+            /** @description The share's own mergerfs `minfreespace`, such as `1000K`. Absent when the share uses the array's. An Unraid import sets it from the share's floor. */
             minFreeSpace?: string;
             migration?: components["schemas"]["ShareMigration"];
         };
-        /** @description What the Unraid import recorded about a share it created (doc 05 §4 step 15). Absent on a share the import did not create. */
+        /** @description What the Unraid import recorded about a share it created. Absent on a share the import did not create. */
         ShareMigration: {
             targetCacheMode?: components["schemas"]["ShareCacheMode"];
             /** @description What could not be mapped exactly, in plain language: High-water allocation mapped to Balance across disks, a split level Hoserva has no setting for, a security mode it has no equivalent of. */
@@ -5365,7 +5365,7 @@ export interface components {
             confirm: boolean;
         };
         DeleteShareDataRequest: {
-            /** @description Must equal the share name (doc 03 §4.2 typed-confirm). */
+            /** @description Must equal the share name (typed confirmation). */
             confirmation: string;
         };
         ShareBrowseEntry: {
@@ -5389,11 +5389,11 @@ export interface components {
             role: components["schemas"]["UserRole"];
             /** @description Whether TOTP is confirmed and active on this account. */
             totpEnrolled: boolean;
-            /** @description Whether a Samba/password credential (SMB access) is currently provisioned for this account (doc 03 §7). Set the first time setUserPassword succeeds for it; there is no separate action that clears it short of deleting the account. */
+            /** @description Whether a Samba/password credential (SMB access) is currently provisioned for this account. Set the first time setUserPassword succeeds for it; there is no separate action that clears it short of deleting the account. */
             hasCredential: boolean;
             /**
              * Format: date-time
-             * @description When this account last completed sign-in, tracked at authentication time — never derived from whether a session is still live (doc 03 §7). Null when it has never signed in.
+             * @description When this account last completed sign-in, tracked at authentication time — never derived from whether a session is still live. Null when it has never signed in.
              */
             lastLogin: string | null;
             /** Format: date-time */
@@ -5402,7 +5402,7 @@ export interface components {
         CreateUserRequest: {
             username: string;
             /**
-             * @description Defaults to share-only when omitted (Q27).
+             * @description Defaults to share-only when omitted.
              * @enum {string}
              */
             role?: "viewer" | "share-only";
@@ -5416,7 +5416,7 @@ export interface components {
             password: string;
         };
         /**
-         * @description Q27, doc 03 §7 — a user or group's access to one share.
+         * @description A user or group's access to one share.
          * @enum {string}
          */
         ShareAccessLevel: "none" | "read-only" | "read-write";
@@ -5482,7 +5482,7 @@ export interface components {
             expiresAt: string;
         };
         /**
-         * @description Q43: a token's own scope, always admin or viewer — never share-only, since a share-only account has no API access to scope (Q27).
+         * @description A token's own scope, always admin or viewer — never share-only, since a share-only account has no API access to scope.
          * @enum {string}
          */
         ApiTokenRole: "admin" | "viewer";
@@ -5512,11 +5512,11 @@ export interface components {
             role: components["schemas"]["ApiTokenRole"];
             /** Format: date-time */
             createdAt: string;
-            /** @description The raw bearer value — shown once, on creation, and never retrievable again (doc 01 §7). */
+            /** @description The raw bearer value — shown once, on creation, and never retrievable again. */
             token: string;
         };
         /**
-         * @description `local` is a directory — the boot device, the pool, or an external disk's mount (Q72). Every other type is written through rclone: `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or `rclone` for a remote already set up in rclone's own config. An NFS share is a local destination at the path the host has mounted it.
+         * @description `local` is a directory — the boot device, the pool, or an external disk's mount. Every other type is written through rclone: `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or `rclone` for a remote already set up in rclone's own config. An NFS share is a local destination at the path the host has mounted it.
          * @enum {string}
          */
         BackupDestinationType: "local" | "smb" | "s3" | "sftp" | "webdav" | "rclone";
@@ -5539,7 +5539,7 @@ export interface components {
                 [key: string]: string;
             };
             enabled: boolean;
-            /** @description Always true for a remote destination (Q80). */
+            /** @description Always true for a remote destination. */
             encrypt: boolean;
             retention: components["schemas"]["BackupRetention"];
             /** @description Whether credentials are stored for this destination. */
@@ -5649,7 +5649,7 @@ export interface components {
             generatedAt: string;
             /** @description From the first line of the flash's `changes.txt`. Absent when it states none. */
             unraidVersion?: string;
-            /** @description True when the scan ran only because `unverifiedLayout` overrode the refusal of the version or flash layout (Q24). */
+            /** @description True when the scan ran only because `unverifiedLayout` overrode the refusal of the version or flash layout. */
             unverifiedLayout: boolean;
             verdict: components["schemas"]["MigrationVerdict"];
             rows: components["schemas"]["MigrationReportRow"][];
@@ -5661,12 +5661,12 @@ export interface components {
          */
         MigrationUnraidRole: "parity" | "data" | "cache" | "boot" | "unassigned";
         /**
-         * @description The Hoserva role the import pre-fills (doc 05 §4 Phase C). Absent when nothing is proposed: no disk of this machine matched the slot, the disk is refused, or the capture has no `disks.ini`. A disk that is an Unraid boot device, or a parity or data slot's disk that is one, is only ever `ignore`, except that the cache pool's row of an internal boot that shares its disk with the cache (`unraidBoot`) is `cache`. The disk this machine boots from is never proposed a role as a parity or data slot's disk; as the cache pool's disk (the shared NVMe of doc 01 §6) it is `cache`.
+         * @description The Hoserva role the import pre-fills. Absent when nothing is proposed: no disk of this machine matched the slot, the disk is refused, or the capture has no `disks.ini`. A disk that is an Unraid boot device, or a parity or data slot's disk that is one, is only ever `ignore`, except that the cache pool's row of an internal boot that shares its disk with the cache (`unraidBoot`) is `cache`. The disk this machine boots from is never proposed a role as a parity or data slot's disk; as the cache pool's disk (the shared NVMe) it is `cache`.
          * @enum {string}
          */
         MigrationProposedRole: "parity" | "data" | "cache" | "ignore";
         /**
-         * @description Why the scan refused a disk, as a code beside the row's prose. `boot_device` is an Unraid boot device given a data or parity slot; `host_boot` the disk this machine boots from, given a parity or data slot (the cache pool may share it); `failed` a disk reported failed; `encrypted`, `zfs`, `unsupported_filesystem`, `filesystem_mismatch` and `no_filesystem` the disk's filesystem (Q22, Q23); `no_filesystem_node` and `duplicate_uuid` a disk Hoserva cannot mount by filesystem UUID; `multi_device_btrfs` a btrfs filesystem spanning several devices; `filesystem_unverified` a btrfs or ext4 disk whose superblock could not be read; `pending_log` a log that was never replayed; `integrity_check` a failed read-only filesystem check; `unreadable` a disk that passed its checks but could not be read completely; `weak_identity_parity` a parity disk with only a weak identity (Q21).
+         * @description Why the scan refused a disk, as a code beside the row's prose. `boot_device` is an Unraid boot device given a data or parity slot; `host_boot` the disk this machine boots from, given a parity or data slot (the cache pool may share it); `failed` a disk reported failed; `encrypted`, `zfs`, `unsupported_filesystem`, `filesystem_mismatch` and `no_filesystem` the disk's filesystem; `no_filesystem_node` and `duplicate_uuid` a disk Hoserva cannot mount by filesystem UUID; `multi_device_btrfs` a btrfs filesystem spanning several devices; `filesystem_unverified` a btrfs or ext4 disk whose superblock could not be read; `pending_log` a log that was never replayed; `integrity_check` a failed read-only filesystem check; `unreadable` a disk that passed its checks but could not be read completely; `weak_identity_parity` a parity disk with only a weak identity.
          * @enum {string}
          */
         MigrationRefusalCode: "boot_device" | "host_boot" | "failed" | "encrypted" | "zfs" | "unsupported_filesystem" | "filesystem_mismatch" | "no_filesystem" | "no_filesystem_node" | "duplicate_uuid" | "multi_device_btrfs" | "filesystem_unverified" | "pending_log" | "integrity_check" | "unreadable" | "weak_identity_parity";
@@ -5682,7 +5682,7 @@ export interface components {
             proposedRole?: components["schemas"]["MigrationProposedRole"];
             /** @description True when this row's disk is also an Unraid boot device, whatever the row's slot: the cache pool of an internal boot that shares its disk with the cache (proposed `cache`), or a parity or data slot that names a boot device (refused as `boot_device` and proposed `ignore`). The disk is this one row, never a second `boot` row beside it. Absent otherwise. */
             unraidBoot?: boolean;
-            /** @description True when this row's disk is the disk this machine boots from, which is the scan's own boot-disk detection, not a second one: Debian is installed on it. False when a disk of this machine matched the row and is not that disk. Absent when no disk of this machine matched, and in a report made before the field existed; absent means unknown, never false. On the cache pool's row, true is the shared NVMe of doc 01 §6. */
+            /** @description True when this row's disk is the disk this machine boots from, which is the scan's own boot-disk detection, not a second one: Debian is installed on it. False when a disk of this machine matched the row and is not that disk. Absent when no disk of this machine matched, and in a report made before the field existed; absent means unknown, never false. On the cache pool's row, true is the shared NVMe. */
             hostBoot?: boolean;
             /** @description This machine's device for the disk. Absent when none matched. */
             device?: string;
@@ -5698,7 +5698,7 @@ export interface components {
             size?: number;
             /** @description The filesystem this machine's disk reports. */
             filesystem?: string;
-            /** @description True when only a weak identity identifies the disk (Q21). Absent when no disk of this machine matched. */
+            /** @description True when only a weak identity identifies the disk. Absent when no disk of this machine matched. */
             weakIdentity?: boolean;
             /** @description Why no disk of this machine matched the slot. */
             problem?: string;
@@ -5712,7 +5712,7 @@ export interface components {
             name: string;
             /** @description Unraid's allocation method as the share's config gives it (`fillup`, `mostfree`, `highwater`). Absent when it sets none. */
             allocationMethod?: string;
-            /** @description True for High-water, which has no exact equivalent (Q11). */
+            /** @description True for High-water, which has no exact equivalent. */
             highWater: boolean;
             /** @description The disks the share is limited to. Empty means any. */
             include: string[];
@@ -5723,7 +5723,7 @@ export interface components {
         };
         /** @enum {string} */
         MigrationBootMode: "usb" | "internal";
-        /** @description Where Unraid boots from, for the planned layout and rollback wording of doc 05 §5. Every field is absent when the capture does not say. */
+        /** @description Where Unraid boots from, for the planned layout and rollback wording. Every field is absent when the capture does not say. */
         MigrationBoot: {
             mode?: components["schemas"]["MigrationBootMode"];
             /** @description Whether an internal boot pool is a mirrored pair. Only for `internal`. */
@@ -5732,7 +5732,7 @@ export interface components {
             sharedWithCache?: boolean;
         };
         /**
-         * @description `missing` when the source has no capture, `unreadable` when it is there and does not parse, `stale` when a template on the flash was saved after it was taken (Q89), `present` otherwise.
+         * @description `missing` when the source has no capture, `unreadable` when it is there and does not parse, `stale` when a template on the flash was saved after it was taken, `present` otherwise.
          * @enum {string}
          */
         MigrationCaptureState: "present" | "missing" | "unreadable" | "stale";
@@ -5780,7 +5780,7 @@ export interface components {
             sourceDevice?: string;
             /** @description The disks a scan can read as the Unraid USB stick now. */
             flashDevices: components["schemas"]["MigrationFlashDevice"][];
-            /** @description True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is the only source and no stick is offered (Q25). */
+            /** @description True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is the only source and no stick is offered. */
             zipOnly: boolean;
             report?: components["schemas"]["MigrationReport"];
             verify?: components["schemas"]["MigrationVerify"];
@@ -5813,9 +5813,9 @@ export interface components {
             erases: components["schemas"]["MigrationParityErase"][];
             /** @description Why it cannot be offered now (a disk missing, swapped or not allowed, or no data disk with the pool's `minfreespace` free); no `confirmation` is given. */
             problem?: string;
-            /** @description The unprotected window in doc 05 §5's terms: the array has no redundancy from the moment Unraid's array stopped until the initial sync completes. */
+            /** @description The unprotected window: the array has no redundancy from the moment Unraid's array stopped until the initial sync completes. */
             unprotectedWindow: string;
-            /** @description What rollback means once this is confirmed, for this session's boot mode and layout (doc 05 §5): the general statement first, then the row of the table that applies. */
+            /** @description What rollback means once this is confirmed, for this session's boot mode and layout: the general statement first, then the row of the table that applies. */
             rollback: string[];
         };
         MigrationVerifyCounts: {
@@ -5891,12 +5891,12 @@ export interface components {
          */
         MigrationTemplateClass: "autostart" | "running" | "stopped" | "template_only" | "unknown";
         /**
-         * @description How a conversion reads. `clean` is Q36's definition: no warning of class `untranslated_flag`, `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. `warnings` has at least one. `failed` is a template the converter could not read. `previewed` is a Compose Manager project's `compose.yaml`, which is never converted. `missing` is a project whose `compose.yaml` is not in the source.
+         * @description How a conversion reads. `clean` means no warning of class `untranslated_flag`, `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. `warnings` has at least one. `failed` is a template the converter could not read. `previewed` is a Compose Manager project's `compose.yaml`, which is never converted. `missing` is a project whose `compose.yaml` is not in the source.
          * @enum {string}
          */
         MigrationTemplateStatus: "clean" | "warnings" | "failed" | "previewed" | "missing";
         MigrationTemplateCounts: {
-            /** @description Counted templates that convert cleanly (Q36). */
+            /** @description Counted templates that convert cleanly. */
             clean: number;
             /** @description Counted templates that convert with at least one warning that needs manual action. */
             withWarnings: number;
@@ -5969,7 +5969,7 @@ export interface components {
             file: string;
             class: components["schemas"]["MigrationTemplateClass"];
             status: components["schemas"]["MigrationTemplateStatus"];
-            /** @description The warnings that make a conversion not clean (Q36). */
+            /** @description The warnings that make a conversion not clean. */
             warningCount: number;
             /** @description Why the converter could not read the template. Present only when `status` is `failed`. */
             error?: string;
@@ -6099,7 +6099,7 @@ export interface components {
              * @description That time; present exactly when `finished` is true.
              */
             finishedAt?: string;
-            /** @description In the order of doc 05 §4's steps. */
+            /** @description In the order of the migration's steps. */
             items: components["schemas"]["MigrationChecklistItem"][];
         };
         MigrationChecklistItem: {
@@ -6296,7 +6296,7 @@ export interface components {
             bareMetal?: components["schemas"]["ConfigImportBareMetal"];
         };
         /**
-         * @description `matched`: exactly one attached disk carries the recorded identity (WWN, else serial; a weak-identity disk by filesystem UUID and size, Q21) and its filesystem is the recorded one. `absent`: no attached disk is it. `replaced`: the identity or the filesystem differs, either an attached disk holds the recorded filesystem with another identity or the disk with the recorded identity holds another filesystem. `ambiguous`: more than one attached disk matches, a disk and its clone. A disk that is not `matched` stays a row of the restored array with its recorded filesystem, is never mounted or adopted by the restore, and leaves the array degraded.
+         * @description `matched`: exactly one attached disk carries the recorded identity (WWN, else serial; a weak-identity disk by filesystem UUID and size) and its filesystem is the recorded one. `absent`: no attached disk is it. `replaced`: the identity or the filesystem differs, either an attached disk holds the recorded filesystem with another identity or the disk with the recorded identity holds another filesystem. `ambiguous`: more than one attached disk matches, a disk and its clone. A disk that is not `matched` stays a row of the restored array with its recorded filesystem, is never mounted or adopted by the restore, and leaves the array degraded.
          * @enum {string}
          */
         ConfigImportDiskState: "matched" | "absent" | "replaced" | "ambiguous";
@@ -6331,7 +6331,7 @@ export interface components {
         ConfigImportDiskMapping: {
             disks: components["schemas"]["ConfigImportDiskMappingEntry"][];
         };
-        /** @description The bare-metal restore of an archive onto a fresh install (doc 10 §1), present when the installation has no array configured and the archive's schema is not newer. */
+        /** @description The bare-metal restore of an archive onto a fresh install, present when the installation has no array configured and the archive's schema is not newer. */
         ConfigImportBareMetal: {
             /** @description The archive's database is older than the running schema and is upgraded, on a staged copy, by the migration runner. */
             schemaUpgrade: boolean;
@@ -6358,7 +6358,7 @@ export interface components {
             /** @description The stack whose `.env` file it is (`stack_env`), the array disk by its `ConfigImportDisk.name` (`disk`), the table and column of a database secret cleared by a bare-metal restore, with the row it was in (`database_secret`), or `backup_recipient`, the archive's backup recipient, which a bare-metal restore adopts only when `identity.age` opens and otherwise leaves this box's own in place. */
             name: string;
             /**
-             * @description `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section could not be opened (see `ConfigImportSecretsStatus`; for `backup_recipient`, its `identity.age`). `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was sealed under the machine key of the installation the archive came from, which this machine does not have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
+             * @description `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section could not be opened (see `ConfigImportSecretsStatus`; for `backup_recipient`, its `identity.age`). `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged or the replace flow adopts a replacement disk. `sealed_under_other_key`: the secret was sealed under the machine key of the installation the archive came from, which this machine does not have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
              * @enum {string}
              */
             reason: "no_secrets" | "no_passphrase" | "passphrase_incorrect" | "stack_not_in_archive" | "left_in_place" | "disk_absent" | "disk_replaced" | "disk_ambiguous" | "sealed_under_other_key";
@@ -6422,7 +6422,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description An error response (doc 01 §5). */
+        /** @description An error response. */
         Error: {
             headers: {
                 [name: string]: unknown;
@@ -8989,7 +8989,7 @@ export interface operations {
                      * @description The Flash Backup zip, its root being `/boot`.
                      */
                     file: string;
-                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
+                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against. */
                     unverifiedLayout?: boolean;
                     /** @description Hash every file of every data disk for the baseline, instead of every file of 1 MiB or less plus a deterministic sample of the larger ones. It takes much longer. */
                     fullChecksums?: boolean;
@@ -9021,7 +9021,7 @@ export interface operations {
                 "application/json": {
                     /** @description The disk's device path, as `flashDevices` lists it (`/dev/sdb`). */
                     device: string;
-                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against (Q24). */
+                    /** @description Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against. */
                     unverifiedLayout?: boolean;
                     /** @description Hash every file of every data disk for the baseline, as for the zip scan (`startMigrationScan`). */
                     fullChecksums?: boolean;

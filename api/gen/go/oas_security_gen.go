@@ -14,7 +14,7 @@ import (
 // SecurityHandler is handler for security parameters.
 type SecurityHandler interface {
 	// HandleApiToken handles apiToken security.
-	// Personal API token (Q43), scoped to a role (admin/viewer). For scripts and the remote CLI over TCP.
+	// Personal API token, scoped to a role (admin/viewer). For scripts and the remote CLI over TCP.
 	HandleApiToken(ctx context.Context, operationName OperationName, t ApiToken) (context.Context, error)
 	// HandleSessionCookie handles sessionCookie security.
 	// Web UI session, issued at login over TCP.
@@ -505,7 +505,7 @@ func (s *Server) securitySessionCookie(ctx context.Context, operationName Operat
 // SecuritySource is provider of security values (tokens, passwords, etc.).
 type SecuritySource interface {
 	// ApiToken provides apiToken security value.
-	// Personal API token (Q43), scoped to a role (admin/viewer). For scripts and the remote CLI over TCP.
+	// Personal API token, scoped to a role (admin/viewer). For scripts and the remote CLI over TCP.
 	ApiToken(ctx context.Context, operationName OperationName) (ApiToken, error)
 	// SessionCookie provides sessionCookie security value.
 	// Web UI session, issued at login over TCP.
