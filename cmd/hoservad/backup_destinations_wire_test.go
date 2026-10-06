@@ -71,7 +71,7 @@ func newBackupRig(t *testing.T, passphrase string) *backupRig {
 		t.Fatal(err)
 	}
 	build := func() (*backup.Service, error) {
-		return newBackupService(ctx, cfg, db, machineKey, recipient, settings, disk.NewFakeRunner(), api.NewBackupDestinationStore(db))
+		return newBackupService(ctx, cfg, db, machineKey, recipient, settings, disk.NewFakeRunner(), api.NewBackupDestinationStore(db), store.NewArrayStore(db))
 	}
 	svc, err := build()
 	if err != nil {

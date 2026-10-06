@@ -142,7 +142,7 @@ func (a *AppdataService) uploadAppdata(ctx context.Context, dests []Destination,
 		}
 	}()
 	for _, dest := range dests {
-		release, why := a.Backup.admitDestination(ctx, dest)
+		release, why := a.Backup.admitWrite(ctx, dest)
 		if why != "" {
 			a.Backup.log("skipping destination %q for %s: %s", dest.ID, name, why)
 			failures = append(failures, fmt.Errorf("destination %q skipped: %s", dest.ID, why))

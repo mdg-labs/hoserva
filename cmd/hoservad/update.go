@@ -51,7 +51,7 @@ func packageVersion(ctx context.Context, runner disk.Runner, name string) string
 // pool path — into the destination store when it holds none. Destinations
 // are read from the store on every run (D4), so one added through the API
 // is written to by the next backup.
-func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, recipient *backup.Recipient, settings *api.SettingsService, runner disk.Runner, destinations *api.BackupDestinationStore) (*backup.Service, error) {
+func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, recipient *backup.Recipient, settings *api.SettingsService, runner disk.Runner, destinations *api.BackupDestinationStore, arrays *store.ArrayStore) (*backup.Service, error) {
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
@@ -74,6 +74,8 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 		// wireBackup hands this same instance to the handler, so an eject
 		// (#454) waits for the writes this service admits.
 		ExternalGates: &backup.ExternalWriteGates{},
+		// The pool is read-only while an adoption is pending (doc 05 §4).
+		MigrationUnfinished: arrays.MigrationUnfinished,
 	}
 	defaults := backup.DefaultDestinations()
 	defaults[0].Path = filepath.Join(cfg.stateDir, "backups")

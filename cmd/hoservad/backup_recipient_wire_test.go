@@ -74,7 +74,7 @@ func TestNewBackupService_EncryptsNightlyArchiveThroughRealWiring(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	backupService, err := newBackupService(ctx, cfg, db, machineKey, recipient, settingsService, disk.NewFakeRunner(), api.NewBackupDestinationStore(db))
+	backupService, err := newBackupService(ctx, cfg, db, machineKey, recipient, settingsService, disk.NewFakeRunner(), api.NewBackupDestinationStore(db), store.NewArrayStore(db))
 	if err != nil {
 		t.Fatalf("newBackupService: %v", err)
 	}
@@ -165,5 +165,84 @@ func TestNewBackupService_EncryptsNightlyArchiveThroughRealWiring(t *testing.T) 
 	}
 	if _, err := io.Copy(io.Discard, archiveReader); err != nil {
 		t.Fatalf("reading decrypted archive: %v", err)
+	}
+}
+
+// A config backup built the way main.go builds it skips the pool destination
+// while the array record has a migration pending (#639), reading that state
+// from the same ArrayStore the daemon holds.
+func TestNewBackupService_SkipsThePoolWhileTheArrayRecordHasAMigrationPending(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", store.DSN(filepath.Join(dir, "hoservad.db")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, _, err := (&store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	machineKey, err := auth.LoadOrGenerateMachineKey(ctx, filepath.Join(dir, "secret.key"), &auth.FakeMachineKeyStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsService := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
+	passphrase := "correct horse battery staple"
+	if _, err := settingsService.Update(ctx, api.UpdateGeneralSettingsInput{BackupPassphrase: &passphrase}); err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := backup.LoadOrGenerateRecipient(ctx, machineKey, api.NewBackupRecipientStore(db), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config{stateDir: filepath.Join(dir, "state"), configRoot: filepath.Join(dir, "etc")}
+	if err := os.MkdirAll(cfg.stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	arrays := store.NewArrayStore(db)
+	svc, err := newBackupService(ctx, cfg, db, machineKey, recipient, settingsService, disk.NewFakeRunner(), api.NewBackupDestinationStore(db), arrays)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	poolRoot := filepath.Join(dir, "mnt", "user")
+	svc.PoolRoot = poolRoot
+	svc.PoolMounted = func(string) (bool, error) { return true, nil }
+	svc.Log = func(string, ...any) {}
+	svc.Now = func() time.Time { return time.Date(2026, 10, 5, 3, 0, 0, 0, time.UTC) }
+	if err := svc.RemoveDestination(ctx, "boot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RemoveDestination(ctx, "pool"); err != nil {
+		t.Fatal(err)
+	}
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+	if _, err := svc.AddDestination(ctx, backup.NewDestination{Name: "Pool", Type: backup.TypeLocal, Path: poolDest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO array_settings (id, create_policy, min_free_space, created_at, migration_pending) VALUES (1, 'mfs', '50G', '2026-10-05T00:00:00Z', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Run(ctx); err == nil || !strings.Contains(err.Error(), "migration is finished") {
+		t.Fatalf("Run = %v, want a failure naming the pending migration", err)
+	}
+	if _, err := os.Stat(poolRoot); !os.IsNotExist(err) {
+		t.Fatalf("the pool was written to while the migration was pending: %v", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `UPDATE array_settings SET migration_pending = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("Run after the migration finished: %v", err)
+	}
+	if entries, err := os.ReadDir(poolDest); err != nil || len(entries) == 0 {
+		t.Fatalf("pool destination after the migration finished = %v, %v, want an archive", entries, err)
 	}
 }
