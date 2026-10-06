@@ -51,7 +51,7 @@ The threshold guard checks the changes before every sync, whether it was the nig
 | Files removed or changed | More than 10% of the files in the array |
 | A data disk that held files now holds none | Any such disk |
 
-Files that Hoserva itself moved between disks are counted separately as **Moved by Hoserva** and do not count towards these limits. When the guard holds the nightly sync, Hoserva sends a notification, and the Parity page shows **Threshold guard is blocking sync**. Nothing syncs until you decide. You can review the changes and sync anyway, or leave the sync held and investigate. You cannot turn the guard off.
+Files that Hoserva itself moved between disks are counted separately as **Moved by Hoserva** and do not count towards these limits. When the guard holds the nightly sync, Hoserva sends a notification, and the Parity page shows **Threshold guard is blocking sync**. Nothing syncs until you decide. You can review the changes and sync anyway, or leave the sync held and investigate. You cannot turn the guard off, and **Sync now** never overrides it.
 
 ## How do I see how fresh parity is?
 
@@ -65,8 +65,9 @@ A scrub reads data and parity and checks that they still agree. It finds silent 
 
 <Tabs groupId="interface">
   <TabItem value="web" label="Web UI" default>
-    - **Sync now:** open **Storage → Parity** and select **Sync now**. If the guard has stopped the sync, the dialog shows the reason, and confirming syncs anyway.
-    - **See the changes first:** select **Run diff**. A diff reads every file on every data disk, so it spins all of them up. Hoserva shows this warning before it runs.
+    - **Sync now:** open **Storage → Parity** and select **Sync now**, then confirm. This starts a normal sync, and the guard can hold it like the nightly one. If it does, the page shows **Threshold guard is blocking sync** with the reason.
+    - **Sync anyway:** to sync past a held sync, select **Sync anyway…** on that banner. Hoserva first asks the guard again, and the override is offered only if the guard still blocks the sync. If it does not, the sync runs as a normal one. Type `SYNC ANYWAY` to confirm, then select **Sync anyway**.
+    - **See the changes first:** select **Run diff**. A diff checks every data disk against parity, so it spins all of them up, and Hoserva shows a warning before it runs. It then lists the changes in groups such as **Removed**, **Updated** and **Added**.
     - **Scrub:** select **Scrub now**.
     - **Change the schedule:** open **Settings → Schedules**. The **Nightly maintenance chain** card holds the start time and the steps.
   </TabItem>
@@ -75,7 +76,7 @@ A scrub reads data and parity and checks that they still agree. It finds silent 
     hoserva sync --dry-run
     ```
 
-    `--dry-run` prints the diff without syncing. It reads every data disk, so it spins them up.
+    `--dry-run` runs the same check as **Run diff** without syncing. It queues a job and prints that job, not a list of changes, and the check wakes every data disk.
 
     ```bash
     hoserva sync

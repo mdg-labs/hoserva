@@ -45,7 +45,7 @@ Use one parity disk or two. Each parity disk must be at least as large as your l
 
 | Parity disks | Disks that can fail without losing data | Choose it when |
 |---|---|---|
-| 1 | Any 1 disk, data or parity | Most home arrays. The failed disk is rebuilt from parity onto its replacement. |
+| 1 | Any 1 disk, data or parity | Most home arrays. A failed data disk is rebuilt from parity onto its replacement, and a failed parity disk is recreated by a full sync. |
 | 2 | Any 2 disks, data or parity | You want protection while a replacement rebuilds, or your array is large enough that a second failure during a long rebuild worries you. It costs one more disk. |
 
 A worked example: with data disks of 4 TB, 8 TB and 12 TB, every parity disk must be at least 12 TB. The array offers 24 TB of space, and one parity disk of 12 TB or larger protects it against one failed disk.
@@ -73,5 +73,5 @@ Docker Engine is needed only for the Apps section, and you install it yourself f
 
 ## Next steps
 
-- [Install on Debian](./install-deb.md)
+- [Install on Debian](./install-deb.mdx)
 - [How pooling works](../concepts/how-pooling-works.md)

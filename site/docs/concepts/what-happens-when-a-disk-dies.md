@@ -15,7 +15,7 @@ Parity can rebuild only the data that was on the disk at the last successful syn
 
 Changes to files on your other disks since the last sync can also make some blocks impossible to rebuild, when those files share their parity positions with the lost data. A fix that leaves blocks it could not rebuild ends as failed, and its error says how many.
 
-To see which files changed since the last sync, select **Run diff** under **Changes since last sync** on **Storage → Parity**. It wakes every data disk to compare the files against parity, so run it when you need the answer. The **Guided recovery** on the same page has a step called **What cannot be recovered**, but it shows only a warning that files written after the last successful sync are not on parity. It does not list them. [How parity works](../concepts/how-parity-works.mdx) explains why parity is updated on a schedule.
+To see which files changed since the last sync, select **Run diff** under **Changes since last sync** on **Storage → Parity**. It checks every data disk against parity and lists the changes by group, such as **Removed** and **Updated**. That wakes every data disk, so run it when you need the answer. The **Guided recovery** on the same page has a step called **What cannot be recovered**, but it shows only a warning that files written after the last successful sync are not on parity. It does not list them. [How parity works](../concepts/how-parity-works.mdx) explains why parity is updated on a schedule.
 
 ## What keeps working?
 

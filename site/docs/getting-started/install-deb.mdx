@@ -3,7 +3,11 @@ title: Install on Debian
 description: Download and verify the Hoserva .deb package, install it on Debian 13 with apt, sign in over HTTPS on port 8008 and check the installation with hoserva doctor.
 ---
 
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
 Hoserva is installed on an existing Debian system from a `.deb` package. The package installs the Hoserva daemon, the `hoserva` command-line tool and the Debian packages Hoserva drives. After it is installed you finish the setup in a web browser.
+
+<TrademarkNotice />
 
 ## Before you start
 
@@ -86,7 +90,7 @@ The wizard has four steps.
 1. **Create the admin account.** Choose a **Username** and a **Password** of at least 12 characters. There are no default credentials. The checkbox **Set up an authenticator app (recommended)** adds a second sign-in step.
 2. **System check.** Hoserva runs the same checks as `hoserva doctor`. You cannot continue while a storage dependency check has failed. If the server already has Samba shares, NFS exports, fstab mounts or Docker containers, Hoserva lists them under **Existing host configuration**. It never overwrites them. For each item you choose **Import into Hoserva** or **Leave unmanaged**.
 3. **Basics.** Set the **Hostname** and the **Timezone**. The timezone matters because the nightly maintenance starts at 02:00 in it. You can add a **Notification channel** (Email, Gotify, ntfy, Discord or Webhook) and a **Backup passphrase**. If you skip the channel, Hoserva warns that you will not be told about disk failures. If you skip the passphrase, it warns that a restored backup does not restore the secrets the passphrase protects.
-4. **Where next?** Choose **Fresh install** to continue to the storage setup. Choose **Migrating from Unraid** if you are bringing an existing array from another system, which opens the migration tool; its guide starts at the [migration overview](../migrating-from-unraid/overview.mdx). Select **Finish setup**.
+4. **Where next?** Choose **Fresh install** to continue to the storage setup. Choose **Migrating from Unraid** if you are bringing an existing Unraid array, which opens the migration tool; its guide starts at the [migration overview](../migrating-from-unraid/overview.mdx). Select **Finish setup**.
 
 The next page is the storage setup wizard. Continue with [Create your first array](./first-array.mdx).
 
