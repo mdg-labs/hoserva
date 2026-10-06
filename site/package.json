@@ -4,11 +4,13 @@
   "version": "0.0.0",
   "description": "Hoserva's public documentation site (Docusaurus, versioned docs). See docs/internal/05-migration.md §7 and docs/internal/13-open-questions.md Q3 and Q90.",
   "scripts": {
-    "start": "docusaurus start",
-    "build": "docusaurus build --out-dir dist",
+    "start": "npm run gen-api && docusaurus start",
+    "gen-api": "node scripts/gen-api-docs.mjs",
+    "build": "npm run gen-api && docusaurus build --out-dir dist",
     "serve": "docusaurus serve --dir dist",
     "typecheck": "tsc",
-    "check": "node scripts/check-layout.mjs . dist && node scripts/check-external.mjs . dist && node scripts/check-versioning.mjs",
+    "check": "node scripts/check-layout.mjs . dist && node scripts/check-external.mjs . dist && node scripts/check-api.mjs . dist && node scripts/check-versioning.mjs",
+    "docs:version": "node scripts/version-docs.mjs",
     "clear": "docusaurus clear"
   },
   "dependencies": {
@@ -20,13 +22,18 @@
     "@fontsource-variable/inter": "5.3.0",
     "@mdx-js/react": "3.1.1",
     "@mermaid-js/layout-elk": "0.1.9",
+    "docusaurus-plugin-openapi-docs": "5.2.0",
+    "docusaurus-plugin-sass": "0.2.7",
+    "docusaurus-theme-openapi-docs": "5.2.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "sass": "1.105.1"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.10.2",
     "@docusaurus/tsconfig": "3.10.2",
     "@docusaurus/types": "3.10.2",
+    "@redocly/openapi-core": "2.59.0",
     "@types/react": "19.3.0",
     "typescript": "5.9.3"
   },
