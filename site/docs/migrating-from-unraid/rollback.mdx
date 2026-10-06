@@ -1,0 +1,69 @@
+---
+title: Rollback
+description: How to go back to Unraid, which stages can be undone cleanly, and what the point of no return changes.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+This page explains how to go back to Unraid if you change your mind or something looks wrong. Going back is clean up to the point of no return, and it means restoring from a backup after it. Read it before you stop the Unraid array, so you know your way back while it is still easy.
+
+<TrademarkNotice />
+
+## How far back can you go?
+
+| Stage | Can you go back? |
+|---|---|
+| Before step 17, the point of no return | Yes, cleanly, as far as your data disks go. Nothing has been written to them. They were adopted read-only, so Unraid sees the array as it left it. |
+| Once step 17 starts writing parity | No. Your old parity disk's contents are destroyed, and going back means restoring from a backup. |
+
+Before step 17 the migration only reads from your data disks, and the former parity disk and the cache are recorded and left unopened. A failed step 17 can already have erased the former parity disk, so treat the start of step 17 as the point of no return even when it reports a failure.
+
+## Take an import back
+
+If you have imported the data disks and decided against it, or the verify failed in a way you do not want to chase, take the import back. This unmounts the read-only pool and the adopted disks, forgets the verify result and deletes the recorded import. It writes nothing to any adopted disk, and the former parity and cache disks were never touched.
+
+```bash
+hoserva migrate undo-import --yes
+```
+
+The command stops without `--yes` and says what it would do. Shares and containers lose `/mnt/user` while it is undone. It is refused once the point of no return has been crossed, and when there is no import waiting for it.
+
+The shares and accounts the import created stay behind. They hold no data, a later import finds them and leaves them as they are, and you can remove them like any others if you abandon the migration. To delete the migration session, its report and the stored Flash Backup zip, run:
+
+```bash
+hoserva migrate forget
+```
+
+Forgetting the session is refused while an import is pending, so undo the import first. Taking an import back is a command-line action. The web UI has no button for it.
+
+## What going back looks like by boot layout
+
+Going back after Debian is installed depends on where Unraid boots from and where Debian went. Find your row. The Web UI shows the same rows under **Boot mode and layout** in the **Review** step, and `hoserva migrate initialize-parity` prints yours before it asks for confirmation. Before step 12, going back is booting Unraid again, with the stick back in if you removed it in step 11.
+
+| Unraid boots from | Debian goes on | Going back after step 12 |
+|---|---|---|
+| A USB stick | A separate device | Put the stick back in and boot from it. |
+| A USB stick | The NVMe that holds the cache | Put the stick back in, re-create the Unraid cache and move appdata back. |
+| An internal device of its own | Another device | Switch the firmware boot order back. |
+| An internal device of its own | That same device | Restore the Flash Backup zip to a USB stick with the Unraid USB Flash Creator and boot from it. |
+| A mirrored pair of internal devices | Another device | Switch the firmware boot order back. |
+| A mirrored pair of internal devices | One device of the pair | Switch the firmware boot order to the other device. Unraid runs with a degraded boot pool, and you replace the wiped device through its normal drive assignment. |
+| A mirrored pair of internal devices | Both devices | Restore the Flash Backup zip to a USB stick and boot from it. |
+| An internal device that also holds the cache | Another device | Switch the firmware boot order back. The cache, partition 4, is untouched until parity is first written. |
+| An internal device that also holds the cache | The same NVMe | Restore the Flash Backup zip to a USB stick and boot from it, then re-create the cache. |
+
+The shared NVMe rows differ because the Debian installation destroyed the Unraid cache. What was on it is on the array, because you emptied the cache in step 5. The internal boot rows follow Unraid's own documentation for internal boot. They have not been tried on a real internal boot server.
+
+These rows assume you have not reached step 17. Reconnect all your array disks before you boot Unraid again.
+
+## After the point of no return
+
+Step 17 formats your former Unraid parity disk or disks as Hoserva parity, and the cache as Hoserva's cache. Once it starts writing, the old parity is gone. Hoserva never formats a data disk, but Unraid can no longer rebuild a disk from the parity that is now erased, and nothing in Hoserva reverses the step. Going back means restoring from a backup, so keep one until you are sure.
+
+That is why the **Initialise parity** step asks you to type a confirmation naming every device it erases.
+
+## Next steps
+
+- [Before you start](./before-you-start.mdx) explains what to prepare while Unraid is still running.
+- [The migration](./the-migration.mdx) shows where each step falls.
+- [Troubleshooting](./troubleshooting.mdx) covers a verify that does not pass.

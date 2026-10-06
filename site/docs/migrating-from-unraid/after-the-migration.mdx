@@ -1,0 +1,111 @@
+---
+title: After the migration
+description: The closing checklist after an Unraid migration, from the first sync and a full scrub to schedules and a restore drill.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+Once your containers are running, a few jobs remain before the migration is really finished: the first parity sync, a full scrub, notifications, schedules, the User Scripts you want to keep, and a restore drill that proves you can recover a file. This page walks through them. You need it after [The migration](./the-migration.mdx) has crossed the point of no return.
+
+<TrademarkNotice />
+
+## Follow the closing checklist
+
+Hoserva tracks these items for you on the command line:
+
+```bash
+hoserva migrate checklist
+```
+
+Each item is shown as `[ ]` still to do, `[x]` done or `[-]` not applicable, with the evidence and, for an item still to do, what to do next. An item is done only when a record shows it: a job that succeeded, a notification test that succeeded, a schedule that is enabled. The checklist applies once the migration has passed its point of no return. Before then, the command says so.
+
+| Item | Done when | Where it is covered |
+|---|---|---|
+| Appdata moved back onto the cache | The appdata relocation to the cache succeeded. Not applicable when the Unraid server had no cache disk. | [Step 18](./the-migration.mdx#step-18-move-appdata-back-to-the-cache) |
+| Initial sync complete | The first sync that is not a dry run succeeded. | [Wait for the first sync](#wait-for-the-first-sync) |
+| Full scrub after the initial sync | A scrub of 100% of all blocks succeeded after that sync. | [Run a full scrub](#run-a-full-scrub) |
+| Notifications tested | A test through an enabled channel succeeded. | [Set up notifications](#set-up-notifications) |
+| Sync, scrub and mover schedules set | The nightly chain's mover, sync and scrub steps are all enabled. | [Set the schedules](#set-the-schedules) |
+| User Scripts inventory reviewed | You acknowledge it. | [Recreate your User Scripts](#recreate-your-user-scripts) |
+| Restore drill done | You acknowledge it. | [Do a restore drill](#do-a-restore-drill) |
+
+## Reconnect your SMB clients
+
+Each account was created without a password. Make sure every account has one (**Users**), then reconnect each client with its new credentials. Nothing from the old Unraid passwords carries over.
+
+## Wait for the first sync
+
+:::warning[No redundancy until the first sync finishes]
+**Until the first parity sync has completed, the array has no redundancy.** Do not write significant new data in the meantime.
+:::
+
+The first sync was queued when you initialised parity. It runs through the threshold guard like every sync, and it takes hours. Follow it with `hoserva jobs`, or on **Storage → Parity**, under **Recent parity jobs**. If the guard blocks it, **Storage → Parity** shows **Guard tripped** and the sync waits for your decision. If it did not complete, **Sync now** on the same page starts another one, or run `hoserva sync`.
+
+## Run a full scrub
+
+A full scrub confirms that parity is consistent with your data. Run it once the first sync has finished:
+
+```bash
+hoserva scrub --percent 100 --all-blocks
+```
+
+Use the command line for this one. A scrub skips blocks scrubbed or synced in the last 10 days unless `--all-blocks` is given. Right after a sync that is every block, so **Scrub now** on **Storage → Parity** finds nothing to check and does not count for this item.
+
+## Set up notifications
+
+Hoserva sends alerts through the channels you add, so until you add one, nothing reaches you. A channel you never tested may be misconfigured, and you would only find out when an alert fails to arrive. Open **Settings → Notifications**, select **Add channel**, fill in **Channel type**, **Channel name** and **Credential**, then select **Send test notification**. A test that fails does not count. The checklist names the notification agents Unraid used, so you know what to recreate. No secret is carried over.
+
+## Set the schedules
+
+Open **Settings → Schedules**. The **Nightly maintenance chain** runs the mover, the diff and threshold guard, the parity sync, the scrub (on its weekly day) and a config backup one after another. The item is done once its mover, sync and scrub steps are all enabled. Choose when the chain starts. Appdata backup is one of the **Other recurring jobs** on the same page.
+
+Unraid has no sync schedule to carry over, because its parity is updated as files are written. Hoserva updates parity on a schedule, so files written since the last sync are not protected until the next one. This keeps the data disks asleep most of the day. The checklist offers values it read from Unraid: its mover schedule as the chain's start time, its parity check schedule as the scrub schedule and its spin-down delay as Hoserva's default. A setting it could not read is shown as not available, not as off.
+
+## Recreate your User Scripts
+
+`hoserva migrate checklist` lists each User Script the scan found, with its name and the schedule from `customSchedule.cron`. Hoserva never runs or translates them. For each one you still want, recreate it on this machine as a plain cron job or systemd timer. When you have been through the list, record it:
+
+```bash
+hoserva migrate checklist ack user_scripts
+```
+
+If the list is empty, check the **User scripts** row of the migration report before you assume there were none. "None found" is not the same as "none exist".
+
+## Do a restore drill
+
+Parity is only worth having if you have recovered a file from it. Do this once the first sync has finished.
+
+1. Pick an unimportant file that has not changed since the last sync, and note its checksum:
+
+   ```bash
+   sha256sum /mnt/user/<share>/<file>
+   ```
+
+2. Delete the file.
+3. Recover it from parity:
+
+   ```bash
+   hoserva fix --confirm --path /mnt/user/<share>/<file>
+   ```
+
+4. When the fix job has finished (`hoserva jobs`), check that the file is back and compare its checksum with the one you noted.
+5. Record the drill:
+
+   ```bash
+   hoserva migrate checklist ack restore_drill
+   ```
+
+:::warning[Use --path for the drill]
+**`hoserva fix` without `--path` restores the whole array to its last sync and reverts every change made since.** With `--path` it restores only that one file and leaves every other change as it is.
+:::
+
+The restore drill is a command-line task. **Guided fix** on **Storage → Parity** opens **Guided recovery**, which recovers the whole array to its last sync and has no single-file option, so do not use it for the drill.
+
+## Keep what you need to go back
+
+Keep the Flash Backup zip for as long as you want a record of how Unraid was set up. Parity is not a backup. It restores a failed disk, and files written since the last sync are not in it, so keep a separate backup of anything irreplaceable.
+
+## Next steps
+
+- [Rollback](./rollback.mdx) explains what going back means now that parity is initialised.
+- [Troubleshooting](./troubleshooting.mdx) covers a container that cannot find its data and permissions that look wrong.
