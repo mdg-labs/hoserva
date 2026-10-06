@@ -61,6 +61,113 @@ func TestMockGetPool_FreshInstallReportsTheUnmountedPool(t *testing.T) {
 	}
 }
 
+// mockPoolMembers is the entries of a getPool answer that hold an array role.
+func mockPoolMembers(pool *apiv1.PoolStatus) []apiv1.PoolDiskEntry {
+	var out []apiv1.PoolDiskEntry
+	for _, e := range pool.Disks {
+		if e.Role != apiv1.PoolDiskEntryRoleUnassigned {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Production lists every present disk that is not an array member as
+// unassigned, whether or not an array exists yet, and never the boot disk: a
+// fresh install offers its two data disks, the USB disk and the Unraid stick
+// (flagged, so the pool page's pickers leave it out).
+func TestMockGetPool_FreshInstallListsTheDisksAsUnassigned(t *testing.T) {
+	for _, scenario := range []string{"fresh-install", "migration-pending"} {
+		t.Run(scenario, func(t *testing.T) {
+			h, err := newHandler(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pool, err := h.GetPool(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mockPoolMembers(pool); len(got) != 0 {
+				t.Fatalf("members with no array = %+v", got)
+			}
+			listed := map[string]apiv1.PoolDiskEntry{}
+			for _, e := range pool.Disks {
+				listed[e.Device] = e
+			}
+			for _, want := range []string{"/dev/sdb", "/dev/sdc", mockExternalDevice, mockFlashDevice} {
+				if _, ok := listed[want]; !ok {
+					t.Errorf("%s is not listed as unassigned: %+v", want, pool.Disks)
+				}
+			}
+			if _, ok := listed["/dev/nvme0n1"]; ok {
+				t.Error("the boot disk is listed")
+			}
+			if !listed[mockFlashDevice].UnraidStick.Or(false) {
+				t.Errorf("the stick %+v is not flagged unraidStick", listed[mockFlashDevice])
+			}
+			if listed["/dev/sdc"].UnraidStick.IsSet() {
+				t.Errorf("a data disk carries unraidStick: %+v", listed["/dev/sdc"])
+			}
+		})
+	}
+}
+
+// A disk is either an array member or unassigned, never both: an inventory disk
+// its stored array matches is listed as a member, and every other non-boot one
+// as unassigned.
+func TestMockGetPool_UnassignedDisksAreTheInventoryOutsideTheArray(t *testing.T) {
+	ctx := context.Background()
+	for _, scenario := range fixtures.Scenarios {
+		if scenario == "migration-pending" {
+			continue
+		}
+		t.Run(scenario, func(t *testing.T) {
+			h, err := newHandler(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pool, err := h.GetPool(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			members := map[string]bool{}
+			for _, e := range mockPoolMembers(pool) {
+				members[e.Device] = true
+			}
+			unassigned := map[string]bool{}
+			for _, e := range pool.Disks {
+				if e.Role != apiv1.PoolDiskEntryRoleUnassigned {
+					continue
+				}
+				if members[e.Device] || unassigned[e.Device] {
+					t.Errorf("%s is listed twice", e.Device)
+				}
+				unassigned[e.Device] = true
+			}
+			stored := map[string]bool{}
+			for _, d := range mockArrayDisks(scenario) {
+				stored[d.Serial] = true
+			}
+			for _, d := range mockDiskInventory(scenario) {
+				switch {
+				case d.Boot:
+					if unassigned[d.Device] || members[d.Device] {
+						t.Errorf("the boot disk %s is listed", d.Device)
+					}
+				case stored[d.Serial.Or("")]:
+					if !members[d.Device] || unassigned[d.Device] {
+						t.Errorf("%s is in the array but is not listed as its member", d.Device)
+					}
+				default:
+					if !unassigned[d.Device] {
+						t.Errorf("%s is outside the array but is not listed as unassigned", d.Device)
+					}
+				}
+			}
+		})
+	}
+}
+
 func mockCreateArrayRequest(cacheDevice string, cacheRole apiv1.ArrayDiskRole) *apiv1.CreateArrayRequest {
 	plan := disk.TopologyPlan{
 		Parity: []disk.AssignedDisk{{Device: "/dev/sdc", Filesystem: disk.XFS}},

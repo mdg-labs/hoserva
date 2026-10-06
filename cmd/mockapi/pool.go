@@ -253,6 +253,36 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 	return &apiv1.PoolStatus{Mounted: true, Disks: disks}
 }
 
+// mockUnassignedPoolDisks is what production GetPool reports for every present
+// disk that is not an array member: the inventory's non-boot disks that
+// backup.MatchAttachedDisk, the match GetPool makes, finds in none of the
+// scenario's array rows. Each is unassigned and active at no mount point, with
+// its size, and carries unraidStick when disk.IsUnraidStick says it is the
+// stick. mockPoolStatus lists the members.
+func mockUnassignedPoolDisks(arrayScenario string, inventory []apiv1.DiskInventoryEntry) []apiv1.PoolDiskEntry {
+	members := mockArrayDisks(arrayScenario)
+	var out []apiv1.PoolDiskEntry
+	for i, d := range mockInventoryAsDisks(inventory) {
+		if d.Boot {
+			continue
+		}
+		if _, member := backup.MatchAttachedDisk(d, members); member {
+			continue
+		}
+		entry := apiv1.PoolDiskEntry{
+			Device:    d.Device,
+			Role:      apiv1.PoolDiskEntryRoleUnassigned,
+			State:     apiv1.DiskStateActive,
+			SizeBytes: apiv1.NewOptNilInt64(inventory[i].SizeBytes),
+		}
+		if disk.IsUnraidStick(d) {
+			entry.UnraidStick = apiv1.NewOptBool(true)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 func (h *handler) countActiveJobs() int32 {
 	var active int32
 	for _, job := range h.jobs {
@@ -477,6 +507,7 @@ func (h *handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	defer h.mu.Unlock()
 	status := mockPoolStatus(h.arrayScenario())
 	status.Mounted = h.poolMountedLocked()
+	status.Disks = append(status.Disks, mockUnassignedPoolDisks(h.arrayScenario(), mockDiskInventory(h.scenario))...)
 	return status, nil
 }
 
