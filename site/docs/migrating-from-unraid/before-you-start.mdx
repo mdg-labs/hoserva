@@ -87,7 +87,7 @@ Accounts are recreated from the backup, but passwords cannot be carried over. Ea
 
 ## Step 5: Empty the cache
 
-The cache device is about to be wiped or repartitioned, and appdata is only part of what a real server keeps there.
+The cache device is about to be wiped or repartitioned, and appdata is only part of what a real server keeps there. With no cache disk there is nothing to empty: see [No cache disk](./special-cases/no-cache-disk.mdx). With several pools, see [Named pools](./special-cases/named-pools.mdx) for which one becomes the cache and what happens to the others.
 
 :::danger[Anything left on the cache is lost]
 **Move everything off the cache onto the array and confirm the cache is empty before step 10.** Whatever is still there when the cache is re-created, or when Debian is installed onto a shared device, is gone with it.
@@ -132,7 +132,7 @@ Device names such as `/dev/sdb` change between reboots and operating systems. Se
 
 ## Step 8: Note which disk is parity
 
-Its contents are worthless to Hoserva. The disk is erased and rewritten as Hoserva parity at the point of no return.
+Its contents are worthless to Hoserva. The disk is erased and rewritten as Hoserva parity at the point of no return. With dual parity, mark both disks: see [Dual parity](./special-cases/dual-parity.mdx).
 
 - [ ] Parity disk(s) marked in my table
 
@@ -141,6 +141,15 @@ Its contents are worthless to Hoserva. The disk is erased and rewritten as Hoser
 If the case has more than four bays, photograph or note which disk sits where. Finding the right disk later is a real problem.
 
 - [ ] Positions noted
+
+## Check for special cases
+
+Most servers need nothing here. Tick each line once it is true for your server. Until it is, read the page the line links to.
+
+- [ ] Every data disk is XFS, ext4 or single-device btrfs. An encrypted disk, a ZFS disk or a member of a multi-device btrfs filesystem is refused, so fix that now: see [Unsupported arrays](./special-cases/unsupported-arrays.mdx), and [btrfs and ext4 data disks](./special-cases/btrfs-and-ext4-data-disks.mdx) for the checks a supported disk has to pass
+- [ ] Unraid is version 6.12.x or 7.x and boots from a USB stick, or I have read [Unraid 7](./special-cases/unraid-7.mdx) for any other version or for a server that boots from an internal device
+- [ ] I have one parity disk, or I have read [Dual parity](./special-cases/dual-parity.mdx) for two
+- [ ] I have one cache disk, or I have read [No cache disk](./special-cases/no-cache-disk.mdx) or [Named pools](./special-cases/named-pools.mdx) for a server with no cache disk or with several pools
 
 ## Choose your rollback row before step 10
 

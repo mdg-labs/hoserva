@@ -1,0 +1,132 @@
+---
+title: Script against the API with a token
+sidebar_label: API tokens
+description: Create a personal API token and use it over HTTPS to read your disk list from a script.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+A personal API token lets a script or another computer call Hoserva's API without signing in as a person. This page creates a token, then uses it to list your disks. Create one token for each script, so you can revoke it on its own.
+
+## Before you start
+
+- You are signed in to the web interface as an admin, or you have a shell on the Hoserva server as root or as a member of the `hoserva` group.
+- Your computer can reach the server on port 8008. By default Hoserva accepts connections only from private network addresses.
+- `curl` and `jq` are installed on the computer that runs the script.
+
+## Create a token
+
+<Tabs groupId="interface">
+  <TabItem value="web" label="Web UI" default>
+    1. Open **Users**.
+    2. In the **Personal API tokens** card, select **Create token**.
+    3. Under **Account**, choose the account the token belongs to.
+    4. Enter a **Token name** that says what the token is for, such as `disk-report`.
+    5. Under **Scope**, choose **Viewer**. A viewer token can read state but cannot change anything. Choose **Admin** only for a script that has to change settings.
+    6. Select **Create token**.
+    7. Copy the value shown under **Token created**.
+  </TabItem>
+  <TabItem value="cli" label="CLI">
+    Run this on the server, with your own account name and a name for the token:
+
+    ```bash
+    hoserva token create alice disk-report --role viewer
+    ```
+
+    The output lists the token's details. The `token` field holds the value you need.
+  </TabItem>
+</Tabs>
+
+:::warning[The token is shown once]
+**Copy the token now.** Hoserva stores only a hash of it, so it cannot show the value again. If you lose it, revoke the token and create a new one. Treat the token like a password: anyone who has it can call the API with its scope.
+:::
+
+A token can have a narrower scope than its account, never a wider one. An admin can hand a script a viewer token to limit what the script can do. An account with only SMB or NFS access cannot have a token.
+
+## List your disks with the token
+
+The script reads the token from a variable, so the token never appears in the script or in your shell history.
+
+1. Store the token and the server's name in your shell. Paste the token when `read` waits for it. Nothing is echoed.
+
+   ```bash
+   read -r -s HOSERVA_TOKEN
+   export HOSERVA_TOKEN
+   export HOSERVA_HOST=nas.local
+   ```
+
+   Replace `nas.local` with the name or address of your server.
+
+2. Save this script as `list-disks.sh`:
+
+   ```bash title="list-disks.sh"
+   #!/usr/bin/env bash
+   set -euo pipefail
+
+   curl --silent --show-error --fail \
+     --header "Authorization: Bearer $HOSERVA_TOKEN" \
+     "https://$HOSERVA_HOST:8008/api/v1/disks" \
+     | jq -r '.disks[] | [.device, "\(.sizeBytes / 1e12 * 10 | round / 10) TB", (.model // "unknown")] | @tsv'
+   ```
+
+3. Run it:
+
+   ```bash
+   bash list-disks.sh
+   ```
+
+   ```text title="Output"
+   /dev/sdb	4 TB	WDC WD40EFRX
+   /dev/sdh	1 TB	Samsung SSD 870 EVO 1TB
+   ```
+
+The script prints one line per disk: the device, its size and its model. Your output lists your own disks.
+
+`--fail` makes `curl` exit with an error on any non-success status, so `set -e` stops the script instead of passing an error message to `jq`.
+
+`curl` checks the server's certificate, and with Hoserva's default self-signed certificate that check fails. Give Hoserva a certificate your computer trusts: issue a Let's Encrypt certificate (see [Exposing services safely](../guides/exposing-safely.mdx#which-certificate-does-the-ui-use)), or save a copy of the self-signed certificate and add `--cacert` with its path to the `curl` line. For a one-off test on a network you control, you can add `--insecure` to the `curl` line, which skips the check. Do not keep it in a script you reuse: anyone who can intercept the connection could then pose as your server and receive the token.
+
+The operation behind the call is [List disks](./api/list-disks.api.mdx). Every operation page in the [API reference](./api.md) shows the role it needs and an example request in the same form.
+
+## Use the token with the command-line tool
+
+The `hoserva` command-line tool can also run from another computer. It reads the same token from `HOSERVA_TOKEN`:
+
+```bash
+hoserva --host "$HOSERVA_HOST" --insecure-skip-tls-verify disk list
+```
+
+## Revoke a token
+
+Revoke a token when a script is retired or the token may have leaked. A revoked token stops working at once.
+
+<Tabs groupId="interface">
+  <TabItem value="web" label="Web UI" default>
+    1. Open **Users**.
+    2. In the **Personal API tokens** card, find the token.
+    3. Select **Revoke** and confirm the prompt.
+  </TabItem>
+  <TabItem value="cli" label="CLI">
+    ```bash
+    hoserva token list
+    hoserva token revoke TOKEN_ID
+    ```
+
+    `hoserva token list` shows each token's id. Replace `TOKEN_ID` with the id of the token to revoke.
+  </TabItem>
+</Tabs>
+
+## A call returns an error
+
+| What you see | Likely cause | What to do |
+|---|---|---|
+| `curl` reports a certificate problem | Hoserva's default certificate is self-signed | Trust the certificate on your computer, or add `--cacert` with a saved copy of it. Use `--insecure` only for a one-off test on a network you control |
+| `401` with the code `unauthorized` | The token is wrong, was revoked, or the header is missing | Check `HOSERVA_TOKEN`, and create a new token if you cannot find the value |
+| `403` with the code `forbidden` | The token's scope is too narrow for the operation | Create a token with the **Admin** scope, if the script really needs it |
+| The connection times out or is refused | Your computer is outside the networks Hoserva accepts | See [Exposing services safely](../guides/exposing-safely.mdx) |
+
+## Next steps
+
+- [API reference](./api.md)
+- [Exposing services safely](../guides/exposing-safely.mdx)

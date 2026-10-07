@@ -1,8 +1,8 @@
 name: Pages
 
-# One GitHub Pages site at hoserva.dev (Q66, Q3, Q65, Q67): docs (or a
-# placeholder until site/ exists) at the root and the release index
-# under /releases/. The catalog is published from its own repository at
+# One GitHub Pages site at hoserva.dev (Q66, Q3, Q65, Q67): the site build
+# (the root page, with the docs under /docs/; a placeholder until site/
+# exists) and the release index under /releases/. The catalog is published from its own repository at
 # catalog.hoserva.dev, so this site has no /catalog/ path. Apt does not
 # join this origin (#118). HTTPS on the already-connected custom domain is a
 # repository setting, not something this workflow flips.
@@ -14,7 +14,7 @@ name: Pages
 # release-index-entry.json to the GitHub Release. This workflow does
 # *not* start from that tag push: it starts from `release` published,
 # after the asset exists, so the assembled index cannot miss the tag
-# that woke it. A push to main rebuilds the docs/placeholder without
+# that woke it. A push to main rebuilds the site/placeholder without
 # racing a still-running Release job. dev pushes don't deploy the
 # live site — CI (ci.yml) still runs on every dev push regardless.
 

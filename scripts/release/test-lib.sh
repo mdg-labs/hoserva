@@ -122,10 +122,11 @@ fi
 
 # hoserva_verify_docs_snapshot: throwaway fixture trees, never the real
 # site/. A stable tag needs site/versioned_docs/version-X.Y/,
-# site/versioned_sidebars/version-X.Y-sidebars.json and an X.Y entry in
-# site/versions.json; a beta tag needs none of them. docs_tree writes the
-# sidebar beside the snapshot directory unless its fourth argument is
-# nosidebar.
+# site/versioned_sidebars/version-X.Y-sidebars.json,
+# site/versioned_api/openapi-X.Y.yaml and an X.Y entry in site/versions.json;
+# a beta tag needs none of them. docs_tree writes the sidebar and the spec
+# copy beside the snapshot directory unless its fourth argument is nosidebar
+# or nospec.
 docs_dir="$(mktemp -d)"
 trap 'cleanup; rm -rf "$git_dir" "$docs_dir"' EXIT
 
@@ -138,6 +139,10 @@ docs_tree() {
     if [ "${4:-}" != nosidebar ]; then
       mkdir -p "$root/site/versioned_sidebars"
       printf '{}' >"$root/site/versioned_sidebars/version-$3-sidebars.json"
+    fi
+    if [ "${4:-}" != nospec ]; then
+      mkdir -p "$root/site/versioned_api"
+      printf 'openapi: 3.0.3\n' >"$root/site/versioned_api/openapi-$3.yaml"
     fi
   fi
   [ -z "$versions" ] || printf '%s' "$versions" >"$root/site/versions.json"
@@ -178,9 +183,26 @@ if docs_ok v0.1.0 "$nosidebar"; then
 fi
 nosidebar_err="$(hoserva_verify_docs_snapshot v0.1.0 "$nosidebar" 2>&1 || true)"
 case "$nosidebar_err" in
-  *site/versioned_sidebars/version-0.1-sidebars.json*"npx docusaurus docs:version 0.1"*) ;;
+  *site/versioned_sidebars/version-0.1-sidebars.json*"npm run docs:version -- 0.1"*) ;;
   *)
     note "FAIL: the refusal should name the missing sidebar and the docs:version command, got: $nosidebar_err"
+    fail=1
+    ;;
+esac
+nospec="$(docs_tree nospec '["0.1"]' 0.1 nospec)"
+if docs_ok v0.1.0 "$nospec"; then
+  note "FAIL: a stable tag without site/versioned_api/openapi-0.1.yaml should be refused"
+  fail=1
+fi
+if ! docs_ok v0.1.0-beta.1 "$nospec"; then
+  note "FAIL: a beta tag should pass without a spec copy"
+  fail=1
+fi
+nospec_err="$(hoserva_verify_docs_snapshot v0.1.0 "$nospec" 2>&1 || true)"
+case "$nospec_err" in
+  *site/versioned_api/openapi-0.1.yaml*"npm run docs:version -- 0.1"*) ;;
+  *)
+    note "FAIL: the refusal should name the missing spec copy and the docs:version command, got: $nospec_err"
     fail=1
     ;;
 esac
@@ -218,7 +240,7 @@ fi
 
 docs_err="$(hoserva_verify_docs_snapshot v0.3.1 "$nosite" 2>&1 || true)"
 case "$docs_err" in
-  *site/versioned_docs/version-0.3/*"npx docusaurus docs:version 0.3"*) ;;
+  *site/versioned_docs/version-0.3/*"npm run docs:version -- 0.3"*) ;;
   *)
     note "FAIL: the refusal should name the missing directory and the docs:version command, got: $docs_err"
     fail=1

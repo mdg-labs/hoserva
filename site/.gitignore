@@ -1,0 +1,6 @@
+# The API reference is generated from the OpenAPI specification at every build
+# (scripts/gen-api-docs.mjs): the spec's build-time copy and the pages of the
+# current docs and of each docs version are never committed.
+/.openapi/
+/docs/reference/api/
+/versioned_docs/*/reference/api/

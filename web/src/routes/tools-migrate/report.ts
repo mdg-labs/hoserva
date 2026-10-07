@@ -21,8 +21,8 @@ export type ParityErase = components["schemas"]["MigrationParityErase"];
 export type Job = components["schemas"]["Job"];
 export type ImportDisk = components["schemas"]["MigrationImportDisk"];
 
-export const DOCS_UNPROTECTED_WINDOW_URL = "https://hoserva.dev/migrating-from-unraid/before-you-start";
-export const DOCS_CAPTURE_URL = "https://hoserva.dev/migrating-from-unraid/the-migration";
+export const DOCS_UNPROTECTED_WINDOW_URL = "https://hoserva.dev/docs/migrating-from-unraid/before-you-start";
+export const DOCS_CAPTURE_URL = "https://hoserva.dev/docs/migrating-from-unraid/before-you-start";
 
 export type SourceKind = "zip" | "stick";
 export const SOURCE_ZIP: SourceKind = "zip";

@@ -38,28 +38,33 @@ const DROPDOWN = 'navbar__item dropdown';
 const versionsFile = path.join(siteDir, 'versions.json');
 const versions = fs.existsSync(versionsFile) ? JSON.parse(fs.readFileSync(versionsFile, 'utf8')) : [];
 
-if (!fs.existsSync(path.join(buildDir, 'index.html'))) {
-  fail('index.html is missing from the build');
-}
+// The site root is the landing page, outside the versioned docs: it carries
+// no version banner, is not marked noindex, and leads to the docs.
+const home = readPage('index.html');
+if (home.includes(UNRELEASED) || home.includes(UNMAINTAINED)) fail('the site root shows a version banner');
+if (NOINDEX.test(home)) fail('the site root is marked noindex');
+// Only the page body counts: the navbar of a versioned build also links into the docs.
+const homeBody = /<main[\s\S]*<\/main>/.exec(home)?.[0] ?? '';
+if (home !== '' && !/\bhref="\/docs\/"/.test(homeBody)) fail('the site root body does not link to /docs/');
 
 if (versions.length === 0) {
-  const root = readPage('index.html');
-  if (!root.includes(UNRELEASED)) fail('no versions: the root does not show the unreleased banner');
-  if (NOINDEX.test(root)) fail('no versions: the root is marked noindex');
-  if (root.includes(DROPDOWN)) fail('no versions: the navbar has a version dropdown');
-  if (fs.existsSync(path.join(buildDir, 'next'))) fail('no versions: /next/ exists');
+  const docs = readPage('docs/index.html');
+  if (!docs.includes(UNRELEASED)) fail('no versions: /docs/ does not show the unreleased banner');
+  if (NOINDEX.test(docs)) fail('no versions: /docs/ is marked noindex');
+  if (docs.includes(DROPDOWN)) fail('no versions: the navbar has a version dropdown');
+  if (fs.existsSync(path.join(buildDir, 'docs', 'next'))) fail('no versions: /docs/next/ exists');
 } else {
-  const root = readPage('index.html');
-  if (root.includes(UNRELEASED) || root.includes(UNMAINTAINED)) fail(`the root (${versions[0]}) shows a version banner`);
-  if (NOINDEX.test(root)) fail(`the root (${versions[0]}) is marked noindex`);
-  if (!root.includes(DROPDOWN)) fail('the navbar has no version dropdown');
-  const next = readPage('next/index.html');
-  if (!next.includes(UNRELEASED)) fail('/next/ does not show the unreleased banner');
-  if (!NOINDEX.test(next)) fail('/next/ is not marked noindex');
+  const docs = readPage('docs/index.html');
+  if (docs.includes(UNRELEASED) || docs.includes(UNMAINTAINED)) fail(`/docs/ (${versions[0]}) shows a version banner`);
+  if (NOINDEX.test(docs)) fail(`/docs/ (${versions[0]}) is marked noindex`);
+  if (!docs.includes(DROPDOWN)) fail('the navbar has no version dropdown');
+  const next = readPage('docs/next/index.html');
+  if (!next.includes(UNRELEASED)) fail('/docs/next/ does not show the unreleased banner');
+  if (!NOINDEX.test(next)) fail('/docs/next/ is not marked noindex');
   for (const older of versions.slice(1)) {
-    const page = readPage(`${older}/index.html`);
-    if (!page.includes(UNMAINTAINED)) fail(`/${older}/ does not show the unmaintained banner`);
-    if (NOINDEX.test(page)) fail(`/${older}/ is marked noindex`);
+    const page = readPage(`docs/${older}/index.html`);
+    if (!page.includes(UNMAINTAINED)) fail(`/docs/${older}/ does not show the unmaintained banner`);
+    if (NOINDEX.test(page)) fail(`/docs/${older}/ is marked noindex`);
   }
 }
 

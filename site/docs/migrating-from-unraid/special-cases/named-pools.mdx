@@ -1,0 +1,60 @@
+---
+title: Named pools
+description: How the migration treats Unraid servers with several pools, which pool becomes Hoserva's cache, what happens to the others, and how container paths into other pools are flagged.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+Unraid can have several pools besides its array: a pool named `cache`, and further pools with names of your choosing. Hoserva has one cache disk. This page explains which pool becomes it, what happens to the devices of every other pool, and what to change in a container template that points into another pool.
+
+<TrademarkNotice />
+
+## Which pool becomes the cache?
+
+The migration chooses one pool and proposes one disk of it as Hoserva's cache:
+
+- **The pool named `cache`**, which is the one Unraid itself calls `/mnt/cache`.
+- **Otherwise the first pool by name.**
+- **One device only.** If that pool has several devices, only the first one the scan matched to a disk on this machine is proposed as the cache. Hoserva has one cache disk.
+
+A pool that is only the boot pool of an Unraid server with internal boot, with no cache on it, is not a cache pool. See [Unraid 7](./unraid-7.mdx).
+
+In the **Review** step, the disks of every pool are listed under **Disk roles** with the pool's name, for example `pool cache`. The proposal appears under **Role in Hoserva** as **Cache**. To use a different pool, set the proposed disk to **Ignore** and give the disk you want the role **Cache**. Giving **Cache** to more than one disk is refused. On the command line, `hoserva migrate import --role <serial>=<role>` does the same, with `cache` or `ignore` as the role.
+
+The disk you choose is erased and formatted as Hoserva's cache at the point of no return, so everything on it has to be moved to the array first. [Before you start](../before-you-start.mdx) does that in step 5.
+
+## What happens to the other pools?
+
+Every other pool device is proposed **Ignore**. An ignored disk is not adopted, not mounted by the import and not erased, and it is not part of the pool at `/mnt/user`. Its files stay on it and appear in no share.
+
+The scan tells you where this matters:
+
+- **Cache contents.** A share that has a directory on a pool is reported, with a reminder that step 5 must move what is there to the array.
+- **Shares.** A share that lives only on a pool is flagged as having no directory on any matched data disk, and the report names the pool. The share is still created, but its files are not in the pool, because they are on a disk Hoserva does not adopt.
+- **Notes.** When the import creates the shares, the **Notes** column of **Shares created** says so for a share that used the cache of a pool other than `cache`: the share used that pool, and Hoserva has one cache disk.
+
+If you want the files of another pool in a Hoserva share, move them onto the array in Unraid before you migrate. If you want them to stay where they are, nothing is lost by leaving them: the disk keeps its data and Hoserva leaves it alone.
+
+## How are container paths into other pools flagged?
+
+Hoserva mounts the pool at `/mnt/user` and the cache at `/mnt/cache`, so paths under those two names need no change. A template that maps a folder from any other `/mnt/<pool>` name, for example `/mnt/games/steam`, is flagged when the template is converted. The folder name stays as it was written.
+
+- **In the Web UI**, **Docker templates** lists each template with how many warnings its conversion has.
+- **On the command line**, `hoserva migrate templates <file>.xml` prints the generated Compose file and the warnings. The one for a path into another pool is labelled `flagged_path` and reads that the host path is on another Unraid pool or disk, which Hoserva does not map to this path, that it is kept as written, and that you should check it exists and means the same on this server.
+
+The same flag appears for paths into `/boot`, `/mnt/disks` and `/mnt/user0`.
+
+A flagged path is not translated for you. It also applies to the pool that became the cache when that pool is not named `cache`: a path such as `/mnt/fast/appdata` is flagged, even though the disk behind `/mnt/fast` is now `/mnt/cache`.
+
+To change it:
+
+1. Create the stack. `hoserva migrate containers create` creates a template with a flagged path only when you also name it with `--acknowledge <file>.xml`, after you have read its warnings. The stack is created stopped.
+2. Save its Compose file with `hoserva stack show <name> > compose.yml`.
+3. In `compose.yml`, change the path to a folder that exists on this server. Use `/mnt/cache/...` for what lived on the pool that became the cache, once appdata is back on the cache, or `/mnt/user/<share>/...` for what you moved onto the array.
+4. Apply it with `hoserva stack edit <name> --file compose.yml`, then start the stack as in step 20 of [The migration](../the-migration.mdx). `hoserva migrate containers check <name>` shows whether each folder is `ok`, `empty`, `missing` or `unreadable`.
+
+## Next steps
+
+- [Before you start](../before-you-start.mdx) explains how to empty the cache in step 5.
+- [The migration](../the-migration.mdx) shows where the disk roles and the templates appear.
+- [Troubleshooting](../troubleshooting.mdx#a-container-cannot-find-its-appdata) covers a container that cannot find its appdata.

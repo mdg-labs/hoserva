@@ -464,24 +464,24 @@ func (s *ContainerStateEventData) SetAt(val time.Time) {
 	s.At = val
 }
 
-// `wrong_filesystem` (#388) is `PoolDiskEntry`-only: a disk matched to an array slot by identity (Q21:
-// serial/WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a
-// replacement disk that kept the original disk's serial/WWN (a cloned or reused drive) but was
-// formatted differently, or not at all. Distinct from `missing`: the disk is genuinely present, so the
-// pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly
-// like a missing disk (not ready, no mount attempted for that slot) and never emits it on
-// `DiskStateEvent`, since it is not a spindown state.
+// `wrong_filesystem` is `PoolDiskEntry`-only: a disk matched to an array slot by identity (serial or
+// WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a replacement disk
+// that kept the original disk's serial/WWN (a cloned or reused drive) but was formatted differently,
+// or not at all. Distinct from `missing`: the disk is genuinely present, so the pool's own slot list
+// must say so rather than report it `active`. The storage gate treats it exactly like a missing disk
+// (not ready, no mount attempted for that slot) and never emits it on `DiskStateEvent`, since it is
+// not a spindown state.
 //
-// `mount_failed` (#398) is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem`
-// deliberately does not: a disk matched to a slot by identity whose filesystem UUID was never
-// positively read at all — most commonly a genuinely blank same-serial replacement, the literal #388
-// scenario — so the storage gate's own identity/FSUUID check reports the array ready for it, but
-// hoservad's own bounded attempt to mount that slot's disk still failed or timed out. Never derived
-// from a device probe on this state's own read path (Q13) — it reflects the daemon's last actual
-// mount attempt, recorded when it happened. The web/CLI Replace disk flow offers this slot's own
-// device as its only replacement target, the same way it does for `wrong_filesystem`; the replace
-// job's own one-off probe of that exact device is what actually confirms it is blank before formatting
-// it. Never emitted on `DiskStateEvent`, since it is not a spindown state.
+// `mount_failed` is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem` deliberately
+// does not: a disk matched to a slot by identity whose filesystem UUID was never positively read at
+// all — most commonly a genuinely blank same-serial replacement — so the storage gate's own
+// identity/FSUUID check reports the array ready for it, but hoservad's own bounded attempt to mount
+// that slot's disk still failed or timed out. Never derived from a device probe on this state's own
+// read path — it reflects the daemon's last actual mount attempt, recorded when it happened. The
+// web/CLI Replace disk flow offers this slot's own device as its only replacement target, the same way
+// it does for `wrong_filesystem`; the replace job's own one-off probe of that exact device is what
+// actually confirms it is blank before formatting it. Never emitted on `DiskStateEvent`, since it is
+// not a spindown state.
 // Ref: #/components/schemas/DiskState
 type DiskState string
 
@@ -587,7 +587,7 @@ func (s *DiskStateEvent) SetData(val DiskStateEventData) {
 
 type DiskStateEventData struct {
 	DiskId string `json:"diskId"`
-	// E.g. `/dev/sdb` — as reported, never accepted back as input (doc 01 §7).
+	// E.g. `/dev/sdb` — as reported, never accepted back as input.
 	Device string    `json:"device"`
 	State  DiskState `json:"state"`
 	At     time.Time `json:"at"`
@@ -635,8 +635,8 @@ func (s *DiskStateEventData) SetAt(val time.Time) {
 
 // Ref: #/components/schemas/Error
 type Error struct {
-	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can
-	// also return one of: `setup_required` (409 — no admin account exists yet; every operation but
+	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation can also
+	// return one of: `setup_required` (409 — no admin account exists yet; every operation but
 	// getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409,
 	// createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source
 	// address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy`
@@ -658,9 +658,9 @@ type Error struct {
 	// (404 — no such API route), `api_token_not_found` (404, revokeApiToken — no token with that id),
 	// `invalid_token_role` (400, createApiToken — the requested role is neither admin nor viewer;
 	// share-only is never a valid token role), `share_only_no_api_token` (403, createApiToken — the
-	// target account has SMB/NFS access only and no API access at all, Q27) and
-	// `token_role_exceeds_account` (403, createApiToken — the requested role is wider than the target
-	// account's own role; a token can only narrow an account's access, never widen it).
+	// target account has SMB/NFS access only and no API access at all) and `token_role_exceeds_account`
+	// (403, createApiToken — the requested role is wider than the target account's own role; a token can
+	// only narrow an account's access, never widen it).
 	Code string `json:"code"`
 	// A human-readable explanation, safe to show in the UI or CLI.
 	Message string `json:"message"`
@@ -710,7 +710,7 @@ func (s *ErrorDetails) init() ErrorDetails {
 	return m
 }
 
-// The full set of `/api/v1/events` SSE event types (doc 01 §5).
+// The full set of `/api/v1/events` SSE event types.
 // Ref: #/components/schemas/Event
 // Event represents sum type.
 type Event struct {
@@ -863,7 +863,7 @@ type Job struct {
 	Status JobStatus `json:"status"`
 	// Null when the job type or tool reports no meaningful percentage.
 	Progress OptNilInt32 `json:"progress"`
-	// Whether this job type persists a checkpoint to resume from (Q29).
+	// Whether this job type persists a checkpoint to resume from.
 	Resumable bool `json:"resumable"`
 	// Whether the underlying tool honestly supports cancelling this job.
 	Cancellable bool           `json:"cancellable"`
@@ -983,7 +983,7 @@ func (s *Job) SetError(val OptNilError) {
 	s.Error = val
 }
 
-// The mutually exclusive job class the scheduler enforces (doc 01 §4).
+// The mutually exclusive job class the scheduler enforces.
 // Ref: #/components/schemas/JobClass
 type JobClass string
 
@@ -1073,8 +1073,8 @@ func (s *JobProgressEvent) SetData(val Job) {
 	s.Data = val
 }
 
-// `interrupted` is set on an in-flight job by a daemon restart and is never cleared automatically (doc
-// 01 §4) — resuming or re-running it is always an explicit user action.
+// `interrupted` is set on an in-flight job by a daemon restart and is never cleared automatically —
+// resuming or re-running it is always an explicit user action.
 // Ref: #/components/schemas/JobStatus
 type JobStatus string
 
@@ -1145,7 +1145,7 @@ func (s *JobStatus) UnmarshalText(data []byte) error {
 	}
 }
 
-// Every job type named in doc 01 §4's mutually-exclusive-class table.
+// Every job type, each belonging to one of the mutually exclusive job classes.
 // Ref: #/components/schemas/JobType
 type JobType string
 
@@ -1521,9 +1521,8 @@ func (s *NotificationEventData) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
 }
 
-// The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every
-// one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it
-// per event type.
+// The fixed event catalog, in its own order. Each event type has a compiled-in default severity, which
+// can be overridden per event type.
 // Ref: #/components/schemas/NotificationEventType
 type NotificationEventType string
 

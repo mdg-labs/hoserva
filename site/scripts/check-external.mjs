@@ -21,23 +21,27 @@ if (!fs.existsSync(buildDir)) {
 // and this file, which names the patterns.
 const sourcePattern =
   /fonts\.(googleapis|gstatic)\.com|googletagmanager|google-analytics|gtag|plugin-google-|algolia|docsearch|plausible|posthog|matomo|umami|mixpanel|hotjar|segment\.(com|io)|cdn\.jsdelivr|unpkg\.com|cdnjs/i;
-const skip = new Set(['node_modules', 'dist', '.docusaurus', 'package-lock.json', 'check-external.mjs']);
+const skip = new Set(['node_modules', 'dist', '.docusaurus', '.openapi', 'package-lock.json', 'check-external.mjs']);
+// The generated API reference carries base64 blobs that can contain any of the
+// patterns by chance; what it renders is checked in the build output instead.
+const generatedApi = /^(docs|versioned_docs[\\/][^\\/]+)[\\/]reference[\\/]api$/;
 
 // Output: a request to one of these hosts. The local search library ships
 // CSS class names that contain "algolia", which are not requests.
 const hostPattern =
   /https?:\/\/([a-z0-9-]+\.)*(fonts\.googleapis\.com|fonts\.gstatic\.com|googletagmanager\.com|google-analytics\.com|algolia\.net|algolianet\.com|algolia\.io|jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|plausible\.io|posthog\.com|matomo\.cloud)/i;
 
-function files(dir, skipNames) {
+function files(dir, skipNames, skipPath = null, root = dir) {
   return fs.readdirSync(dir, {withFileTypes: true}).flatMap((entry) => {
     if (skipNames.has(entry.name)) return [];
     const full = path.join(dir, entry.name);
-    return entry.isDirectory() ? files(full, skipNames) : [full];
+    if (skipPath?.test(path.relative(root, full))) return [];
+    return entry.isDirectory() ? files(full, skipNames, skipPath, root) : [full];
   });
 }
 
 const failures = [];
-for (const file of files(siteDir, skip)) {
+for (const file of files(siteDir, skip, generatedApi)) {
   const match = sourcePattern.exec(fs.readFileSync(file, 'latin1'));
   if (match) failures.push(`${path.relative(siteDir, file)} mentions "${match[0]}"`);
 }

@@ -1,10 +1,88 @@
 ---
 title: Unraid 7
-draft: true
+description: Which Unraid versions the migration supports, what the unverified-layout override records, and how Unraid 7.3 internal boot is handled and rolled back.
 ---
 
 import TrademarkNotice from '@site/src/components/TrademarkNotice';
 
-What differs when migrating from a server running Unraid 7. This page is not written yet.
+Hoserva migrates servers running Unraid 6.12.x and any Unraid 7.x. This page explains how the scan decides whether your version is supported, what the override for other versions records, and what changes when Unraid 7.3 boots from an internal device instead of a USB stick.
 
 <TrademarkNotice />
+
+## Which Unraid versions are supported?
+
+The scan reads the version from the first line of `changes.txt` in your Flash Backup zip.
+
+| Version | What the scan does |
+|---|---|
+| 6.12.x | Supported. |
+| Any 7.x, including 7.3 | Supported. |
+| Any other version | Refused, with a message that the version is neither 6.12.x nor 7.x. |
+| No version in `changes.txt`, or no `bzimage` file at the root of the zip | Refused as a flash layout Hoserva does not know. |
+
+The steps in [Before you start](../before-you-start.mdx) use the share settings of Unraid 6.12 and 7: **Primary storage**, **Secondary storage** and **Mover action**.
+
+## Can I scan a version that is not supported?
+
+You can, on the command line, with `--unverified-layout`. It lets the scan go ahead with a version or flash layout that Hoserva has not been verified against:
+
+```bash
+hoserva migrate scan --flash-backup <server>-boot.zip --unverified-layout
+```
+
+:::warning[Nobody has checked this layout]
+**The override accepts a version or layout that Hoserva has not been verified against, and every finding rests on it.** Check every row of the report before you rely on it. Everything else the scan checks still applies.
+:::
+
+The override is recorded, so it cannot be missed later:
+
+- The **Unraid version** check is a **Warning** that says the scan went ahead only because the override was given.
+- The downloaded report starts with a note headed "Unverified layout".
+- `hoserva migrate status` prints that the scan went ahead only because `--unverified-layout` overrode the refusal.
+- The Web UI shows the banner **This Unraid version or flash layout has not been verified** with the report.
+
+The Web UI has no option to set the override. A Flash Backup without a usable `config/disk.cfg` is refused whatever you pass.
+
+## What changes with Unraid 7.3 internal boot?
+
+Unraid 7.3 can boot from one or more internal devices instead of a USB stick. Hoserva recognises such a device by its partition layout: a BIOS boot partition, an EFI system partition, an Unraid boot partition and a data partition. It does not open any of them. These rules apply to every internal boot layout:
+
+- **The Flash Backup zip is the only source.** The boot pool is ZFS, which Hoserva does not read, and a USB stick that is still attached for licensing is not kept up to date. The Web UI says **Only the Flash Backup zip can be used**.
+- **A boot device is left alone.** It is never adopted, and it can only be given the role **Ignore**, except that a device which also holds the cache can be given **Cache**, which records its data partition only. Its ZFS boot partition is not refused as an unsupported ZFS disk.
+- **The firmware keeps its Unraid entries.** After you install Debian on another device, confirm that the firmware boots Debian first, because going back relies on the same boot order.
+
+There are three layouts. The Review step names them under **Boot mode and layout**, and the table shows what going back means for each. The full list of rows is in [Rollback](../rollback.mdx#what-going-back-looks-like-by-boot-layout).
+
+| Layout | What Hoserva does | Going back after Debian is installed |
+|---|---|---|
+| An internal device of its own | Leaves the device alone. | Debian on another device: switch the firmware boot order back. Debian on that device: restore the Flash Backup zip to a USB stick and boot from it. |
+| A mirrored pair of internal devices | Leaves both devices alone. | Debian on another device: switch the firmware boot order back. Debian on one device of the pair: boot the other, which runs with a degraded boot pool. Debian on both: restore the zip to a USB stick. |
+| An internal device that also holds the Unraid cache | Leaves partitions 1 to 3, Unraid's boot pool, alone. Partition 4 is Unraid's cache, which is re-created and not adopted. If you give the device the role **Cache**, step 17 formats partition 4 as Hoserva's cache. | Debian on another device: switch the firmware boot order back, because partition 4 is untouched until parity is first written. Debian on the same NVMe: restore the zip to a USB stick, boot from it and re-create the cache. |
+
+Empty the cache in step 5 of [Before you start](../before-you-start.mdx) in every layout. The layouts and their rollback steps follow Unraid's own documentation for internal boot. Hoserva has not been tried on a server that really boots internally, so read your row in [Rollback](../rollback.mdx) before you stop the array.
+
+## Why is a mirrored pair refused as the cache?
+
+If the boot pool is a mirrored pair, Hoserva never formats a partition of either device. So partition 4 of a mirrored pair cannot be Hoserva's cache. The same refusal applies when the capture in the Flash Backup does not say whether the boot pool is mirrored.
+
+The import does not catch this. It is refused when you reach **Initialise parity**, which then shows **Parity cannot be initialised now** with the reason: the cache is a partition of an Unraid boot device that may be one of a mirrored pair, which is never formatted, so choose another cache or none. Nothing has been erased at that point.
+
+If the capture says the pair is not mirrored but a second Unraid boot device is attached, Hoserva offers the confirmation instead. The initialisation then refuses the cache before it formats any disk, so nothing is erased, and the screen shows **The initialisation did not finish** with a message that more than one Unraid boot device is attached. The way on is the same as below.
+
+To go on:
+
+1. Undo the import. It writes nothing to any disk:
+
+   ```bash
+   hoserva migrate undo-import --yes
+   ```
+
+2. Import again. Give the boot device the role **Ignore**. Give the role **Cache** to another disk, or to none. With none, see [No cache disk](./no-cache-disk.mdx).
+
+For the same reason, the Review step shows no going-back row for a mirrored pair that also holds the cache, and says that Hoserva cannot tell you what going back means for that server.
+
+## Next steps
+
+- [Rollback](../rollback.mdx) lists what going back means for every boot layout.
+- [The migration](../the-migration.mdx) explains the Debian installation in step 12 and the cache in step 17.
+- [No cache disk](./no-cache-disk.mdx) covers a migration without a cache.

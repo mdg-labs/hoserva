@@ -1,0 +1,344 @@
+/*
+ * Maps the coss tokens of coss.css onto Docusaurus's Infima variables, so the
+ * stock components (navbar, sidebar, docs pages, admonitions, tables, code
+ * blocks, search) pick up the web UI's palette, radius and type. Each block
+ * is placed after Infima's own CSS, with the selectors Infima uses for its
+ * light and dark values (`:root`, `html[data-theme='dark']`).
+ */
+
+:root,
+html[data-theme='dark'] {
+  --ifm-font-family-base: 'Inter Variable', system-ui, sans-serif;
+  --ifm-font-family-monospace: 'Geist Mono Variable', ui-monospace, monospace;
+  --ifm-heading-font-family: 'Inter Variable', system-ui, sans-serif;
+  --ifm-heading-font-weight: 600;
+  --ifm-font-weight-semibold: 500;
+  --ifm-line-height-base: 1.7;
+  --ifm-code-font-size: 88%;
+
+  --ifm-global-radius: var(--radius-lg);
+  --ifm-code-border-radius: var(--radius-sm);
+  --ifm-pre-border-radius: var(--radius-lg);
+  --ifm-alert-border-radius: var(--radius-xl);
+  --ifm-card-border-radius: var(--radius-2xl);
+  --ifm-pagination-nav-border-radius: var(--radius-xl);
+  --ifm-breadcrumb-border-radius: var(--radius-md);
+  --ifm-button-border-radius: var(--radius-lg);
+  --ifm-global-shadow-lw: 0 1px 2px 0 rgb(0 0 0 / 5%);
+  --ifm-global-shadow-md: 0 4px 16px rgb(0 0 0 / 8%);
+  --ifm-global-shadow-tl: 0 12px 28px rgb(0 0 0 / 12%);
+
+  --ifm-background-color: var(--background);
+  --ifm-background-surface-color: var(--background);
+  --ifm-color-content: var(--foreground);
+  --ifm-color-content-inverse: var(--background);
+  --ifm-color-content-secondary: var(--muted-foreground);
+  --ifm-hover-overlay: var(--accent);
+
+  --ifm-color-emphasis-0: var(--background);
+  --ifm-color-emphasis-100: color-mix(in srgb, var(--foreground) 4%, var(--background));
+  --ifm-color-emphasis-200: color-mix(in srgb, var(--foreground) 8%, var(--background));
+  --ifm-color-emphasis-300: color-mix(in srgb, var(--foreground) 12%, var(--background));
+  --ifm-color-emphasis-400: color-mix(in srgb, var(--foreground) 24%, var(--background));
+  --ifm-color-emphasis-500: color-mix(in srgb, var(--foreground) 40%, var(--background));
+  --ifm-color-emphasis-600: color-mix(in srgb, var(--foreground) 56%, var(--background));
+  --ifm-color-emphasis-700: color-mix(in srgb, var(--foreground) 68%, var(--background));
+  --ifm-color-emphasis-800: color-mix(in srgb, var(--foreground) 80%, var(--background));
+  --ifm-color-emphasis-900: color-mix(in srgb, var(--foreground) 90%, var(--background));
+  --ifm-color-emphasis-1000: var(--foreground);
+
+  --ifm-color-primary: var(--primary);
+  --ifm-color-primary-dark: color-mix(in srgb, var(--primary) 90%, black);
+  --ifm-color-primary-darker: color-mix(in srgb, var(--primary) 85%, black);
+  --ifm-color-primary-darkest: color-mix(in srgb, var(--primary) 70%, black);
+  --ifm-color-primary-light: color-mix(in srgb, var(--primary) 85%, white);
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--primary) 70%, white);
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--primary) 50%, white);
+  --ifm-color-primary-contrast-background: var(--muted);
+  --ifm-color-primary-contrast-foreground: var(--foreground);
+  --ifm-color-success: var(--success);
+  --ifm-color-info: var(--info);
+  --ifm-color-warning: var(--warning);
+  --ifm-color-danger: var(--destructive);
+
+  --ifm-link-color: var(--foreground);
+  --ifm-link-hover-color: var(--foreground);
+  --ifm-link-decoration: none;
+  --ifm-link-hover-decoration: none;
+  --ifm-toc-border-color: var(--border);
+  --ifm-hr-background-color: var(--border);
+  --ifm-blockquote-border-color: var(--input);
+  --ifm-blockquote-color: var(--muted-foreground);
+
+  --ifm-table-border-color: var(--border);
+  --ifm-table-stripe-background: transparent;
+  --ifm-table-head-background: var(--muted);
+  --ifm-table-head-font-weight: 500;
+  --ifm-table-cell-padding: 0.625rem 0.875rem;
+
+  --ifm-code-background: var(--muted);
+  --ifm-pre-background: var(--code);
+  --prism-background-color: var(--code);
+  --prism-color: var(--code-foreground);
+  --docusaurus-highlighted-code-line-bg: var(--code-highlight);
+
+  --ifm-navbar-height: 3.5rem;
+  --ifm-navbar-shadow: none;
+  --ifm-navbar-link-hover-color: var(--foreground);
+  --ifm-navbar-link-active-color: var(--foreground);
+  --ifm-navbar-search-input-background-color: var(--background);
+  --ifm-navbar-search-input-color: var(--foreground);
+  --ifm-navbar-search-input-placeholder-color: var(--muted-foreground);
+
+  --ifm-menu-color: var(--sidebar-foreground);
+  --ifm-menu-color-active: var(--sidebar-accent-foreground);
+  --ifm-menu-color-background-hover: var(--sidebar-accent);
+  --ifm-menu-color-background-active: var(--sidebar-accent);
+  --ifm-menu-link-padding-horizontal: 0.625rem;
+  --ifm-menu-link-padding-vertical: 0.3125rem;
+
+  --ifm-tabs-color-active: var(--foreground);
+  --ifm-pagination-color-active: var(--foreground);
+  --ifm-pagination-nav-color-hover: var(--foreground);
+  --ifm-breadcrumb-color-active: var(--foreground);
+  --ifm-pills-color-active: var(--foreground);
+  --ifm-dropdown-background-color: var(--popover);
+  --ifm-footer-background-color: var(--sidebar);
+  --ifm-footer-link-color: var(--muted-foreground);
+  --ifm-footer-link-hover-color: var(--foreground);
+
+  --ifm-scrollbar-track-background-color: transparent;
+  --ifm-scrollbar-thumb-background-color: var(--input);
+  --ifm-scrollbar-thumb-hover-background-color: var(--ring);
+
+  --search-local-modal-background: var(--popover);
+  --search-local-modal-shadow: var(--ifm-global-shadow-tl);
+  --search-local-hit-background: var(--muted);
+  --search-local-hit-shadow: none;
+  --search-local-hit-color: var(--foreground);
+  --search-local-hit-active-color: var(--primary-foreground);
+  --search-local-muted-color: var(--muted-foreground);
+  --search-local-highlight-color: var(--foreground);
+  --search-local-input-active-border-color: var(--ring);
+
+  --code-token-comment: var(--muted-foreground);
+  --code-token-keyword: var(--color-purple-700);
+  --code-token-string: var(--color-emerald-700);
+  --code-token-number: var(--color-orange-700);
+  --code-token-function: var(--color-blue-700);
+  --code-token-type: var(--color-teal-700);
+  --code-token-tag: var(--color-rose-700);
+}
+
+html[data-theme='dark'] {
+  --ifm-global-shadow-lw: none;
+  --ifm-global-shadow-md: 0 4px 16px rgb(0 0 0 / 40%);
+  --ifm-global-shadow-tl: 0 12px 28px rgb(0 0 0 / 50%);
+  --ifm-color-primary-dark: color-mix(in srgb, var(--primary) 90%, black);
+  --ifm-color-primary-light: color-mix(in srgb, var(--primary) 85%, black);
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--primary) 70%, black);
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--primary) 50%, black);
+
+  --code-token-keyword: var(--color-purple-400);
+  --code-token-string: var(--color-emerald-400);
+  --code-token-number: var(--color-orange-400);
+  --code-token-function: var(--color-blue-400);
+  --code-token-type: var(--color-teal-400);
+  --code-token-tag: var(--color-rose-400);
+}
+
+/* The code block container sets its Prism variables inline from the theme. */
+.theme-code-block {
+  --prism-background-color: var(--code) !important;
+  --prism-color: var(--code-foreground) !important;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ifm-global-shadow-lw);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+.markdown a:not(.button, .hash-link) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.markdown a:not(.button, .hash-link):hover {
+  text-decoration-color: currentColor;
+}
+
+code {
+  border: 1px solid var(--border);
+}
+
+pre code,
+.theme-code-block code {
+  border: 0;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--border);
+  background-color: transparent;
+}
+
+/* The blur sits on a layer of its own: backdrop-filter on .navbar itself would
+   make it the containing block of the position: fixed mobile menu inside it. */
+.navbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: color-mix(in srgb, var(--background) 85%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.navbar__title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.navbar__link,
+.menu__link {
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.navbar__link--active {
+  font-weight: 600;
+}
+
+.navbar__search-input {
+  height: 2rem;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
+  font-size: 0.875rem;
+}
+
+.navbar__search-input:focus-visible {
+  border-color: var(--ring);
+  outline: 3px solid color-mix(in srgb, var(--ring) 24%, transparent);
+}
+
+.navbar-sidebar,
+.dropdown__menu {
+  border: 1px solid var(--border);
+}
+
+.theme-doc-sidebar-container {
+  background-color: var(--sidebar);
+  border-right: 1px solid var(--sidebar-border) !important;
+}
+
+.menu__link {
+  border-radius: var(--radius-md);
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  font-weight: 500;
+}
+
+.theme-doc-toc-desktop .table-of-contents__link {
+  font-size: 0.8125rem;
+}
+
+.table-of-contents__link--active {
+  font-weight: 500;
+}
+
+.pagination-nav__link {
+  border-color: var(--border);
+  box-shadow: var(--ifm-global-shadow-lw);
+}
+
+.pagination-nav__link:hover {
+  border-color: var(--ring);
+  text-decoration: none;
+}
+
+.tabs__item {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.markdown table {
+  display: table;
+  font-size: 0.875rem;
+}
+
+.markdown table th {
+  color: var(--muted-foreground);
+  text-align: left;
+}
+
+.alert {
+  --ifm-alert-border-width: 1px;
+  --ifm-alert-border-left-width: 1px;
+  --ifm-alert-shadow: none;
+  --ifm-alert-padding-horizontal: 1rem;
+  --ifm-alert-padding-vertical: 0.875rem;
+}
+
+.alert--secondary {
+  --ifm-alert-background-color: var(--muted);
+  --ifm-alert-background-color-highlight: var(--accent);
+  --ifm-alert-foreground-color: var(--foreground);
+  --ifm-alert-border-color: var(--border);
+}
+
+.alert--info {
+  --ifm-alert-background-color: color-mix(in srgb, var(--info) 8%, transparent);
+  --ifm-alert-background-color-highlight: color-mix(in srgb, var(--info) 16%, transparent);
+  --ifm-alert-foreground-color: var(--info-foreground);
+  --ifm-alert-border-color: color-mix(in srgb, var(--info) 36%, transparent);
+}
+
+.alert--success {
+  --ifm-alert-background-color: color-mix(in srgb, var(--success) 8%, transparent);
+  --ifm-alert-background-color-highlight: color-mix(in srgb, var(--success) 16%, transparent);
+  --ifm-alert-foreground-color: var(--success-foreground);
+  --ifm-alert-border-color: color-mix(in srgb, var(--success) 36%, transparent);
+}
+
+.alert--warning {
+  --ifm-alert-background-color: color-mix(in srgb, var(--warning) 8%, transparent);
+  --ifm-alert-background-color-highlight: color-mix(in srgb, var(--warning) 16%, transparent);
+  --ifm-alert-foreground-color: var(--warning-foreground);
+  --ifm-alert-border-color: color-mix(in srgb, var(--warning) 36%, transparent);
+}
+
+.alert--danger {
+  --ifm-alert-background-color: color-mix(in srgb, var(--destructive) 8%, transparent);
+  --ifm-alert-background-color-highlight: color-mix(in srgb, var(--destructive) 16%, transparent);
+  --ifm-alert-foreground-color: var(--destructive-foreground);
+  --ifm-alert-border-color: color-mix(in srgb, var(--destructive) 36%, transparent);
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+}
+
+/* The API reference theme sets its own variables later in the cascade and
+   draws its collapsible sections as alerts. */
+html:root,
+html[data-theme='dark'] {
+  --openapi-required: var(--destructive-foreground);
+  --openapi-card-background-color: var(--ifm-color-emphasis-100) !important;
+  --openapi-input-border: var(--ring);
+  --openapi-input-background: var(--background);
+}
+
+.openapi-markdown__details {
+  --ifm-alert-background-color-highlight: var(--muted);
+  --ifm-alert-foreground-color: var(--foreground);
+}

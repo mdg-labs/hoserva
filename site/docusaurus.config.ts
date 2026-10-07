@@ -2,16 +2,43 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
+import {prismTheme} from './src/lib/prism';
 
 // Versioning rules: docs/internal/13-open-questions.md Q90. With no
-// versions.json the current docs are the whole site, at the root. Once
-// `docs:version` has made a snapshot, the latest stable version takes the
-// root and the current docs move to /next/, kept out of search engines.
+// versions.json the current docs are the whole docs site, at /docs/. Once
+// `docs:version` has made a snapshot, the latest stable version takes /docs/
+// and the current docs move to /docs/next/, kept out of search engines. The
+// site root and /apps are custom pages beside the docs plugin.
 const versionsFile = path.join(__dirname, 'versions.json');
 const versions: string[] = fs.existsSync(versionsFile)
   ? JSON.parse(fs.readFileSync(versionsFile, 'utf8'))
   : [];
 const hasVersions = versions.length > 0;
+
+// The API reference is generated from the OpenAPI specification (never
+// committed): the current docs from the build-time copy of api/openapi.yaml,
+// and each version in versions.json from its own versioned_api/openapi-X.Y.yaml.
+const apiOptions = {
+  hideSendButton: true,
+  showSchemas: true,
+  sidebarOptions: {groupPathsBy: 'tag', categoryLinkSource: 'tag'},
+} satisfies Partial<OpenApiPlugin.Options>;
+
+const apiSpecs: Record<string, OpenApiPlugin.Options> = {
+  current: {...apiOptions, specPath: '.openapi/current.yaml', outputDir: 'docs/reference/api'},
+};
+for (const version of versions) {
+  const specPath = `versioned_api/openapi-${version}.yaml`;
+  if (!fs.existsSync(path.join(__dirname, specPath))) {
+    throw new Error(`versions.json lists ${version}, but ${specPath} is missing: copy api/openapi.yaml there when the version is made`);
+  }
+  apiSpecs[`v${version}`] = {
+    ...apiOptions,
+    specPath,
+    outputDir: `versioned_docs/version-${version}/reference/api`,
+  };
+}
 
 const config: Config = {
   title: 'Hoserva',
@@ -36,8 +63,9 @@ const config: Config = {
       'classic',
       {
         docs: {
-          routeBasePath: '/',
+          routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
+          docItemComponent: '@theme/ApiItem',
           lastVersion: hasVersions ? versions[0] : undefined,
           versions: {
             current: {
@@ -54,7 +82,20 @@ const config: Config = {
       } satisfies Preset.Options,
     ],
   ],
+  plugins: [
+    './plugins/tailwind',
+    'docusaurus-plugin-sass',
+    [
+      'docusaurus-plugin-openapi-docs',
+      {
+        id: 'api',
+        docsPluginId: 'classic',
+        config: apiSpecs,
+      },
+    ],
+  ],
   themes: [
+    'docusaurus-theme-openapi-docs',
     '@docusaurus/theme-mermaid',
     [
       '@easyops-cn/docusaurus-search-local',
@@ -63,7 +104,7 @@ const config: Config = {
         indexDocs: true,
         indexBlog: false,
         indexPages: false,
-        docsRouteBasePath: '/',
+        docsRouteBasePath: 'docs',
       },
     ],
   ],
@@ -83,6 +124,10 @@ const config: Config = {
     },
     colorMode: {
       respectPrefersColorScheme: true,
+    },
+    prism: {
+      theme: prismTheme,
+      darkTheme: prismTheme,
     },
     mermaid: {
       theme: {light: 'neutral', dark: 'dark'},

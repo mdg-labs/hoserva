@@ -1,0 +1,55 @@
+---
+title: btrfs and ext4 data disks
+description: How data disks formatted with btrfs or ext4 migrate in place, which checks can refuse one, and what to do about each refusal.
+---
+
+import TrademarkNotice from '@site/src/components/TrademarkNotice';
+
+If some or all of your Unraid data disks use btrfs or ext4 instead of XFS, they migrate the same way: Hoserva adopts each disk as it is, without formatting it. This page explains how a disk passes, which checks can refuse one, and what to do when one does.
+
+<TrademarkNotice />
+
+## What does adopting a btrfs or ext4 disk mean?
+
+Hoserva supports XFS, ext4 and single-device btrfs data disks. Each disk is checked and adopted on its own, so one array can mix all three.
+
+- **No formatting.** The disk keeps its filesystem and every file on it. Your data disks are never formatted by the migration.
+- **Read-only until the point of no return.** The scan and the import mount each disk read-only. The verify then compares every adopted disk with what the scan recorded.
+- **The same steps.** Nothing else in [The migration](../the-migration.mdx) changes for these disks.
+
+A disk that fails a check is refused by name and the scan carries on with the others. A refused data disk makes the verdict **No-go**, and the **Review** step marks its row **Not adopted**.
+
+## What does the scan check on each disk?
+
+The scan runs the checks below before it mounts anything. They read the disk and never write to it.
+
+1. **The filesystem is what Unraid says it is.** The Flash Backup names a filesystem for each disk, and the disk itself reports one. They have to agree.
+2. **The filesystem is a single device.** A btrfs filesystem that spans several disks is refused. See [Unsupported arrays](./unsupported-arrays.mdx).
+3. **The filesystem has an ID of its own.** Hoserva identifies a filesystem by its UUID, a unique ID, so two data disks cannot share one.
+4. **The log is clean.** A btrfs or ext4 filesystem keeps a log of recent changes. If the last stop left changes in it that were never applied, the disk is refused.
+5. **The filesystem passes a read-only check.** The scan runs `e2fsck -n` on an ext4 disk and `btrfs check --readonly` on a btrfs disk, on the unmounted device. Neither command changes anything on the disk.
+
+The scan reports these under **Data disk filesystem** and **Filesystem check**. A disk that passes both is listed as a single btrfs or ext4 filesystem with a clean check.
+
+## What do the refusals mean?
+
+The report states each refusal in words. The table gives its meaning and the fix. If you read the scan as JSON, with `hoserva migrate status --json`, each refused disk in the review part of the report carries a `refusalCode`, shown in the first column.
+
+| Refusal | What it means | What to do |
+|---|---|---|
+| The flash and the device name different filesystems (`filesystem_mismatch`) | Unraid's configuration says, for example, btrfs, and the disk reports ext4. Hoserva does not guess which is right. | Check the disk in Unraid to find out why they disagree. If you change anything, take a new Flash Backup, then scan again. |
+| The disk is one of several devices of a btrfs filesystem (`multi_device_btrfs`) | The filesystem is not self-contained on this disk. | See [Unsupported arrays](./unsupported-arrays.mdx). |
+| The filesystem UUID is also on another disk (`duplicate_uuid`) | Two data disks carry the same ID, which can happen when a disk was cloned from another. Both cannot be adopted. | Resolve the duplicate in Unraid, for example by removing a clone from the array, then scan again. |
+| A log was never applied (`pending_log`) | A btrfs disk has a tree log that was never replayed, or an ext4 disk has a journal that needs recovery. Hoserva mounts the disk read-only without replaying anything, so the files in the log would be missing from what it reads. It never replays a log on a disk it does not own yet. | Start Unraid and stop the array cleanly, which leaves the log clean. Shut the server down and scan again. |
+| The filesystem could not be shown to be clean (`filesystem_unverified`) | Hoserva could not read the disk's superblock to confirm that it is a single-device btrfs filesystem with a clean log, or an ext4 filesystem with a clean journal. It treats what it cannot confirm as unsafe. | Check the disk's cabling and health in Unraid, stop the array cleanly and scan again. If it is refused again, treat it as a damaged disk, as in the next row. |
+| The read-only check failed (`integrity_check`) | The check found a problem in the filesystem. Calculating parity over a damaged filesystem would keep the damage. | Repair the filesystem in Unraid, then scan again. Hoserva never repairs a disk it does not own yet. |
+
+A disk can also be refused for reasons that do not depend on its filesystem, such as being reported failed or not being read completely. [Troubleshooting](../troubleshooting.mdx#a-disk-is-refused) lists them.
+
+While the verdict is **No-go**, the import is not offered, so a refused disk has to be resolved and cannot be skipped. Fix the cause, then scan again.
+
+## Next steps
+
+- [The migration](../the-migration.mdx) starts the scan in step 14.
+- [Unsupported arrays](./unsupported-arrays.mdx) covers multi-device btrfs, ZFS and encrypted disks.
+- [Troubleshooting](../troubleshooting.mdx#a-disk-is-refused) explains every other reason a disk is refused.

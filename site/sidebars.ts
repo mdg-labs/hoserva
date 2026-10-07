@@ -34,6 +34,18 @@ function section(label: string, items: Item[]): Item {
   return {type: 'category', label, collapsed: false, items};
 }
 
+// The operations and schemas of the API reference are generated from the
+// OpenAPI specification at build time (scripts/gen-api-docs.mjs), together
+// with their sidebar slice, which is read here. A snapshot made by
+// `docs:version` keeps that slice in its versioned sidebar.
+function apiReference(): Item[] {
+  const generated = path.join(docsDir, 'reference', 'api', 'sidebar.ts');
+  if (!fs.existsSync(generated)) {
+    throw new Error('sidebars.ts: docs/reference/api/sidebar.ts is missing; run `npm run gen-api` first');
+  }
+  return require(generated).default as Item[];
+}
+
 // The navigation tree is doc 05 §7's structure.
 const sidebars: SidebarsConfig = {
   docs: [
@@ -79,7 +91,14 @@ const sidebars: SidebarsConfig = {
     ]),
     section('Reference', [
       page('reference/cli', 'CLI'),
-      page('reference/api', 'API'),
+      {
+        type: 'category',
+        label: 'API',
+        collapsed: true,
+        link: {type: 'doc', id: 'reference/api'},
+        items: apiReference(),
+      },
+      page('reference/api-tokens', 'API tokens'),
       page('reference/config-files', 'Config files'),
       page('reference/template-format', 'Template format'),
     ]),

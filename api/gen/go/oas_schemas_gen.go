@@ -60,7 +60,7 @@ type AddDiskPlan struct {
 	CurrentFilesystem OptString           `json:"currentFilesystem"`
 	Filesystem        ArrayDiskFilesystem `json:"filesystem"`
 	Adopt             bool                `json:"adopt"`
-	// The next free `/mnt/diskN` this disk will be mounted at (doc 02 §4 "Adding a disk" step 4).
+	// The next free `/mnt/diskN` this disk will be mounted at.
 	Mountpoint string `json:"mountpoint"`
 	// Exact typed confirmation `addDisk` requires for this plan: `ERASE <device>`, or
 	// `ADOPT ONLY — NOTHING ERASED` when adopt is true.
@@ -171,7 +171,7 @@ func (s *AddDiskPlan) SetConfirmation(val string) {
 type AddDiskPlanRequest struct {
 	Device     string                 `json:"device"`
 	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
-	// Keep the existing filesystem instead of formatting (Q23).
+	// Keep the existing filesystem instead of formatting.
 	Adopt OptBool `json:"adopt"`
 }
 
@@ -289,7 +289,7 @@ type ApiTokenCreated struct {
 	Name      string       `json:"name"`
 	Role      ApiTokenRole `json:"role"`
 	CreatedAt time.Time    `json:"createdAt"`
-	// The raw bearer value — shown once, on creation, and never retrievable again (doc 01 §7).
+	// The raw bearer value — shown once, on creation, and never retrievable again.
 	Token string `json:"token"`
 }
 
@@ -363,8 +363,8 @@ func (s *ApiTokenCreated) SetToken(val string) {
 	s.Token = val
 }
 
-// Q43: a token's own scope, always admin or viewer — never share-only, since a share-only account
-// has no API access to scope (Q27).
+// A token's own scope, always admin or viewer — never share-only, since a share-only account has no
+// API access to scope.
 // Ref: #/components/schemas/ApiTokenRole
 type ApiTokenRole string
 
@@ -804,7 +804,7 @@ func (s *AppMount) SetLocation(val OptAppMountLocation) {
 
 // Which storage a mount's host path lies on, decided from the path alone against the daemon's known
 // mount points (the pool at `/mnt/user`, each data disk's and the cache disk's mount point). Nothing
-// is read from a data disk to decide it, so a listing never wakes one (doc 02 §1).
+// is read from a data disk to decide it, so a listing never wakes one.
 // Ref: #/components/schemas/AppMountLocation
 type AppMountLocation struct {
 	// `pool` is a path under `/mnt/user`, whose files may be on any data disk. `disk` is a path under one
@@ -1951,8 +1951,8 @@ func (s *ApplyHostConfigRequest) SetFiles(val []HostConfigChoice) {
 // Ref: #/components/schemas/ApplyHostConfigResult
 type ApplyHostConfigResult struct {
 	Files []HostConfigChoice `json:"files"`
-	// Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers, images or
-	// named volumes exist, when there is no cache disk, or when the caller did not accept a move.
+	// Docker's data-root after this apply. Always `/var/lib/docker` when containers, images or named
+	// volumes exist, when there is no cache disk, or when the caller did not accept a move.
 	DockerDataRoot string `json:"dockerDataRoot"`
 }
 
@@ -1992,7 +1992,7 @@ type ApplyNetworkSettingsRequest struct {
 	Gateway OptString `json:"gateway"`
 	// DNS nameservers. Empty array clears them.
 	DNS []string `json:"dns"`
-	// Set the Q10 access-scope toggle. Omitted leaves it unchanged.
+	// Set the access-scope toggle. Omitted leaves it unchanged.
 	AllowAllSources OptBool `json:"allowAllSources"`
 	// Persist a new listen port for the next daemon start. Omitted leaves it unchanged.
 	ListenPort OptInt `json:"listenPort"`
@@ -2078,7 +2078,7 @@ func (s *ApplyNetworkSettingsRequest) SetListenPort(val OptInt) {
 	s.ListenPort = val
 }
 
-// Default mergerfs create policy for new shares (doc 02 §1, Q11).
+// Default mergerfs create policy for new shares.
 // Ref: #/components/schemas/ArrayCreatePolicy
 type ArrayCreatePolicy string
 
@@ -2140,8 +2140,7 @@ type ArrayDiskAssignment struct {
 	Device     string                 `json:"device"`
 	Role       ArrayDiskRole          `json:"role"`
 	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
-	// Keep the existing filesystem instead of formatting (data and cache only; Q20 forbids this on
-	// parity).
+	// Keep the existing filesystem instead of formatting (data and cache only; not allowed on parity).
 	Adopt OptBool `json:"adopt"`
 }
 
@@ -2185,7 +2184,7 @@ func (s *ArrayDiskAssignment) SetAdopt(val OptBool) {
 	s.Adopt = val
 }
 
-// Filesystem to format with, or to verify when adopt is true (Q23). Parity is always xfs (Q20).
+// Filesystem to format with, or to verify when adopt is true. Parity is always xfs.
 // Ref: #/components/schemas/ArrayDiskFilesystem
 type ArrayDiskFilesystem string
 
@@ -2235,8 +2234,7 @@ func (s *ArrayDiskFilesystem) UnmarshalText(data []byte) error {
 	}
 }
 
-// A role the array-setup wizard assigns (doc 03 §3.1 step 2). Ignore is omitted — those disks never
-// appear in the plan.
+// A role the array-setup wizard assigns. Ignore is omitted — those disks never appear in the plan.
 // Ref: #/components/schemas/ArrayDiskRole
 type ArrayDiskRole string
 
@@ -2297,7 +2295,7 @@ type BackupDestination struct {
 	// The non-secret rclone settings of a remote destination.
 	Options OptBackupDestinationOptions `json:"options"`
 	Enabled bool                        `json:"enabled"`
-	// Always true for a remote destination (Q80).
+	// Always true for a remote destination.
 	Encrypt   bool            `json:"encrypt"`
 	Retention BackupRetention `json:"retention"`
 	// Whether credentials are stored for this destination.
@@ -2469,10 +2467,10 @@ func (s *BackupDestinationTestResult) SetError(val OptNilString) {
 	s.Error = val
 }
 
-// `local` is a directory — the boot device, the pool, or an external disk's mount (Q72). Every other
-// type is written through rclone: `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or `rclone`
-// for a remote already set up in rclone's own config. An NFS share is a local destination at the path
-// the host has mounted it.
+// `local` is a directory — the boot device, the pool, or an external disk's mount. Every other type
+// is written through rclone: `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or `rclone` for
+// a remote already set up in rclone's own config. An NFS share is a local destination at the path the
+// host has mounted it.
 // Ref: #/components/schemas/BackupDestinationType
 type BackupDestinationType string
 
@@ -2717,8 +2715,8 @@ func (s *CachePartitionReason) UnmarshalText(data []byte) error {
 	}
 }
 
-// Cache disk byte breakdown for the cache page (doc 03 §3.6), computed as a by-product of each mover
-// run (Q87) — never a live directory walk on a timer (Q13).
+// Cache disk byte breakdown for the cache page, computed as a by-product of each mover run — never a
+// live directory walk on a timer.
 // Ref: #/components/schemas/CacheUsageBreakdown
 type CacheUsageBreakdown struct {
 	// Bytes under cache-only shares (appdata and similar).
@@ -3380,8 +3378,7 @@ func (s *CatalogSource) SetLastRefreshedAt(val OptDateTime) {
 	s.LastRefreshedAt = val
 }
 
-// `curated`: Hoserva's own catalog (doc 04 §7). `user_added`: a source URL the user added (doc 04
-// §4).
+// `curated`: Hoserva's own catalog. `user_added`: a source URL the user added.
 // Ref: #/components/schemas/CatalogSourceKind
 type CatalogSourceKind string
 
@@ -3700,8 +3697,8 @@ func (s *ConfigImportArchive) SetSchemaVersion(val string) {
 	s.SchemaVersion = val
 }
 
-// The bare-metal restore of an archive onto a fresh install (doc 10 §1), present when the
-// installation has no array configured and the archive's schema is not newer.
+// The bare-metal restore of an archive onto a fresh install, present when the installation has no
+// array configured and the archive's schema is not newer.
 // Ref: #/components/schemas/ConfigImportBareMetal
 type ConfigImportBareMetal struct {
 	// The archive's database is older than the running schema and is upgraded, on a staged copy, by the
@@ -4290,12 +4287,12 @@ func (s *ConfigImportDiskMappingEntry) SetDevice(val string) {
 }
 
 // `matched`: exactly one attached disk carries the recorded identity (WWN, else serial; a
-// weak-identity disk by filesystem UUID and size, Q21) and its filesystem is the recorded one.
-// `absent`: no attached disk is it. `replaced`: the identity or the filesystem differs, either an
-// attached disk holds the recorded filesystem with another identity or the disk with the recorded
-// identity holds another filesystem. `ambiguous`: more than one attached disk matches, a disk and its
-// clone. A disk that is not `matched` stays a row of the restored array with its recorded filesystem,
-// is never mounted or adopted by the restore, and leaves the array degraded.
+// weak-identity disk by filesystem UUID and size) and its filesystem is the recorded one. `absent`: no
+// attached disk is it. `replaced`: the identity or the filesystem differs, either an attached disk
+// holds the recorded filesystem with another identity or the disk with the recorded identity holds
+// another filesystem. `ambiguous`: more than one attached disk matches, a disk and its clone. A disk
+// that is not `matched` stays a row of the restored array with its recorded filesystem, is never
+// mounted or adopted by the restore, and leaves the array degraded.
 // Ref: #/components/schemas/ConfigImportDiskState
 type ConfigImportDiskState string
 
@@ -4509,10 +4506,10 @@ type ConfigImportNotRestored struct {
 	// `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array
 	// disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the
 	// array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged
-	// or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was
-	// sealed under the machine key of the installation the archive came from, which this machine does not
-	// have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its
-	// `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
+	// or the replace flow adopts a replacement disk. `sealed_under_other_key`: the secret was sealed under
+	// the machine key of the installation the archive came from, which this machine does not have, and the
+	// archive holds no copy of it it could be sealed again from (no passphrase opened its `secrets.age`,
+	// or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
 	Reason  ConfigImportNotRestoredReason `json:"reason"`
 	Message string                        `json:"message"`
 }
@@ -4619,10 +4616,10 @@ func (s *ConfigImportNotRestoredKind) UnmarshalText(data []byte) error {
 // `disk_absent`, `disk_replaced` and `disk_ambiguous`: a bare-metal restore did not match the array
 // disk (see `ConfigImportDiskState`), so it stays a row of the restored array, unmounted, and the
 // array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged
-// or the replace flow (doc 09 §4) adopts a replacement disk. `sealed_under_other_key`: the secret was
-// sealed under the machine key of the installation the archive came from, which this machine does not
-// have, and the archive holds no copy of it it could be sealed again from (no passphrase opened its
-// `secrets.age`, or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
+// or the replace flow adopts a replacement disk. `sealed_under_other_key`: the secret was sealed under
+// the machine key of the installation the archive came from, which this machine does not have, and the
+// archive holds no copy of it it could be sealed again from (no passphrase opened its `secrets.age`,
+// or it never carried this secret, like TOTP), so a bare-metal restore cleared it.
 type ConfigImportNotRestoredReason string
 
 const (
@@ -5252,14 +5249,14 @@ type ConfigureLetsEncryptRequest struct {
 	// Hostname the certificate will cover, challenged via DNS-01.
 	Domain   string        `json:"domain"`
 	Provider DNS01Provider `json:"provider"`
-	// Cloudflare API token with Zone.DNS Edit. Write-only (Q28). Required when `provider` is cloudflare
-	// and no token is stored yet.
+	// Cloudflare API token with Zone.DNS Edit. Write-only. Required when `provider` is cloudflare and no
+	// token is stored yet.
 	CloudflareAPIToken OptString `json:"cloudflareAPIToken"`
 	// RFC 2136 nameserver as host:port. Required when `provider` is rfc2136.
 	Rfc2136Nameserver OptString `json:"rfc2136Nameserver"`
 	// TSIG key name. Required when `provider` is rfc2136.
 	Rfc2136TsigKeyName OptString `json:"rfc2136TsigKeyName"`
-	// TSIG secret. Write-only (Q28). Required when `provider` is rfc2136 and no secret is stored yet.
+	// TSIG secret. Write-only. Required when `provider` is rfc2136 and no secret is stored yet.
 	Rfc2136TsigSecret OptString `json:"rfc2136TsigSecret"`
 	// TSIG algorithm. Defaults to hmac-sha256.
 	Rfc2136TsigAlgorithm OptString `json:"rfc2136TsigAlgorithm"`
@@ -5540,12 +5537,11 @@ func (s *CreateApiTokenRequest) SetRole(val ApiTokenRole) {
 type CreateArrayRequest struct {
 	Disks        []ArrayDiskAssignment `json:"disks"`
 	CreatePolicy OptArrayCreatePolicy  `json:"createPolicy"`
-	// Mergerfs minfreespace in its size-suffix syntax (doc 02 §1), e.g. `50G`. Omitted uses the engine
-	// default.
+	// Mergerfs minfreespace in its size-suffix syntax, e.g. `50G`. Omitted uses the engine default.
 	MinFreeSpace OptString `json:"minFreeSpace"`
-	// Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing
-	// every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned
-	// disk is adopted. A wrong or missing string is refused and formats nothing.
+	// Exact typed confirmation for this plan: `ERASE /dev/sda, /dev/sdb` listing every device that will be
+	// formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong
+	// or missing string is refused and formats nothing.
 	Confirmation string `json:"confirmation"`
 }
 
@@ -5750,7 +5746,7 @@ type CreateNotificationChannelRequest struct {
 	Enabled bool                    `json:"enabled"`
 	// The channel's credential, e.g. an SMTP password, a Gotify app token, an ntfy auth token, a Discord
 	// webhook URL, or a generic webhook's auth header value. Encrypted with the machine key before it
-	// reaches the database (Q28) and never returned by any later read.
+	// reaches the database and never returned by any later read.
 	Secret                OptString                     `json:"secret"`
 	EmailHost             OptString                     `json:"emailHost"`
 	EmailPort             OptInt32                      `json:"emailPort"`
@@ -6069,7 +6065,7 @@ func (s *CreateUserGroupRequest) SetName(val string) {
 // Ref: #/components/schemas/CreateUserRequest
 type CreateUserRequest struct {
 	Username string `json:"username"`
-	// Defaults to share-only when omitted (Q27).
+	// Defaults to share-only when omitted.
 	Role OptCreateUserRequestRole `json:"role"`
 }
 
@@ -6093,7 +6089,7 @@ func (s *CreateUserRequest) SetRole(val OptCreateUserRequestRole) {
 	s.Role = val
 }
 
-// Defaults to share-only when omitted (Q27).
+// Defaults to share-only when omitted.
 type CreateUserRequestRole string
 
 const (
@@ -6136,7 +6132,7 @@ func (s *CreateUserRequestRole) UnmarshalText(data []byte) error {
 }
 
 // DNS-01 providers in v1: Cloudflare's API and generic RFC 2136. HTTP-01 and TLS-ALPN-01 are not
-// offered (Q9).
+// offered.
 // Ref: #/components/schemas/DNS01Provider
 type DNS01Provider string
 
@@ -6268,7 +6264,7 @@ type DeleteShareDataNoContent struct{}
 
 // Ref: #/components/schemas/DeleteShareDataRequest
 type DeleteShareDataRequest struct {
-	// Must equal the share name (doc 03 §4.2 typed-confirm).
+	// Must equal the share name (typed confirmation).
 	Confirmation string `json:"confirmation"`
 }
 
@@ -6307,14 +6303,13 @@ type DiskInventoryEntry struct {
 	Boot         bool      `json:"boot"`
 	Failed       OptBool   `json:"failed"`
 	WeakIdentity OptBool   `json:"weakIdentity"`
-	// True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`, doc 05 §3).
-	// Hoserva only reads it for a migration and never assigns it a role: every role assignment, and
-	// registering, mounting, formatting or enabling it as a backup destination as an external disk, is
-	// refused with `409 unraid_stick`, so a client offers it no role. Ejecting a stick registered before
-	// it was recognised still works, so it can be taken offline.
+	// True when this disk is the Unraid USB stick (a `vfat` filesystem labelled `UNRAID`). Hoserva only
+	// reads it for a migration and never assigns it a role: every role assignment, and registering,
+	// mounting, formatting or enabling it as a backup destination as an external disk, is refused with
+	// `409 unraid_stick`, so a client offers it no role. Ejecting a stick registered before it was
+	// recognised still works, so it can be taken offline.
 	UnraidStick OptBool `json:"unraidStick"`
-	// Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk
-	// (doc 02 §1, §4, doc 03 §3.1).
+	// Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk.
 	Filesystem OptString `json:"filesystem"`
 	// Cached filesystem label from udev (`ID_FS_LABEL`).
 	Label OptString `json:"label"`
@@ -6323,17 +6318,16 @@ type DiskInventoryEntry struct {
 	SmartStatus OptString `json:"smartStatus"`
 	// True when udev reports an existing filesystem on the disk.
 	ContainsData OptBool `json:"containsData"`
-	// True when the disk is laid out the way Unraid lays out an array or pool disk (doc 05 §3): an MBR or
-	// GPT partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real
-	// Unraid array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's
-	// cache; the disk is never mounted to look for `super.dat`. A hint for a warning, never a role.
+	// True when the disk is laid out the way Unraid lays out an array or pool disk: an MBR or GPT
+	// partition table whose partition 1 starts at sector 64 and holds XFS, btrfs or ext4. A real Unraid
+	// array carries no filesystem label, so the layout is the only sign. Read from sysfs and udev's cache;
+	// the disk is never mounted to look for `super.dat`. A hint for a warning, never a role.
 	LooksLikeUnraid OptBool `json:"looksLikeUnraid"`
-	// Only on the boot disk: its spare partitions that may be assigned the `cache` role (doc 01 §6, doc
-	// 02 §4). A partition is listed when it is on the boot disk, typed as Linux data, carries no
-	// filesystem signature in udev's cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount
-	// or swap unit, or held open by another device, and has a by-id link and a PARTUUID. Derived from
-	// sysfs, udev, by-id and the files above without opening the device; the blank probe runs only when
-	// the partition is picked.
+	// Only on the boot disk: its spare partitions that may be assigned the `cache` role. A partition is
+	// listed when it is on the boot disk, typed as Linux data, carries no filesystem signature in udev's
+	// cache, is not mounted, swap, named in `/etc/fstab` or a systemd mount or swap unit, or held open by
+	// another device, and has a by-id link and a PARTUUID. Derived from sysfs, udev, by-id and the files
+	// above without opening the device; the blank probe runs only when the partition is picked.
 	CachePartitions []CachePartition `json:"cachePartitions"`
 }
 
@@ -6487,14 +6481,13 @@ func (s *DiskInventoryEntry) SetCachePartitions(val []CachePartition) {
 	s.CachePartitions = val
 }
 
-// Doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's
-// first copy until its post-check passes — every pool mount marks this disk no-create for the whole
-// time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every
-// mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create);
-// `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in
-// snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of
-// snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that
-// finished leaves the pool and the array altogether.
+// The disk-removal state machine: `evacuating` from before an evacuation's first copy until its
+// post-check passes — every pool mount marks this disk no-create for the whole time; `evacuated`
+// once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID
+// layout and mount table (still no-create); `unpooled` once `finishDiskRemoval`'s job has taken it out
+// of every pool mount — still in snapraid.conf and mounted; `unlisted` once a sync has recorded it
+// empty and it is out of snapraid.conf too — only its unmount and removal from the array are left. A
+// disk that finished leaves the pool and the array altogether.
 // Ref: #/components/schemas/DiskRemovalState
 type DiskRemovalState string
 
@@ -6551,24 +6544,24 @@ func (s *DiskRemovalState) UnmarshalText(data []byte) error {
 	}
 }
 
-// `wrong_filesystem` (#388) is `PoolDiskEntry`-only: a disk matched to an array slot by identity (Q21:
-// serial/WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a
-// replacement disk that kept the original disk's serial/WWN (a cloned or reused drive) but was
-// formatted differently, or not at all. Distinct from `missing`: the disk is genuinely present, so the
-// pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly
-// like a missing disk (not ready, no mount attempted for that slot) and never emits it on
-// `DiskStateEvent`, since it is not a spindown state.
+// `wrong_filesystem` is `PoolDiskEntry`-only: a disk matched to an array slot by identity (serial or
+// WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a replacement disk
+// that kept the original disk's serial/WWN (a cloned or reused drive) but was formatted differently,
+// or not at all. Distinct from `missing`: the disk is genuinely present, so the pool's own slot list
+// must say so rather than report it `active`. The storage gate treats it exactly like a missing disk
+// (not ready, no mount attempted for that slot) and never emits it on `DiskStateEvent`, since it is
+// not a spindown state.
 //
-// `mount_failed` (#398) is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem`
-// deliberately does not: a disk matched to a slot by identity whose filesystem UUID was never
-// positively read at all — most commonly a genuinely blank same-serial replacement, the literal #388
-// scenario — so the storage gate's own identity/FSUUID check reports the array ready for it, but
-// hoservad's own bounded attempt to mount that slot's disk still failed or timed out. Never derived
-// from a device probe on this state's own read path (Q13) — it reflects the daemon's last actual
-// mount attempt, recorded when it happened. The web/CLI Replace disk flow offers this slot's own
-// device as its only replacement target, the same way it does for `wrong_filesystem`; the replace
-// job's own one-off probe of that exact device is what actually confirms it is blank before formatting
-// it. Never emitted on `DiskStateEvent`, since it is not a spindown state.
+// `mount_failed` is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem` deliberately
+// does not: a disk matched to a slot by identity whose filesystem UUID was never positively read at
+// all — most commonly a genuinely blank same-serial replacement — so the storage gate's own
+// identity/FSUUID check reports the array ready for it, but hoservad's own bounded attempt to mount
+// that slot's disk still failed or timed out. Never derived from a device probe on this state's own
+// read path — it reflects the daemon's last actual mount attempt, recorded when it happened. The
+// web/CLI Replace disk flow offers this slot's own device as its only replacement target, the same way
+// it does for `wrong_filesystem`; the replace job's own one-off probe of that exact device is what
+// actually confirms it is blank before formatting it. Never emitted on `DiskStateEvent`, since it is
+// not a spindown state.
 // Ref: #/components/schemas/DiskState
 type DiskState string
 
@@ -6662,7 +6655,7 @@ type DiskUpgradePlan struct {
 	CurrentFilesystem OptString           `json:"currentFilesystem"`
 	Filesystem        ArrayDiskFilesystem `json:"filesystem"`
 	// Parity upgrades only: the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and
-	// verified at independently of the old one (Q71), submitted back unchanged to `upgradeDisk`.
+	// verified at independently of the old one, submitted back unchanged to `upgradeDisk`.
 	NewMountpoint OptString `json:"newMountpoint"`
 	// The copy/verify/remount steps (data) or copy/verify/switch/check steps (parity) this plan's own
 	// apply call runs, in order.
@@ -6807,8 +6800,8 @@ type DiskUpgradePlanRequest struct {
 	Mountpoint string `json:"mountpoint"`
 	// The replacement disk's device path.
 	Device string `json:"device"`
-	// Data-disk upgrades only (default xfs); a parity disk is always formatted XFS (Q20) regardless of
-	// this field.
+	// Data-disk upgrades only (default xfs); a parity disk is always formatted XFS regardless of this
+	// field.
 	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
 }
 
@@ -7007,8 +7000,8 @@ func (s *DoctorReport) SetChecks(val []DoctorCheck) {
 
 // Ref: #/components/schemas/Error
 type Error struct {
-	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can
-	// also return one of: `setup_required` (409 — no admin account exists yet; every operation but
+	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation can also
+	// return one of: `setup_required` (409 — no admin account exists yet; every operation but
 	// getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409,
 	// createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source
 	// address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy`
@@ -7030,9 +7023,9 @@ type Error struct {
 	// (404 — no such API route), `api_token_not_found` (404, revokeApiToken — no token with that id),
 	// `invalid_token_role` (400, createApiToken — the requested role is neither admin nor viewer;
 	// share-only is never a valid token role), `share_only_no_api_token` (403, createApiToken — the
-	// target account has SMB/NFS access only and no API access at all, Q27) and
-	// `token_role_exceeds_account` (403, createApiToken — the requested role is wider than the target
-	// account's own role; a token can only narrow an account's access, never widen it).
+	// target account has SMB/NFS access only and no API access at all) and `token_role_exceeds_account`
+	// (403, createApiToken — the requested role is wider than the target account's own role; a token can
+	// only narrow an account's access, never widen it).
 	Code string `json:"code"`
 	// A human-readable explanation, safe to show in the UI or CLI.
 	Message string `json:"message"`
@@ -7158,8 +7151,8 @@ type EvacuationPlan struct {
 	Moves      []RebalanceMove    `json:"moves"`
 	Warnings   []RebalanceWarning `json:"warnings"`
 	// Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch
-	// there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content doc 09 §4 has
-	// no procedure for moving (#367). Always empty on a plan this operation actually returns: any such
+	// there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content for which there
+	// is no procedure for moving it. Always empty on a plan this operation actually returns: any such
 	// content refuses the plan outright (`EvacuationPlanRefusal`) instead.
 	NonSharePaths []string `json:"nonSharePaths"`
 	// Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`).
@@ -7218,9 +7211,9 @@ func (s *EvacuationPlan) SetConfirmation(val string) {
 
 func (*EvacuationPlan) planDiskEvacuationRes() {}
 
-// `planDiskEvacuation`'s 400 refusal (#367): the shared `Error` schema has no room for
-// `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every
-// offending path structurally, not only in `message`.
+// `planDiskEvacuation`'s 400 refusal: the shared `Error` schema has no room for `nonSharePaths`, so a
+// refusal caused by non-share content on the disk gets its own body naming every offending path
+// structurally, not only in `message`.
 // Ref: #/components/schemas/EvacuationPlanRefusal
 type EvacuationPlanRefusal struct {
 	Code    string `json:"code"`
@@ -7283,11 +7276,11 @@ type ExternalDisk struct {
 	Device string            `json:"device"`
 	// /mnt/disks/ — mounted on request, never automatically.
 	MountPoint string `json:"mountPoint"`
-	// The same /mnt/disks/ path, exposed as a stable bind-mount source for a container (Q72, Unraid
-	// Unassigned Devices convention).
+	// The same /mnt/disks/ path, exposed as a stable bind-mount source for a container (Unraid Unassigned
+	// Devices convention).
 	ContainerPath string `json:"containerPath"`
 	Mounted       bool   `json:"mounted"`
-	// Whether this disk's mount is a local backup destination (doc 10 §1).
+	// Whether this disk's mount is a local backup destination.
 	BackupDestination bool `json:"backupDestination"`
 	// Always false — the boot device is never offered as external.
 	Boot       bool        `json:"boot"`
@@ -7455,8 +7448,8 @@ type ForgetMigrationNoContent struct{}
 // Ref: #/components/schemas/FormatExternalDiskRequest
 type FormatExternalDiskRequest struct {
 	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
-	// Exact typed confirmation for this disk (`disk.TopologyPlan.Confirmation`): `ERASE /dev/sdX`. A wrong
-	// or missing string is refused and formats nothing.
+	// Exact typed confirmation for this disk: `ERASE /dev/sdX`. A wrong or missing string is refused and
+	// formats nothing.
 	Confirmation string `json:"confirmation"`
 }
 
@@ -7486,7 +7479,7 @@ type GeneralSettings struct {
 	Hostname OptString `json:"hostname"`
 	// IANA timezone name, e.g. "Europe/Berlin".
 	Timezone OptString `json:"timezone"`
-	// Whether a backup passphrase is configured. The passphrase itself is never returned (Q28).
+	// Whether a backup passphrase is configured. The passphrase itself is never returned.
 	BackupPassphraseSet bool `json:"backupPassphraseSet"`
 }
 
@@ -8011,7 +8004,7 @@ func (s *HostConfigChoice) SetDecision(val HostConfigDecision) {
 }
 
 // Import persists parsed facts in SQLite so a later generate may take ownership; leave marks the host
-// file unmanaged so Generator never writes it (doc 01 §2).
+// file unmanaged so Generator never writes it.
 // Ref: #/components/schemas/HostConfigDecision
 type HostConfigDecision string
 
@@ -8054,7 +8047,7 @@ func (s *HostConfigDecision) UnmarshalText(data []byte) error {
 	}
 }
 
-// Q76 onboarding category, matching DoctorCheck.id.
+// Onboarding category, matching DoctorCheck.id.
 // Ref: #/components/schemas/HostConfigID
 type HostConfigID string
 
@@ -8183,7 +8176,7 @@ type Job struct {
 	Status JobStatus `json:"status"`
 	// Null when the job type or tool reports no meaningful percentage.
 	Progress OptNilInt32 `json:"progress"`
-	// Whether this job type persists a checkpoint to resume from (Q29).
+	// Whether this job type persists a checkpoint to resume from.
 	Resumable bool `json:"resumable"`
 	// Whether the underlying tool honestly supports cancelling this job.
 	Cancellable bool           `json:"cancellable"`
@@ -8303,7 +8296,7 @@ func (s *Job) SetError(val OptNilError) {
 	s.Error = val
 }
 
-// The mutually exclusive job class the scheduler enforces (doc 01 §4).
+// The mutually exclusive job class the scheduler enforces.
 // Ref: #/components/schemas/JobClass
 type JobClass string
 
@@ -8367,8 +8360,8 @@ func (s *JobClass) UnmarshalText(data []byte) error {
 	}
 }
 
-// `interrupted` is set on an in-flight job by a daemon restart and is never cleared automatically (doc
-// 01 §4) — resuming or re-running it is always an explicit user action.
+// `interrupted` is set on an in-flight job by a daemon restart and is never cleared automatically —
+// resuming or re-running it is always an explicit user action.
 // Ref: #/components/schemas/JobStatus
 type JobStatus string
 
@@ -8439,7 +8432,7 @@ func (s *JobStatus) UnmarshalText(data []byte) error {
 	}
 }
 
-// Every job type named in doc 01 §4's mutually-exclusive-class table.
+// Every job type, each belonging to one of the mutually exclusive job classes.
 // Ref: #/components/schemas/JobType
 type JobType string
 
@@ -8729,7 +8722,7 @@ type LetsEncryptStatus struct {
 	// Hostname configured for DNS-01.
 	Domain   OptString        `json:"domain"`
 	Provider OptDNS01Provider `json:"provider"`
-	// True when a DNS credential is stored (Q28); the secret itself is never returned.
+	// True when a DNS credential is stored; the secret itself is never returned.
 	HasSecret OptBool `json:"hasSecret"`
 	// Last issue or renewal failure. Omitted after a success.
 	LastError OptString `json:"lastError"`
@@ -8811,7 +8804,7 @@ func (s *ListApiTokensOK) SetTokens(val []ApiTokenSummary) {
 
 // Ref: #/components/schemas/ListAppImagesOK
 type ListAppImagesOK struct {
-	// False when the Docker Engine is not reachable (doc 04 §3).
+	// False when the Docker Engine is not reachable.
 	Available bool `json:"available"`
 	// Set alongside available=false with the reason and a remediation.
 	Message OptString  `json:"message"`
@@ -8850,7 +8843,7 @@ func (s *ListAppImagesOK) SetImages(val []AppImage) {
 
 // Ref: #/components/schemas/ListAppUpdateHistoryOK
 type ListAppUpdateHistoryOK struct {
-	// False when the Docker Engine is not reachable (doc 04 §3).
+	// False when the Docker Engine is not reachable.
 	Available bool `json:"available"`
 	// Set alongside available=false with the reason and a remediation.
 	Message OptString         `json:"message"`
@@ -8889,7 +8882,7 @@ func (s *ListAppUpdateHistoryOK) SetRecords(val []AppUpdateRecord) {
 
 // Ref: #/components/schemas/ListAppUpdatesOK
 type ListAppUpdatesOK struct {
-	// False when the Docker Engine is not reachable (doc 04 §3).
+	// False when the Docker Engine is not reachable.
 	Available bool `json:"available"`
 	// Set alongside available=false with the reason and a remediation.
 	Message OptString   `json:"message"`
@@ -8980,7 +8973,7 @@ func (s *ListAppdataArchivesOKUnavailableItem) SetMessage(val string) {
 
 // Ref: #/components/schemas/ListAppsOK
 type ListAppsOK struct {
-	// False when the Docker Engine is not reachable (doc 04 §3).
+	// False when the Docker Engine is not reachable.
 	Available bool `json:"available"`
 	// Set alongside available=false with the reason and a remediation.
 	Message OptString `json:"message"`
@@ -9047,7 +9040,7 @@ func (s *ListDisksOK) SetDisks(val []DiskInventoryEntry) {
 
 // Ref: #/components/schemas/ListDockerNetworksOK
 type ListDockerNetworksOK struct {
-	// False when the Docker Engine is not reachable (doc 04 §3).
+	// False when the Docker Engine is not reachable.
 	Available bool `json:"available"`
 	// Set alongside available=false with the reason and a remediation.
 	Message  OptString       `json:"message"`
@@ -9278,13 +9271,13 @@ func (s *LogoutNoContent) SetSetCookie(val OptString) {
 
 // Ref: #/components/schemas/MaintenanceChainSchedule
 type MaintenanceChainSchedule struct {
-	// Local time the chain starts (Q30 default 02:00).
+	// Local time the chain starts (default 02:00).
 	StartTime      string  `json:"startTime"`
 	WeeklyScrubDay Weekday `json:"weeklyScrubDay"`
 	// Human-readable summary, e.g. "every day at 02:00".
 	SchedulePreview string    `json:"schedulePreview"`
 	NextRun         time.Time `json:"nextRun"`
-	// Q30 order — mover, diff_guard, sync, scrub, config_backup.
+	// Order: mover, diff_guard, sync, scrub, config_backup.
 	Steps []MaintenanceChainStep `json:"steps"`
 }
 
@@ -9364,7 +9357,7 @@ func (s *MaintenanceChainStep) SetEnabled(val bool) {
 	s.Enabled = val
 }
 
-// One step in Q30's fixed nightly maintenance chain order.
+// One step in the fixed nightly maintenance chain order.
 // Ref: #/components/schemas/MaintenanceChainStepId
 type MaintenanceChainStepId string
 
@@ -9495,7 +9488,7 @@ func (s *MetricPoint) SetValue(val float64) {
 	s.Value = val
 }
 
-// Q74 retention tier used for this response.
+// Retention tier used for this response.
 // Ref: #/components/schemas/MetricResolution
 type MetricResolution string
 
@@ -9629,7 +9622,7 @@ type Migration struct {
 	// The disks a scan can read as the Unraid USB stick now.
 	FlashDevices []MigrationFlashDevice `json:"flashDevices"`
 	// True when the session's capture says Unraid booted from an internal device: the Flash Backup zip is
-	// the only source and no stick is offered (Q25).
+	// the only source and no stick is offered.
 	ZipOnly    bool                   `json:"zipOnly"`
 	Report     OptMigrationReport     `json:"report"`
 	Verify     OptMigrationVerify     `json:"verify"`
@@ -9736,8 +9729,8 @@ func (s *Migration) SetParityInit(val OptMigrationParityInit) {
 	s.ParityInit = val
 }
 
-// Where Unraid boots from, for the planned layout and rollback wording of doc 05 §5. Every field is
-// absent when the capture does not say.
+// Where Unraid boots from, for the planned layout and rollback wording. Every field is absent when the
+// capture does not say.
 // Ref: #/components/schemas/MigrationBoot
 type MigrationBoot struct {
 	Mode OptMigrationBootMode `json:"mode"`
@@ -9876,7 +9869,7 @@ func (s *MigrationCapture) SetCapturedAt(val OptDateTime) {
 }
 
 // `missing` when the source has no capture, `unreadable` when it is there and does not parse, `stale`
-// when a template on the flash was saved after it was taken (Q89), `present` otherwise.
+// when a template on the flash was saved after it was taken, `present` otherwise.
 // Ref: #/components/schemas/MigrationCaptureState
 type MigrationCaptureState string
 
@@ -10006,7 +9999,7 @@ type MigrationChecklist struct {
 	Finished bool `json:"finished"`
 	// That time; present exactly when `finished` is true.
 	FinishedAt OptDateTime `json:"finishedAt"`
-	// In the order of doc 05 §4's steps.
+	// In the order of the migration's steps.
 	Items []MigrationChecklistItem `json:"items"`
 }
 
@@ -10994,7 +10987,7 @@ type MigrationContainerTemplate struct {
 	File   string                  `json:"file"`
 	Class  MigrationTemplateClass  `json:"class"`
 	Status MigrationTemplateStatus `json:"status"`
-	// The warnings that make a conversion not clean (Q36).
+	// The warnings that make a conversion not clean.
 	WarningCount int `json:"warningCount"`
 	// Why the converter could not read the template. Present only when `status` is `failed`.
 	Error OptString `json:"error"`
@@ -11367,7 +11360,7 @@ type MigrationDisk struct {
 	// detection, not a second one: Debian is installed on it. False when a disk of this machine matched
 	// the row and is not that disk. Absent when no disk of this machine matched, and in a report made
 	// before the field existed; absent means unknown, never false. On the cache pool's row, true is the
-	// shared NVMe of doc 01 §6.
+	// shared NVMe.
 	HostBoot OptBool `json:"hostBoot"`
 	// This machine's device for the disk. Absent when none matched.
 	Device OptString `json:"device"`
@@ -11380,8 +11373,7 @@ type MigrationDisk struct {
 	Size OptInt64 `json:"size"`
 	// The filesystem this machine's disk reports.
 	Filesystem OptString `json:"filesystem"`
-	// True when only a weak identity identifies the disk (Q21). Absent when no disk of this machine
-	// matched.
+	// True when only a weak identity identifies the disk. Absent when no disk of this machine matched.
 	WeakIdentity OptBool `json:"weakIdentity"`
 	// Why no disk of this machine matched the slot.
 	Problem OptString `json:"problem"`
@@ -11938,11 +11930,11 @@ type MigrationParityInit struct {
 	// Why it cannot be offered now (a disk missing, swapped or not allowed, or no data disk with the
 	// pool's `minfreespace` free); no `confirmation` is given.
 	Problem OptString `json:"problem"`
-	// The unprotected window in doc 05 §5's terms: the array has no redundancy from the moment Unraid's
-	// array stopped until the initial sync completes.
+	// The unprotected window: the array has no redundancy from the moment Unraid's array stopped until the
+	// initial sync completes.
 	UnprotectedWindow string `json:"unprotectedWindow"`
-	// What rollback means once this is confirmed, for this session's boot mode and layout (doc 05 §5):
-	// the general statement first, then the row of the table that applies.
+	// What rollback means once this is confirmed, for this session's boot mode and layout: the general
+	// statement first, then the row of the table that applies.
 	Rollback []string `json:"rollback"`
 }
 
@@ -12104,12 +12096,12 @@ func (s *MigrationPhase) UnmarshalText(data []byte) error {
 	}
 }
 
-// The Hoserva role the import pre-fills (doc 05 §4 Phase C). Absent when nothing is proposed: no disk
-// of this machine matched the slot, the disk is refused, or the capture has no `disks.ini`. A disk
-// that is an Unraid boot device, or a parity or data slot's disk that is one, is only ever `ignore`,
-// except that the cache pool's row of an internal boot that shares its disk with the cache
-// (`unraidBoot`) is `cache`. The disk this machine boots from is never proposed a role as a parity or
-// data slot's disk; as the cache pool's disk (the shared NVMe of doc 01 §6) it is `cache`.
+// The Hoserva role the import pre-fills. Absent when nothing is proposed: no disk of this machine
+// matched the slot, the disk is refused, or the capture has no `disks.ini`. A disk that is an Unraid
+// boot device, or a parity or data slot's disk that is one, is only ever `ignore`, except that the
+// cache pool's row of an internal boot that shares its disk with the cache (`unraidBoot`) is `cache`.
+// The disk this machine boots from is never proposed a role as a parity or data slot's disk; as the
+// cache pool's disk (the shared NVMe) it is `cache`.
 // Ref: #/components/schemas/MigrationProposedRole
 type MigrationProposedRole string
 
@@ -12169,13 +12161,12 @@ func (s *MigrationProposedRole) UnmarshalText(data []byte) error {
 // Why the scan refused a disk, as a code beside the row's prose. `boot_device` is an Unraid boot
 // device given a data or parity slot; `host_boot` the disk this machine boots from, given a parity or
 // data slot (the cache pool may share it); `failed` a disk reported failed; `encrypted`, `zfs`,
-// `unsupported_filesystem`, `filesystem_mismatch` and `no_filesystem` the disk's filesystem (Q22,
-// Q23); `no_filesystem_node` and `duplicate_uuid` a disk Hoserva cannot mount by filesystem UUID;
+// `unsupported_filesystem`, `filesystem_mismatch` and `no_filesystem` the disk's filesystem;
+// `no_filesystem_node` and `duplicate_uuid` a disk Hoserva cannot mount by filesystem UUID;
 // `multi_device_btrfs` a btrfs filesystem spanning several devices; `filesystem_unverified` a btrfs or
 // ext4 disk whose superblock could not be read; `pending_log` a log that was never replayed;
 // `integrity_check` a failed read-only filesystem check; `unreadable` a disk that passed its checks
-// but could not be read completely; `weak_identity_parity` a parity disk with only a weak identity
-// (Q21).
+// but could not be read completely; `weak_identity_parity` a parity disk with only a weak identity.
 // Ref: #/components/schemas/MigrationRefusalCode
 type MigrationRefusalCode string
 
@@ -12322,7 +12313,7 @@ type MigrationReport struct {
 	// From the first line of the flash's `changes.txt`. Absent when it states none.
 	UnraidVersion OptString `json:"unraidVersion"`
 	// True when the scan ran only because `unverifiedLayout` overrode the refusal of the version or flash
-	// layout (Q24).
+	// layout.
 	UnverifiedLayout bool                 `json:"unverifiedLayout"`
 	Verdict          MigrationVerdict     `json:"verdict"`
 	Rows             []MigrationReportRow `json:"rows"`
@@ -12498,7 +12489,7 @@ type MigrationSharePreview struct {
 	// Unraid's allocation method as the share's config gives it (`fillup`, `mostfree`, `highwater`).
 	// Absent when it sets none.
 	AllocationMethod OptString `json:"allocationMethod"`
-	// True for High-water, which has no exact equivalent (Q11).
+	// True for High-water, which has no exact equivalent.
 	HighWater bool `json:"highWater"`
 	// The disks the share is limited to. Empty means any.
 	Include []string `json:"include"`
@@ -12794,7 +12785,7 @@ func (s *MigrationTemplateClass) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/MigrationTemplateCounts
 type MigrationTemplateCounts struct {
-	// Counted templates that convert cleanly (Q36).
+	// Counted templates that convert cleanly.
 	Clean int `json:"clean"`
 	// Counted templates that convert with at least one warning that needs manual action.
 	WithWarnings int `json:"withWarnings"`
@@ -13046,11 +13037,10 @@ func (s *MigrationTemplatePreviewKind) UnmarshalText(data []byte) error {
 	}
 }
 
-// How a conversion reads. `clean` is Q36's definition: no warning of class `untranslated_flag`,
-// `untranslated_field`, `flagged_path`, `missing_network` or `conflict`. `warnings` has at least one.
-// `failed` is a template the converter could not read. `previewed` is a Compose Manager project's
-// `compose.yaml`, which is never converted. `missing` is a project whose `compose.yaml` is not in the
-// source.
+// How a conversion reads. `clean` means no warning of class `untranslated_flag`, `untranslated_field`,
+// `flagged_path`, `missing_network` or `conflict`. `warnings` has at least one. `failed` is a template
+// the converter could not read. `previewed` is a Compose Manager project's `compose.yaml`, which is
+// never converted. `missing` is a project whose `compose.yaml` is not in the source.
 // Ref: #/components/schemas/MigrationTemplateStatus
 type MigrationTemplateStatus string
 
@@ -13749,8 +13739,7 @@ func (s *MigrationVerifyStatus) UnmarshalText(data []byte) error {
 	}
 }
 
-// Structured outcome of one finished mover run (#273, doc 09 §2), persisted in SQLite rather than
-// only in the job log.
+// Structured outcome of one finished mover run, persisted in SQLite rather than only in the job log.
 // Ref: #/components/schemas/MoverRunResult
 type MoverRunResult struct {
 	StartedAt  time.Time `json:"startedAt"`
@@ -13833,8 +13822,8 @@ func (s *MoverRunResult) SetSkipped(val []MoverSkippedEntry) {
 	s.Skipped = val
 }
 
-// One file the mover chose not to move (or could not move), with why (doc 09 §2, doc 03 §3.6's
-// skipped-because-in-use list).
+// One file the mover chose not to move (or could not move), with why (the skipped-because-in-use
+// list).
 // Ref: #/components/schemas/MoverSkippedEntry
 type MoverSkippedEntry struct {
 	Share string `json:"share"`
@@ -13940,7 +13929,7 @@ func (s *NetworkAddressMethod) UnmarshalText(data []byte) error {
 	}
 }
 
-// Detected host network backend (Q75).
+// Detected host network backend.
 // Ref: #/components/schemas/NetworkBackend
 type NetworkBackend string
 
@@ -14181,7 +14170,7 @@ func (s *NetworkPending) SetRemainingSeconds(val int) {
 // Ref: #/components/schemas/NetworkSettings
 type NetworkSettings struct {
 	Backend NetworkBackend `json:"backend"`
-	// True only when the backend is ifupdown (Q75).
+	// True only when the backend is ifupdown.
 	Editable bool `json:"editable"`
 	// Why addressing cannot be edited, when `editable` is false.
 	ReadOnlyReason OptString          `json:"readOnlyReason"`
@@ -14189,10 +14178,10 @@ type NetworkSettings struct {
 	Pending        OptNetworkPending  `json:"pending"`
 	Certificate    TLSCertificateInfo `json:"certificate"`
 	LetsEncrypt    LetsEncryptStatus  `json:"letsEncrypt"`
-	// When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source
-	// address is accepted.
+	// When false (default), the TCP listener accepts only LAN-ish sources. When true, every source address
+	// is accepted.
 	AllowAllSources bool `json:"allowAllSources"`
-	// TCP port the TLS UI/API currently listens on (Q9).
+	// TCP port the TLS UI/API currently listens on.
 	ListenPort int `json:"listenPort"`
 	// True when a persisted listen-port change has not been bound yet.
 	ListenPortRestartRequired OptBool `json:"listenPortRestartRequired"`
@@ -14559,7 +14548,7 @@ func (s *NotificationAlert) SetRead(val bool) {
 	s.Read = val
 }
 
-// Never carries a credential (Q28) — `hasSecret` is the only signal that one is configured. Only the
+// Never carries a credential — `hasSecret` is the only signal that one is configured. Only the
 // properties relevant to `type` are meaningful; the rest are absent.
 // Ref: #/components/schemas/NotificationChannel
 type NotificationChannel struct {
@@ -14851,9 +14840,8 @@ func (s *NotificationChannelType) UnmarshalText(data []byte) error {
 	}
 }
 
-// The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every
-// one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it
-// per event type.
+// The fixed event catalog, in its own order. Each event type has a compiled-in default severity, which
+// can be overridden per event type.
 // Ref: #/components/schemas/NotificationEventType
 type NotificationEventType string
 
@@ -15173,8 +15161,8 @@ type NotificationQuietHours struct {
 	// 24-hour local time, e.g. "22:00".
 	Start string `json:"start"`
 	End   string `json:"end"`
-	// Always true (doc 03 §8.3) — critical alerts deliver regardless of quiet hours, and this cannot be
-	// disabled, so there is no request field that ever sets it otherwise.
+	// Always true — critical alerts deliver regardless of quiet hours, and this cannot be disabled, so
+	// there is no request field that ever sets it otherwise.
 	CriticalAlwaysDelivers bool `json:"criticalAlwaysDelivers"`
 }
 
@@ -18826,7 +18814,7 @@ func (o OptWeekday) Or(d Weekday) Weekday {
 	return d
 }
 
-// A recurring job scheduled outside the nightly chain (doc 03 §8.4).
+// A recurring job scheduled outside the nightly chain.
 // Ref: #/components/schemas/OtherScheduleJobId
 type OtherScheduleJobId string
 
@@ -18888,7 +18876,7 @@ type PackageDependencyStatus struct {
 	// Debian package name (mergerfs, snapraid).
 	Name             string `json:"name"`
 	InstalledVersion string `json:"installedVersion"`
-	// Lowest version this Hoserva release was tested against (Q7).
+	// Lowest version this Hoserva release was tested against.
 	TestedFloor string `json:"testedFloor"`
 	// True when installedVersion is at or above testedFloor.
 	InRange bool `json:"inRange"`
@@ -18934,7 +18922,7 @@ func (s *PackageDependencyStatus) SetInRange(val bool) {
 	s.InRange = val
 }
 
-// One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+// One diff group; moved-by-Hoserva is a match against the relocation manifest.
 // Ref: #/components/schemas/ParityDiffCategory
 type ParityDiffCategory string
 
@@ -19070,7 +19058,7 @@ func (s *ParityDiffResult) SetGuard(val ParityGuardState) {
 	s.Guard = val
 }
 
-// Parity age from `snapraid status` (doc 02 §2).
+// Parity age from `snapraid status`.
 // Ref: #/components/schemas/ParityFreshness
 type ParityFreshness string
 
@@ -19122,7 +19110,7 @@ func (s *ParityFreshness) UnmarshalText(data []byte) error {
 
 // Ref: #/components/schemas/ParityGuardState
 type ParityGuardState struct {
-	// True when the threshold guard would block a sync (doc 02 §2).
+	// True when the threshold guard would block a sync.
 	WouldBlock bool                 `json:"wouldBlock"`
 	Triggers   []ParityGuardTrigger `json:"triggers"`
 	// Accounted-for removals compared against the removed-count threshold.
@@ -19365,21 +19353,20 @@ type PoolDiskEntry struct {
 	UnraidStick OptBool     `json:"unraidStick"`
 	SizeBytes   OptNilInt64 `json:"sizeBytes"`
 	UsedBytes   OptNilInt64 `json:"usedBytes"`
-	// Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null
-	// for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
+	// Free space from statfs(2) on this disk's mountpoint — never a directory walk. Null for a non-data
+	// disk, or when free-space accounting is unavailable (no array topology yet).
 	FreeBytes OptNilInt64 `json:"freeBytes"`
-	// True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) —
-	// the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not
-	// being reported for this disk.
+	// True once this disk's free space is at or below the pool's configured minfreespace — the point
+	// mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being
+	// reported for this disk.
 	NearMinFreeSpace OptBool `json:"nearMinFreeSpace"`
-	// Doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in
-	// removal.
+	// The removal state of this disk. Null for a disk that is not currently in removal.
 	RemovalState OptNilDiskRemovalState `json:"removalState"`
-	// The exact typed phrase `finishDiskRemoval` requires for this disk (#361), set whenever
-	// `removalState` is set. Reading it here rather than from `planDiskEvacuation` is what lets Finish
-	// removal be retried once the disk has left the pool (`unpooled`/`unlisted`) — `planDiskEvacuation`
-	// itself refuses those states with `disk_leaving_array`, since evacuating a disk that has already left
-	// the pool makes no sense, but the confirmation phrase does not depend on evacuating it again.
+	// The exact typed phrase `finishDiskRemoval` requires for this disk, set whenever `removalState` is
+	// set. Reading it here rather than from `planDiskEvacuation` is what lets Finish removal be retried
+	// once the disk has left the pool (`unpooled`/`unlisted`) — `planDiskEvacuation` itself refuses
+	// those states with `disk_leaving_array`, since evacuating a disk that has already left the pool makes
+	// no sense, but the confirmation phrase does not depend on evacuating it again.
 	FinishConfirmation OptString `json:"finishConfirmation"`
 }
 
@@ -19566,12 +19553,12 @@ func (s *PoolDiskEntryRole) UnmarshalText(data []byte) error {
 type PoolStatus struct {
 	Mounted bool            `json:"mounted"`
 	Disks   []PoolDiskEntry `json:"disks"`
-	// Sum of data-disk free space (doc 09 §5) — distinct from a `df` on the pool mount, which reports
-	// the same misleading pool-wide total this field exists to be shown alongside rather than replace.
-	// Null when no array topology is configured yet.
+	// Sum of data-disk free space — distinct from a `df` on the pool mount, which reports the same
+	// misleading pool-wide total this field exists to be shown alongside rather than replace. Null when no
+	// array topology is configured yet.
 	PoolFreeBytes OptNilInt64 `json:"poolFreeBytes"`
 	// The largest single data disk's free space — the real answer to "what is the biggest file I can
-	// write" (doc 09 §5).
+	// write".
 	LargestDiskFreeBytes OptNilInt64 `json:"largestDiskFreeBytes"`
 	// Mountpoint of the disk largestDiskFreeBytes refers to.
 	LargestDiskPath OptNilString `json:"largestDiskPath"`
@@ -19723,7 +19710,7 @@ func (s *PutRegistryCredentialRequest) SetPassword(val string) {
 	s.Password = val
 }
 
-// One file a rebalance or evacuation plan moves (doc 09 §3-4).
+// One file a rebalance or evacuation plan moves.
 // Ref: #/components/schemas/RebalanceMove
 type RebalanceMove struct {
 	Share string `json:"share"`
@@ -19823,8 +19810,8 @@ func (s *RebalancePlan) SetConfirmation(val string) {
 	s.Confirmation = val
 }
 
-// A condition a rebalance or evacuation plan surfaces for review before it runs (doc 09 §3's
-// path-preserving caveat) — never something the plan itself acts on.
+// A condition a rebalance or evacuation plan surfaces for review before it runs (the path-preserving
+// caveat) — never something the plan itself acts on.
 // Ref: #/components/schemas/RebalanceWarning
 type RebalanceWarning struct {
 	Share  string `json:"share"`
@@ -19955,8 +19942,8 @@ type ReplaceDiskPlan struct {
 	CurrentFilesystem OptString           `json:"currentFilesystem"`
 	Filesystem        ArrayDiskFilesystem `json:"filesystem"`
 	Adopt             bool                `json:"adopt"`
-	// The SnapRAID command this plan's own apply call runs to reconstruct the slot's contents from parity
-	// (doc 02 §4 "Replacing a failed disk" step 4), e.g. `snapraid fix -d d2`.
+	// The SnapRAID command this plan's own apply call runs to reconstruct the slot's contents from parity,
+	// e.g. `snapraid fix -d d2`.
 	Rebuild string `json:"rebuild"`
 	// Exact typed confirmation `replaceDisk` requires for this plan: `ERASE <replacementDevice>`, or
 	// `ADOPT ONLY — NOTHING ERASED` when adopt is true.
@@ -20090,7 +20077,7 @@ type ReplaceDiskPlanRequest struct {
 	// The replacement disk's device path.
 	Device     string                 `json:"device"`
 	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
-	// Keep the existing filesystem instead of formatting (Q23).
+	// Keep the existing filesystem instead of formatting.
 	Adopt OptBool `json:"adopt"`
 }
 
@@ -20760,19 +20747,19 @@ func (s *SetupStatus) SetAdminExists(val bool) {
 // Ref: #/components/schemas/Share
 type Share struct {
 	Name ShareName `json:"name"`
-	// The share's mount path (`/mnt/user/<name>`, D10).
+	// The share's mount path (`/mnt/user/<name>`).
 	Path         string            `json:"path"`
 	CacheMode    ShareCacheMode    `json:"cacheMode"`
 	CreatePolicy ArrayCreatePolicy `json:"createPolicy"`
 	Smb          ShareSMB          `json:"smb"`
 	Nfs          ShareNFS          `json:"nfs"`
 	// Null when this share has not been through a sync since it was created — an honest "not yet synced"
-	// state (doc 03 §4.1-4.2), never a zero or placeholder that looks like real data.
+	// state, never a zero or placeholder that looks like real data.
 	Usage     NilShareUsage `json:"usage"`
 	CreatedAt time.Time     `json:"createdAt"`
 	UpdatedAt time.Time     `json:"updatedAt"`
 	// The share's own mergerfs `minfreespace`, such as `1000K`. Absent when the share uses the array's. An
-	// Unraid import sets it from the share's floor (doc 09 §1).
+	// Unraid import sets it from the share's floor.
 	MinFreeSpace OptString         `json:"minFreeSpace"`
 	Migration    OptShareMigration `json:"migration"`
 }
@@ -20887,7 +20874,7 @@ func (s *Share) SetMigration(val OptShareMigration) {
 	s.Migration = val
 }
 
-// Q27, doc 03 §7 — a user or group's access to one share.
+// A user or group's access to one share.
 // Ref: #/components/schemas/ShareAccessLevel
 type ShareAccessLevel string
 
@@ -21054,7 +21041,7 @@ func (s *ShareBrowseResult) SetEntries(val []ShareBrowseEntry) {
 	s.Entries = val
 }
 
-// Per-share cache mode (doc 02 §3, Q12).
+// Per-share cache mode.
 // Ref: #/components/schemas/ShareCacheMode
 type ShareCacheMode string
 
@@ -21131,8 +21118,8 @@ func (s *ShareDiskUsage) SetBytes(val int64) {
 	s.Bytes = val
 }
 
-// What the Unraid import recorded about a share it created (doc 05 §4 step 15). Absent on a share the
-// import did not create.
+// What the Unraid import recorded about a share it created. Absent on a share the import did not
+// create.
 // Ref: #/components/schemas/ShareMigration
 type ShareMigration struct {
 	TargetCacheMode OptShareCacheMode `json:"targetCacheMode"`
@@ -21164,14 +21151,14 @@ func (s *ShareMigration) SetNotes(val []string) {
 // Ref: #/components/schemas/ShareNFS
 type ShareNFS struct {
 	Enabled bool `json:"enabled"`
-	// Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets (doc 03 §4.2). Required
-	// when enabled is true.
+	// Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets. Required when enabled
+	// is true.
 	Hosts []string `json:"hosts"`
-	// NFS squash option (doc 03 §4.2).
+	// NFS squash option.
 	Squash ShareNFSSquash `json:"squash"`
-	// The fsid= value RenderNFSExports writes for this share's export line (#350, #351). Derived from the
-	// share name only; ignored on a create or update request. Always present on a response — a draft
-	// preview can use the saved share's fsid because a share cannot be renamed.
+	// The fsid= value written for this share's NFS export line. Derived from the share name only; ignored
+	// on a create or update request. Always present on a response — a draft preview can use the saved
+	// share's fsid because a share cannot be renamed.
 	Fsid OptUUID `json:"fsid"`
 }
 
@@ -21215,7 +21202,7 @@ func (s *ShareNFS) SetFsid(val OptUUID) {
 	s.Fsid = val
 }
 
-// NFS squash option (doc 03 §4.2).
+// NFS squash option.
 type ShareNFSSquash string
 
 const (
@@ -21404,7 +21391,7 @@ type ShareSMB struct {
 	Browseable  bool `json:"browseable"`
 	Recycle     bool `json:"recycle"`
 	TimeMachine bool `json:"timeMachine"`
-	// Samba `fruit:time machine max size` (Q73), e.g. `500G`. Required when timeMachine is true; omitted
+	// Samba `fruit:time machine max size`, e.g. `500G`. Required when timeMachine is true; omitted
 	// otherwise.
 	TimeMachineMaxSize OptNilString `json:"timeMachineMaxSize"`
 }
@@ -21479,14 +21466,13 @@ func (s *ShareSMB) SetTimeMachineMaxSize(val OptNilString) {
 	s.TimeMachineMaxSize = val
 }
 
-// Bytes used and per-disk distribution as of the last sync (doc 02 §1 line 78, doc 03 §4.1-4.2,
-// #223) — computed once as a step of the sync job, from SnapRAID's own tracked state, never a live
-// directory walk.
+// Bytes used and per-disk distribution as of the last sync — computed once as a step of the sync
+// job, from SnapRAID's own tracked state, never a live directory walk.
 // Ref: #/components/schemas/ShareUsage
 type ShareUsage struct {
 	TotalBytes int64 `json:"totalBytes"`
-	// Which disks currently hold this share's files, and how much (doc 03 §4.2). A disk this share does
-	// not currently occupy is simply absent, not a zero entry.
+	// Which disks currently hold this share's files, and how much. A disk this share does not currently
+	// occupy is simply absent, not a zero entry.
 	PerDisk []ShareDiskUsage `json:"perDisk"`
 	// When the sync that produced these figures completed.
 	AsOf time.Time `json:"asOf"`
@@ -21524,7 +21510,7 @@ func (s *ShareUsage) SetAsOf(val time.Time) {
 
 // Ref: #/components/schemas/SpinTransition
 type SpinTransition struct {
-	// E.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7).
+	// E.g. `/dev/sdb` — as recorded, never accepted back as input.
 	Device    string                  `json:"device"`
 	FromState SpinTransitionFromState `json:"fromState"`
 	ToState   SpinTransitionToState   `json:"toState"`
@@ -22330,8 +22316,7 @@ func (s *StartFixRequest) SetPath(val OptString) {
 type StartMigrationDeviceScanReq struct {
 	// The disk's device path, as `flashDevices` lists it (`/dev/sdb`).
 	Device string `json:"device"`
-	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
-	// (Q24).
+	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against.
 	UnverifiedLayout OptBool `json:"unverifiedLayout"`
 	// Hash every file of every data disk for the baseline, as for the zip scan (`startMigrationScan`).
 	FullChecksums OptBool `json:"fullChecksums"`
@@ -22370,8 +22355,7 @@ func (s *StartMigrationDeviceScanReq) SetFullChecksums(val OptBool) {
 type StartMigrationScanReq struct {
 	// The Flash Backup zip, its root being `/boot`.
 	File ht.MultipartFile `json:"file"`
-	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against
-	// (Q24).
+	// Go ahead although the Unraid version or flash layout is not one Hoserva has been verified against.
 	UnverifiedLayout OptBool `json:"unverifiedLayout"`
 	// Hash every file of every data disk for the baseline, instead of every file of 1 MiB or less plus a
 	// deterministic sample of the larger ones. It takes much longer.
@@ -22427,13 +22411,12 @@ func (s *StartRebalanceRequest) SetConfirmation(val string) {
 
 // Ref: #/components/schemas/StartScrubRequest
 type StartScrubRequest struct {
-	// Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
+	// Scrub percentage cap (`hoserva scrub [--percent N]`).
 	Percent OptInt32 `json:"percent"`
 	// Scrub blocks of every age (`hoserva scrub --all-blocks`, SnapRAID `-o 0`). By default a scrub skips
-	// blocks scrubbed or synced within the last 10 days (doc 02 §2), so a scrub right after a sync can
-	// find nothing to check and still succeed. Set true when every block must be verified, such as the
-	// full scrub after the initial sync (doc 05 §4 step 22). Omitted means false. The scheduled scrub
-	// never sets it.
+	// blocks scrubbed or synced within the last 10 days, so a scrub right after a sync can find nothing to
+	// check and still succeed. Set true when every block must be verified, such as the full scrub after
+	// the initial sync. Omitted means false. The scheduled scrub never sets it.
 	AllBlocks OptBool `json:"allBlocks"`
 }
 
@@ -22459,7 +22442,7 @@ func (s *StartScrubRequest) SetAllBlocks(val OptBool) {
 
 // Ref: #/components/schemas/StartShareRelocationRequest
 type StartShareRelocationRequest struct {
-	// Relocation direction (doc 09 §2, `hoserva share relocate <share> --to cache|array`).
+	// Relocation direction (`hoserva share relocate <share> --to cache|array`).
 	To StartShareRelocationRequestTo `json:"to"`
 }
 
@@ -22473,7 +22456,7 @@ func (s *StartShareRelocationRequest) SetTo(val StartShareRelocationRequestTo) {
 	s.To = val
 }
 
-// Relocation direction (doc 09 §2, `hoserva share relocate <share> --to cache|array`).
+// Relocation direction (`hoserva share relocate <share> --to cache|array`).
 type StartShareRelocationRequestTo string
 
 const (
@@ -22544,9 +22527,9 @@ func (s *StartSyncRequest) SetConfirm(val OptBool) {
 
 // Ref: #/components/schemas/StopArrayRequest
 type StopArrayRequest struct {
-	// Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse
-	// new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and
-	// NFS, then unmount share paths, the catch-all and data disks.
+	// Must be true after reviewing the stop list the Stop array confirmation dialog shows: refuse new jobs
+	// and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then
+	// unmount share paths, the catch-all and data disks.
 	Confirm bool `json:"confirm"`
 }
 
@@ -22565,11 +22548,10 @@ type SystemStatus struct {
 	Healthy         bool    `json:"healthy"`
 	Summary         string  `json:"summary"`
 	MaintenanceMode OptBool `json:"maintenanceMode"`
-	// True whenever any disk `hoservad` expects is currently missing by identity (doc 02 §1, Q69) —
-	// including once the user has acknowledged the degraded state through
-	// `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears;
-	// `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still
-	// waiting on the user.
+	// True whenever any disk `hoservad` expects is currently missing by identity — including once the
+	// user has acknowledged the degraded state through `POST /array/degraded/acknowledge`. It clears only
+	// once the missing disk actually reappears; `arrayDegradedAcknowledged` is what distinguishes an
+	// acknowledged degraded array from one still waiting on the user.
 	ArrayDegraded OptBool `json:"arrayDegraded"`
 	// True once the user has acknowledged the current degraded state
 	// (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It
@@ -22577,16 +22559,16 @@ type SystemStatus struct {
 	// be true while `storageServicesReleased` is still false: the acknowledgement stands even when the
 	// transition it triggers does not actually start anything (maintenance mode, or a mount failure,
 	// `array_services_not_started`) — a client must never read this field alone as "services are
-	// running" (#385 finding 2).
+	// running".
 	ArrayDegradedAcknowledged OptBool `json:"arrayDegradedAcknowledged"`
 	// True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt —
-	// read live from the same runtime flag (`/run/hoserva/storage-ready`) hoservad itself sets only after
-	// mounting and confirming the pool — and the array is not currently in maintenance mode. This is the
-	// field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged`
-	// alone only reports the acknowledgement, not whether it took effect (#385 finding 2). It goes false
-	// again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier
-	// acknowledgement is still set — an explicit stop takes those services back down, so a standing
-	// acknowledgement must never be read as "still running".
+	// read live from the runtime flag hoservad itself sets only after mounting and confirming the pool —
+	// and the array is not currently in maintenance mode. This is the field a client checks before ever
+	// telling the user services are running; `arrayDegradedAcknowledged` alone only reports the
+	// acknowledgement, not whether it took effect. It goes false again the moment `array stop` enters
+	// maintenance mode, even while the runtime flag from an earlier acknowledgement is still set — an
+	// explicit stop takes those services back down, so a standing acknowledgement must never be read as
+	// "still running".
 	StorageServicesReleased OptBool  `json:"storageServicesReleased"`
 	ParityBlocked           OptBool  `json:"parityBlocked"`
 	ActiveJobs              OptInt32 `json:"activeJobs"`
@@ -22723,7 +22705,7 @@ func (s *TLSCertificateInfo) SetDomain(val OptString) {
 	s.Domain = val
 }
 
-// How the current TLS certificate was issued (Q9).
+// How the current TLS certificate was issued.
 // Ref: #/components/schemas/TLSCertificateKind
 type TLSCertificateKind string
 
@@ -23144,7 +23126,7 @@ type TemplateInstallRequest struct {
 	// Input name to value. An input with no entry, or an empty one, takes its default. An entry for a name
 	// that is not one of the template's inputs is refused.
 	Values OptTemplateInstallRequestValues `json:"values"`
-	// `bridge`, `host` or the name of an existing Docker network (Q37). It replaces the service's own
+	// `bridge`, `host` or the name of an existing Docker network. It replaces the service's own
 	// `network_mode` and `networks` in the generated Compose file. A name that is not a Docker network
 	// name, or is `none`, is refused with 400 `invalid_template_input` (`details.input` is `networkMode`).
 	// A network that does not exist is a `missing_network` warning in the plan, with the exact
@@ -23164,8 +23146,8 @@ type TemplateInstallRequest struct {
 	// `memoryMiB`).
 	MemoryMiB OptInt `json:"memoryMiB"`
 	// At most 4096 bytes; longer is 400 `invalid_template_input`. Absent or empty adds nothing. Raw
-	// `docker run` flags, read by the parser doc 04 §5 describes for an Unraid template's `ExtraParams`:
-	// parsed into Compose fields and merged into the service, never passed to a shell. A flag outside the
+	// `docker run` flags, read by the same parser that handles an Unraid template's `ExtraParams`: parsed
+	// into Compose fields and merged into the service, never passed to a shell. A flag outside the
 	// translate table, a word that is not a flag, or a string with shell syntax is a `untranslated_flag`
 	// warning in the plan and a comment above the service in the Compose file, never dropped silently. A
 	// flag that widens privileges (`--cap-add`, `--device`, `--pid=host`, `--security-opt`, a mount of a
@@ -23514,7 +23496,7 @@ func (s *TotpConfirmRequest) SetCode(val string) {
 
 // Both fields are optional for a first enrolment. Once TOTP is already active on the account, exactly
 // one must prove the caller still holds it — the current password, or a current TOTP code — or
-// enrollTotp is refused; supplying both is refused too (doc 01 §7).
+// enrollTotp is refused; supplying both is refused too.
 // Ref: #/components/schemas/TotpEnrollRequest
 type TotpEnrollRequest struct {
 	Password OptString `json:"password"`
@@ -23545,7 +23527,7 @@ func (s *TotpEnrollRequest) SetCode(val OptString) {
 type TotpEnrollResponse struct {
 	// Base32-encoded TOTP secret (RFC 6238), for manual entry.
 	Secret string `json:"secret"`
-	// An otpauth:// URI, for the enrolment QR code (doc 03 §1).
+	// An otpauth:// URI, for the enrolment QR code.
 	OtpauthUri string `json:"otpauthUri"`
 }
 
@@ -23569,8 +23551,8 @@ func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
 	s.OtpauthUri = val
 }
 
-// Doc 03 §8.1 connection choice-cards: a USB-attached UPS Hoserva drives locally, or a remote NUT
-// server this host monitors (Q77).
+// Connection choice: a USB-attached UPS Hoserva drives locally, or a remote NUT server this host
+// monitors.
 // Ref: #/components/schemas/UPSConnection
 type UPSConnection string
 
@@ -23623,7 +23605,7 @@ type UPSSettings struct {
 	Driver OptString `json:"driver"`
 	// Driver port for a USB UPS (commonly "auto").
 	Port OptString `json:"port"`
-	// Whether a local monitor password is stored. The password itself is never returned (Q28).
+	// Whether a local monitor password is stored. The password itself is never returned.
 	MonitorPasswordSet OptBool `json:"monitorPasswordSet"`
 	// Remote NUT server hostname or address.
 	NetworkHost OptString `json:"networkHost"`
@@ -23633,13 +23615,13 @@ type UPSSettings struct {
 	NetworkUpsName OptString `json:"networkUpsName"`
 	// Monitoring username on the remote NUT server.
 	NetworkUsername OptString `json:"networkUsername"`
-	// Whether a network monitoring password is stored. The password itself is never returned (Q28).
+	// Whether a network monitoring password is stored. The password itself is never returned.
 	NetworkPasswordSet OptBool `json:"networkPasswordSet"`
-	// USB-only. Charge percent that marks the battery low for a clean shutdown (Q77). Omitted or zero
-	// leaves NUT's driver default.
+	// USB-only. Charge percent that marks the battery low for a clean shutdown. Omitted or zero leaves
+	// NUT's driver default.
 	LowBatteryPercent OptInt32 `json:"lowBatteryPercent"`
-	// USB-only. Estimated runtime seconds remaining that mark the battery low (Q77). Omitted or zero
-	// leaves NUT's driver default.
+	// USB-only. Estimated runtime seconds remaining that mark the battery low. Omitted or zero leaves
+	// NUT's driver default.
 	RuntimeSeconds OptInt32 `json:"runtimeSeconds"`
 }
 
@@ -23773,7 +23755,7 @@ type UnraidConversion struct {
 	// The generated Compose file. Not applied anywhere: a service named after the template and, where the
 	// template needs them, the top-level `networks` and `volumes` it refers to.
 	Compose string `json:"compose"`
-	// True when the Compose file needs no manual action (Q36): no warning of class `untranslated_flag`,
+	// True when the Compose file needs no manual action: no warning of class `untranslated_flag`,
 	// `untranslated_field`, `flagged_path`, `missing_network` or `conflict`.
 	Clean    bool                `json:"clean"`
 	Warnings []ConversionWarning `json:"warnings"`
@@ -24054,7 +24036,7 @@ func (s *UpdateBackupDestinationRequest) SetRetention(val OptBackupRetention) {
 	s.Retention = val
 }
 
-// Release channel the update check reads from the signed index (Q67).
+// Release channel the update check reads from the signed index.
 // Ref: #/components/schemas/UpdateChannel
 type UpdateChannel string
 
@@ -24119,7 +24101,7 @@ type UpdateGeneralSettingsRequest struct {
 	Hostname OptString `json:"hostname"`
 	// IANA timezone name. Omitted leaves timezone unchanged.
 	Timezone OptString `json:"timezone"`
-	// Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase
+	// Write-only. Sets or replaces the backup passphrase. Omitted leaves any existing passphrase
 	// unchanged.
 	BackupPassphrase OptString `json:"backupPassphrase"`
 }
@@ -24158,7 +24140,7 @@ func (s *UpdateGeneralSettingsRequest) SetBackupPassphrase(val OptString) {
 type UpdateMaintenanceChainScheduleRequest struct {
 	StartTime      OptString  `json:"startTime"`
 	WeeklyScrubDay OptWeekday `json:"weeklyScrubDay"`
-	// Per-step enabled flags only — order is ignored; Q30's order is always server-defined.
+	// Per-step enabled flags only — order is ignored; the order is always server-defined.
 	Steps []MaintenanceChainStep `json:"steps"`
 }
 
@@ -24705,11 +24687,11 @@ type UpdateStatus struct {
 	// Release notes for availableVersion, if the index carries them.
 	Changelog OptString     `json:"changelog"`
 	Channel   UpdateChannel `json:"channel"`
-	// Whether the periodic outbound update check is enabled (Q49).
+	// Whether the periodic outbound update check is enabled.
 	CheckEnabled bool `json:"checkEnabled"`
 	// Version rollback would restore, if an upgrade has been applied.
 	PreviousVersion OptString `json:"previousVersion"`
-	// Whether `/run/reboot-required` is present (Q68).
+	// Whether `/run/reboot-required` is present.
 	RebootRequired       bool                      `json:"rebootRequired"`
 	PendingDebianUpdates []DebianPackageUpdate     `json:"pendingDebianUpdates"`
 	Dependencies         []PackageDependencyStatus `json:"dependencies"`
@@ -24835,7 +24817,7 @@ type UpdateUPSSettingsRequest struct {
 	Driver OptString `json:"driver"`
 	// Required for USB. Driver port (commonly "auto").
 	Port OptString `json:"port"`
-	// Write-only. Required on first USB configure; omit on later updates to keep the stored secret (Q28).
+	// Write-only. Required on first USB configure; omit on later updates to keep the stored secret.
 	MonitorPassword OptString `json:"monitorPassword"`
 	// Required for network. Remote NUT server host.
 	NetworkHost OptString `json:"networkHost"`
@@ -24845,12 +24827,11 @@ type UpdateUPSSettingsRequest struct {
 	NetworkUpsName OptString `json:"networkUpsName"`
 	// Required for network. Monitoring username.
 	NetworkUsername OptString `json:"networkUsername"`
-	// Write-only. Required on first network configure; omit on later updates to keep the stored secret
-	// (Q28).
+	// Write-only. Required on first network configure; omit on later updates to keep the stored secret.
 	NetworkPassword OptString `json:"networkPassword"`
-	// USB-only low-battery charge percent (Q77).
+	// USB-only low-battery charge percent.
 	LowBatteryPercent OptInt32 `json:"lowBatteryPercent"`
-	// USB-only low-battery runtime seconds (Q77).
+	// USB-only low-battery runtime seconds.
 	RuntimeSeconds OptInt32 `json:"runtimeSeconds"`
 }
 
@@ -25273,10 +25254,10 @@ func (s *UserPermissionEntry) SetAccess(val ShareAccessLevel) {
 	s.Access = val
 }
 
-// Q27: admin (full UI), viewer (read-only UI), or share-only (SMB/NFS only, no UI login at all — the
+// Admin (full UI), viewer (read-only UI), or share-only (SMB/NFS only, no UI login at all — the
 // default for a new account). A share-only account can still sign in with this role on a session that
-// predates a role change; every operation but the public ones refuses it (RoleViewer/RoleAdmin never
-// satisfy it), and login itself refuses a share-only account outright.
+// predates a role change; every operation but the public ones refuses it, and login itself refuses a
+// share-only account outright.
 // Ref: #/components/schemas/UserRole
 type UserRole string
 
@@ -25374,12 +25355,12 @@ type UserSummary struct {
 	Role     UserRole  `json:"role"`
 	// Whether TOTP is confirmed and active on this account.
 	TotpEnrolled bool `json:"totpEnrolled"`
-	// Whether a Samba/password credential (SMB access) is currently provisioned for this account (doc 03
-	// §7). Set the first time setUserPassword succeeds for it; there is no separate action that clears it
-	// short of deleting the account.
+	// Whether a Samba/password credential (SMB access) is currently provisioned for this account. Set the
+	// first time setUserPassword succeeds for it; there is no separate action that clears it short of
+	// deleting the account.
 	HasCredential bool `json:"hasCredential"`
 	// When this account last completed sign-in, tracked at authentication time — never derived from
-	// whether a session is still live (doc 03 §7). Null when it has never signed in.
+	// whether a session is still live. Null when it has never signed in.
 	LastLogin NilDateTime `json:"lastLogin"`
 	CreatedAt time.Time   `json:"createdAt"`
 }

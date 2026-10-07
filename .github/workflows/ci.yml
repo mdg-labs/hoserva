@@ -253,8 +253,9 @@ jobs:
 
   # The docs site (issue #82, Q3, Q90). Every push and pull request runs the
   # job; the build itself runs only when something it depends on changed, so
-  # an unrelated change reports success without paying for it. A diff that
-  # cannot be computed builds, never skips.
+  # an unrelated change reports success without paying for it. The API
+  # reference is generated from api/openapi.yaml, so a change to it builds
+  # too. A diff that cannot be computed builds, never skips.
   site-build:
     name: Docs site (Q3, Q90)
     runs-on: ubuntu-latest
@@ -284,7 +285,7 @@ jobs:
           esac
           changed=true
           if [ -n "$base" ] && files="$(git diff --name-only "$base" HEAD)"; then
-            if ! printf '%s\n' "$files" | grep -Eq '^(site/|Makefile$|\.github/workflows/ci\.yml$|scripts/release/assemble-pages-site\.sh$)'; then
+            if ! printf '%s\n' "$files" | grep -Eq '^(site/|api/openapi\.yaml$|Makefile$|\.github/workflows/ci\.yml$|scripts/release/assemble-pages-site\.sh$)'; then
               changed=false
             fi
           fi
