@@ -28,16 +28,27 @@ const (
 type Check func(t *Template) []Issue
 
 var checks = []Check{
-	checkAllowedKeys,
+	checkComposeDocument,
 	checkServices,
 	checkReservedInputs,
 	checkReferences,
 	checkPathDefaults,
 	checkBindSources,
-	checkSelfContained,
 	checkUserIDs,
 	checkMetadata,
 }
+
+// CheckCompose runs the rules that hold any Compose document to the keys the
+// privilege summary classifies and to its own content: the allow list and the
+// self-contained check. A template's Check and the migration's preview of a
+// Compose Manager project both apply it, so the two cannot disagree on what a
+// stack may use. The issues carry no line numbers.
+func CheckCompose(compose map[string]any) []Issue {
+	t := &Template{Compose: compose}
+	return append(checkAllowedKeys(t), checkSelfContained(t)...)
+}
+
+func checkComposeDocument(t *Template) []Issue { return CheckCompose(t.Compose) }
 
 // Check runs every rule beyond the schema and returns what it found, in a
 // stable order.

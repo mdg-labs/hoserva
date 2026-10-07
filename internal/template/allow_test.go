@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const probeBlock = "x-hoserva:\n  schema: 1\n  id: probe\n  revision: 1\n  title: Probe\n  categories: [system]\n  icon: icon.svg\n  docs: https://example.com\n"
@@ -165,5 +167,55 @@ func TestCheckAcceptsOnlyComposeKeysTheSummaryClassifies(t *testing.T) {
 		case tc.want != "" && !strings.Contains(got, tc.want):
 			t.Errorf("%s: issues %q, want one with %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// CheckCompose is the allow list and the self-contained check over a bare
+// Compose document, and a template's Check reports the same issues for it.
+func TestCheckComposeHoldsAnyComposeDocumentToTheAllowList(t *testing.T) {
+	cases := map[string]string{
+		"services:\n  web:\n    image: x\n    secrets: [a]\nsecrets:\n  a:\n    file: /f\n": "secrets",
+		"services:\n  web:\n    image: x\n    volumes_from: [\"container:c\"]\n":            "volumes_from",
+		"services:\n  web:\n    extends:\n      file: o.yaml\n      service: web\n":         "extends",
+		"include: [o.yaml]\nservices:\n  web:\n    image: x\n":                              "include",
+		"services:\n  web:\n    image: x\n    gpus: all\n":                                  "gpus",
+	}
+	for body, want := range cases {
+		var compose map[string]any
+		if err := yaml.Unmarshal([]byte(body), &compose); err != nil {
+			t.Fatal(err)
+		}
+		issues := CheckCompose(compose)
+		if len(issues) == 0 || !strings.Contains(issues[0].String(), want) {
+			t.Errorf("CheckCompose(%q) = %v, want an issue on %s", body, issues, want)
+		}
+		var viaCheck []Issue
+		for _, i := range checkCompose(t, body) {
+			if strings.Contains(i.String(), want) {
+				viaCheck = append(viaCheck, i)
+			}
+		}
+		if len(viaCheck) == 0 {
+			t.Errorf("a template with %q is not refused for %s by Check", body, want)
+		}
+	}
+	var ok map[string]any
+	if err := yaml.Unmarshal([]byte("services:\n  db:\n    image: x\n  web:\n    image: x\n    volumes_from: [db]\n"), &ok); err != nil {
+		t.Fatal(err)
+	}
+	if issues := CheckCompose(ok); len(issues) != 0 {
+		t.Errorf("CheckCompose(own volumes_from) = %v, want none", issues)
+	}
+}
+
+// A template is still refused for a top-level version: only an imported
+// project has it dropped, before CheckCompose.
+func TestCheckRefusesATopLevelVersionInATemplate(t *testing.T) {
+	var found bool
+	for _, i := range checkCompose(t, "version: '3'\nservices:\n  web:\n    image: x\n") {
+		found = found || strings.Contains(i.String(), `"version"`)
+	}
+	if !found {
+		t.Error("a template with a top-level version is not refused")
 	}
 }

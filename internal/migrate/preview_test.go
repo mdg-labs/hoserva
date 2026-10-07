@@ -236,6 +236,102 @@ func TestPreview_ComposeProjectsAreReviewedAsTheyAreAndNotConverted(t *testing.T
 	}
 }
 
+// A project is held to the keys a template may use, so its privileges are
+// computed from everything its compose.yaml does: a file that uses a key the
+// template allow list refuses is not previewed.
+func TestPreview_AProjectWithAKeyTheAllowListRefusesIsFailed(t *testing.T) {
+	cases := map[string]string{
+		"secrets from a file":         "services:\n  web:\n    image: x\n    secrets: [token]\nsecrets:\n  token:\n    file: /etc/hoserva/key\n",
+		"configs from a file":         "services:\n  web:\n    image: x\n    configs: [conf]\nconfigs:\n  conf:\n    file: /var/lib/hoserva/hoserva.db\n",
+		"include":                     "include:\n  - other.yaml\nservices:\n  web:\n    image: x\n",
+		"build":                       "services:\n  web:\n    build: /root\n",
+		"env_file of another file":    "services:\n  web:\n    image: x\n    env_file: /etc/hoserva/key\n",
+		"volumes_from a container":    "services:\n  web:\n    image: x\n    volumes_from: [\"container:other\"]\n",
+		"volumes_from a bare name":    "services:\n  web:\n    image: x\n    volumes_from: [other]\n",
+		"extends another file":        "services:\n  web:\n    extends:\n      file: other.yaml\n      service: web\n",
+		"ipc host":                    "services:\n  web:\n    image: x\n    ipc: host\n",
+		"network_mode container":      "services:\n  web:\n    image: x\n    network_mode: \"container:other\"\n",
+		"service on the host network": "services:\n  web:\n    image: x\n    networks: [host]\n",
+		"a host network definition":   "services:\n  web:\n    image: x\nnetworks:\n  host: {}\n",
+		"gpus":                        "services:\n  web:\n    image: x\n    gpus: all\n",
+		"post_start":                  "services:\n  web:\n    image: x\n    post_start:\n      - command: id\n",
+		"uts host":                    "services:\n  web:\n    image: x\n    uts: host\n",
+		"userns_mode host":            "services:\n  web:\n    image: x\n    userns_mode: host\n",
+		"a volume driver":             "services:\n  web:\n    image: x\nvolumes:\n  data:\n    driver: other\n",
+		"an unknown top-level key":    "services:\n  web:\n    image: x\nmodels: {}\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := previewCompose([]byte(body))
+			o := p.Outcome(true)
+			if o.Status != PreviewFailed || o.Failure != FailureNotAccepted || o.FailureText() == "" {
+				t.Errorf("outcome = %+v, want a failed preview", o)
+			}
+			if p.Error == "" || p.Compose != "" || p.Source != body || len(p.Privileges) != 0 {
+				t.Errorf("preview = %+v, want the reason, the source and no Compose or privileges", p)
+			}
+			r := scanInventory(t, func(f map[string][]byte) { f[composeFile] = []byte(body) })
+			if o := r.Import.ComposeProjects[0].Outcome; o.Status != PreviewFailed || o.Failure != FailureNotAccepted || r.Import.TemplateCounts.ComposeProjects != 0 {
+				t.Errorf("the scan's outcome = %+v, counts %+v, want it failed and not counted", o, r.Import.TemplateCounts)
+			}
+			requireRow(t, r, CheckContainers, StatusWarn, "stack", "compose.yaml")
+		})
+	}
+}
+
+// What the allow list accepts is still previewed with its privileges, and a
+// service may inherit the volumes of another service of the same file.
+func TestPreview_AProjectWithinTheAllowListIsStillPreviewed(t *testing.T) {
+	p := previewCompose([]byte("services:\n  db:\n    image: x\n    volumes:\n      - /mnt/user/appdata/db:/data\n  web:\n    image: x\n    privileged: true\n    volumes_from: [db]\n    env_file: .env\n"))
+	o := p.Outcome(true)
+	if o.Status != PreviewOnly || p.Compose == "" || p.Failure != "" {
+		t.Fatalf("outcome = %+v, preview %+v, want it previewed", o, p)
+	}
+	kinds := map[string]bool{}
+	for _, pr := range p.Privileges {
+		kinds[pr.Kind] = true
+	}
+	if !kinds["privileged"] {
+		t.Errorf("privileges = %+v, want privileged", p.Privileges)
+	}
+}
+
+// Host networking, the host PID namespace and the host cgroup namespace are on
+// the allow list, so they are previewed and reported, not refused.
+func TestPreview_HostNamespaceModesAreReportedNotRefused(t *testing.T) {
+	for _, key := range []string{"network_mode", "pid", "cgroup"} {
+		p := previewCompose([]byte("services:\n  web:\n    image: x\n    " + key + ": host\n"))
+		if o := p.Outcome(true); o.Status != PreviewOnly || p.Failure != "" || len(p.Privileges) != 1 {
+			t.Errorf("%s: outcome = %+v, preview %+v, want it previewed with one privilege", key, o, p)
+		}
+	}
+}
+
+// The obsolete top-level version key is ignored, and only that key: the rest of
+// the file is held to the allow list as before.
+func TestPreview_ATopLevelVersionKeyIsIgnored(t *testing.T) {
+	ok := "version: '3'\nservices:\n  web:\n    image: x\n    privileged: true\n"
+	p := previewCompose([]byte(ok))
+	if o := p.Outcome(true); o.Status != PreviewOnly || p.Failure != "" || p.Error != "" {
+		t.Fatalf("outcome = %+v, preview %+v, want it previewed", o, p)
+	}
+	if p.Compose != ok || len(p.Privileges) != 1 || p.Privileges[0].Kind != "privileged" {
+		t.Errorf("preview = %+v, want the file as written and its one privilege", p)
+	}
+	for name, body := range map[string]string{
+		"secrets":    "version: '3'\nservices:\n  web:\n    image: x\n    secrets: [t]\nsecrets:\n  t:\n    file: /f\n",
+		"build":      "version: \"3.8\"\nservices:\n  web:\n    build: /root\n",
+		"include":    "version: '3'\ninclude: [o.yaml]\nservices:\n  web:\n    image: x\n",
+		"a service":  "version: '3'\nservices:\n  web:\n    image: x\n    ipc: host\n",
+		"top-level":  "version: '3'\nservices:\n  web:\n    image: x\nmodels: {}\n",
+		"no version": "services:\n  web:\n    image: x\nmodels: {}\n",
+	} {
+		if o := previewCompose([]byte(body)).Outcome(true); o.Status != PreviewFailed || o.Failure != FailureNotAccepted {
+			t.Errorf("%s: outcome = %+v, want a failed preview", name, o)
+		}
+	}
+}
+
 // The report names and counts. Neither its rows nor the session row holds a
 // template's content: the fixture's masked variable, its image and its host
 // path are in the zip and in the on-request preview, and in nothing the session

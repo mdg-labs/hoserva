@@ -357,6 +357,68 @@ func TestContainers_AComposeManagerProjectIsCreatedFromItsOwnComposeYAML(t *test
 	}
 }
 
+func TestContainers_AProjectWithAVersionKeyIsCreatedFromItsOwnComposeYAML(t *testing.T) {
+	body := "version: '3'\nservices:\n  web:\n    image: fixture/web:1.0\n"
+	r := newFlowRig(t, func(f map[string][]byte) { f[composeFile] = []byte(body) })
+	res, err := r.s.CreateStacks(ctx0, []StackSelection{{Name: "stack"}})
+	if err != nil || len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("CreateStacks(stack) = %+v, %v, want the project created", res, err)
+	}
+	if st, err := r.stacks.Get(ctx0, "stack"); err != nil || st.Compose != body {
+		t.Errorf("stack = %+v, %v, want the project's compose.yaml byte for byte, version included", st, err)
+	}
+}
+
+// createCounts stands in for the stack layer and counts the stacks asked for.
+type createCounts struct {
+	StackLayer
+	creates int
+}
+
+func (l *createCounts) Create(ctx context.Context, n container.NewStack) (container.Stack, error) {
+	l.creates++
+	return l.StackLayer.Create(ctx, n)
+}
+
+func TestContainers_AProjectTheAllowListRefusesIsNeitherCreatableNorCreated(t *testing.T) {
+	cases := map[string]string{
+		"secrets":        "services:\n  web:\n    image: x\n    secrets: [token]\nsecrets:\n  token:\n    file: /etc/hoserva/key\n",
+		"configs":        "services:\n  web:\n    image: x\n    configs: [conf]\nconfigs:\n  conf:\n    file: /var/lib/hoserva/hoserva.db\n",
+		"build":          "services:\n  web:\n    build: /root\n",
+		"include":        "include:\n  - other.yaml\nservices:\n  web:\n    image: x\n",
+		"volumes_from":   "services:\n  web:\n    image: x\n    volumes_from: [\"container:other\"]\n",
+		"env_file":       "services:\n  web:\n    image: x\n    env_file: /etc/hoserva/key\n",
+		"ipc host":       "services:\n  web:\n    image: x\n    ipc: host\n",
+		"network_mode":   "services:\n  web:\n    image: x\n    network_mode: \"container:other\"\n",
+		"gpus":           "services:\n  web:\n    image: x\n    gpus: all\n",
+		"extends a file": "services:\n  web:\n    extends:\n      file: other.yaml\n      service: web\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newFlowRig(t, func(f map[string][]byte) { f[composeFile] = []byte(body) })
+			layer := &createCounts{StackLayer: r.stacks}
+			r.s.Stacks = layer
+
+			o, err := r.s.Offer(ctx0)
+			if err != nil || len(o.Projects) != 1 || o.Projects[0].Creatable {
+				t.Fatalf("Offer = %+v, %v, want the project listed and not creatable", o.Projects, err)
+			}
+			for _, sel := range []StackSelection{{Name: "stack"}, {Name: "stack", Acknowledged: true}} {
+				if _, err := r.s.CreateStacks(ctx0, []StackSelection{sel}); !errors.Is(err, ErrTemplateUnconvertible) {
+					t.Errorf("CreateStacks(%+v) = %v, want ErrTemplateUnconvertible", sel, err)
+				}
+			}
+			_, err = r.s.CreateStacks(ctx0, []StackSelection{{Name: "my-Photos.xml", Acknowledged: true}, {Name: "stack"}})
+			if !errors.Is(err, ErrTemplateUnconvertible) {
+				t.Errorf("CreateStacks(a template and the project) = %v, want ErrTemplateUnconvertible", err)
+			}
+			if layer.creates != 0 || len(r.stackNames(t)) != 0 {
+				t.Errorf("Create called %d times, stacks %v, want none: the whole request is refused first", layer.creates, r.stackNames(t))
+			}
+		})
+	}
+}
+
 func TestContainers_AnInvalidSelectionIsRefusedBeforeAnythingIsCreated(t *testing.T) {
 	r := newFlowRig(t, func(f map[string][]byte) {
 		f[tmplDir+"my-notes-b.xml"] = []byte(`<Container version="2"><Name>Notes</Name><Repository>fixture/notes:2</Repository></Container>`)
