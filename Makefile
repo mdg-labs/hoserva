@@ -484,12 +484,13 @@ test-gh:
 web-outbound-test:
 	$(JUNIT) web-outbound test-check-web-outbound.sh -- scripts/devenv/test-check-web-outbound.sh
 
-# Fixture tests for the JUnit wrapper and for the L3 suite's JUnit writer
-# (neither needs a VM); the renderer's own tests are Go tests under
+# Fixture tests for the JUnit wrapper, the L3 suite's JUnit writer (no VM) and
+# the PR comment script (a stub gh); the renderer's own tests are Go tests under
 # scripts/devenv/testreport and run with test-go.
 test-devenv:
 	$(JUNIT) devenv test-junit-step.sh -- scripts/devenv/test-junit-step.sh
 	$(JUNIT) devenv test-l3-junit.sh -- scripts/vm/test-l3-junit.sh
+	$(JUNIT) devenv test-pr-comment.sh -- scripts/devenv/test-pr-comment.sh
 
 # The Pages site assembly script's own test (Q66).
 test-pages-site:
@@ -531,7 +532,7 @@ lint-gh:
 # shellcheck over the user-run Unraid script and its tests, and over the
 # release helpers that publish it. In CI a missing shellcheck is a failure,
 # as for golangci-lint above.
-SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh scripts/devenv/junit-step.sh scripts/devenv/test-junit-step.sh scripts/vm/l3-junit.sh scripts/vm/test-l3-junit.sh \
+SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh scripts/devenv/junit-step.sh scripts/devenv/test-junit-step.sh scripts/vm/l3-junit.sh scripts/vm/test-l3-junit.sh scripts/devenv/pr-comment.sh scripts/devenv/test-pr-comment.sh \
 	scripts/vm/unraid-fixture.sh scripts/vm/unraid-capture.sh scripts/vm/unraid-capture-guest.sh scripts/vm/unraid-lib.sh \
 	scripts/vm/create-vm.sh scripts/vm/unraid-sizing-check.sh \
 	scripts/vm/run-migration-suite.sh scripts/vm/migration-suite-guest.sh scripts/vm/usb-image.sh scripts/vm/migration-suite-coverage-check.sh scripts/vm/migration-suite-check.sh \

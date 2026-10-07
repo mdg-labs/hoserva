@@ -475,7 +475,20 @@ jobs:
           printf '%s' "$NEEDS_JSON" > "$RUNNER_TEMP/needs.json"
           go run ./scripts/devenv/testreport -needs "$RUNNER_TEMP/needs.json" "$RUNNER_TEMP/test-results" > "$RUNNER_TEMP/test-summary.md"
           cat "$RUNNER_TEMP/test-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      # Which PR this run belongs to, for test-report-comment.yml: that workflow
+      # runs for forks too, where the workflow_run event lists no pull request.
+      # The comment workflow treats this file as untrusted data and checks the
+      # number against the PR's current head before using it.
+      - name: Record the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          jq -n --argjson number "$PR_NUMBER" --arg head_sha "$PR_HEAD_SHA" '{number: $number, head_sha: $head_sha}' > "$RUNNER_TEMP/pr.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-summary
-          path: ${{ runner.temp }}/test-summary.md
+          path: |
+            ${{ runner.temp }}/test-summary.md
+            ${{ runner.temp }}/pr.json

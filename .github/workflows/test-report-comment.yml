@@ -1,0 +1,66 @@
+name: Test report comment
+
+# Keeps one comment on each pull request with the latest CI test summary, edited
+# in place (doc 06 §7, issue #633). ci.yml's test-report job uploads the summary
+# as the `test-summary` artifact; this workflow reads it after the run finished.
+#
+# It is a separate workflow because of Q42: ci.yml runs pull-request code, so it
+# keeps `contents: read` and no write permission, and a fork's PR could not be
+# commented on from it anyway. A `workflow_run` workflow always runs from the
+# default branch with its own token, and this one holds the only write
+# permission, `pull-requests: write`. In exchange it never runs pull-request
+# code: the artifact is data written by that code, so nothing in it is executed,
+# its PR number is validated, and the PR's current head must still be the commit
+# the run tested (scripts/devenv/pr-comment.sh, tested by
+# scripts/devenv/test-pr-comment.sh). It never uses `pull_request_target`.
+#
+# `workflow_run` only fires from the copy of this file on the default branch
+# (`main`), so it works once a dev -> main promotion has carried it there.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  actions: read
+
+# One comment is edited at a time per branch, so two runs finishing together
+# cannot both create it.
+concurrency:
+  group: test-report-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    name: Comment the test summary
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # The default branch's own scripts, never the pull request's code: the
+      # ref is named, not left to the event, and only the renderer and the
+      # comment script are fetched.
+      - name: Check out the default branch's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts/devenv
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Create or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_TIME: ${{ github.event.workflow_run.updated_at }}
+        run: scripts/devenv/pr-comment.sh

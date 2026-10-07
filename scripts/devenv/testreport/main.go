@@ -4,9 +4,16 @@
 //
 // Usage: testreport [-needs needs.json] <dir>
 //
+//	testreport -comment summary.md -run-url URL -sha SHA -time RFC3339
+//
 // -needs names a file holding the GitHub Actions `needs` context
 // (toJSON(needs)); each job's conclusion is then listed, so a job that failed
 // before it wrote a report, or one that runs no tests, still has a row.
+//
+// -comment instead wraps an already rendered summary as the pull-request
+// comment (comment.go): a hidden marker, a header with the run link, commit
+// and time, mentions neutralized, and the text cut to GitHub's comment size
+// limit with a link to the full run summary.
 //
 // A file that is empty or cannot be parsed is shown as such, never dropped.
 // The exit status is 0 whenever a summary was written: the suites themselves
@@ -457,8 +464,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fl := flag.NewFlagSet("testreport", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	needsPath := fl.String("needs", "", "file holding the GitHub Actions `needs` context as JSON")
+	commentPath := fl.String("comment", "", "render the run summary in `file` as a pull-request comment instead of reading a directory")
+	runURL := fl.String("run-url", "", "with -comment: the workflow run's URL")
+	sha := fl.String("sha", "", "with -comment: the commit the run tested")
+	when := fl.String("time", "", "with -comment: when the run finished, RFC 3339")
 	if err := fl.Parse(args); err != nil {
 		return 2
+	}
+	if *commentPath != "" {
+		if fl.NArg() != 0 || *needsPath != "" {
+			_, _ = fmt.Fprintln(stderr, "usage: testreport -comment summary.md -run-url URL -sha SHA -time RFC3339")
+			return 2
+		}
+		if err := runComment(*commentPath, *runURL, *sha, *when, stdout); err != nil {
+			_, _ = fmt.Fprintln(stderr, "testreport: -comment:", err)
+			return 2
+		}
+		return 0
 	}
 	if fl.NArg() != 1 {
 		_, _ = fmt.Fprintln(stderr, "usage: testreport [-needs needs.json] <dir>")
