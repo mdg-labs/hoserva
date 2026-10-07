@@ -65,16 +65,19 @@ existing line by adding its PR number.
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks, and not put back by a rollback that did complete the stop) — PR 199, 246, 338, 395
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
+- **errors** — a helper swapped for one that reports a missing path as an error (a descriptor-relative `RemoveAll` in place of `os.RemoveAll`) while a caller still treats every error as a leftover, so it warns about data that never existed — PR 772
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
 - **errors** — a refusal of the user's input returned as an unnamed `errors.New`, so the API's sentinel classifier cannot match it and a bad request answers 500 — PR 592
 - **errors** — a catch-all default maps every unclassified error to 502, so a local database or filesystem failure is blamed on an upstream; reserve 502 for errors wrapped as coming from the external process — PR 491
 - **errors** — a per-group result (one row per image) failed by one member that cannot be evaluated, hiding the result its comparable siblings produced — PR 491
 - **efficiency** — a per-item lookup that resolves its item by listing every item, called once per item on a request path, so one request costs N full listings — PR 510
+- **efficiency** — a body that was streamed is read whole into memory to transform it (escaping a report or a decompressed job log for the terminal), so an unbounded response is held twice — PR 772
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
 - **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
 - **errors** — a fixed deadline sized for the small case applied to a transfer whose size is unbounded (a multi-gigabyte archive over rclone), so large inputs fail on size alone — PR 453
 - **errors** — a caller accepts a helper's exit 0 as a result while the helper exits 0 with empty output when its input is missing (`dev-diff.sh --list` without a local `dev`), so "unavailable" reads as "empty" — PR 575
 - **errors** — a step allowed to fail (`continue-on-error` on an artifact download) feeds a reporter that cannot tell its failure from an expected empty result, so a failed download reads as "no reports were found" — PR 714
+- **errors** — a lookup calls a listing that refuses results past its page cap without the filter that bounds it (every advisory instead of the drafts the lookup can match), so once the collection grows every run stops — PR 772
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
@@ -109,6 +112,7 @@ existing line by adding its PR number.
 - **validation** — an "exact duplicate" rule compares only some fields, so entries that differ in access mode or bind address count as identical and one is silently dropped — PR 491
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **validation** — a helper carrying a single-value side effect (a "given more than once, the last is used" note) reused for a field that accumulates a list, so the operator is told kept values were dropped — PR 542
+- **contract** — a failure summary names one cause (an unaccepted key) where the check behind it refuses several (values, control characters), so a report gives the wrong reason — PR 772
 - **contract** — a size limit set on a decoded value (48 KiB of template text) under a transport limit (64 KiB request body) that the encoding can inflate past, so a valid maximum input is refused before the handler sees it — PR 542
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
@@ -127,6 +131,7 @@ existing line by adding its PR number.
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
+- **validation** — an exemption meant for one rule applied by deleting the entry before every rule runs, so its value also escapes the rules it was never exempt from (an imported Compose `version` key skipping the control-character check along with the allow list) — PR 772
 - **identity** — first match taken when several candidates match (a weak-identity disk and its clone), or a stale path reported beside the disk that now holds it, so one record appears twice — PR 337
 - **accounting** — capacity tracked per consumer (per share) instead of per filesystem, or a negative headroom summed into a total, so a plan overcommits or wrongly refuses — PR 337
 - **planning** — planner and post-check disagree on which entries count (the planner skips symlinks or all of lost+found, the post-check rejects them), so the refusal comes only after all the work, on every retry — PR 337, 394
@@ -140,6 +145,7 @@ existing line by adding its PR number.
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
 - **security** — a CI job that runs pull-request code checks out with the default `persist-credentials`, leaving `GITHUB_TOKEN` in `.git/config` for the code under test to read — PR 546
 - **security** — user or state values written into a config format or a generated script without escaping (control characters; a typed password inside a string literal of a database init script) — PR 254, catalog PR 81
+- **security** — output escaped at the program's own print while a framework prints the same text raw first (Cobra without `SilenceErrors` on the root command), so the escape is bypassed and the error shows twice — PR 772
 - **security** — a file the CLI saves for the user that names accounts, shares or containers is left world-readable (0644) where the daemon keeps the same data 0600 — PR 575
 - **security** — a user-docs example bakes a TLS-skip flag (`curl --insecure`) into a reusable script that sends a secret token, instead of keeping it to a one-off test — PR 708
 
