@@ -108,7 +108,7 @@ export default function AppPage({data}: {data: Data}): ReactNode {
             <Button
               variant="outline"
               render={<Link to="/docs/guides/backing-up-your-data" />}>
-              See how an app is installed
+              See an example install: a backup app
             </Button>
             <Button variant="ghost" render={<Link to="/apps" />}>
               Browse all apps
