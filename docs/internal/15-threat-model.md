@@ -1,0 +1,209 @@
+# Hoserva — Threat Model
+
+This is the written reference every security judgement in the project is made against: the security audit, the verifier, CodeRabbit triage and a human reading a report. A finding is measured against the assets (§1), the attackers (§2), the entry points (§3), the invariants (§4), the accepted residuals (§5) and the severity rubric (§6) below, and nothing else. The controls themselves — what the daemon does to protect each asset — are in doc 01 §7; this doc names who and what they protect against, and where in the code each one is enforced.
+
+Code anchors name a package or a file, and are checked against `dev`. When code moves, the anchor moves with it in the same change.
+
+---
+
+## 1. Assets
+
+| Asset | Why it matters | Where it lives |
+|---|---|---|
+| **User data** on the array and the cache | The product's reason to exist. Destroying it or exposing it to someone who may not read it is the worst outcome. | Data disks under `/mnt/disk*`, the cache, the pooled view at `/mnt/user` |
+| **Parity integrity** | Parity is the only copy of a lost disk's content. Syncing over a disaster (ransomware, an unmounted disk, a bad `rm -rf`) destroys the parity that could have recovered it (doc 02 §2). | The parity disk(s), SnapRAID's content files |
+| **Secrets at rest** | SMTP passwords, notification tokens, API keys, ACME keys, TOTP seeds, registry credentials, the UPS monitoring password. | Encrypted columns in the SQLite database, sealed by the machine key (Q28); generated config files that must carry a secret; the backup archive's `secrets.age` (doc 10 §1) |
+| **The machine key** | The one thing standing between a leaked database file and every secret in it. | `/etc/hoserva/secret.key`, root-owned `0600` (Q28) |
+| **Root on the host** | `hoservad` runs as root, so anything that reaches root-executed code reaches the whole machine, every asset above included (doc 01 §7). | The daemon, the mover and relocation jobs, the generated systemd units |
+| **The admin account and its sessions** | The credential that gates every administrative operation. | `users`, `sessions` and API-token rows; `internal/auth/` |
+| **The release-signing key and the catalog-signing key** | They decide what code and what templates installations will accept. They are separate, and each compiled-in public key verifies only its own kind of file (doc 01 §7). | CI secrets; the public halves are compiled into `hoservad` (`internal/update/pubkey.go`, `internal/template/pubkey.go`) |
+| **Appdata** of installed containers | Application databases and credentials in plain files. | The appdata share; encrypted before it leaves the box (Q28, Q80) |
+
+---
+
+## 2. Attackers
+
+The three realistic threats are a user exposing the UI to the internet with a weak password (2.2), a malicious or compromised container template (2.9), and ransomware reaching the shares over SMB (2.8). The third is why the SnapRAID deletion threshold guard (doc 02) is a security feature, not just a usability one: it is the last line of defence between an encryption event and parity being updated to match it.
+
+Each attacker has a capability, a thing it is **trusted with**, and a thing it **must never reach**. A finding names the attacker it relies on; a finding that needs a capability the named attacker does not have is not a finding of that kind.
+
+### 2.1 Unauthenticated LAN client
+
+- **Capability:** opens a TCP connection to `:8008` from an address the source filter admits (Q10) and sends arbitrary HTTP; can guess credentials subject to the login limiter; can watch and send traffic on the LAN.
+- **Trusted with:** the static SPA assets, the setup-status operation, the first-admin operation while no admin exists, and the login operation. Nothing else.
+- **Must never reach:** any other API operation, any session, any file or disk, any other principal's credential. No response signal may tell an unknown username from a real one with a wrong password (doc 01 §7).
+
+### 2.2 Internet client
+
+- **Capability:** the same as 2.1, from any source address. Only possible when the user flips the one warned, explicit all-sources toggle (Q10) or forwards the port themselves.
+- **Trusted with:** the same as 2.1.
+- **Must never reach:** the same as 2.1. Exposure is the user's choice and is warned about; it raises the likelihood of attacks on 2.1's surface, not the surface itself. This attacker is why TOTP is prompted for when the UI is reachable from a non-private address (doc 01 §7).
+
+### 2.3 Signed-in admin — the trust ceiling
+
+- **Capability:** every operation in `api/openapi.yaml` declared `x-hoserva-role: admin` or `viewer`, over the web UI, the CLI's token or a personal API token. Can format disks, install containers, configure notification destinations and outbound URLs, install a user-added catalog source, restore a backup, and read audit logs.
+- **Trusted with:** everything the API exposes. The admin is the owner of the machine.
+- **Must never reach:** root *outside* the API's own contract. There is no arbitrary-command endpoint, no user-supplied path passed unsanitised to a shell, and no template field interpolated into a command line (doc 01 §7).
+- **What is not a finding:** anything an admin can already do by design. An admin pointing a webhook at an internal address, installing a privileged container after the install flow warned about it, formatting a disk they selected, or mounting a path they chose is the product working. A finding about admin capabilities is a finding only when it crosses the line above or defeats a warning or confirmation the design promises.
+
+### 2.4 Viewer and other authenticated non-admin principals
+
+- **Capability:** the operations declared `viewer`, with a valid session or token.
+- **Trusted with:** reading status and configuration the UI shows a viewer, and managing their own credential (enrolling and confirming their own TOTP).
+- **Must never reach:** any operation declared `admin`, another account's credentials or sessions, or a secret's plaintext. An operation whose role is undeclared is refused, never allowed (T3).
+
+### 2.5 Local unprivileged user on the host
+
+- **Capability:** a login on the host that is not root, not in the `hoserva` group and not the daemon's own uid. Can read world-readable files, connect to any listening TCP port on loopback, create files and symlinks in directories it owns, and race the daemon.
+- **Trusted with:** nothing Hoserva owns.
+- **Must never reach:** `hoserva.sock` or `ups-control.sock`, the machine key, the database, a generated file that carries a secret, or any path the root daemon writes through. Loopback-source login attempts share one lockout subject (§5), so this attacker can back off the loopback callers; that is accepted.
+
+### 2.6 `hoserva`-group member
+
+- **Capability:** connects to `hoserva.sock`, which the daemon treats as authenticated by peer credential (Q44).
+- **Trusted with:** the whole API, as an admin. Group membership is root-equivalent by design, exactly like the `docker` group (doc 01 §7, Q44).
+- **Must never reach:** the three recovery commands — password reset, TOTP reset and unlock — which admit uid 0 specifically, never the group or the daemon's own uid (Q78, T5).
+
+### 2.7 The `nut` child (#340)
+
+- **Capability:** the unprivileged account upsmon's child runs as. It parses whatever a remote NUT server sends back, so it is code Hoserva does not own, reachable from the network. Treat it as compromised-by-design.
+- **Trusted with:** `/run/hoserva/ups-control.sock` (`root:nut 0660`) and nothing else.
+- **Must never reach:** `hoserva.sock`. `nut` never joins the `hoserva` group, and each socket's admission rule is checked against the group that socket names (T4).
+
+### 2.8 Share user over SMB or NFS, including ransomware on a client
+
+- **Capability:** a Hoserva user or guest with write access to a share, or malware running as such a user on a client machine. Can create, rename, replace and delete files and directories under the share's tree, and can replace a directory with a symlink through the pooled path or through a branch.
+- **Trusted with:** the content of the shares they were granted, with the permission the share gives them.
+- **Must never reach:** a write by the root daemon to a path outside the share's disks because of what the share user arranged (T2); a parity update that records a mass deletion or encryption event (T1); another user's share; the host.
+- **Why it matters:** ransomware reaching the shares is one of the three realistic threats named at the start of this section. The threshold guard is the last defence between an encryption event and parity being rewritten to match it.
+
+### 2.9 Malicious or compromised catalog template
+
+- **Capability:** supplies a Compose file with an `x-hoserva` block through the curated catalog, a user-added catalog source or a hand-imported template. Can request privileges, host paths, devices, ports and inputs; can carry hostile text in any field.
+- **Trusted with:** whatever the install flow showed the admin and the admin approved. A curated catalog archive is trusted only after its signature verifies and its serial is not older than the current one (Q65). A template from a user-added source or imported by hand is trusted exactly as far as the admin chose to trust it.
+- **Must never reach:** a privilege the install flow did not warn about (T7); a host command line (T6); the machine key or the database; a mount of the daemon's own state directory. A Compose key the privilege summary does not know about is refused, so the summary can never understate (`internal/template/allow.go`).
+
+### 2.10 Hostile content on an imported Unraid flash
+
+- **Capability:** controls every byte of a Flash Backup zip or a stick the user connects to migrate: names, paths, scripts, plugin files, templates, share and cron definitions, container environment.
+- **Trusted with:** being read as data, in memory.
+- **Must never reach:** disk, a shell, a path outside the import's own scope, or a report that quotes file content beyond names and counts (doc 05 §3). Nothing in the source is executed or extracted; an entry named with `..` or an absolute path refuses the whole zip (`internal/migrate/CLAUDE.md`, T9).
+
+### 2.11 A container or VM guest
+
+- **Capability:** code running inside a container Hoserva manages, with whatever privileges the admin approved at install. A VM guest, once VM management exists (doc 14), has the guest's own kernel and whatever devices were passed through.
+- **Trusted with:** its own mounts, ports and devices exactly as installed; the share paths it was given.
+- **Must never reach:** more than the install flow warned about; the machine key; the daemon's own state; a root write through a path it controls (it is a share-writer too, §2.8). A container with `/mnt/user` mounted read-write is a share user for every purpose of this doc.
+
+### 2.12 A compromised dependency or CI step
+
+- **Capability:** a Go or npm dependency, a GitHub Action, a base image or a build step that executes attacker-chosen code during a build or in the product.
+- **Trusted with:** nothing beyond what the build gave it.
+- **Must never reach:** the release-signing key, the catalog-signing key, or a published artefact. Both private keys are held only as CI secrets and never in the repository (doc 01 §7, Q39). The signed checksums and the signed catalog are what let an installation notice an artefact that did not come from the project.
+
+---
+
+## 3. Entry points, mapped to code
+
+Everything an attacker can send something to, with the package that owns the check. A finding names an entry point from this list.
+
+| Entry point | Reachable by | Owner (in `dev`) |
+|---|---|---|
+| **HTTPS listener on `:8008`** — source filter at accept time, TLS, then the HTTP middleware | 2.1, 2.2 | `internal/auth/sourcefilter.go` (the ranges), `cmd/hoservad/sourcefilter_listener.go` (applied at accept), `cmd/hoservad/tlslistener.go` and `cmd/hoservad/https.go` (TLS, certificate) |
+| **Session, API-token and role checks** on every request | 2.1–2.4 | `internal/api/security.go` (`enforceRole`, the security handlers), `internal/api/roles.go` (one role per operation, checked against the spec), `internal/api/setupgate.go` (what is reachable before an admin exists) |
+| **Login, lockout, TOTP, session revocation** | 2.1, 2.2 | `internal/auth/ratelimit.go`, `internal/auth/password.go`, `internal/auth/totp.go`, `internal/auth/session.go`, `internal/api/auth_handler.go`, `internal/api/authservice.go` |
+| **`hoserva.sock`** — peer credential, then group | 2.5, 2.6 | `cmd/hoservad/unixsocket.go` (`authorizeUnixPeer`, `unixSocketAuthMiddleware`), `internal/auth/peercred.go` |
+| **Root-only recovery commands** over the same socket | 2.6 | `internal/api/recovery.go` (`requireRootPeer`), `internal/api/recovery_handler.go`, `internal/api/authservice_recovery.go` |
+| **`ups-control.sock`** (`root:nut 0660`) | 2.7 | `cmd/hoservad/upscontrol.go`, `cmd/hoservad/unixsocket.go` (`authorizeUnixPeer` with the `nut` group) |
+| **Share writes that reach root code paths** — mover, share relocation, rebalance, evacuation, stray-temp sweeps, `fix` | 2.8, 2.11 | `internal/cache/` (`mover.go`, `entry.go`, `relocate.go`, `rebalance.go`, `evacuate.go`, `dirmeta.go`), `internal/beneath/` (symlink-free resolution), `internal/parity/filemeta.go`, jobs in `internal/job/` (`mover_run.go`, `share_relocation_run.go`, `rebalance_run.go`, `evacuation_run.go`) |
+| **Share writes reaching generated config and the pool** — the Samba and NFS exports, the mergerfs mounts, the Browse tab | 2.8 | `internal/config/samba.go`, `internal/config/nfs.go`, `internal/config/pool.go`, `internal/pool/`, `internal/share/` (`paths.go`, `validate.go`, `access.go`, `unix_accounts.go`, `samba_accounts.go`) |
+| **The threshold guard** on every sync | 2.8 | `internal/parity/guard.go`, `internal/parity/snapraid_engine.go` (`Sync`), `internal/job/diffguard.go`, `cmd/hoservad/mover_threshold.go` |
+| **Template and catalog ingestion** — parse, validate, privilege summary, install | 2.9 | `internal/template/` (`parse.go`, `block.go`, `allow.go`, `privilege.go`, `runflags.go`, `install.go`), `internal/container/compose.go` |
+| **Catalog archive and its signature** | 2.9, 2.12 | `internal/template/archive.go` (`VerifyArchive`), `internal/template/refresh.go`, `internal/template/sources.go` (user-added sources and their keys), `internal/template/pubkey.go` |
+| **Unraid migration import** — scan upload, flash source, import, verification | 2.10 | `internal/migrate/` (`upload.go`, `flash.go`, `scan.go`, `import.go`, `verify.go`; its `CLAUDE.md` holds the rules), `internal/job/migration_*_run.go` |
+| **Backup restore and config import** — archive unpack, restore of files and database | 2.3, 2.10 | `internal/backup/` (`archive.go`, `restorefiles.go`, `restorecheck.go`, `importcheck.go`, `encrypt.go`), `internal/api/config_backup_handler.go` and the `config_import*` handlers |
+| **Outbound fetches** — update check and release index, catalog refresh, notification destinations, ACME, container registries | 2.3, 2.9, 2.12 | `internal/update/` (`host.go`, `verify.go`, `url.go`), `internal/template/refresh.go`, `internal/notify/sender*.go`, `internal/acme/`, `internal/container/registry.go` |
+| **Update install** — a downloaded `.deb` | 2.12 | `internal/update/install.go` (`ApplyVerifiedUpdate`), `internal/update/verify.go` (`VerifySHA256SUMS`) |
+| **External commands** — `snapraid`, `mergerfs`, `smartctl`, `docker compose`, `rclone`, `dpkg` | 2.3, 2.8, 2.9 | `internal/disk/runner.go`, `internal/parity/runner.go` and `argv.go`, `internal/container/compose.go`, `internal/backup/rclone.go`, `internal/share/commander.go` |
+| **Generated config files** | 2.5 | `internal/config/generator.go` and its siblings; the mode of each file written |
+| **Secrets in the database** | 2.5, 2.3 | `internal/auth/machinekey.go`, `internal/notify/secretcipher.go`, `internal/store/` |
+| **The CLI** — a client of the API, not an entry point of its own | 2.3, 2.6 | `cmd/hoserva/` (reaches the daemon only through the generated client, D18) |
+
+Future boundaries, listed so a finding about them is recognised as design work rather than a defect in shipped code: the optional browser terminal (off by default, gated by a confirmation that says it is root shell access, doc 01 §7) and VM management with PCI and USB passthrough (doc 14 §3; VFIO and bootloader changes are `safety-critical`). Neither is implemented on `dev`.
+
+---
+
+## 4. Security invariants
+
+Each invariant is one sentence and the code that enforces it. Audit findings and verifier verdicts cite them by number (`violates T2`). An invariant the code does not yet hold is still an invariant; a violation is a finding.
+
+| # | Invariant | Anchor |
+|---|---|---|
+| **T1** | Nothing syncs past a tripped threshold guard, and a sync is evaluated on a fresh diff every time; the guard and its tests are never weakened. | `internal/parity/guard.go`, `internal/parity/snapraid_engine.go` (`Sync`), `internal/job/diffguard.go` |
+| **T2** | Root never writes, renames, removes or changes ownership through a path component a lower-trust principal controls: every path beneath a data disk or a share is resolved without following a symlink in any component. | `internal/beneath/`, used by `internal/cache/` and `internal/parity/filemeta.go` |
+| **T3** | An API operation with no declared role is refused, and every operation's role comes from `api/openapi.yaml`, so an operation cannot be reachable at a lower role than the contract states. | `internal/api/security.go` (`enforceRole`), `internal/api/roles.go` and its spec cross-check test |
+| **T4** | Each Unix socket admits a peer only by uid 0, the daemon's own uid or membership of the group *that socket names*; the `nut` account is never admitted to `hoserva.sock`. | `cmd/hoservad/unixsocket.go` (`authorizeUnixPeer`), `cmd/hoservad/upscontrol.go` |
+| **T5** | The recovery commands (password reset, TOTP reset, unlock) admit the peer credential uid 0 only, and are audit-logged and announced. | `internal/api/recovery.go` (`requireRootPeer`), `internal/api/recovery_handler.go` |
+| **T6** | No user, template or imported input is ever interpolated into a shell command: arguments are parsed into a structured argv and executed directly, never through `sh -c`. | `internal/disk/runner.go`, `internal/parity/argv.go` and `runner.go`, `internal/container/compose.go`, `internal/template/runflags.go`, `internal/update/install.go` |
+| **T7** | A template cannot request a privilege the install flow does not show: every Compose key is on an allow list or refused, and the privilege summary is read from the Compose content, never from a field the template declares. | `internal/template/allow.go`, `internal/template/privilege.go` |
+| **T8** | A catalog archive is used only after its signature verifies against the compiled-in catalog key and its serial is not older than the current one; a release only after its signed checksums verify and the downloaded file matches; each compiled-in key verifies only its own kind of file. | `internal/template/archive.go` (`VerifyArchive`), `internal/update/verify.go`, `internal/update/install.go` (`ApplyVerifiedUpdate`) |
+| **T9** | An imported Unraid source is data, never instructions: nothing in it is executed, extracted to disk or followed as a path, and nothing is destroyed before the point of no return. | `internal/migrate/` (`flash.go`, `upload.go`; its `CLAUDE.md`) |
+| **T10** | Secrets are encrypted at rest under the machine key, the key is `root` `0600` in a directory only its owner can write, and the key is generated once at first start and never silently regenerated afterward — a missing or mismatched key after that is a fatal startup error, never a fresh key. | `internal/auth/machinekey.go`, `internal/notify/secretcipher.go` |
+| **T11** | A secret never leaves the database as plaintext: backups re-encrypt it under the backup passphrase, appdata archives are encrypted before upload, and no log line, error string or diagnostic bundle carries one. | `internal/backup/encrypt.go`, `internal/backup/baremetal_secrets.go`, `internal/backup/appdata_archive.go` |
+| **T12** | A generated file that carries a secret is not readable by an unprivileged local account. | `internal/config/generator.go` |
+| **T13** | The listener admits only the source ranges Q10 names unless the single explicit all-sources toggle is on; the filter runs at accept time against the real peer address and trusts no forwarding header. | `internal/auth/sourcefilter.go`, `cmd/hoservad/sourcefilter_listener.go` |
+| **T14** | Login failures give no signal — status, code or timing — that tells an unknown username from a wrong password, and a credential change revokes every other session of that account. | `internal/auth/ratelimit.go`, `internal/api/auth_handler.go`, `internal/api/authservice.go` and `internal/api/authstore.go` (`ActivateTOTPAndRevokeOtherSessions`, Q84) |
+| **T15** | The session cookie is `HttpOnly`, `Secure` and `SameSite=Strict`, and a session or token is stored only as a hash. | `internal/api/auth_handler.go`, `internal/auth/session.go`, `internal/auth/apitoken.go` |
+| **T16** | Parity is written only by a user-configured schedule or an explicit user action; an array-to-array relocation is two-phase — copy, verify, sync, then delete — and the source is deleted only after the sync that covers its copy. | `internal/job/scheduler.go` and `internal/job/schedule.go` (the schedule), `cmd/hoservad/share_relocation.go`, `internal/job/share_relocation_run.go`, `internal/cache/relocate.go`, `internal/parity/relocation_store.go` (Q14) |
+| **T17** | Hoserva makes no outbound request on its own beyond the update check, the catalog refresh and the container update check, each of which sends nothing beyond a plain HTTP request and can be disabled. | `internal/update/`, `internal/template/refresh.go`, `internal/container/updates.go` (Q49, Q67, Q81) |
+| **T18** | A destructive operation takes its confirmation from the caller's own request, and the CLI and the web UI ask the user for it rather than sending it themselves. | `internal/api/` (the refusals `update.ErrConfirmRequired`, `disk.ErrConfirmationMismatch`, `share.ErrConfirmation`), `cmd/hoserva/` |
+
+---
+
+## 5. Accepted residuals
+
+These are accepted in doc 01 §7 and are **not findings**, as is anything an admin can do by design (§2.3). The wording there is the authority; this section only names them so an audit does not re-report them. Tightening or loosening one is a change to doc 01 §7 first.
+
+1. **Login lockout is a LAN denial-of-service surface.** Any LAN client that knows or guesses the admin's username can keep backing off the real admin's account, the same way a forgetful admin locks themself out. Accepted rather than tightened; the root-only recovery path also clears a lockout, so the account stays recoverable without waiting the backoff out (Q78).
+2. **The shared loopback budget.** Every loopback source address — the whole `127.0.0.0/8` range and `::1` — shares one address subject, so a local unprivileged user can exhaust that budget and back off every loopback caller, including a browser on the host, for the same window. Accepted: a local user can already exhaust the host in other ways, and the Unix-socket recovery path is never rate-limited.
+3. **The evictable unknown-username table.** The unknown-username and source-address budgets each live in a capped, evictable table (10,000 subjects each), so a sustained flood large enough to fill and evict from the unknown-username table can lift an unknown username's own lockout early, where a real account's, never capped or evicted, would not. Accepted, not a defect.
+4. **`hoserva` group membership is root-equivalent** (Q44). A finding that a group member can do what the API allows an admin to do is not a finding.
+5. **The API runs as root.** This is unavoidable because it partitions disks and mounts filesystems; the attack surface is kept small rather than the privilege removed (doc 01 §7).
+
+---
+
+## 6. Severity rubric
+
+Five levels, defined in Hoserva's terms. The rating is the lowest level whose definition the finding meets after the anti-inflation rules below.
+
+| Level | Definition |
+|---|---|
+| **Critical** | An attacker below admin reaches root, or destroys or exposes array data, **from the network in the default configuration** (the production build, the LAN-only listener). Attackers 2.1, 2.2 and 2.4 are the ones that can do this. |
+| **High** | The same outcome from a lower-trust *local or content* position: a share user (2.8), a local unprivileged user (2.5), a template (2.9), an imported flash (2.10), a guest (2.11) or the `nut` child (2.7). Also: any bypass of the threshold guard (T1), a template escaping what the install flow warned about (T7), a break in signature verification (T8), and a break in the root-only recovery gate (T5). |
+| **Medium** | A confidentiality or integrity loss that is bounded, needs a precondition the default configuration does not give, or stops short of root or array data: a secret exposed to a local account, a session or credential weakness that needs an adjacent position, a violation of an invariant with no working path to a High outcome. |
+| **Low** | A weakness whose exploitation needs an already privileged or already compromised position, or a defence-in-depth gap with no attack path today. |
+| **Info** | An observation with no exploitable path: a missing hardening step, a wording or documentation gap in a security control, a non-default configuration the product already warns about. |
+
+**Anti-inflation rules.** A finding is rated only after all of these hold:
+
+1. **A reachable entry point** from §3 — named, with its owner.
+2. **A named attacker** from §2, using only that attacker's capability. A finding that needs admin, or a capability the attacker lacks, is not a finding at that level.
+3. **The production build and defaults** — the packaged daemon, the LAN-only listener, the shipped settings. A path that exists only with a developer flag, in the mock API, in a test helper or after the user turned a warned toggle on is rated by that precondition, not as if it were the default.
+4. **Admin by design is not a finding**, and neither is anything in §5.
+5. **Theory is checked in theory.** A finding states the exact sequence from entry point to outcome, and a verifier re-derives it independently before it is rated above Low.
+
+### Worked examples
+
+The first four are drawn from Hoserva's own history; the Critical and Info examples are constructed against Hoserva's own surfaces because no shipped defect of those levels exists in the project's public record.
+
+- **Critical (constructed).** An operation is added to `api/openapi.yaml` with `x-hoserva-role: public` that starts a disk-format job. An unauthenticated LAN client (2.1) reaches it on the default listener through the HTTPS entry point and destroys array data. Review of the spec change is what stops this: T3 makes the spec the single authority for roles and refuses an operation that declares none, but an operation declared public with a matching role-map entry passes every check, exactly as the first-admin operation does.
+- **High — #656.** The shared copy routine, run as root by the mover and share relocation, resolved target paths by name. A share user (2.8) who replaced a target directory with a symlink could make the root daemon create and rename files anywhere on the host. The attacker is below admin and local to the share; the outcome is root writes through a path the attacker controls (T2). Fixed.
+- **Medium — #260.** Every generated config file was written `0644`, including `upsmon.conf`, which carries the UPS monitoring password. A local unprivileged user (2.5) could read it. A secret is exposed, but not root or array data, and it needs a local account (T12). Fixed.
+- **Low — #573.** A hand-edited cron line in an imported flash (2.10) could carry text such as `TOKEN=…` into the migration report as a folder name, breaking the rule that a report never quotes file content beyond names and counts. The report is shown only to the admin who ran the scan, and the plugin never writes such a line.
+- **Info (constructed).** The wording of a control in doc 01 §7 is looser than what the code enforces. The code is correct and the doc is wrong; nothing is exploitable, and the fix is a documentation edit.
+
+---
+
+## 7. Disclosure split
+
+The rubric decides where a finding is recorded. A finding rated **Critical or High** goes to a private repository security advisory, never to a public issue; **Medium, Low and Info** findings are public issues carrying the `security` label. A public finding that shares a root cause with a withheld one is withheld too. How a report is made, the advisory workflow and its tooling are `SECURITY.md` and the disclosure default in doc 13; this doc only supplies the severity that drives the split.

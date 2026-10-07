@@ -27,6 +27,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 | `12-repo-architecture.md` | Repo layout, agent workflow |
 | `13-open-questions.md` | **Every unsettled question, each with a recommended default** |
 | `14-virtual-machines.md` | VM management, libvirt/KVM, PCI/USB passthrough, Unraid VM migration |
+| `15-threat-model.md` | Anything security-relevant: attackers, entry points, security invariants `T1`…, accepted residuals, the severity rubric |
 
 **Decisions vs. defaults.** A `Dn` in doc 00 §5 is settled — reopening it needs a new reason, not a new preference. A `Qn` in doc 13 is a recommended default the docs are written to — follow it, and if your work shows it is wrong, say so in your report or issue rather than silently diverging. Work that settles or changes a default updates its doc 13 entry in the same change.
 

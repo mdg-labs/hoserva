@@ -669,7 +669,7 @@ The `domains` share path matches Unraid's own exactly (D10-style path compatibil
 ### Q52 — The threshold guard vs. large VM disk images
 **Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 02 §2, Q13, Q15, Q16, doc 14 §2
 
-**The gap:** a running VM can dirty gigabytes inside one qcow2 file between syncs. That's one file rewriting, not many files deleted, so it doesn't trip the guard by count — but the guard's ransomware-detection value (doc 01 §7's threat-model note) doesn't reach *inside* a VM's own filesystem, and a nightly sync can move a large amount of parity data for what looks like a single, unremarkable file change.
+**The gap:** a running VM can dirty gigabytes inside one qcow2 file between syncs. That's one file rewriting, not many files deleted, so it doesn't trip the guard by count — but the guard's ransomware-detection value (doc 15 §2.8) doesn't reach *inside* a VM's own filesystem, and a nightly sync can move a large amount of parity data for what looks like a single, unremarkable file change.
 
 **Default:** vdisk shares are **not** given special guard exemptions — the existing count/percentage logic already doesn't trip on one large file rewrite — but the UI marks VM disk shares as "not diff-protected against changes inside the VM," so the guard's silence there isn't mistaken for a stronger guarantee than it is.
 
