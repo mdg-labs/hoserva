@@ -13,7 +13,9 @@ You are reviewing **{{ISSUE_COUNT}} issue(s)**, each with its own commit in
 one workspace:
 
 {{ISSUE_LIST — one line per issue, in commit order:
-"1. #<number> — <title> — `<sha>`". For a single issue this is one line.}}
+"1. #<number> — <title> — `<sha>`". For a single issue this is one line. An
+advisory target is "1. <GHSA-id> — <summary> — `<sha>`" and is always the
+only entry.}}
 
 **One verdict per issue, judged independently.** Run every layer below
 against each commit separately, against *that* issue alone. A mixed result
@@ -81,6 +83,28 @@ else is (`ps -o pid,lstart,args -p <pid>`) before touching it.
 
 No recursive scan rooted at `/`. An explicit Bash `timeout` on anything that
 builds, tests or scans. Nothing you start outlives your dispatch.
+
+{{IF ADVISORY — fill when the target is a private security advisory; omit otherwise:}}
+## 🔴 This target is a private security advisory
+
+What you are reviewing is a fix for a finding that is **not public**. Make
+**no GitHub write of any kind**: no comment, no `issue-status.sh`, no
+`epic-status.sh`, no label, no `scripts/gh-rest.sh` write. Skip each issue's
+"Post this issue's verdict" section below; your returned message is the whole
+verdict and it never leaves this session. Do not copy anything from the
+advisory text into a place that could be public.
+
+**Check the commit message and everything the diff adds for reproduction or
+exploit detail**, under layers 2 and 4. The message must be neutral: it says
+what the code now does and nothing about how it used to fail. Any of these is
+a **blocking** finding, in the commit message, a code comment, a test name or
+a fixture: reproduction steps, a payload or crafted input, a trace, an
+attacker or victim narrative, a severity, a quotation or paraphrase of the
+advisory, or wording that calls the change a vulnerability or security fix.
+The message ends in `Refs: {{ADVISORY_ID}}` and carries no `Fixes` line;
+anything else is blocking too. Quoting a blocking finding in your return, name
+the line and the kind of detail, not the detail itself.
+{{END IF}}
 
 ## How to read a commit
 
@@ -301,7 +325,7 @@ evidence is a FAIL.{{END IF}}
 
 ## What was supposed to happen
 
-{{ISSUE_BODY}}
+{{ISSUE_BODY — for an advisory target, the advisory's `description`}}
 
 ### Comments on the issue — read these, they override the body
 
@@ -311,12 +335,15 @@ Its **blocking** findings are what a fix round must close; its notes were
 never required.
 
 {{ISSUE_COMMENTS — the full thread, verbatim, or "No comments on this
-issue." Never summarize it away.}}
+issue." Never summarize it away. An advisory target has none.}}
 
 **Declared scope:** {{SCOPE_PATHS}}
 **Reviewed commit:** `{{SHA}}`
 
 ## Post this issue's verdict, move its label, then move on
+
+{{IF ADVISORY: **Skip this whole section for an advisory target** — post nothing, move
+nothing, and return the verdict as your final message.}}
 
 1. Fill `.claude/skills/orchestrate/templates/verification-comment.md`
    (every `{{…}}` token; omit each findings section that is empty) into a
@@ -346,14 +373,15 @@ issue." Never summarize it away.}}
 
 ---
 
-Those calls are your only GitHub writes. You never close, reopen, or edit an
-issue, and never touch any label but `status:*`.
+Those calls are your only GitHub writes (an advisory target has none). You
+never close, reopen, or edit an issue, and never touch any label but
+`status:*`.
 
 Before handing off: your lab is destroyed and confirmed gone, any worktree
 you added is removed, and nothing you started is still running.
 
 Then return **every** verdict as your final message — one line per issue:
-`#<number>: PASS` or `#<number>: FAIL`, followed by that issue's blocking
+`#<number>: PASS` or `#<number>: FAIL` (`<GHSA-id>: PASS` or `<GHSA-id>: FAIL` for an advisory target), followed by that issue's blocking
 findings (notes stay in the comment) — plus any **findings outside these
 issues**.
 

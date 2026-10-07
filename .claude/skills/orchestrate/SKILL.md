@@ -1,7 +1,7 @@
 ---
 name: orchestrate
-description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local dev only after a PASS and pushing it there immediately, including safety-critical commits, unless it's blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run dev-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
-argument-hint: <issue-number>... [--no-discord]
+description: Given a GitHub issue number (a single item, or an epic with sub-issues) or a private security advisory id (`--advisory GHSA-…`), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local dev only after a PASS and pushing it there immediately, including safety-critical commits, unless it's blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run dev-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
+argument-hint: <issue-number>... [--advisory <GHSA-id>]... [--no-discord]
 allowed-tools:
   - Read
   - Grep
@@ -27,6 +27,12 @@ the fix, regardless of the issue's own labels. `main` is out of scope for
 this skill entirely: it only moves via a `dev → main` pull request the
 maintainer opens by hand, gated by GitHub's required status checks (doc 12
 §6).
+
+A finding the doc 15 rubric rates Critical or High lives in a private
+repository security advisory, not a public issue (Q91). `--advisory GHSA-…`
+fixes one through this same loop — executor, Opus verifier, landing on `dev`
+— without writing anything to a public GitHub surface (step 0a). It may be
+given alone or beside issue numbers.
 
 An issue whose body carries a `Lands in: mdg-labs/hoserva-catalog` line is
 still tracked here, but its commits land in the catalog repository instead,
@@ -117,9 +123,57 @@ scripts/gh-rest.sh issue-view <N> --jq '{number,title,body,labels,state}'
 
 Call the resulting set of open issue numbers **T**.
 
+## 0a. Advisory targets
+
+For each `--advisory <GHSA-id>`:
+
+```
+scripts/gh-rest.sh advisory-get <GHSA-id> --jq '{ghsa_id,summary,description,severity,state}'
+```
+
+If the call fails — a malformed id, an advisory that does not exist or that
+this account cannot read — stop and say so; never guess an id. The
+advisory's `description` is its body, and it is the only thing about it that
+reaches an executor or verifier. The advisory joins **T** as an **advisory
+unit**, identified by its GHSA id; its unit id (steps 5–7) is `adv-` plus the
+id's three four-character groups joined with `-` (`adv-abcd-efgh-ijkl`).
+
+An advisory unit differs from an issue in exactly these ways, and in no
+others:
+
+- **Nothing is written to a public GitHub surface** — no issue, comment,
+  label, status label, epic rollup, branch (step 7's `ci/<unit-id>` run
+  included), pull request or any text naming it, beyond the `Refs:` trailer
+  of its landing commit (step 8). Verdicts, findings and the run log stay in
+  this session and the report (step 12). It has no `status:*` label, so
+  every `issue-status.sh` / `epic-status.sh` call in this skill, and in its
+  templates, is skipped for it.
+- **No comments, relationships or epic.** Step 1's comment and relationship
+  reads, and step 1a (it always lands in `mdg-labs/hoserva`), do not apply.
+- **The readiness gate (step 1b) is read by hand** from the description, since
+  `scripts/issue-readiness.sh` only reads issues: it needs acceptance
+  criteria and an out-of-scope section like an issue's body. A description
+  without them is reported and left out of T — an `issue-refiner` edits issues
+  and never touches an advisory; the maintainer fixes the description with
+  `scripts/gh-rest.sh advisory-update`.
+- **File scope (step 3)** comes from the paths the description names; if it
+  names none, its scope is the whole repo.
+- **Never bundled** (step 4): it is its own unit, with its own agent and its
+  own line in the report. The promotion-diff budget applies to it unchanged.
+- **The commit message is neutral** and ends in `Refs: <GHSA-id>` instead of
+  `Fixes #<n>` (steps 6 and 8). Neutral means it says what the code now does
+  and nothing about how it used to fail: no reproduction, trace, payload,
+  attacker narrative, severity or quotation or paraphrase of the advisory.
+  The same holds for every code comment, test name and fixture the diff adds.
+  The executor and verifier dispatches state the rule (the `ADVISORY` blocks
+  in both templates).
+- **The verifier is always Opus**, whatever the diff's size (step 7), and
+  posts nothing to GitHub.
+
 ## 1. Pull each issue's full body, comments, and relationships
 
-For every issue in T — the body and its comments are two different REST
+For every issue in T (an advisory unit has no comments or relationships —
+step 0a) — the body and its comments are two different REST
 endpoints, so this is always two calls:
 
 ```
@@ -314,6 +368,7 @@ first, delete that edge, re-layer the waves.
 
 **Never bundle:**
 
+- an advisory unit (step 0a) with anything;
 - issues with different landing repositories (step 1a);
 - an issue scoped "the whole repo";
 - an issue whose thread carries a verification FAIL, or that is entering a fix round;
@@ -440,7 +495,8 @@ attempt re-clones fresh.
 
 ## Status labels — exactly one, always
 
-Every issue carries exactly **one** `status:*` label. Everything goes through:
+Every issue carries exactly **one** `status:*` label. (An advisory unit has
+none — step 0a.) Everything goes through:
 
 ```
 scripts/issue-status.sh <issue-number> <status>
@@ -486,7 +542,11 @@ it is `safety-critical` or a `spike`. On a fix round, the rejected SHA and the
 verifier's findings verbatim.
 
 `FIXES_TRAILER` is `Fixes #<n>` for a `mdg-labs/hoserva` landing and
-`Fixes mdg-labs/hoserva#<n>` for a `mdg-labs/hoserva-catalog` one. Fill the
+`Fixes mdg-labs/hoserva#<n>` for a `mdg-labs/hoserva-catalog` one. For an
+advisory unit it is `Refs: <GHSA-id>`: fill the template's `ADVISORY` blocks
+(the neutral-commit-message rule, no status calls) and put the advisory's
+`description` where the issue body goes, with "No comments on this issue."
+where the thread goes. Fill the
 template's `IF LANDING_REPO is mdg-labs/hoserva-catalog` blocks for the latter,
 so its executor and verifier run the catalog repository's own checks instead
 of `make test`, and the `NO_HOOKS` blocks when the clone has no
@@ -522,7 +582,8 @@ run
 scripts/issue-status.sh <first issue's number> in-progress
 scripts/epic-status.sh <epic number>   # only if the unit has one
 ```
-for the **first** issue in the unit (bundle order). This makes the label
+for the **first** issue in the unit (bundle order); an advisory unit has no
+label to claim, so skip this. This makes the label
 accurate the instant dispatch happens, independent of whatever the executor
 itself does. It's harmless if the executor's own claim call runs again
 later for the same issue — the script replaces the whole status-label set
@@ -562,7 +623,9 @@ Read `.claude/skills/orchestrate/templates/verifier-prompt.md` and fill it:
 per issue, its details, the same comment thread, its scope, its flags, and
 **its own commit SHA**; once, the workspace, lab id, attempt number, epic and
 `LANDING_REPO`/`HOSERVA_ROOT` (step 1a).
-On a fix round, fill the `FIX_ROUND` block too: the rejected SHA, where it
+For an advisory unit, fill the template's `ADVISORY` blocks: the verifier
+posts no comment and moves no label, and its returned verdict is read only
+here. On a fix round, fill the `FIX_ROUND` block too: the rejected SHA, where it
 can be read, and the previous round's **blocking** findings verbatim — the
 verifier checks those are closed and reviews what changed, rather than
 restarting the review.
@@ -570,14 +633,17 @@ restarting the review.
 ```
 Agent({
   subagent_type: "task-verifier",
-  model: "opus",      // any issue in the unit is safety-critical, OR the unit's diff is large (below)
+  model: "opus",      // any issue in the unit is safety-critical, OR the unit is an advisory unit, OR the unit's diff is large (below)
   model: "sonnet",    // otherwise
   description: "Verify <unit-id> attempt <n>",
   prompt: <the filled template>
 })
 ```
 
-**Acceptance that only a real GitHub Actions run can show** — a changed
+**Acceptance that only a real GitHub Actions run can show** (never for an
+advisory unit: pushing its commit to a `ci/` branch would publish the fix
+before it is verified, so a unit whose acceptance needs a real run is left
+out of T and reported) — a changed
 workflow under `.github/workflows/`, a nightly L3 step, a release or Pages
 job — cannot be verified from the scratch clone. Before dispatching the
 verifier, run it for real, without touching `dev`:
@@ -620,7 +686,7 @@ triage estimate is worth a line in the report as well.
 
 **One verifier per unit per attempt**, verdicts **per issue**: all seven layers
 run against each commit separately, one comment and one label move per
-issue. **Only blocking findings fail an issue**; notes are recorded in the
+issue (none for an advisory unit). **Only blocking findings fail an issue**; notes are recorded in the
 comment and go nowhere else — which is why a note may never describe a
 defect: a wrong behaviour in code the diff adds is blocking, one in
 untouched code is a finding outside the issue (step 11), and a capability
@@ -628,7 +694,8 @@ with no production caller fails layer 7. If a PASS comment's notes
 describe a concrete defect anyway, treat that note as a finding outside the
 issue and route it in step 11. A mixed PASS/FAIL result is normal. The verifier posts its own
 comments and moves its own labels; read its returned verdicts rather than
-re-deriving them from GitHub.
+re-deriving them from GitHub. An advisory unit's verifier posts and moves
+nothing, so its returned verdict is the only record.
 
 ## 8. On PASS — land, sequentially, never in parallel
 
@@ -696,6 +763,11 @@ git cherry-pick -n FETCH_HEAD
   ```
   Drop the `-s` only where the hook exists (the real repo). You may change
   only the message, never the diff.
+
+  For an advisory unit the trailer is the executor's `Refs: <GHSA-id>` and
+  nothing is added: no `Fixes` line for anything, no epic trailer. The id
+  appears nowhere else in the message, and the message stays neutral
+  (step 0a). The push is the same `git push origin dev`.
 
   For a `mdg-labs/hoserva-catalog` landing the trailers are
   `Fixes mdg-labs/hoserva#<issue-number>` and, only if it is really the
@@ -776,7 +848,8 @@ defect stays; anything else is a note, and you say so in the report.
 
 If attempt 3 also fails: stop. Put the issue back to `status:ready`, then
 `AskUserQuestion` with the latest findings — keep trying / hand it to the
-maintainer / skip for now. Destroy its lab and delete its clone.
+maintainer / skip for now. Destroy its lab and delete its clone. (An advisory
+unit has no label to reset, and its findings are never posted anywhere.)
 
 ## 10. Repeat until T is empty
 
@@ -830,6 +903,12 @@ run.
 Never fold a finding into an unrelated landing commit: a pulled-in finding
 gets its own issue and its own commit.
 
+**A finding an advisory unit surfaces is never filed as a public issue if it
+could be exploited.** Rate it with doc 15 §6; one that is Critical or High
+goes into the report for the maintainer to record as an advisory (Q91), and
+nothing else is written anywhere public. A Medium or lower one is routed as
+above.
+
 ## 12. Compose the report
 
 - What landed (issue → commit SHA → one line), and whether it reached
@@ -839,6 +918,11 @@ gets its own issue and its own commit.
   worth naming separately so the maintainer knows which ones deserve a
   closer read even though they're already on `origin/dev`
 - **Commits held back by a fresh `blockedBy`** — landed locally, not pushed, because step 11 filed a follow-up against them during this run (their own list, even if empty: "none this run")
+- **Advisory targets** — each by its GHSA id (this report stays local):
+  landed commit and whether it reached `origin/dev`, or why it did not. For
+  every one that landed: the fix is on `dev`, and once it reaches `main` the
+  maintainer runs `scripts/gh-rest.sh advisory-publish <GHSA-id>` — nothing
+  else records it (Q91). "none this run" when there were none.
 - What's blocked and why (`needs-sudo` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
 - Bundles and why
 - What step 11 routed: pulled into this run (issue → commit), deferred
@@ -872,6 +956,12 @@ markdown to a temp file and run:
 scripts/notify-discord.sh <path to the markdown file>
 ```
 
+A run with an advisory unit sends nothing about it beyond a count: leave it
+out of the file's landed, blocked and findings sections entirely — its id,
+summary, paths, SHA and subject included — and add one line,
+`1 private advisory fixed` (`N private advisories fixed` for several). One
+that did not land adds `1 private advisory not fixed` and no reason.
+
 The script owns the webhook (`DISCORD_WEBHOOK` in `~/.claude/.env`), the
 escaping and the length cap; you never read the secret. A failure is worth
 one line to the user and at most one retry. Then give the user the step-12
@@ -894,4 +984,5 @@ report as your final message.
 - **Surfaced findings are filed and routed as they arrive** — pulled into this run when they belong to its scope, otherwise attached to the open epic they belong to.
 - **Every written artifact uses its template** — dispatch prompts, the executor's report, the verifier's comment.
 - **Every dispatch prompt is passed inline in full** — never as a pointer to a file holding it.
+- **An advisory unit writes nothing to a public GitHub surface.** No issue, comment, label, `status:*` call, epic rollup, `ci/` branch or pull-request text; its commit message is neutral and carries `Refs: <GHSA-id>` and no `Fixes`; its verifier is Opus and posts nothing; Discord gets a count only (step 0a, step 13).
 - **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message — unless it was started with `--no-discord`.
