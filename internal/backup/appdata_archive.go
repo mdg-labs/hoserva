@@ -443,10 +443,12 @@ var beforeAppdataMeta func()
 // through the descriptor of the directory it lies in, which is opened from
 // the one above with O_NOFOLLOW. It creates only directories, regular files
 // and symbolic links, and refuses an entry that would be written through a
-// symbolic link, so nothing lands outside its target. Ownership is restored
-// when running as root.
-func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
-	if len(targets) != len(hdr.Dirs) {
+// symbolic link, so nothing lands outside its target. Each target's
+// descriptor must pass checkCreatedDir, and its identity is recorded in
+// trees; a target that fails the check keeps what it holds and is not
+// recorded. Ownership is restored when running as root.
+func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string, trees []liveIdentity) error {
+	if len(targets) != len(hdr.Dirs) || len(trees) != len(targets) {
 		return errors.New("extracting appdata: one target per archived directory is required")
 	}
 	walkers := make([]*beneath.Walker, len(targets))
@@ -465,10 +467,19 @@ func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataH
 		if err := unix.Mkdirat(parent, name, 0o700); err != nil {
 			return fmt.Errorf("creating %s: %w", t, err)
 		}
+		if beforeAppdataTreeOpen != nil {
+			beforeAppdataTreeOpen(t)
+		}
 		fd, err := beneath.Open(parent, name, unix.O_RDONLY|unix.O_DIRECTORY)
 		if err != nil {
 			return fmt.Errorf("opening %s: %w", t, err)
 		}
+		id, err := checkCreatedDir(fd, t)
+		if err != nil {
+			_ = unix.Close(fd)
+			return fmt.Errorf("refusing the tree: %w", err)
+		}
+		trees[i] = id
 		walkers[i] = beneath.NewWalkerAt(fd)
 	}
 

@@ -71,11 +71,21 @@ func removeEntry(parent int, name string, mode uint32) error {
 		return err
 	}
 	defer func() { _ = unix.Close(fd) }()
-	names, err := ReadNames(fd)
-	if err != nil {
+	if err := removeContents(fd, name); err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return nil
 		}
+		return err
+	}
+	return unlinkat(parent, name, unix.AT_REMOVEDIR)
+}
+
+// removeContents removes everything in the directory fd, which is named name
+// for error messages. Listing a directory that has been removed is an error
+// wrapping unix.ENOENT.
+func removeContents(fd int, name string) error {
+	names, err := ReadNames(fd)
+	if err != nil {
 		return fmt.Errorf("read %s: %w", name, err)
 	}
 	for _, n := range names {
@@ -90,7 +100,43 @@ func removeEntry(parent int, name string, mode uint32) error {
 			return fmt.Errorf("%s/%w", name, err)
 		}
 	}
-	return unlinkat(parent, name, unix.AT_REMOVEDIR)
+	return nil
+}
+
+// ErrNotExpected is returned by RemoveDirIf for a directory that is not the
+// one the caller expected; nothing in it was removed.
+var ErrNotExpected = errors.New("is not the expected directory")
+
+// RemoveDirIf removes the directory name in parent, and everything in it, only
+// if it is the directory same accepts by device and inode. It opens name once
+// with O_NOFOLLOW, asks same about the descriptor it got, and removes the
+// contents through that descriptor with the same per-level walk as RemoveAll,
+// so a name swapped for another directory after the open cannot redirect it.
+// Only the final unlinkat resolves the name again, and it removes an empty
+// directory only, so a name that now holds something else fails with ENOTEMPTY
+// and loses nothing. A name that is a symbolic link is ErrSymlink, a
+// directory that is not the expected one ErrNotExpected and a missing one an
+// error wrapping unix.ENOENT.
+func RemoveDirIf(parent int, name string, same func(dev, ino uint64) bool) error {
+	fd, err := Open(parent, name, unix.O_RDONLY|unix.O_DIRECTORY)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat %s: %w", name, err)
+	}
+	if !same(uint64(st.Dev), uint64(st.Ino)) {
+		return fmt.Errorf("%s: %w", name, ErrNotExpected)
+	}
+	if err := removeContents(fd, name); err != nil {
+		return fmt.Errorf("remove %s: %w", name, err)
+	}
+	if err := unix.Unlinkat(parent, name, unix.AT_REMOVEDIR); err != nil {
+		return fmt.Errorf("remove %s: %w", name, err)
+	}
+	return nil
 }
 
 func unlinkat(parent int, name string, flags int) error {

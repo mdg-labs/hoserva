@@ -6,9 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/mdg-labs/hoserva/internal/beneath"
 	"github.com/mdg-labs/hoserva/internal/container"
@@ -300,6 +303,16 @@ func TestAppdataRestore_RestartsTheContainerWhenExtractionFails(t *testing.T) {
 func swapAppdataDirs(swaps []appdataSwap) error {
 	dirs := &heldDirs{}
 	defer dirs.close()
+	for i := range swaps {
+		id, err := dirs.recordLive(swaps[i].live)
+		if err != nil {
+			return err
+		}
+		swaps[i].recorded = id
+		if swaps[i].tree, err = dirs.recordLive(swaps[i].fresh); err != nil {
+			return err
+		}
+	}
 	return dirs.swap(swaps)
 }
 
@@ -653,4 +666,389 @@ func TestAppdataRestore_WorksInTheDirectoriesItOpenedWhenAParentIsSwappedForALin
 	if len(entries) != 1 {
 		t.Fatalf("the directory the restore opened holds %d entries after the restore, want alpha only", len(entries))
 	}
+}
+
+// otherAppdata is a directory of another application, with a nested file.
+type otherAppdata struct{ files map[string]string }
+
+func newOtherAppdata() otherAppdata {
+	return otherAppdata{files: map[string]string{"data": "not part of this restore", "sub/state": "also not"}}
+}
+
+func (o otherAppdata) create(t *testing.T, dir string) {
+	t.Helper()
+	for rel, content := range o.files {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (o otherAppdata) requireIntactAt(t *testing.T, dir string) {
+	t.Helper()
+	for rel, content := range o.files {
+		if got := readFile(t, filepath.Join(dir, rel)); got != content {
+			t.Fatalf("%s = %q, want %q", filepath.Join(dir, rel), got, content)
+		}
+	}
+}
+
+// putOtherAppdataInPlaceOfLive moves the live directory aside and puts the
+// other application's directory at its name.
+func (r *restoreRig) putOtherAppdataInPlaceOfLive(t *testing.T, other otherAppdata) (aside string) {
+	t.Helper()
+	aside = r.dir + ".aside"
+	if err := os.Rename(r.dir, aside); err != nil {
+		t.Fatal(err)
+	}
+	other.create(t, r.dir)
+	return aside
+}
+
+func (r *restoreRig) withLocalSnapshotDestination(t *testing.T) {
+	t.Helper()
+	if err := r.store.CreateDestination(context.Background(), Destination{
+		ID: DefaultPoolID, Name: "Pool", Type: TypeLocal, Path: r.poolDir, Enabled: true,
+		Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (r *restoreRig) requireNothingLeftNextToLive(t *testing.T, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(r.appdata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("the appdata location holds %v, want %v", got, want)
+	}
+}
+
+func TestAppdataRestore_SwapsOnlyTheDirectoryIdentityRecordedBeforeTheUnpack(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var aside string
+	afterAppdataParents = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	t.Cleanup(func() { afterAppdataParents = nil })
+
+	if err := rig.restore(t); err == nil {
+		t.Fatalf("Restore succeeded over a directory other than the one it recorded\n%s", rig.out)
+	}
+	other.requireIntactAt(t, rig.dir)
+	if got := readFile(t, filepath.Join(aside, "config")); got != "v2-live" {
+		t.Fatalf("the directory the restore started from: config = %q, want v2-live", got)
+	}
+	if got := readFile(t, filepath.Join(aside, "extra")); got != "added after the backup" {
+		t.Fatalf("the directory the restore started from: extra = %q", got)
+	}
+	rig.requireNothingLeftNextToLive(t, "alpha", "alpha.aside")
+	alpha, _ := rig.engine.Inspect(context.Background(), "alpha")
+	if alpha.State != "running" {
+		t.Fatalf("alpha = %s after the refused restore, want it started again", alpha.State)
+	}
+}
+
+func TestAppdataRestore_DoesNotSwapOverADirectoryThatWasAbsentWhenRecorded(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	if err := os.RemoveAll(rig.dir); err != nil {
+		t.Fatal(err)
+	}
+	other := newOtherAppdata()
+	afterAppdataParents = func() { other.create(t, rig.dir) }
+	t.Cleanup(func() { afterAppdataParents = nil })
+
+	if err := rig.restore(t); err == nil {
+		t.Fatalf("Restore succeeded over a directory that appeared after it recorded none\n%s", rig.out)
+	}
+	other.requireIntactAt(t, rig.dir)
+	rig.requireNothingLeftNextToLive(t, "alpha")
+}
+
+func TestAppdataRestore_PutsBackAnEntryMovedAsideThatIsNotTheRecordedOne(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var aside string
+	beforeAppdataMoveAside = func() {
+		beforeAppdataMoveAside = nil
+		aside = rig.putOtherAppdataInPlaceOfLive(t, other)
+	}
+	t.Cleanup(func() { beforeAppdataMoveAside = nil })
+
+	if err := rig.restore(t); err == nil {
+		t.Fatalf("Restore succeeded over a directory other than the one it recorded\n%s", rig.out)
+	}
+	other.requireIntactAt(t, rig.dir)
+	if got := readFile(t, filepath.Join(aside, "config")); got != "v2-live" {
+		t.Fatalf("the directory the restore started from: config = %q, want v2-live", got)
+	}
+	rig.requireNothingLeftNextToLive(t, "alpha", "alpha.aside")
+}
+
+// replaceEveryRestoreNameWithOtherAppdata renames each entry the restore
+// created next to the live directory out of the way and puts a different
+// application's directory at its name.
+func (r *restoreRig) replaceEveryRestoreNameWithOtherAppdata(t *testing.T, other otherAppdata) (moved []string) {
+	t.Helper()
+	entries, err := os.ReadDir(r.appdata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !strings.Contains(e.Name(), ".hoserva-") {
+			continue
+		}
+		p := filepath.Join(r.appdata, e.Name())
+		if err := os.Rename(p, p+".moved"); err != nil {
+			t.Fatal(err)
+		}
+		other.create(t, p)
+		moved = append(moved, p)
+	}
+	if len(moved) == 0 {
+		t.Fatal("the restore had created nothing next to the live directory to replace")
+	}
+	return moved
+}
+
+func TestAppdataRestore_RemovesOnlyTheDirectoryItReplacedWhenTheNameChangesBeforeTheRemoval(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var replaced []string
+	beforeAppdataCleanup = func() {
+		beforeAppdataCleanup = nil
+		replaced = rig.replaceEveryRestoreNameWithOtherAppdata(t, other)
+	}
+	t.Cleanup(func() { beforeAppdataCleanup = nil })
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	for _, p := range replaced {
+		other.requireIntactAt(t, p)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want the archived v1", got)
+	}
+}
+
+func TestAppdataRestore_RemovesOnlyTheTreeItUnpackedWhenARefusedRestoreFindsTheNameChanged(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var aside string
+	afterAppdataParents = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	var replaced []string
+	beforeAppdataCleanup = func() {
+		beforeAppdataCleanup = nil
+		replaced = rig.replaceEveryRestoreNameWithOtherAppdata(t, newOtherAppdata())
+	}
+	t.Cleanup(func() { afterAppdataParents, beforeAppdataCleanup = nil, nil })
+
+	if err := rig.restore(t); err == nil {
+		t.Fatalf("Restore succeeded over a directory other than the one it recorded\n%s", rig.out)
+	}
+	other.requireIntactAt(t, rig.dir)
+	if got := readFile(t, filepath.Join(aside, "config")); got != "v2-live" {
+		t.Fatalf("the directory the restore started from: config = %q, want v2-live", got)
+	}
+	for _, p := range replaced {
+		newOtherAppdata().requireIntactAt(t, p)
+	}
+}
+
+func TestSwapAppdataDirs_PutsBackOnlyTheTreesItSwappedIn(t *testing.T) {
+	root := t.TempDir()
+	write := func(p, content string) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live1, fresh1 := filepath.Join(root, "one"), filepath.Join(root, "one.new")
+	live2, fresh2 := filepath.Join(root, "two"), filepath.Join(root, "two.new")
+	write(filepath.Join(live1, "f"), "live1")
+	write(filepath.Join(live2, "f"), "live2")
+	write(filepath.Join(fresh1, "f"), "fresh1")
+	other := newOtherAppdata()
+	beforeAppdataRollback = func() {
+		beforeAppdataRollback = nil
+		if err := os.Rename(live1, live1+".moved"); err != nil {
+			t.Fatal(err)
+		}
+		other.create(t, live1)
+	}
+	t.Cleanup(func() { beforeAppdataRollback = nil })
+
+	err := swapAppdataDirs([]appdataSwap{
+		{live: live1, fresh: fresh1, old: filepath.Join(root, "one.old")},
+		{live: live2, fresh: fresh2, old: filepath.Join(root, "two.old")},
+	})
+	if err == nil {
+		t.Fatal("swapAppdataDirs succeeded although the second fresh tree is missing")
+	}
+	other.requireIntactAt(t, live1)
+	if got := readFile(t, filepath.Join(live1+".moved", "f")); got != "fresh1" {
+		t.Fatalf("the tree that was swapped in = %q, want fresh1", got)
+	}
+	if got := readFile(t, filepath.Join(live2, "f")); got != "live2" {
+		t.Fatalf("second directory = %q, want live2", got)
+	}
+}
+
+func exchangeDirs(t *testing.T, a, b string) {
+	t.Helper()
+	if err := unix.Renameat2(unix.AT_FDCWD, a, unix.AT_FDCWD, b, unix.RENAME_EXCHANGE); err != nil {
+		t.Fatalf("exchanging %s and %s: %v", a, b, err)
+	}
+}
+
+// otherAppdataAsTree makes a directory that holds the other application's
+// directory as "tree" and returns it.
+func (r *restoreRig) otherAppdataAsTree(t *testing.T, other otherAppdata) string {
+	t.Helper()
+	dir := r.dir + ".foreign"
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other.create(t, filepath.Join(dir, "tree"))
+	return dir
+}
+
+func (r *restoreRig) requireRestoreRefusedAndLiveUntouched(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("Restore succeeded although a directory other than the one it created was in its place\n%s", r.out)
+	}
+	r.requireLiveContent(t)
+}
+
+func (r *restoreRig) requireLiveContent(t *testing.T) {
+	t.Helper()
+	if got := readFile(t, filepath.Join(r.dir, "config")); got != "v2-live" {
+		t.Fatalf("live config = %q, want the untouched v2-live", got)
+	}
+	if got := readFile(t, filepath.Join(r.dir, "extra")); got != "added after the backup" {
+		t.Fatalf("live extra = %q", got)
+	}
+}
+
+func TestAppdataRestore_RefusesAWorkDirectoryThatHoldsAnotherDirectory(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	foreign := rig.otherAppdataAsTree(t, other)
+	var work string
+	beforeAppdataWorkOpen = func(path string) {
+		beforeAppdataWorkOpen = nil
+		work = path
+		exchangeDirs(t, path, foreign)
+	}
+	t.Cleanup(func() { beforeAppdataWorkOpen = nil })
+
+	err := rig.restore(t)
+
+	rig.requireRestoreRefusedAndLiveUntouched(t, err)
+	if !strings.Contains(err.Error(), work) {
+		t.Fatalf("the error does not name the work directory %s: %v", work, err)
+	}
+	other.requireIntactAt(t, filepath.Join(work, "tree"))
+}
+
+func TestAppdataRestore_RefusesAnEmptyWorkDirectoryWithAnotherMode(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	foreign := rig.dir + ".foreign"
+	if err := os.Mkdir(foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var work string
+	beforeAppdataWorkOpen = func(path string) {
+		beforeAppdataWorkOpen = nil
+		work = path
+		exchangeDirs(t, path, foreign)
+	}
+	t.Cleanup(func() { beforeAppdataWorkOpen = nil })
+
+	err := rig.restore(t)
+
+	rig.requireRestoreRefusedAndLiveUntouched(t, err)
+	if !strings.Contains(err.Error(), work) {
+		t.Fatalf("the error does not name the work directory %s: %v", work, err)
+	}
+	entries, rerr := os.ReadDir(work)
+	if rerr != nil || len(entries) != 0 {
+		t.Fatalf("the directory at the work name was changed: %v, %v", entries, rerr)
+	}
+}
+
+func TestAppdataRestore_RefusesATreeThatIsNotTheEmptyDirectoryItCreated(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	foreign := rig.dir + ".foreign"
+	other.create(t, foreign)
+	var tree string
+	beforeAppdataTreeOpen = func(path string) {
+		beforeAppdataTreeOpen = nil
+		tree = path
+		exchangeDirs(t, path, foreign)
+	}
+	t.Cleanup(func() { beforeAppdataTreeOpen = nil })
+
+	err := rig.restore(t)
+
+	rig.requireRestoreRefusedAndLiveUntouched(t, err)
+	other.requireIntactAt(t, tree)
+}
+
+func TestAppdataRestore_SwapsOnlyTheTreeItUnpacked(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	foreign := rig.dir + ".foreign"
+	other.create(t, foreign)
+	var tree string
+	beforeAppdataMoveAside = func() {
+		beforeAppdataMoveAside = nil
+		entries, err := os.ReadDir(rig.appdata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".hoserva-restore-") {
+				tree = filepath.Join(rig.appdata, e.Name(), "tree")
+				exchangeDirs(t, tree, foreign)
+			}
+		}
+	}
+	t.Cleanup(func() { beforeAppdataMoveAside = nil })
+
+	err := rig.restore(t)
+
+	rig.requireRestoreRefusedAndLiveUntouched(t, err)
+	if tree == "" {
+		t.Fatal("the hook did not find the restore's work directory")
+	}
+	other.requireIntactAt(t, tree)
 }

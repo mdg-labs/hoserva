@@ -27,7 +27,7 @@ import (
 func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
 	dirs := &heldDirs{}
 	defer dirs.close()
-	return dirs.extract(ctx, archivePath, hdr, targets)
+	return dirs.extract(ctx, archivePath, hdr, targets, make([]liveIdentity, len(targets)))
 }
 
 func packTestTree(t *testing.T, dir string) (string, appdataHeader, appdataTrailer) {

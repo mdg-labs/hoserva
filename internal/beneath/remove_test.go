@@ -177,3 +177,117 @@ func TestRemoveAll_APlannedDirectoryThatVanishesBeforeItIsOpenedIsSkipped(t *tes
 		t.Fatalf("RemoveAll = %v", err)
 	}
 }
+
+func identityOfDir(t *testing.T, path string) (dev, ino uint64) {
+	t.Helper()
+	var st unix.Stat_t
+	if err := unix.Lstat(path, &st); err != nil {
+		t.Fatal(err)
+	}
+	return uint64(st.Dev), uint64(st.Ino)
+}
+
+func TestRemoveDirIf_RemovesTheTreeWhoseIdentityMatches(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "app/deep", "keep")
+	if err := os.WriteFile(filepath.Join(root, "app/deep/f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dev, ino := identityOfDir(t, filepath.Join(root, "app"))
+
+	err := RemoveDirIf(openTestRoot(t, root), "app", func(d, i uint64) bool { return d == dev && i == ino })
+	if err != nil {
+		t.Fatalf("RemoveDirIf = %v", err)
+	}
+	if exists(t, filepath.Join(root, "app")) || !exists(t, filepath.Join(root, "keep")) {
+		t.Fatal("RemoveDirIf did not remove exactly the tree")
+	}
+}
+
+func TestRemoveDirIf_LeavesADirectoryWhoseIdentityDiffers(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "app/deep", "other")
+	if err := os.WriteFile(filepath.Join(root, "app/deep/f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dev, ino := identityOfDir(t, filepath.Join(root, "other"))
+
+	err := RemoveDirIf(openTestRoot(t, root), "app", func(d, i uint64) bool { return d == dev && i == ino })
+	if !errors.Is(err, ErrNotExpected) {
+		t.Fatalf("RemoveDirIf = %v, want ErrNotExpected", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "app/deep/f")); string(got) != "x" {
+		t.Fatalf("the directory with another identity was changed: %q", got)
+	}
+}
+
+func TestRemoveDirIf_DoesNotFollowALinkAtTheName(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "target")
+	if err := os.WriteFile(filepath.Join(root, "target/f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "target"), filepath.Join(root, "app")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RemoveDirIf(openTestRoot(t, root), "app", func(uint64, uint64) bool { return true })
+	if !errors.Is(err, ErrSymlink) {
+		t.Fatalf("RemoveDirIf = %v, want ErrSymlink", err)
+	}
+	if !exists(t, filepath.Join(root, "target/f")) {
+		t.Fatal("the link's target was removed")
+	}
+}
+
+func TestRemoveDirIf_ReportsAMissingDirectory(t *testing.T) {
+	root := t.TempDir()
+	err := RemoveDirIf(openTestRoot(t, root), "app", func(uint64, uint64) bool { return true })
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("RemoveDirIf = %v, want a not-exist error", err)
+	}
+}
+
+func TestRemoveDirIf_DoesNotFollowASubdirectorySwappedForALinkWhileRemoving(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mkdirs(t, root, "app/sub")
+	dev, ino := identityOfDir(t, filepath.Join(root, "app"))
+	beforeDescend = func(name string) {
+		if name != "sub" {
+			return
+		}
+		beforeDescend = nil
+		if err := os.Remove(filepath.Join(root, "app/sub")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "app/sub")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeDescend = nil })
+
+	_ = RemoveDirIf(openTestRoot(t, root), "app", func(d, i uint64) bool { return d == dev && i == ino })
+	if !exists(t, filepath.Join(outside, "f")) {
+		t.Fatal("RemoveDirIf followed a link out of the tree")
+	}
+}
+
+func TestRemoveContents_ReportsADirectoryThatWasRemovedWhileOpen(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "gone")
+	fd, err := Open(openTestRoot(t, root), "gone", unix.O_RDONLY|unix.O_DIRECTORY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	if err := os.Remove(filepath.Join(root, "gone")); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeContents(fd, "gone"); !errors.Is(err, unix.ENOENT) {
+		t.Fatalf("removeContents = %v, want an error wrapping ENOENT", err)
+	}
+}
