@@ -344,7 +344,7 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 		return err
 	}
 	for _, s := range swaps {
-		if err := parents.removeAll(s.old); err != nil {
+		if err := parents.removeAll(s.old); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			_, _ = fmt.Fprintf(out, "warning: the appdata that was replaced is still at %s: %v\n", s.old, err)
 		}
 	}

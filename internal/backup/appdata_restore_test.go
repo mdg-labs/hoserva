@@ -156,6 +156,26 @@ func TestAppdataRestore_ReplacesAppdataAfterSnapshottingTheCurrentState(t *testi
 	}
 }
 
+func TestAppdataRestore_RestoresIntoAnAbsentDirectoryWithoutWarning(t *testing.T) {
+	rig := newRestoreRig(t)
+	if err := os.RemoveAll(rig.dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want the archived v1", got)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "sub", "keep")); got != "kept" {
+		t.Fatalf("sub/keep = %q", got)
+	}
+	if strings.Contains(rig.out.String(), "warning:") {
+		t.Fatalf("a restore into an absent directory warned:\n%s", rig.out)
+	}
+}
+
 func TestAppdataRestore_CorruptArchiveIsRefusedBeforeAnythingIsStopped(t *testing.T) {
 	rig := newRestoreRig(t)
 	for key, data := range rig.rclone.Files() {
