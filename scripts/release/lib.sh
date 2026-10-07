@@ -4,6 +4,11 @@
 # key. Sourced, not executed — every caller still validates its own
 # arguments rather than trusting this file blindly.
 
+# Every openssl call goes to this fixed binary, never through PATH, so a
+# directory ahead of /usr/bin on PATH cannot stand in for it while the
+# release-signing key is in use.
+hoserva_openssl=/usr/bin/openssl
+
 # hoserva_channel_from_tag prints "stable" or "beta" for a tag like
 # "v0.1.0" or "v0.1.0-beta.1" — stable versions are GitHub Releases, beta
 # versions are pre-releases (Q66). Anything else is refused: a malformed
@@ -106,7 +111,7 @@ hoserva_verify_docs_snapshot() {
 # real key.
 hoserva_sign_sha256sums() {
   local sums_file="$1" key_file="$2" sig_file="$3"
-  openssl pkeyutl -sign -inkey "$key_file" -rawin -in "$sums_file" -out "$sig_file"
+  "$hoserva_openssl" pkeyutl -sign -inkey "$key_file" -rawin -in "$sums_file" -out "$sig_file"
 }
 
 # hoserva_ed25519_pubkey_raw writes 32 raw Ed25519 public-key bytes to
@@ -146,9 +151,9 @@ hoserva_ed25519_pubkey_raw_from_pem() {
   local spki_prefix="302a300506032b6570032100"
   local spki_len=44
   der_file="$(mktemp)"
-  if openssl pkey -in "$pem_file" -pubin -outform DER -out "$der_file" 2>/dev/null; then
+  if "$hoserva_openssl" pkey -in "$pem_file" -pubin -outform DER -out "$der_file" 2>/dev/null; then
     :
-  elif openssl pkey -in "$pem_file" -pubout -outform DER -out "$der_file" 2>/dev/null; then
+  elif "$hoserva_openssl" pkey -in "$pem_file" -pubout -outform DER -out "$der_file" 2>/dev/null; then
     :
   else
     rm -f "$der_file"

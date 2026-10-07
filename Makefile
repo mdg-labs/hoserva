@@ -320,7 +320,7 @@ hooks-install:
 # release build silently.
 web-build:
 	@echo "web: npm ci"
-	cd web && $(NPM) ci --no-audit --no-fund
+	cd web && $(NPM) ci --ignore-scripts --no-audit --no-fund
 	@echo "web: npm run build"
 	cd web && $(NPM) run build
 	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
@@ -451,6 +451,8 @@ packaging-test:
 	$(JUNIT) packaging-test scripts/release/test-build-deb.sh -- scripts/release/test-build-deb.sh
 	$(JUNIT) packaging-test scripts/release/test-stamp-prepare-script.sh -- scripts/release/test-stamp-prepare-script.sh
 	$(JUNIT) packaging-test scripts/release/test-publish-release.sh -- scripts/release/test-publish-release.sh
+	$(JUNIT) packaging-test scripts/release/test-stage-release-artifacts.sh -- scripts/release/test-stage-release-artifacts.sh
+	$(JUNIT) packaging-test scripts/release/test-release-workflow.sh -- scripts/release/test-release-workflow.sh
 	$(JUNIT) packaging-test packaging/test-control-depends.sh -- packaging/test-control-depends.sh
 	$(JUNIT) packaging-test packaging/test-unattended-upgrades.sh -- packaging/test-unattended-upgrades.sh
 	$(JUNIT) packaging-test packaging/test-preinst-smartd-dropin.sh -- packaging/test-preinst-smartd-dropin.sh

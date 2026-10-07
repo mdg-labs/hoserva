@@ -99,7 +99,7 @@ Each attacker has a capability, a thing it is **trusted with**, and a thing it *
 
 - **Capability:** a Go or npm dependency, a GitHub Action, a base image or a build step that executes attacker-chosen code during a build or in the product.
 - **Trusted with:** nothing beyond what the build gave it.
-- **Must never reach:** the release-signing key, the catalog-signing key, or a published artefact. Both private keys are held only as CI secrets and never in the repository (doc 01 §7, Q39). The signed checksums and the signed catalog are what let an installation notice an artefact that did not come from the project.
+- **Must never reach:** the release-signing key, the catalog-signing key, or a published artefact. Both private keys are held only as CI secrets and never in the repository (doc 01 §7, Q39). The release key is read only by the release workflow's signing job, which runs on its own runner, from its own checkout of the tag, takes the `.deb` files only from the build job's uploaded artifact and runs none of the build tooling (`npm`, `make`, `go`, `dpkg-buildpackage`); `scripts/release/test-release-workflow.sh` checks that layout. The signed checksums and the signed catalog are what let an installation notice an artefact that did not come from the project.
 
 ---
 
