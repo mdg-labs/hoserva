@@ -120,6 +120,7 @@ existing line by adding its PR number.
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **doc-drift** — a design doc's command table lists only one of a command's alternative forms (`--flash-backup` without `--flash-device`) — PR 575
+- **doc-drift** — a maintainer doc lists the conditions a release check refuses but omits one the same change added to the check (the versioned API spec beside the versioned docs and sidebar) — PR 708
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
@@ -137,6 +138,7 @@ existing line by adding its PR number.
 - **security** — a CI job that runs pull-request code checks out with the default `persist-credentials`, leaving `GITHUB_TOKEN` in `.git/config` for the code under test to read — PR 546
 - **security** — user or state values written into a config format or a generated script without escaping (control characters; a typed password inside a string literal of a database init script) — PR 254, catalog PR 81
 - **security** — a file the CLI saves for the user that names accounts, shares or containers is left world-readable (0644) where the daemon keeps the same data 0600 — PR 575
+- **security** — a user-docs example bakes a TLS-skip flag (`curl --insecure`) into a reusable script that sends a secret token, instead of keeping it to a one-off test — PR 708
 
 ## Tests
 - **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic, a fixture key spelled differently from the one the parser reads so the scenario is never built, two omitted optional values compared through the same zero fallback) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589, 592, 644
@@ -155,9 +157,11 @@ existing line by adding its PR number.
 - **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
 - **tests** — a check's cleanup runs after a later step shadows what it must remove (a mount over the directory holding a stray probe), so the leftover survives into later steps — PR 395
 - **tests** — a test swaps process-global state (the `log` output) and its cleanup restores a hard-coded default rather than the value it saved, clobbering whatever an earlier caller set — PR 527
+- **tests** — a scan helper shared by two trees applies an exclusion meant for one (generated API pages skipped in source *and* build output), while a comment says the excluded part is checked in the other — PR 708
 - **docs** — a design doc or spike verdict says a behaviour is verified (by fixtures, the lab or the scan) when the check that would verify it has not been built yet — PR 562
 - **docs** — a fixture or spec comment states a property only one build tier produces (an L2-only partition layout) as if every build had it — PR 568
 - **docs** — a user-facing command block that is not safe to paste (an `export VAR=<value>` the shell reads as redirection) or whose surrounding text it contradicts (an `export` of a secret said to keep it out of shell history) — PR 688
+- **docs** — a user-docs checklist whose tick rule ("tick each line that does not apply") does not fit how its items are phrased (statements to confirm, "I know whether…"), so the reader cannot tell when it is complete — PR 708
 
 ## Catalog templates
 - **template** — an image option that prints credentials (peer configuration QR codes) to the container log left switched on, when the image also saves them in the app's folder — catalog PR 81
