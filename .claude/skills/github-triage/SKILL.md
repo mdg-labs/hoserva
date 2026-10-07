@@ -157,6 +157,7 @@ Every issue gets, per `CLAUDE.md` ("Label set"):
   - `safety-critical` when the work touches the threshold guard, the mover/relocation delete path, the migration import, or `packaging/` — or anything else where a plausible bug loses data
   - `needs-sudo` when the work requires root on the host
   - `blocked` only for an external blocker that isn't expressible as a native blocked-by relationship
+  - `security` for a public issue for a security defect or hardening (doc 15). A finding the doc 15 rubric rates Critical or High is not filed as a public issue at all — it is a private security advisory (Q91)
 
 There is no hardware label. Acceptance that seems to need real disks gets an
 agent-runnable lab or VM test instead, with the residual real-hardware risk

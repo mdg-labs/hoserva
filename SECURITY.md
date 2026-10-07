@@ -22,14 +22,14 @@ Reports that cannot be reproduced from the description are slower to act on, so 
 
 1. You get an acknowledgement. This is a small, volunteer-run project, so please allow a few days.
 2. The report is assessed against the project's published severity levels and either accepted or closed with an explanation.
-3. An accepted report gets a fix, developed privately. You are welcome to review the fix and to be credited in the advisory.
-4. When the fix is released, the advisory is published, with credit to you unless you ask not to be named. A CVE is requested where it is useful.
+3. An accepted report gets a fix. While no release has users, the fix is committed to the public `dev` branch with a neutral commit message that does not describe the problem, and the advisory stays private. Once a release has users, a Critical fix is developed in the advisory's temporary private fork and ships with the patched release. You are welcome to review the fix and to be credited in the advisory.
+4. When the fix is on `main`, the advisory is published, with credit to you unless you ask not to be named. A CVE is requested where it is useful.
 
-Reports are kept private until a fix is available. If a report turns out not to be a vulnerability, or is a hardening suggestion with no way to exploit it today, it may be moved to a public issue with your agreement.
+The report and its advisory are kept private until the fix is on `main`. If a report turns out not to be a vulnerability, or is a hardening suggestion with no way to exploit it today, it may be moved to a public issue with your agreement.
 
 ## Supported versions
 
-Hoserva has not had a 1.0 release yet. Until it does, security fixes are made on `main`, and only the latest release built from it is supported.
+Hoserva has not had a 1.0 release yet. Until it does, security fixes reach `main`, and only the latest release built from it is supported.
 
 ## Scope
 
