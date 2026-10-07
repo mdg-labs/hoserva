@@ -134,9 +134,9 @@ case "$key" in
     out=$(jq -c --arg id "${path##*/}" '.[] | select(.ghsa_id == $id)' "$S/triage.json")
     [ -n "$out" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     emit "$out" ;;
-  "GET repos/$repo/security-advisories?per_page=100")
+  "GET repos/$repo/security-advisories?per_page=100&state=draft")
     [ ! -e "$S/fail_advisory_list" ] || { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
-    emit "$(cat "$S/advisories.json")" ;;
+    emit "$(jq -c 'map(select(.state == "draft"))' "$S/advisories.json")" ;;
   "POST repos/$repo/security-advisories")
     count=$(jq 'length' "$S/advisories.json")
     ids=(GHSA-2345-cfgh-jmpq GHSA-2345-cfgh-jmpr GHSA-2345-cfgh-jmpv GHSA-2345-cfgh-jmpw)
@@ -339,6 +339,7 @@ sed '/^filed: /d' "$report" >"$work/report.nofiled"
 assert_eq "$(writes "$state")" "0" "lost write-backs: still no write"
 assert_eq "$(jq 'length' "$state/issues.json")" "2" "lost write-backs: no duplicate issue"
 assert_eq "$(jq 'length' "$state/advisories.json")" "2" "lost write-backs: no duplicate advisory"
+assert_contains "$state/gh.log" "security-advisories?per_page=100&state=draft" "the advisory lookup lists only draft advisories"
 assert_contains "$work/report.nofiled" 'filed: "#1002"' "lost write-backs: restored from the marker"
 
 # An issue that work has started on is not moved back to ready.

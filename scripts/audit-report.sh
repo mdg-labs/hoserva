@@ -527,7 +527,7 @@ find_issue() {
 
 find_advisory() {
   local id=$1 out
-  out=$("$GH_REST" advisory-list) || return 1
+  out=$("$GH_REST" advisory-list --state draft) || return 1
   jq -r --arg id "$id" '
     [ .[] | select((.description // "") | split("\n") | map(rtrimstr("\r")) | any(. == "Audit-finding: " + $id)) | .ghsa_id ]
     | sort | .[0] // empty' <<<"$out"
