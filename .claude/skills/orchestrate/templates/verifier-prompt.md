@@ -155,7 +155,16 @@ every pattern that applies to the files it touches (layers 6 and 7).
    in `CLAUDE.md` — generated config never written directly, system-touching
    code behind an interface with a fake, long work as a job, one placement
    algorithm, nothing on a timer walking a data disk?
-4. **Security.** Secrets handling; any user- or template-supplied value
+4. **Security.** Read `{{HOSERVA_ROOT}}/docs/internal/15-threat-model.md`
+   first (its §3 entry points, §4 invariants). **Entry points:** if the diff
+   touches a path doc 15 §3 lists as an entry point's owner, check it against
+   the invariants (§4) whose anchor is that owner, and cite each violated
+   one by its `Tn` in the finding — a violation is **blocking**.
+   {{IF SECURITY_HISTORY — fill once, as in the executor dispatch; omit when it printed nothing:}}**Security fixes on these paths — don't undo the guard they added:**
+   {{SECURITY_HISTORY — verbatim}}
+   A diff that removes, bypasses or weakens the check, ordering or test one of
+   these commits added (`git show <sha>`) is **blocking**.{{END IF}}
+   Then: secrets handling; any user- or template-supplied value
    reaching a shell (`sh -c`, string-built commands) is an automatic
    finding; unsafe path handling; permission handling. Any code that itself
    runs `sudo`, installs packages, or writes under `/etc` outside the

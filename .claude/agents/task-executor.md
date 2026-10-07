@@ -73,3 +73,9 @@ the code now does, with no reproduction, payload, trace, attacker narrative,
 severity or quotation of the advisory, and the same for every comment, test
 name and fixture you add. The advisory is not public, and a commit message is.
 Everything else above applies unchanged.
+
+A dispatch may carry a **security history**: earlier commits on the paths in
+your scope that fixed a security issue, under the heading "Security fixes on
+these paths — don't undo the guard they added". Read the ones that touch what
+you change and keep the guard each added; a change that would have to loosen
+one is not made — report it instead.

@@ -217,6 +217,15 @@ report, name the target by its GHSA id wherever the report template says
   - **Tests that prove something.** For every test you add, know which line
     of your change it would fail without. A test that passes with the
     change reverted proves nothing.
+{{IF SECURITY_HISTORY — fill once, with the output of `scripts/security-history.sh` over the unit's scope, only when it printed something; if it failed, put "Security history unavailable: <its message>" here; omit otherwise:}}- **Security fixes on these paths — don't undo the guard they added.** Each
+  commit below fixed a security issue in files your scope covers. Read the
+  ones that touch what you are changing (`git show <sha>`) and keep the guard
+  each added — the check, the ordering, the test — in place; a change that
+  would have to loosen one is not made: stop and report it. The invariants they protect are
+  doc 15 §4.
+
+  {{SECURITY_HISTORY — verbatim}}
+{{END IF}}
 {{IF SITE_DOCS — fill when the issue's scope touches `site/docs/` or `site/versioned_docs/`; omit otherwise:}}- **Public docs pages.** Before you write or edit any page under `site/docs/`
   or `site/versioned_docs/`, read `{{HOSERVA_ROOT}}/.claude/skills/user-docs/SKILL.md`
   in full and follow it: its hard rules (no internal references, positioning

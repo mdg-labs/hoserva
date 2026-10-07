@@ -527,6 +527,25 @@ with no epic.
 - **You never set `status:closed`.** The trailer only closes the issue once its commit reaches `main` — that's the later `dev → main` promotion, not this run's push to `dev`; the workflow labels it when it happens. This holds for a `mdg-labs/hoserva-catalog` landing too: its `Fixes mdg-labs/hoserva#<n>` trailer closes the issue when the commit reaches the catalog's `main`.
 - **You own the abandonment transitions:** an issue leaving your hands still open (executor `blocked`, or escalated after three FAILs) goes back to `status:ready`.
 
+## 5a. Security history of each unit's paths
+
+For each unit, run this inside its landing clone (the real repo, or
+`$CATALOG`), once per unit, with every path of the unit's step-3 scope as an
+argument:
+
+```
+<HOSERVA_ROOT>/scripts/security-history.sh <each path of the unit's scope>
+```
+
+It lists the earlier commits on those paths that fixed a `security`-labelled
+issue (doc 15 §7), each with its subject and the issue's title. Keep its
+output verbatim as `SECURITY_HISTORY` for steps 6 and 7. Empty output means
+there is none: the dispatches omit the block. A non-zero exit means the
+history could not be read: say so in both dispatches in place of the block
+("Security history unavailable: <the script's message>"), never omit it as if
+there were none. The history is public (commit subjects and issue titles), so
+an advisory unit gets it too.
+
 ## 6. Dispatch `task-executor`
 
 **Run the promotion-diff budget check (step 4) first — before every
@@ -538,8 +557,8 @@ Read `.claude/skills/orchestrate/templates/executor-prompt.md` and fill every
 about the machine, and from step 1a `LANDING_REPO` — named in the dispatch —
 and `HOSERVA_ROOT`), then the per-issue block once per issue in bundle order —
 number, title, body, **comment thread**, scope, `FIXES_TRAILER`, and whether
-it is `safety-critical` or a `spike`. On a fix round, the rejected SHA and the
-verifier's findings verbatim.
+it is `safety-critical` or a `spike`, and `SECURITY_HISTORY` (step 5a). On a
+fix round, the rejected SHA and the verifier's findings verbatim.
 
 `FIXES_TRAILER` is `Fixes #<n>` for a `mdg-labs/hoserva` landing and
 `Fixes mdg-labs/hoserva#<n>` for a `mdg-labs/hoserva-catalog` one. For an
@@ -621,8 +640,9 @@ haven't heard back. When a notification arrives, route its findings
 
 Read `.claude/skills/orchestrate/templates/verifier-prompt.md` and fill it:
 per issue, its details, the same comment thread, its scope, its flags, and
-**its own commit SHA**; once, the workspace, lab id, attempt number, epic and
-`LANDING_REPO`/`HOSERVA_ROOT` (step 1a).
+**its own commit SHA**; once, the workspace, lab id, attempt number, epic,
+`LANDING_REPO`/`HOSERVA_ROOT` (step 1a) and the same `SECURITY_HISTORY`
+(step 5a).
 For an advisory unit, fill the template's `ADVISORY` blocks: the verifier
 posts no comment and moves no label, and its returned verdict is read only
 here. On a fix round, fill the `FIX_ROUND` block too: the rejected SHA, where it

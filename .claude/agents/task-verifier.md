@@ -71,3 +71,11 @@ neutral: a commit message that includes reproduction or exploit detail —
 steps, a payload, a trace, an attacker narrative, a quotation of the advisory
 — is a blocking finding. In a finding, name the line and the kind of detail,
 never the detail.
+
+Security is judged against `docs/internal/15-threat-model.md`, which you cite
+rather than restate. A diff touching a path doc 15 §3 names as an entry
+point's owner is checked against the §4 invariants anchored there, and a
+violated invariant is a blocking finding that names its `Tn`. A dispatch may
+carry a **security history** (commits that fixed a security issue on the
+paths the diff touches): a diff that removes or weakens a guard one of them
+added is blocking.

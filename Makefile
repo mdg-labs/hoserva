@@ -478,6 +478,7 @@ test-gh:
 	$(JUNIT) gh scripts/test-epic-status.sh -- scripts/test-epic-status.sh
 	$(JUNIT) gh scripts/test-issue-readiness.sh -- scripts/test-issue-readiness.sh
 	$(JUNIT) gh scripts/test-check-gh-rest.sh -- scripts/test-check-gh-rest.sh
+	$(JUNIT) gh scripts/test-security-history.sh -- scripts/test-security-history.sh
 
 # Fixture test for the Q49 outbound-request check's allowlist (issue #461);
 # it scans throwaway directories, not the web build.
