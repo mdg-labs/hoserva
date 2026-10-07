@@ -227,3 +227,37 @@ func TestSuiteTimeFallsBackToTheCases(t *testing.T) {
 	}
 	mustContain(t, renderDir(t, dir), "| s | 2 | 2 | 0 | 0 | 3.5s |")
 }
+
+func TestSkippedTestsAreListedWithTheirReason(t *testing.T) {
+	dir := t.TempDir()
+	doc := `<testsuite name="l3-rest" tests="3" failures="0" skipped="2"><testcase classname="l3-rest" name="install" time="1"/>` +
+		`<testcase classname="l3-rest" name="UPS &lt;flow&gt;" time="0"><skipped message="NOT-YET-IMPLEMENTED: no running domain | step 1"/></testcase>` +
+		`<testcase classname="l3-rest" name="NFS export mount" time="0"><skipped message="not selected"/></testcase></testsuite>`
+	if err := os.WriteFile(filepath.Join(dir, "l3-rest.xml"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := renderDir(t, dir)
+	mustContain(t, out,
+		"**3 tests: 1 passed, 0 failed, 2 skipped**",
+		"<summary>Skipped (2)</summary>",
+		"| l3-rest | l3-rest / UPS &lt;flow&gt; | NOT-YET-IMPLEMENTED: no running domain &#124; step 1 |",
+		"| l3-rest | l3-rest / NFS export mount | not selected |",
+	)
+	mustNotContain(t, out, "### Failures", "| l3-rest | l3-rest / install |")
+}
+
+func TestSkippedListIsCapped(t *testing.T) {
+	dir := t.TempDir()
+	var doc strings.Builder
+	doc.WriteString(`<testsuite name="many">`)
+	for i := 0; i < maxSkippedShown+3; i++ {
+		fmt.Fprintf(&doc, `<testcase classname="many" name="S%03d"><skipped/></testcase>`, i)
+	}
+	doc.WriteString(`</testsuite>`)
+	if err := os.WriteFile(filepath.Join(dir, "many.xml"), []byte(doc.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := renderDir(t, dir)
+	mustContain(t, out, "Skipped (103)", "S099", "3 more skipped tests are not listed.")
+	mustNotContain(t, out, "S100")
+}

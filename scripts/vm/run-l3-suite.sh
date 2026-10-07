@@ -28,6 +28,8 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/vm/lib.sh
 source "$script_dir/lib.sh"
+# shellcheck source=scripts/vm/l3-junit.sh
+source "$script_dir/l3-junit.sh"
 
 # Step registry (issue #391) and nightly-l3.yml's own two parallel groups
 # (issue #392) — defined before vm_require_id below so a pure listing or
@@ -122,8 +124,15 @@ vm_assert_own_domain "$VM_DOMAIN"
 
 declare -a STEP_NAMES=()
 declare -a STEP_RESULTS=()
+declare -a STEP_SECONDS=()
+L3_STEP_MARK=$SECONDS
 
-record() { STEP_NAMES+=("$1"); STEP_RESULTS+=("$2"); }
+record() {
+  STEP_NAMES+=("$1")
+  STEP_RESULTS+=("$2")
+  STEP_SECONDS+=("$((SECONDS - L3_STEP_MARK))")
+  L3_STEP_MARK=$SECONDS
+}
 
 not_yet() {
   echo "vm-suite[$HOSERVA_LAB_ID]: $1 — NOT-YET-IMPLEMENTED: $2"
@@ -225,6 +234,11 @@ l3_resolve_steps "${L3_STEPS:-}"
 if [[ "${L3_PLAN:-}" == "1" ]]; then
   exit 0
 fi
+
+# With TEST_REPORT_DIR set (doc 06 §7), the recorded steps are written as
+# JUnit on the way out, whether the run reached its summary or not
+# (l3-junit.sh). With it unset the hook does nothing.
+trap 'l3_junit_finish $?' EXIT
 
 # Array setup (step 3) and journey 5's own fixture (seeded ahead of the
 # playwright step, doc 06 §4) share this L3 admin session and cookie jar — the same account
@@ -2080,6 +2094,7 @@ fi
 
 echo ""
 echo "vm-suite[$HOSERVA_LAB_ID]: ===== summary ====="
+L3_SUMMARY_DONE=1
 overall_fail=0
 for i in "${!STEP_NAMES[@]}"; do
   printf 'vm-suite[%s]: %-32s %s\n' "$HOSERVA_LAB_ID" "${STEP_NAMES[$i]}" "${STEP_RESULTS[$i]}"

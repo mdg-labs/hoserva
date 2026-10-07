@@ -37,6 +37,7 @@ const (
 	// A run page's step summary is capped at 1 MiB; the failures listed
 	// stay far below it, and the total in the heading still counts them all.
 	maxFailuresShown = 100
+	maxSkippedShown  = 100
 )
 
 type status int
@@ -401,6 +402,35 @@ func render(reports []report, needs map[string]string) string {
 			}
 			fmt.Fprint(&w, f)
 		}
+	}
+
+	var skips []string
+	for _, r := range reports {
+		for _, s := range r.Suites {
+			for _, tc := range s.Cases {
+				if tc.Status != skipped {
+					continue
+				}
+				title := tc.Name
+				if tc.Suite != "" {
+					title = tc.Suite + " / " + tc.Name
+				}
+				skips = append(skips, fmt.Sprintf("| %s | %s | %s |\n", cell(suiteLabel(r.Path)), cell(title), cell(truncate(tc.Message, maxMessageRunes))))
+			}
+		}
+	}
+	if len(skips) > 0 {
+		fmt.Fprintf(&w, "<details><summary>Skipped (%d)</summary>\n\n| Report | Test | Reason |\n|---|---|---|\n", len(skips))
+		for i, row := range skips {
+			if i == maxSkippedShown {
+				break
+			}
+			fmt.Fprint(&w, row)
+		}
+		if len(skips) > maxSkippedShown {
+			fmt.Fprintf(&w, "\n%d more skipped tests are not listed.\n", len(skips)-maxSkippedShown)
+		}
+		fmt.Fprint(&w, "\n</details>\n\n")
 	}
 	return w.String()
 }
