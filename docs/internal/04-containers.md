@@ -123,7 +123,7 @@ Because the pool is at `/mnt/user` and cache at `/mnt/cache` (decision D10), **p
 
 - `/boot`, `/mnt/disks/` (Unassigned Devices), and other Unraid-specific mounts
 - `/mnt/user0` — Unraid's array-only view of shares, which has no Hoserva equivalent path
-- `/mnt/<pool>/` for Unraid 6.9+ named pools other than the one mapped to `/mnt/cache` (doc 05 §2)
+- `/mnt/<pool>/` for every Unraid 6.9+ named pool, including the one the migration makes the cache when it is not named `cache` (doc 05 §2): the path does not exist on Hoserva, and the fix is to rewrite it to `/mnt/cache/…`. Only `/mnt/cache` itself maps identically.
 
 ### Ownership variables
 
