@@ -1,7 +1,7 @@
 ---
 name: security-audit
-description: Audits Hoserva's code for security defects without changing it — splits the code into review units along trust boundaries, sends one Opus security-reviewer per unit, has an independent Opus security-verifier refute every candidate finding in theory, and writes one complete, parseable Markdown report outside the repository. Audits the whole codebase with no scope, or only the paths, area labels or unit names given. Use when asked to "run a security audit", "audit <area>", "security-audit internal/pool" or "review the code for vulnerabilities".
-argument-hint: [scope ...] [--no-discord]
+description: Audits Hoserva's code for security defects without changing it — splits the code into review units along trust boundaries, sends one Opus security-reviewer per unit, has an independent Opus security-verifier refute every candidate finding in theory, and writes one complete, parseable Markdown report outside the repository. Audits the whole codebase with no scope, or only the paths, area labels or unit names given. A second mode, "file", turns an approved report into GitHub records — a public issue per finding that is not withheld, a draft security advisory per withheld one. Use when asked to "run a security audit", "audit <area>", "security-audit internal/pool", "review the code for vulnerabilities" or "file the audit report".
+argument-hint: [scope ...] [--no-discord] | file <report> [--epic <n>]
 allowed-tools:
   - Read
   - Grep
@@ -16,10 +16,11 @@ allowed-tools:
 
 Reviews Hoserva's code for security defects the way `orchestrate` works
 issues: partition the work, one agent per partition, an independent check of
-every result, and one report at the end. It **never changes the codebase** and
-files nothing: its only output is a Markdown report under
-`~/.local/state/hoserva-audit/<run-id>/`, in the fixed format of step 6, which
-a later step (turning a report into issues and advisories) parses.
+every result, and one report at the end. The audit **never changes the
+codebase** and files nothing: its only output is a Markdown report under
+`~/.local/state/hoserva-audit/<run-id>/`, in the fixed format of step 6. The
+**file mode** (see "File mode", after step 8) parses that report with
+`scripts/audit-report.sh` and, once the maintainer confirms, files it.
 
 **You (the current session) are the orchestrator.** You spawn `security-reviewer`
 and `security-verifier` subagents — both Opus — and drive the steps below in
@@ -31,7 +32,12 @@ anti-inflation rules, never by a reviewer's or your own preference.
 
 ## Invocation
 
-`/security-audit [scope …] [--no-discord]`
+`/security-audit [scope …] [--no-discord]` — the audit, steps 1–8 below.
+
+`/security-audit file <report> [--epic <n>]` — the file mode, described after
+step 8. `<report>` is a path to a `report.md`, or a run id under
+`~/.local/state/hoserva-audit/`. When the first word of the arguments is
+`file`, nothing of steps 1–8 runs.
 
 A scope item is one of:
 
@@ -43,6 +49,8 @@ No scope means the whole codebase. An unrecognised scope item is a stop:
 name it and ask, never guess. `--no-discord` skips step 7.
 
 ## Hard limits — for you and every agent
+
+These are the audit's (steps 1–8). The file mode has its own, in its section.
 
 - **The codebase is never written.** No `git commit`, `add`, `apply`, `stash`,
   `reset`, `checkout` or push in the real repository; no editor tool pointed at a repository file;
@@ -302,7 +310,9 @@ Write one file, `~/.local/state/hoserva-audit/<run-id>/report.md`, in one
 there is no second file, and the report is **never committed** and never posted
 anywhere. Then re-read it once and check it against the format below.
 
-The format is fixed so a later step can parse it without guessing. A parser
+The format is fixed so a later step can parse it without guessing —
+`scripts/audit-report.sh` does, and refuses a report that departs from it,
+naming the finding at fault. A parser
 reads: the first `---` block as YAML; the table under `## Summary`; each
 `## SA-…` heading followed by exactly one fenced `yaml` block; each `###`
 heading by its exact text; and the three trailing `##` sections by theirs.
@@ -353,6 +363,8 @@ verdict: CONFIRMED | CONFIRMED-WITH-PRECONDITIONS
 files: [<repository-relative path>, …]
 related: [<SA-… id>, …]      # [] when none
 invariant: <T1…T18, or none>
+cwe: [CWE-<n>, …]            # optional; not written by the audit
+filed: "#<n>" | GHSA-…       # optional; written by the file mode
 ```
 
 ### Summary
@@ -364,7 +376,13 @@ invariant: <T1…T18, or none>
 ### Verifier notes
 ````
 
-Every `###` heading appears once, in this order. Allowed values: `severity` is
+Every `###` heading appears once, in this order. The header holds its eleven
+keys in the order shown and, after them, at most the two optional keys `cwe`
+and `filed`, in that order. The audit never writes either: `cwe` is for a
+maintainer who wants a withheld finding's advisory to carry a weakness class,
+and `filed` is what the file mode writes back (it is the issue number or the
+GHSA id the finding was filed as). A trailing ` # comment` after an unquoted
+value is ignored. Allowed values: `severity` is
 the verifier's final severity; `type` and `area` are one label each from the
 label set in `CLAUDE.md` (`bug` for a defect, `chore` for hardening, `docs` for
 a documentation gap); `safety_critical` is `true` when the fix touches the
@@ -434,15 +452,72 @@ candidates refuted, any unit not reviewed and any unassigned file. **Do not
 quote a finding's title, path or trace in the chat beyond what the maintainer
 needs to open the report** — it is read at the maintainer's terminal, but the
 transcript is not a place for an unfixed vulnerability's details. Nothing was
-filed and nothing in the repository changed: turning the report into issues
-and advisories is a separate step.
+filed and nothing in the repository changed: filing the report is the file
+mode, run only when the maintainer says so.
+
+## File mode — `/security-audit file <report> [--epic <n>]`
+
+Turns a report the maintainer has read into GitHub records, per Q91 and doc 15
+§7: a **public issue** for every finding with `withhold: false`, a **draft
+security advisory** for every finding with `withhold: true`. It runs only when
+the maintainer asks for it, on a report the audit wrote; none of steps 1–8
+runs, and no agent is dispatched.
+
+**Limits.** The repository is not written, and neither is anything else except
+the report's own `filed:` lines, which only `scripts/audit-report.sh` writes.
+Every GitHub call goes through `scripts/audit-report.sh`, which calls only
+`scripts/gh-rest.sh` and `scripts/issue-status.sh` — never a `gh` command of
+your own, never a hand edit of the report, never a label or status set by hand.
+No lab, Docker, VM or `sudo`. A withheld finding appears on no public surface:
+no issue, title, comment, label, Discord message or commit message names it, and
+beyond the step 2 list, which stays at the maintainer's terminal, you give its
+id in the chat, never its title or trace.
+
+1. **Resolve the report.** `<report>` is a path, or a run id, which means
+   `~/.local/state/hoserva-audit/<run-id>/report.md`. No argument, or a file that
+   does not exist, is a stop: ask which report.
+2. **Parse and list.** Run
+   `scripts/audit-report.sh list <report>`. The script parses the report
+   deterministically against the format in step 6 and **refuses a malformed one,
+   naming the finding, the front matter or the section at fault**; relay that
+   message and stop — never repair a report yourself, never file from a
+   half-understood one. A valid report prints one line per finding: id,
+   severity, `public` or `withheld`, what it was already filed as (`-` for
+   nothing) and title. Show the maintainer that list as it is. It is local to
+   their terminal; the titles are not repeated anywhere else.
+3. **Confirm — no GitHub write before this.** One `AskUserQuestion`: "file N
+   issues and M draft advisories (K already filed) under epic #E?", with the
+   target epic named (`--epic`, default `#685`). Anything but a clear yes
+   ends the run. The script refuses to write without `--confirmed`, which you
+   pass only after that yes.
+4. **File.** Run `scripts/audit-report.sh file <report> [--epic <n>] --confirmed`.
+   With `--dry-run` in place of `--confirmed` it reads GitHub, prints what it
+   would do and writes nothing — use it when the maintainer asks to preview.
+   For each finding in report order the script:
+   - checks first, before any write, that the epic is open, carries the `epic` label and has a milestone;
+   - for a **public** finding, looks for an existing issue whose body has the line `Audit-finding: <id>`; when there is none it creates the issue in `github-triage`'s body shape — the report's Summary, the entry point, trace and impact (under `## Root cause / relevant code`), the fix direction (`## Proposed approach`), the test to write first as an acceptance criterion, and `## Out of scope` — with labels the finding's `type`, its `area:*` (none when `none`), `security`, and `safety-critical` when set, and the epic's milestone. It then attaches the issue to the epic as a native sub-issue and sets it `ready` through `scripts/issue-status.sh`;
+   - for a **withheld** finding, looks for an advisory whose description has the same marker line; when there is none it creates a **draft** advisory through `scripts/gh-rest.sh advisory-create` — the finding's title as summary, the full finding as description, its severity (`info` is recorded as `low`, the lowest an advisory takes) and its `cwe` when it has one. Nothing is published, accepted or forked;
+   - writes the issue number or GHSA id back into the report's `filed:` line, so the report is the local record of what was filed.
+5. **Re-running is safe.** A finding the report records as filed, or that a
+   marker lookup finds, is not created again; for an issue the script only
+   completes what a failed run left undone (epic attachment, `ready` — and only
+   when the issue still has no status beyond `new`, so work that has started is
+   never reset). **A lookup that fails is a failed run, never "nothing found"**:
+   the script stops at that finding and exits non-zero. After any failure,
+   fix the cause or tell the maintainer and re-run the same command; do not
+   file by hand.
+6. **Hand over.** Tell the maintainer: the report path, how many issues and
+   advisories were created, how many were already filed, and any finding the
+   run stopped at (by id). List created issues by number; list advisories by GHSA id
+   only. Do not quote a withheld finding's title, path or trace.
 
 ## Non-negotiables
 
+- **File mode writes to GitHub only after the maintainer's explicit yes, only through `scripts/audit-report.sh`, and never names a withheld finding on a public surface.**
 - **The codebase is never written, the lab, Docker and VMs are never started, and no agent touches the network.**
 - **Every agent prompt is inline and complete** — never a pointer to a file.
 - **No finding without a verifier's verdict**; a Critical or High that one verifier refutes gets a second, independent one.
 - **At most 6 agents in flight**, each wave in one message, no polling.
 - **Critical and High findings are `withhold: true`**; the Discord message carries counts and the run id only.
-- **The report is written once, to `~/.local/state/hoserva-audit/<run-id>/report.md`, in the format above, and is never committed.**
+- **The report is written once by the audit, to `~/.local/state/hoserva-audit/<run-id>/report.md`, in the format above, and is never committed.** The file mode adds only `filed:` lines to it.
 - **Severity is doc 15 §6's, set by the verifier** — not the reviewer's proposal and not yours.
