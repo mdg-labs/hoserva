@@ -5,5 +5,5 @@
 # checks its signature against the compiled-in catalog key
 # (internal/template.CatalogPublicKey). Bumping the snapshot is a commit that
 # changes only these two lines.
-serial=1790853250
-sha256=157f2eaba6699adfba6270aa7330f26764627b8995ca1aa59689f6907050d290
+serial=1791338858
+sha256=20dff656996c4d08613b8118b2eb6e8c885bf82920baa8fb5b207207e438d627
