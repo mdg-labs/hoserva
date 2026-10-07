@@ -3,15 +3,10 @@ import {bundle, createConfig, lint} from '@redocly/openapi-core';
 
 const METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
 
-// api/openapi.yaml is OpenAPI 3.1 but marks four nullable values with the 3.0
-// keyword `nullable`, which the 3.1 schema does not know. The reference
-// renders them correctly, so only this one finding is tolerated.
-const tolerated = (problem) => problem.ruleId === 'struct' && problem.message === 'Property `nullable` is not expected here.';
-
 // Returns the parsed document, or throws with every validation error.
 export async function loadSpec(file) {
   const config = await createConfig({extends: ['minimal']});
-  const problems = (await lint({ref: file, config})).filter((p) => p.severity === 'error' && !tolerated(p));
+  const problems = (await lint({ref: file, config})).filter((p) => p.severity === 'error');
   if (problems.length > 0) {
     const shown = problems.slice(0, 10).map((p) => `  ${p.location?.[0]?.pointer ?? ''}: ${p.message}`);
     throw new Error(`${file} is not a valid OpenAPI document (${problems.length} errors):\n${shown.join('\n')}`);
