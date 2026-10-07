@@ -332,6 +332,18 @@ func TestPreview_ATopLevelVersionKeyIsIgnored(t *testing.T) {
 	}
 }
 
+// The version key is exempt from the allow list, not from the text rule: a
+// control character in its value refuses the project.
+func TestPreview_AControlCharacterInTheVersionValueIsRefused(t *testing.T) {
+	for name, version := range map[string]string{"escape": `"3\e[2K"`, "C1": `"3\u009b"`} {
+		body := "version: " + version + "\nservices:\n  web:\n    image: x\n"
+		p := previewCompose([]byte(body))
+		if o := p.Outcome(true); o.Status != PreviewFailed || o.Failure != FailureNotAccepted || p.Compose != "" {
+			t.Errorf("%s: outcome = %+v, preview %+v, want a failed preview with no Compose", name, o, p)
+		}
+	}
+}
+
 // The report names and counts. Neither its rows nor the session row holds a
 // template's content: the fixture's masked variable, its image and its host
 // path are in the zip and in the on-request preview, and in nothing the session

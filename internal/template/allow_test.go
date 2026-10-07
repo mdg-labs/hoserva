@@ -209,7 +209,7 @@ func TestCheckComposeHoldsAnyComposeDocumentToTheAllowList(t *testing.T) {
 }
 
 // A template is still refused for a top-level version: only an imported
-// project has it dropped, before CheckCompose.
+// project is exempt from the allow list for it (CheckImportedCompose).
 func TestCheckRefusesATopLevelVersionInATemplate(t *testing.T) {
 	var found bool
 	for _, i := range checkCompose(t, "version: '3'\nservices:\n  web:\n    image: x\n") {

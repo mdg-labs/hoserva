@@ -209,10 +209,11 @@ func previewTemplate(data []byte, networks []template.NetworkDef) *Preview {
 // content. The file is not converted, and a second YAML document is refused
 // because Compose merges every document, so one could add what the summary
 // never sees. For the same reason a file is refused when it uses a key the
-// template allow list refuses (template.CheckCompose), whatever the key does:
-// the summary reads only the keys the list accepts, except the obsolete
-// top-level version, which Compose ignores and is dropped before the check
-// (the file is passed on as written). A file without a services
+// template allow list refuses (template.CheckImportedCompose), whatever the key
+// does: the summary reads only the keys the list accepts, except the obsolete
+// top-level version, which Compose ignores and is exempt from the list (its
+// value is still checked for control characters, and the file is passed on as
+// written). A file without a services
 // mapping runs nothing of its own, so it is not counted as a previewed project.
 func previewCompose(data []byte) *Preview {
 	p := &Preview{Source: string(data), Compose: string(data)}
@@ -231,13 +232,7 @@ func previewCompose(data []byte) *Preview {
 		p.Compose, p.Failure, p.Error = "", FailureNoServices, "compose.yaml declares no services"
 		return p
 	}
-	checked := make(map[string]any, len(compose))
-	for k, v := range compose {
-		if k != "version" {
-			checked[k] = v
-		}
-	}
-	if issues := template.CheckCompose(checked); len(issues) > 0 {
+	if issues := template.CheckImportedCompose(compose); len(issues) > 0 {
 		p.Compose, p.Failure, p.Error = "", FailureNotAccepted, notAcceptedText(issues)
 		return p
 	}

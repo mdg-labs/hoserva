@@ -163,6 +163,27 @@ func TestCheckComposeRefusesControlCharactersInAnyComposeDocument(t *testing.T) 
 	}
 }
 
+func TestCheckImportedComposeExemptsOnlyTheVersionKeyFromTheAllowList(t *testing.T) {
+	svc := func() map[string]any {
+		return map[string]any{"web": map[string]any{"image": "example/web:1"}}
+	}
+	if issues := CheckImportedCompose(map[string]any{"version": "3", "services": svc()}); len(issues) != 0 {
+		t.Errorf("CheckImportedCompose(version) = %v, want none", issues)
+	}
+	if issues := CheckCompose(map[string]any{"version": "3", "services": svc()}); len(issues) == 0 {
+		t.Error("CheckCompose accepted a top-level version")
+	}
+	if issues := CheckImportedCompose(map[string]any{"version": "3", "services": svc(), "models": map[string]any{}}); len(issues) != 1 {
+		t.Errorf("CheckImportedCompose(version, models) = %v, want one issue on models", issues)
+	}
+	for _, v := range []string{"3\x1b[2K", "3\u009b"} {
+		issues := CheckImportedCompose(map[string]any{"version": v, "services": svc()})
+		if len(issues) != 1 || strings.Join(issues[0].Path, ".") != "version" || !strings.Contains(issues[0].Message, "control character") {
+			t.Errorf("CheckImportedCompose(version %q) = %v, want one control-character issue on version", v, issues)
+		}
+	}
+}
+
 func TestLintReportsMalformedTemplates(t *testing.T) {
 	cases := []struct {
 		name, old, replacement string

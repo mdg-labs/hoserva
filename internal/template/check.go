@@ -41,13 +41,33 @@ var checks = []Check{
 
 // CheckCompose runs the rules that hold any Compose document to the keys the
 // privilege summary classifies and to its own content: the allow list and the
-// self-contained check. A template's Check and the migration's preview of a
-// Compose Manager project both apply it, so the two cannot disagree on what a
-// stack may use. The issues carry no line numbers.
+// self-contained check. A template's Check applies it, and so does the
+// migration's preview of a Compose Manager project (through
+// CheckImportedCompose), so the two cannot disagree on what a stack may use.
+// The issues carry no line numbers.
 func CheckCompose(compose map[string]any) []Issue {
 	t := &Template{Compose: compose}
 	out := append(checkAllowedKeys(t), checkSelfContained(t)...)
 	return append(out, checkComposeText(compose)...)
+}
+
+// CheckImportedCompose is CheckCompose for an imported Compose Manager
+// project. The obsolete top-level version key, which Compose ignores, is
+// exempt from the allow list and the self-contained check, so a project is not
+// refused for it alone; its value is still held to the control-character rule
+// like every other string of the file.
+func CheckImportedCompose(compose map[string]any) []Issue {
+	rest := make(map[string]any, len(compose))
+	for k, v := range compose {
+		if k != "version" {
+			rest[k] = v
+		}
+	}
+	out := CheckCompose(rest)
+	if v, ok := compose["version"]; ok {
+		out = append(out, checkComposeText(map[string]any{"version": v})...)
+	}
+	return out
 }
 
 func checkComposeDocument(t *Template) []Issue { return CheckCompose(t.Compose) }
