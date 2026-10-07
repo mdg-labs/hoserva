@@ -31,17 +31,17 @@ const generatedApi = /^(docs|versioned_docs[\\/][^\\/]+)[\\/]reference[\\/]api$/
 const hostPattern =
   /https?:\/\/([a-z0-9-]+\.)*(fonts\.googleapis\.com|fonts\.gstatic\.com|googletagmanager\.com|google-analytics\.com|algolia\.net|algolianet\.com|algolia\.io|jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|plausible\.io|posthog\.com|matomo\.cloud)/i;
 
-function files(dir, skipNames, root = dir) {
+function files(dir, skipNames, skipPath = null, root = dir) {
   return fs.readdirSync(dir, {withFileTypes: true}).flatMap((entry) => {
     if (skipNames.has(entry.name)) return [];
     const full = path.join(dir, entry.name);
-    if (generatedApi.test(path.relative(root, full))) return [];
-    return entry.isDirectory() ? files(full, skipNames, root) : [full];
+    if (skipPath?.test(path.relative(root, full))) return [];
+    return entry.isDirectory() ? files(full, skipNames, skipPath, root) : [full];
   });
 }
 
 const failures = [];
-for (const file of files(siteDir, skip)) {
+for (const file of files(siteDir, skip, generatedApi)) {
   const match = sourcePattern.exec(fs.readFileSync(file, 'latin1'));
   if (match) failures.push(`${path.relative(siteDir, file)} mentions "${match[0]}"`);
 }
