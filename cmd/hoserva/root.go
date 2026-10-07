@@ -27,6 +27,8 @@ func rootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hoserva",
 		Short: "Hoserva command-line interface",
+		// writeError is the only place an error is printed, escaped.
+		SilenceErrors: true,
 	}
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Emit machine-readable JSON")
 	cmd.PersistentFlags().StringVar(&socketPath, "socket", defaultSocket, "Path to hoservad's Unix socket")
@@ -65,8 +67,13 @@ func rootCmd() *cobra.Command {
 }
 
 func runCLI() int {
-	if err := rootCmd().Execute(); err != nil {
-		writeError(os.Stderr, err)
+	return execute(rootCmd(), os.Stderr)
+}
+
+func execute(root *cobra.Command, stderr io.Writer) int {
+	root.SetErr(stderr)
+	if err := root.Execute(); err != nil {
+		writeError(stderr, err)
 		return exitError
 	}
 	return exitOK
