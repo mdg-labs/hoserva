@@ -374,4 +374,4 @@ A NAS holds everything a person owns digitally and increasingly gets exposed to 
 
 ### Threat model
 
-Doc 15 is the threat model: the attackers and what each is trusted with, the entry points and the code that owns them, the numbered security invariants, the severity rubric and how a finding's severity decides where it is reported. The accepted residuals above are listed there as well and stay accepted.
+Doc 15 is the threat model: the attackers and what each is trusted with, the entry points and the code that owns them, the numbered security invariants, the severity rubric and how a finding's severity decides where it is reported. The accepted residuals above are listed there as well and stay accepted. A finding rated Critical or High is reported privately, through a security advisory, and a lower one as a public issue (Q91); `SECURITY.md` tells outside reporters how.

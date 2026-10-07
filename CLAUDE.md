@@ -104,8 +104,10 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 |---|---|
 | Type (exactly one) | `feat`, `bug`, `chore`, `docs`, `spike` |
 | Area | `area:storage`, `area:api`, `area:web`, `area:cli`, `area:shares`, `area:containers`, `area:vm`, `area:migration`, `area:backup`, `area:packaging`, `area:devenv`, `area:site` |
-| Extras | `epic`, `safety-critical`, `needs-sudo`, `blocked` |
+| Extras | `epic`, `safety-critical`, `needs-sudo`, `blocked`, `security` |
 | Status (machine-managed) | `status:new`, `status:ready`, `status:in-progress`, `status:in-review`, `status:implemented`, `status:closed`, `status:cancelled` |
+
+`security` marks a public issue for a security defect or hardening (doc 15). A finding the doc 15 rubric rates Critical or High is a private security advisory instead, never a public issue (Q91).
 
 ## Area → paths
 

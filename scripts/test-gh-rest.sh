@@ -69,6 +69,7 @@ while [ \$# -gt 0 ]; do
     --method) method="\$2"; shift 2 ;;
     -f|-F) shift 2 ;;
     --jq) jqf="\$2"; shift 2 ;;
+    --input) printf 'body: %s\n' "\$(cat)" >>"\$log"; shift 2 ;;
     --*) shift ;;
     *) path="\$1"; shift ;;
   esac
@@ -152,6 +153,20 @@ case "\$method \$path" in
     body='{"full_name":"test-owner/test-repo","default_branch":"main"}' ;;
   "GET repos/\$repo/labels?per_page=100&page=1")
     body='[{"name":"bug"},{"name":"feat"}]' ;;
+  "GET repos/\$repo/security-advisories?per_page=100")
+    body='[{"ghsa_id":"GHSA-2345-cfgh-jmpq","state":"draft"},{"ghsa_id":"GHSA-2345-cfgh-jmpr","state":"triage"}]' ;;
+  "GET repos/\$repo/security-advisories?per_page=100&state=triage")
+    body='[{"ghsa_id":"GHSA-2345-cfgh-jmpr","state":"triage"}]' ;;
+  "GET repos/\$repo/security-advisories?per_page=100&state=closed")
+    body="\$(hundred 100 300000)" ;;
+  "GET repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpq")
+    body='{"ghsa_id":"GHSA-2345-cfgh-jmpq","severity":"high"}' ;;
+  "POST repos/\$repo/security-advisories")
+    body='{"ghsa_id":"GHSA-2345-cfgh-jmpq"}' ;;
+  "PATCH repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpq")
+    body='{"ghsa_id":"GHSA-2345-cfgh-jmpq"}' ;;
+  "POST repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpq/forks")
+    body='{}' ;;
   "GET repos/\$repo/pulls/80/comments?per_page=100&page=1")
     body='[{"id":1,"body":"inline finding"}]' ;;
   *)
@@ -337,6 +352,117 @@ assert_eq "$out" '["bug","feat"]' "label-list"
 out="$(run paged "pulls/80/comments" --jq '.[0].body')"
 assert_eq "$out" "inline finding" "paged is a generic self-paging GET for an endpoint with no named subcommand"
 
+# --- security advisories -----------------------------------------------------
+GHSA="GHSA-2345-cfgh-jmpq"
+descfile="$work/advisory.md"
+# shellcheck disable=SC2016
+printf 'Line one with "quotes" and $(not run) and `ticks`\nLine two\n' >"$descfile"
+
+out="$(run advisory-list --jq '[.[].ghsa_id]')"
+assert_eq "$out" '["GHSA-2345-cfgh-jmpq","GHSA-2345-cfgh-jmpr"]' "advisory-list reads every state when none is given"
+
+: >"$LOG"
+out="$(run advisory-list --state triage --jq '[.[].state]')"
+assert_eq "$out" '["triage"]' "advisory-list --state filters through the query"
+assert_contains "$LOG" "api repos/$REPO/security-advisories?per_page=100&state=triage" "advisory-list --state reaches the repository-scoped endpoint"
+assert_not_contains "$LOG" "&page=" "advisory-list never sends a page number: the endpoint pages by cursor"
+
+set +e
+run advisory-list --state closed >/dev/null 2>"$work/adv-full.err"
+rc=$?
+set -e
+assert_eq "$([ "$rc" -ne 0 ] && echo refused)" "refused" "a full page of advisories is refused, not returned as if complete"
+if ! grep -q "may be only the first page" "$work/adv-full.err"; then
+  note "FAIL: the full-page refusal should say why"
+  fail=1
+fi
+
+out="$(run advisory-get "$GHSA" --jq '.severity')"
+assert_eq "$out" "high" "advisory-get"
+
+# A real write: the exact method, path and body gh receives.
+: >"$LOG"
+run advisory-create --summary 'A "quoted" summary' --description-file "$descfile" \
+  --severity high --cwe CWE-22 --cwe CWE-59 >/dev/null
+assert_contains "$LOG" "api --method POST repos/$REPO/security-advisories --input -" "advisory-create POSTs to the repository's advisories"
+body_line="$(grep '^body: ' "$LOG")"
+assert_eq "$(jq -r '.summary' <<<"${body_line#body: }")" 'A "quoted" summary' "advisory-create carries the summary verbatim"
+assert_eq "$(jq -r '.description' <<<"${body_line#body: }")" "$(cat "$descfile")" "advisory-create carries the description file verbatim, metacharacters included"
+assert_eq "$(jq -c '[.severity, .cwe_ids, .vulnerabilities]' <<<"${body_line#body: }")" '["high",["CWE-22","CWE-59"],[]]' "advisory-create sends severity, CWE ids and an empty vulnerabilities list"
+
+# --dry-run prints method, path and body and calls gh not at all.
+: >"$LOG"
+out="$(run advisory-create --summary S --description-file "$descfile" --severity critical --dry-run)"
+assert_eq "$(head -n1 <<<"$out")" "POST repos/$REPO/security-advisories" "advisory-create --dry-run prints the method and path"
+assert_eq "$(tail -n1 <<<"$out" | jq -r '.severity')" "critical" "advisory-create --dry-run prints the JSON body"
+assert_eq "$(wc -c <"$LOG" | tr -d ' ')" "0" "advisory-create --dry-run never calls gh"
+
+: >"$LOG"
+out="$(run advisory-update "$GHSA" --severity low --dry-run)"
+assert_eq "$out" "PATCH repos/$REPO/security-advisories/$GHSA
+{\"severity\":\"low\"}" "advisory-update --dry-run sends only the fields given"
+assert_eq "$(wc -c <"$LOG" | tr -d ' ')" "0" "advisory-update --dry-run never calls gh"
+
+: >"$LOG"
+run advisory-update "$GHSA" --summary "New summary" >/dev/null
+assert_contains "$LOG" "api --method PATCH repos/$REPO/security-advisories/$GHSA --input -" "advisory-update PATCHes the advisory"
+assert_contains "$LOG" 'body: {"summary":"New summary"}' "advisory-update sends only the summary"
+
+for pair in "accept:draft" "reject:closed" "publish:published"; do
+  name=${pair%%:*}; state=${pair##*:}
+  out="$(run "advisory-$name" "$GHSA" --dry-run)"
+  assert_eq "$out" "PATCH repos/$REPO/security-advisories/$GHSA
+{\"state\":\"$state\"}" "advisory-$name --dry-run moves the advisory to $state"
+  : >"$LOG"
+  run "advisory-$name" "$GHSA" >/dev/null
+  assert_contains "$LOG" "body: {\"state\":\"$state\"}" "advisory-$name sends state $state"
+done
+
+out="$(run advisory-fork "$GHSA" --dry-run)"
+assert_eq "$(head -n1 <<<"$out")" "POST repos/$REPO/security-advisories/$GHSA/forks" "advisory-fork --dry-run prints the fork endpoint"
+: >"$LOG"
+run advisory-fork "$GHSA" >/dev/null
+assert_contains "$LOG" "api --method POST repos/$REPO/security-advisories/$GHSA/forks" "advisory-fork POSTs to the forks endpoint"
+
+# Every advisory subcommand refuses what it does not know, before any call.
+: >"$LOG"
+refused() {
+  local why=$1; shift
+  local rc
+  set +e
+  run "$@" >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_eq "$([ "$rc" -ne 0 ] && echo refused)" "refused" "$why"
+}
+refused "advisory-list refuses an unknown flag" advisory-list --bogus
+refused "advisory-list refuses an unknown state" advisory-list --state open
+refused "advisory-get refuses an unknown flag" advisory-get "$GHSA" --bogus
+refused "advisory-get refuses a non-GHSA id" advisory-get 123
+refused "advisory-create refuses an unknown flag" advisory-create --summary S --description-file "$descfile" --severity high --bogus x --dry-run
+refused "advisory-create refuses an unknown severity" advisory-create --summary S --description-file "$descfile" --severity severe --dry-run
+refused "advisory-create refuses a malformed CWE" advisory-create --summary S --description-file "$descfile" --severity high --cwe 22 --dry-run
+refused "advisory-create needs a summary" advisory-create --description-file "$descfile" --severity high --dry-run
+refused "advisory-create needs a description file that exists" advisory-create --summary S --description-file "$work/missing.md" --severity high --dry-run
+refused "advisory-update refuses an unknown flag" advisory-update "$GHSA" --bogus --dry-run
+refused "advisory-update needs something to change" advisory-update "$GHSA" --dry-run
+refused "advisory-update refuses a non-GHSA id" advisory-update nope --severity low --dry-run
+for name in accept reject publish fork; do
+  refused "advisory-$name refuses an unknown flag" "advisory-$name" "$GHSA" --bogus
+  refused "advisory-$name refuses a second positional argument" "advisory-$name" "$GHSA" extra --dry-run
+  refused "advisory-$name needs an id" "advisory-$name" --dry-run
+  refused "advisory-$name refuses a non-GHSA id" "advisory-$name" "../issues/1" --dry-run
+done
+assert_eq "$(wc -c <"$LOG" | tr -d ' ')" "0" "no refused advisory command reached gh"
+
+out="$(run help)"
+for sub in advisory-list advisory-get advisory-create advisory-update advisory-accept advisory-reject advisory-fork advisory-publish; do
+  case "$out" in
+    *"  $sub "*) : ;;
+    *) note "FAIL: usage text does not list $sub"; fail=1 ;;
+  esac
+done
+
 # --- never GraphQL, never search/, never --paginate -----------------------
 # The log above only ever accumulates the *last* scenario's calls (each
 # scenario truncates it first) — run the full suite once more into one
@@ -350,6 +476,8 @@ run blocked-by 61 >/dev/null
 run pr-list --base main --head dev >/dev/null
 run repo-view >/dev/null
 run label-list >/dev/null
+run advisory-list >/dev/null
+run advisory-get "$GHSA" >/dev/null
 if grep -iE 'graphql|search/|--paginate' "$LOG" >/dev/null; then
   note "FAIL: the log contains a forbidden invocation"
   grep -iE 'graphql|search/|--paginate' "$LOG" >&2

@@ -74,6 +74,7 @@ hoserva_labels=(
   "safety-critical|b60205|Touches a path where a bug loses data — human reads the diff before push"
   "needs-sudo|d93f0b|Requires root — maintainer runs this, never an agent"
   "blocked|000000|Cannot proceed until a dependency or external blocker is resolved"
+  "security|e11d21|A public issue for a security defect or hardening (doc 15)"
 
   "status:new|ededed|Filed, not yet triaged"
   "status:ready|bfd4f2|Triaged and ready to be picked up"
