@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -453,10 +454,13 @@ func (in *Installer) resolve(ctx context.Context, t *Template, composeText []byt
 		case KindSecret:
 			switch {
 			case inst != nil && req.values[n] != "":
+				if err := checkSecretFormat(n, spec.Format, req.values[n]); err != nil {
+					return nil, err
+				}
 				secrets[n] = req.values[n]
 			case inst != nil && inst.generate[n]:
 				ri.Generated = true
-				if secrets[n], err = in.newSecret(); err != nil {
+				if secrets[n], err = in.newSecret(spec.Format); err != nil {
 					return nil, err
 				}
 			case inst != nil:
@@ -464,9 +468,12 @@ func (in *Installer) resolve(ctx context.Context, t *Template, composeText []byt
 			default:
 				ri.Generated = given == ""
 				if !ri.Generated {
+					if err := checkSecretFormat(n, spec.Format, given); err != nil {
+						return nil, err
+					}
 					secrets[n] = given
 				} else if req.generate {
-					if secrets[n], err = in.newSecret(); err != nil {
+					if secrets[n], err = in.newSecret(spec.Format); err != nil {
 						return nil, err
 					}
 				} else {
@@ -536,7 +543,7 @@ func (in *Installer) resolve(ctx context.Context, t *Template, composeText []byt
 	for k, v := range values {
 		summed[k] = v
 		if pending[k] {
-			summed[k] = secretPlaceholder
+			summed[k] = secretPlaceholder(t.Block.Inputs[k].Format)
 		}
 	}
 	if err := t.checkResolved(summed); err != nil {
@@ -575,21 +582,51 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-const secretBytes = 24
+const (
+	secretBytes      = 24
+	laravelKeyBytes  = 32
+	laravelKeyPrefix = "base64:"
+)
 
-// secretPlaceholder has the length and alphabet of a generated secret.
-var secretPlaceholder = strings.Repeat("0", 2*secretBytes)
+// secretPlaceholder has the length and alphabet of a generated secret of the
+// given format.
+func secretPlaceholder(format string) string {
+	if format == FormatLaravelKey {
+		return laravelKeyPrefix + base64.StdEncoding.EncodeToString(make([]byte, laravelKeyBytes))
+	}
+	return strings.Repeat("0", 2*secretBytes)
+}
 
-func (in *Installer) newSecret() (string, error) {
+func (in *Installer) newSecret(format string) (string, error) {
 	r := in.Random
 	if r == nil {
 		r = rand.Reader
 	}
-	b := make([]byte, secretBytes)
+	n := secretBytes
+	if format == FormatLaravelKey {
+		n = laravelKeyBytes
+	}
+	b := make([]byte, n)
 	if _, err := io.ReadFull(r, b); err != nil {
 		return "", fmt.Errorf("generating a secret: %w", err)
 	}
+	if format == FormatLaravelKey {
+		return laravelKeyPrefix + base64.StdEncoding.EncodeToString(b), nil
+	}
 	return hex.EncodeToString(b), nil
+}
+
+// checkSecretFormat refuses a typed secret that does not have the shape its
+// format asks for. A secret without a format accepts any value.
+func checkSecretFormat(name, format, v string) error {
+	if format != FormatLaravelKey {
+		return nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(v, laravelKeyPrefix))
+	if !strings.HasPrefix(v, laravelKeyPrefix) || err != nil || len(raw) != laravelKeyBytes {
+		return invalidInput(name, "%s must be %s followed by %d random bytes in base64, or left empty to be generated", name, laravelKeyPrefix, laravelKeyBytes)
+	}
+	return nil
 }
 
 // checkEnvValue refuses a value the .env file cannot hold as written: a line

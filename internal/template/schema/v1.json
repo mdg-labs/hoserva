@@ -145,6 +145,14 @@
             "minLength": 1,
             "description": "Help text shown in the install form."
           },
+          "format": {
+            "type": "string",
+            "enum": [
+              "hex",
+              "laravel-key"
+            ],
+            "description": "Only for secret inputs: the shape of a generated value. hex (the default) is 48 hexadecimal characters; laravel-key is base64: followed by 32 random bytes in base64 - the APP_KEY of a Laravel application. A value typed for a laravel-key secret must have the same shape; any value is accepted for hex."
+          },
           "optional": {
             "type": "boolean",
             "description": "Only for string inputs: the value may be left empty and is then written to .env as an empty value. An optional input has no default."
@@ -294,6 +302,31 @@
               "not": {
                 "required": [
                   "optional"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "path",
+                    "port",
+                    "string",
+                    "timezone",
+                    "device"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "format"
                 ]
               }
             }
