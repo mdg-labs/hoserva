@@ -138,12 +138,7 @@ func printMigrationReport(c *apiv1.Client, w io.Writer) error {
 	if err != nil {
 		return mapAPIErr(err)
 	}
-	text, err := io.ReadAll(doc.Data)
-	if err != nil {
-		return err
-	}
-	_, err = io.WriteString(w, safeBlock(string(text)))
-	return err
+	return copyBlock(w, doc.Data)
 }
 
 var migrationPhaseLabels = map[apiv1.MigrationPhase]string{
@@ -672,9 +667,7 @@ func printJobLog(c *apiv1.Client, id uuid.UUID, what string) {
 	}
 	defer func() { _ = zr.Close() }()
 	fmt.Printf("%s log:\n", strings.ToUpper(what[:1])+what[1:])
-	text, err := io.ReadAll(zr)
-	fmt.Print(safeBlock(string(text)))
-	if err != nil {
+	if err := copyBlock(os.Stdout, zr); err != nil {
 		fmt.Fprintf(os.Stderr, "The %s's log could not be read to its end: %v\n", what, err)
 	}
 	fmt.Println()

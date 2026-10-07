@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"unicode/utf8"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -74,6 +76,63 @@ func TestSafeTextOfEveryByteValueIsFreeOfControlCharacters(t *testing.T) {
 		assertNoTerminalControl(t, strings.ReplaceAll(safeBlock(s), "\n", ""))
 	}
 }
+
+func TestCopyBlockWritesWhatSafeBlockReturnsHoweverTheReadsAreChunked(t *testing.T) {
+	var all []byte
+	for b := 0; b < 256; b++ {
+		all = append(all, byte(b))
+	}
+	inputs := map[string]string{
+		"every byte value":          string(all),
+		"multi-byte and controls":   "caf\u00e9 \u65e5\u672c \U0001f600\n\tservices:\r\n  a: \x1b[2K\u009b\u202e\u2028\u00a0\xff",
+		"truncated rune at the end": "ok \xe2\x82",
+		"empty":                     "",
+		"larger than one chunk":     strings.Repeat("a\u65e5\x1b\xe2", 40000),
+	}
+	readers := map[string]func(string) io.Reader{
+		"one read":     func(in string) io.Reader { return strings.NewReader(in) },
+		"one byte":     func(in string) io.Reader { return iotest.OneByteReader(strings.NewReader(in)) },
+		"half reads":   func(in string) io.Reader { return iotest.HalfReader(strings.NewReader(in)) },
+		"data and EOF": func(in string) io.Reader { return iotest.DataErrReader(strings.NewReader(in)) },
+	}
+	for iname, in := range inputs {
+		for rname, mk := range readers {
+			t.Run(iname+"/"+rname, func(t *testing.T) {
+				var buf bytes.Buffer
+				if err := copyBlock(&buf, mk(in)); err != nil {
+					t.Fatalf("copyBlock: %v", err)
+				}
+				if got, want := buf.String(), safeBlock(in); got != want {
+					t.Errorf("copyBlock = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestCopyBlockReturnsTheReadErrorAfterTheEscapedPrefix(t *testing.T) {
+	boom := errors.New("connection reset")
+	in := "a\x1b[2K\u65e5\xe2\x82"
+	var buf bytes.Buffer
+	err := copyBlock(&buf, io.MultiReader(strings.NewReader(in), iotest.ErrReader(boom)))
+	if !errors.Is(err, boom) {
+		t.Fatalf("copyBlock error = %v, want %v", err, boom)
+	}
+	if got, want := buf.String(), safeBlock(in); got != want {
+		t.Errorf("copyBlock wrote %q before the error, want %q", got, want)
+	}
+}
+
+func TestCopyBlockReturnsTheWriteError(t *testing.T) {
+	boom := errors.New("broken pipe")
+	if err := copyBlock(failingWriter{boom}, strings.NewReader("abc")); !errors.Is(err, boom) {
+		t.Errorf("copyBlock error = %v, want %v", err, boom)
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (f failingWriter) Write([]byte) (int, error) { return 0, f.err }
 
 func TestWriteErrorPrintsControlCharactersEscaped(t *testing.T) {
 	var buf bytes.Buffer
