@@ -332,6 +332,17 @@ func TestPreview_ATopLevelVersionKeyIsIgnored(t *testing.T) {
 	}
 }
 
+// The failure text covers a value or a character, not only a key.
+func TestPreview_TheFailureTextForARefusedValueDoesNotNameAKey(t *testing.T) {
+	o := previewCompose([]byte("services:\n  web:\n    image: x\n    ipc: host\n")).Outcome(true)
+	if o.Failure != FailureNotAccepted {
+		t.Fatalf("outcome = %+v, want it not accepted", o)
+	}
+	if got, want := o.FailureText(), "compose.yaml uses what a stack of Hoserva does not accept"; got != want {
+		t.Errorf("FailureText = %q, want %q", got, want)
+	}
+}
+
 // The version key is exempt from the allow list, not from the text rule: a
 // control character in its value refuses the project.
 func TestPreview_AControlCharacterInTheVersionValueIsRefused(t *testing.T) {

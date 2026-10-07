@@ -121,7 +121,7 @@ func (o *Outcome) FailureText() string {
 	case FailureNoServices:
 		return "compose.yaml declares no services"
 	case FailureNotAccepted:
-		return "compose.yaml uses a Compose key a stack of Hoserva does not accept"
+		return "compose.yaml uses what a stack of Hoserva does not accept"
 	}
 	return ""
 }
