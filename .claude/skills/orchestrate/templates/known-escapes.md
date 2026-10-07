@@ -54,7 +54,7 @@ existing line by adding its PR number.
 - **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback, a mirrored-boot-pool check that passes when the cache's disk cannot be identified) — PR 150, 159, 603
 - **fail-open** — `|| true` or a swallowed error inside a gate, so the gate reports PASS after a failure — PR 163, 210
 - **fail-open** — a skip meant for one step applied to every step (unregistered mover skip also skipping sync/scrub) — PR 201
-- **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337
+- **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW; a description checker given no template ids passes without reading one) — PR 337, catalog PR 102
 - **fail-open** — a destructive call treats a missing path as success while the disks are unmounted, so the data is still on disk — PR 344
 - **fail-open** — a cleanup step skipped because a status signal still reads good from an earlier successful run (stale freshness/lastSyncAt), not from the run that just failed — PR 357
 - **fail-open** — a paired stop-then-start recovery step reads live status to decide whether the start is still owed, but live status can't distinguish "never touched" from "an earlier attempt's stop succeeded and its start didn't", so a retry after a failed start silently skips finishing it and reports success — PR 421
@@ -170,7 +170,8 @@ existing line by adding its PR number.
 - **template** — an image option that prints credentials (peer configuration QR codes) to the container log left switched on, when the image also saves them in the app's folder — catalog PR 81
 - **template** — an importer or library manager given separate download and library mounts instead of the shared `/data` layout, so moves become copies and hardlinks fail — catalog PR 81
 - **template** — a port published without `/udp` where the application's upstream says it uses that port over TCP and UDP — catalog PR 81
-- **template** — a login served over plain HTTP with no note that it stays on the local network or behind an HTTPS proxy or tunnel — catalog PR 81
+- **template** — a login served over plain HTTP with no note that it stays on the local network or behind an HTTPS proxy or tunnel — catalog PR 81, 102
+- **template** — a description or comment saying the user reaches only one folder when the Compose mounts more than that into the container — catalog PR 102
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156
