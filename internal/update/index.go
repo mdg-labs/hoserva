@@ -17,33 +17,59 @@ func parseIndex(body []byte) (*Index, error) {
 	return &idx, nil
 }
 
-func (idx *Index) latest(channel Channel, current string) *Release {
+// latest returns the channel's head release when it is a well-formed
+// entry strictly newer than current. It returns nil when there is
+// nothing newer, or when current is not a version that can be compared:
+// an unreadable running version never offers an install.
+func (idx *Index) latest(channel Channel, current string) (*Release, error) {
 	releases := idx.Channels[channel]
 	if len(releases) == 0 {
-		return nil
+		return nil, nil
 	}
 	head := releases[0]
-	if current != "" && versionsEqual(head.Version, current) {
-		return nil
+	if err := validateEntry(head); err != nil {
+		return nil, err
 	}
-	cp := head
-	return &cp
+	if channel == ChannelStable && head.Channel != ChannelStable {
+		return nil, fmt.Errorf("%w: %s is not a stable release", ErrReleaseMismatch, head.Version)
+	}
+	cmp, err := compareDebianVersions(head.Version, current)
+	if err != nil || cmp <= 0 {
+		return nil, nil
+	}
+	return &head, nil
 }
 
-func (idx *Index) findVersion(version string) *Release {
+// findVersion returns the entry for exactly the given version.
+func (idx *Index) findVersion(version string) (*Release, error) {
 	for _, list := range idx.Channels {
 		for _, r := range list {
-			if versionsEqual(r.Version, version) || r.Tag == version {
+			if r.Version == version {
+				if err := validateEntry(r); err != nil {
+					return nil, err
+				}
 				cp := r
-				return &cp
+				return &cp, nil
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
-func versionsEqual(a, b string) bool {
-	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
+// validateEntry requires an index entry's tag and channel to be the ones
+// its version implies. The entry is only a pointer: the version that is
+// installed is the one the signed SHA256SUMS names (downloadAndVerify).
+func validateEntry(r Release) error {
+	if !isReleaseVersion(r.Version) {
+		return fmt.Errorf("%w: %q is not a release version", ErrReleaseMismatch, r.Version)
+	}
+	if r.Tag != tagForVersion(r.Version) {
+		return fmt.Errorf("%w: tag %q does not belong to version %s", ErrReleaseMismatch, r.Tag, r.Version)
+	}
+	if r.Channel != channelForVersion(r.Version) {
+		return fmt.Errorf("%w: version %s is not on channel %q", ErrReleaseMismatch, r.Version, r.Channel)
+	}
+	return nil
 }
 
 func assetForArch(r *Release, arch string) (Asset, error) {

@@ -8,8 +8,10 @@ import (
 	"github.com/mdg-labs/hoserva/internal/notify"
 )
 
-// DefaultIndexURL is the permanent signed release-index URL (Q66, Q67).
-// hoservad's update check reads only this file, never the GitHub API.
+// DefaultIndexURL is the permanent release-index URL (Q66, Q67). The
+// index is unsigned and only points at releases; the signed SHA256SUMS
+// of a release is what an install trusts. hoservad's update check reads
+// only this file, never the GitHub API.
 const DefaultIndexURL = "https://hoserva.dev/releases/index.json"
 
 const (
@@ -112,7 +114,8 @@ type DependencyStatus struct {
 	InRange          bool
 }
 
-// Release is one entry from the signed release index.
+// Release is one entry from the release index: a pointer to a release,
+// not a statement the signature covers.
 type Release struct {
 	Tag       string           `json:"tag"`
 	Version   string           `json:"version"`

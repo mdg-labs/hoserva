@@ -148,7 +148,7 @@ func (e *Engine) lookupAvailable(ctx context.Context, channel Channel) (*Release
 	if err != nil {
 		return nil, err
 	}
-	return idx.latest(channel, e.Current), nil
+	return idx.latest(channel, e.Current)
 }
 
 func (e *Engine) fetchIndex(ctx context.Context) (*Index, error) {
@@ -166,9 +166,10 @@ func (e *Engine) fetchIndex(ctx context.Context) (*Index, error) {
 	return parseIndex(body)
 }
 
-// allowURL refuses api.github.com and any URL that isn't the configured
-// index or a GitHub Releases *download* (asset) URL. Hosts are compared
-// after parsing, never as a substring. The GitHub API is never used (Q67).
+// allowURL refuses api.github.com and any URL other than the configured
+// index. Hosts are compared after parsing, never as a substring. The
+// GitHub API is never used (Q67). Release files are checked by
+// allowReleaseURL.
 func (e *Engine) allowURL(raw string) error {
 	u, err := parseHTTPSURL(raw)
 	if err != nil {
@@ -178,9 +179,6 @@ func (e *Engine) allowURL(raw string) error {
 		return fmt.Errorf("%w: %s", ErrIndexURL, raw)
 	}
 	if raw == e.indexURL() {
-		return nil
-	}
-	if hostnameIs(u, "github.com") && strings.Contains(u.Path, "/releases/download/") {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrIndexURL, raw)
@@ -250,7 +248,7 @@ func (e *Engine) Apply(ctx context.Context) error {
 	if err := e.backup(ctx); err != nil {
 		return err
 	}
-	if err := e.downloadAndVerify(ctx, rel); err != nil {
+	if err := e.downloadAndVerify(ctx, rel, rel.Version); err != nil {
 		e.notifyFailed(ctx, "Hoserva update was not installed", err.Error())
 		return err
 	}
@@ -282,14 +280,17 @@ func (e *Engine) Rollback(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rel := idx.findVersion(row.PreviousVersion)
+	rel, err := idx.findVersion(row.PreviousVersion)
+	if err != nil {
+		return err
+	}
 	if rel == nil {
 		return fmt.Errorf("update: previous version %s is not in the release index", row.PreviousVersion)
 	}
 	if err := e.backup(ctx); err != nil {
 		return err
 	}
-	if err := e.downloadAndVerify(ctx, rel); err != nil {
+	if err := e.downloadAndVerify(ctx, rel, row.PreviousVersion); err != nil {
 		e.notifyFailed(ctx, "Hoserva rollback was not installed", err.Error())
 		return err
 	}
@@ -399,23 +400,24 @@ func (e *Engine) backup(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) downloadAndVerify(ctx context.Context, rel *Release) error {
+// downloadAndVerify fetches and checks the release's package against the
+// signed SHA256SUMS. wantVersion is the version the caller means to
+// install; the package file name the signed SHA256SUMS lists must name
+// exactly that version, so what is installed is what the signature
+// covers whatever the index entry claims.
+func (e *Engine) downloadAndVerify(ctx context.Context, rel *Release, wantVersion string) error {
 	asset, err := assetForArch(rel, e.arch())
 	if err != nil {
-		return err
-	}
-	if err := e.allowURL(asset.URL); err != nil {
 		return err
 	}
 	sumsURL, sigURL, err := sumsURLs(asset.URL)
 	if err != nil {
 		return err
 	}
-	if err := e.allowURL(sumsURL); err != nil {
-		return err
-	}
-	if err := e.allowURL(sigURL); err != nil {
-		return err
+	for _, u := range []string{asset.URL, sumsURL, sigURL} {
+		if err := allowReleaseURL(u, rel.Tag); err != nil {
+			return err
+		}
 	}
 
 	sums, err := e.Fetcher.Get(ctx, sumsURL)
@@ -433,6 +435,13 @@ func (e *Engine) downloadAndVerify(ctx context.Context, rel *Release) error {
 	want, err := ChecksumFor(sums, filename)
 	if err != nil {
 		return err
+	}
+	signedVersion, signedArch, err := debFileVersion(filename)
+	if err != nil {
+		return err
+	}
+	if signedVersion != wantVersion || signedArch != e.arch() {
+		return fmt.Errorf("%w: signed package %s is not version %s for %s", ErrReleaseMismatch, filename, wantVersion, e.arch())
 	}
 	if !checksumsMatch(want, asset.SHA256) {
 		return fmt.Errorf("%w: index sha256 does not match signed SHA256SUMS", ErrChecksumMismatch)

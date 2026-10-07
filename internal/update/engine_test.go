@@ -541,7 +541,7 @@ func TestCheck_NeverUsesGitHubAPI(t *testing.T) {
 		}
 	}
 	if len(fetcher.Hits) != 1 || fetcher.Hits[0] != testIndexURL {
-		t.Fatalf("check hits = %v, want only the signed index", fetcher.Hits)
+		t.Fatalf("check hits = %v, want only the release index", fetcher.Hits)
 	}
 }
 
@@ -721,4 +721,303 @@ func TestCheck_NotifiesUpdateAvailableNotFailed(t *testing.T) {
 	if len(notes.Events) != 1 || notes.Events[0] != notify.EventHoservaUpdateAvailable {
 		t.Fatalf("notify events = %v, want [%s]", notes.Events, notify.EventHoservaUpdateAvailable)
 	}
+}
+
+const releaseBase = "https://github.com/mdg-labs/hoserva/releases/download/"
+
+// releaseKit signs release directories with one key and serves them from
+// a MapFetcher, so a test can put any signed file under any index entry.
+type releaseKit struct {
+	t      *testing.T
+	pub    ed25519.PublicKey
+	priv   ed25519.PrivateKey
+	bodies map[string][]byte
+}
+
+func newReleaseKit(t *testing.T) *releaseKit {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &releaseKit{t: t, pub: pub, priv: priv, bodies: map[string][]byte{}}
+}
+
+// serve publishes hoserva_<fileVersion>_amd64.deb with a signed
+// SHA256SUMS under baseURL and returns the package URL and its checksum.
+func (k *releaseKit) serve(baseURL, fileVersion string) (debURL, sha string) {
+	k.t.Helper()
+	name := "hoserva_" + fileVersion + "_amd64.deb"
+	deb := []byte("deb " + baseURL + name)
+	sum := sha256.Sum256(deb)
+	sha = hex.EncodeToString(sum[:])
+	sums := []byte(sha + "  " + name + "\n")
+	k.bodies[baseURL+name] = deb
+	k.bodies[baseURL+"SHA256SUMS"] = sums
+	k.bodies[baseURL+"SHA256SUMS.sig"] = ed25519.Sign(k.priv, sums)
+	return baseURL + name, sha
+}
+
+func (k *releaseKit) engine(current string, channel Channel, channels map[Channel][]Release) (*Engine, *FakeInstaller, *MemorySettings) {
+	k.t.Helper()
+	idx, err := json.Marshal(Index{Channels: channels})
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	k.bodies[testIndexURL] = idx
+	inst := &FakeInstaller{}
+	settings := DefaultMemorySettings()
+	settings.Row.Channel = channel
+	return &Engine{
+		IndexURL:  testIndexURL,
+		Arch:      "amd64",
+		StateDir:  k.t.TempDir(),
+		Current:   current,
+		PublicKey: k.pub,
+		Fetcher:   &MapFetcher{Bodies: k.bodies},
+		Installer: inst,
+		Host:      &FakeHost{},
+		Jobs:      &FakeJobs{},
+		Backup:    &FakeBackup{},
+		Notify:    &FakeNotifier{},
+		Settings:  settings,
+		Snapshots: &recordingSnapshots{live: filepath.Join(k.t.TempDir(), "hoserva-pre-migration-v00000000000001-0000000001.db")},
+	}, inst, settings
+}
+
+func release(tag, version string, channel Channel, debURL, sha string) Release {
+	return Release{Tag: tag, Version: version, Channel: channel, Assets: map[string]Asset{"amd64": {URL: debURL, SHA256: sha}}}
+}
+
+func TestApply_RefusesPackageTheSignedFileDoesNotNameAsTheIndexVersion(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name  string
+		entry func(k *releaseKit) Release
+	}{
+		{"older signed package under a higher version label", func(k *releaseKit) Release {
+			url, sha := k.serve(releaseBase+"v0.9.0/", "0.1.0")
+			return release("v0.9.0", "0.9.0", ChannelStable, url, sha)
+		}},
+		{"tag that does not belong to the version", func(k *releaseKit) Release {
+			url, sha := k.serve(releaseBase+"v0.1.0/", "0.1.0")
+			return release("v0.1.0", "0.9.0", ChannelStable, url, sha)
+		}},
+		{"version that is not a release version", func(k *releaseKit) Release {
+			url, sha := k.serve(releaseBase+"v9/", "9")
+			return release("v9", "9", ChannelStable, url, sha)
+		}},
+		{"channel that does not belong to the version", func(k *releaseKit) Release {
+			url, sha := k.serve(releaseBase+"v0.9.0/", "0.9.0")
+			return release("v0.9.0", "0.9.0", ChannelBeta, url, sha)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newReleaseKit(t)
+			rel := tc.entry(k)
+			e, inst, settings := k.engine("0.2.0", ChannelStable, map[Channel][]Release{ChannelStable: {rel}})
+
+			err := e.Apply(ctx)
+			if !errors.Is(err, ErrReleaseMismatch) {
+				t.Fatalf("Apply = %v, want ErrReleaseMismatch", err)
+			}
+			if len(inst.Calls) != 0 {
+				t.Fatalf("installer called %v", inst.Calls)
+			}
+			if settings.Row.PreviousVersion != "" {
+				t.Fatalf("previous version recorded as %q for a refused install", settings.Row.PreviousVersion)
+			}
+			if _, err := os.Stat(filepath.Join(e.pendingDir(), pendingDebName)); err == nil {
+				t.Fatal("a refused package was left in the pending directory")
+			}
+		})
+	}
+}
+
+func TestApply_RefusesAssetOutsideTheProjectReleaseDirectory(t *testing.T) {
+	ctx := context.Background()
+	for _, base := range []string{
+		"https://github.com/attacker/hoserva/releases/download/v0.2.0/",
+		"https://github.com/mdg-labs/other/releases/download/v0.2.0/",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.1.0/",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/sub/",
+		"https://objects.githubusercontent.com/mdg-labs/hoserva/releases/download/v0.2.0/",
+		"http://github.com/mdg-labs/hoserva/releases/download/v0.2.0/",
+	} {
+		t.Run(base, func(t *testing.T) {
+			k := newReleaseKit(t)
+			url, sha := k.serve(base, "0.2.0")
+			e, inst, _ := k.engine("0.1.0", ChannelStable, map[Channel][]Release{
+				ChannelStable: {release("v0.2.0", "0.2.0", ChannelStable, url, sha)},
+			})
+
+			err := e.Apply(ctx)
+			if !errors.Is(err, ErrIndexURL) {
+				t.Fatalf("Apply = %v, want ErrIndexURL", err)
+			}
+			if len(inst.Calls) != 0 {
+				t.Fatalf("installer called %v", inst.Calls)
+			}
+			for _, hit := range e.Fetcher.(*MapFetcher).Hits {
+				if hit != testIndexURL {
+					t.Fatalf("fetched %s — only the index may be fetched before the asset URL is accepted", hit)
+				}
+			}
+		})
+	}
+}
+
+func TestApply_StableChannelNeverInstallsBeta(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		entry Release
+	}{
+		{"beta entry listed on the stable channel", Release{Tag: "v0.3.0-beta.1", Version: "0.3.0~beta.1", Channel: ChannelBeta}},
+		{"beta version labelled stable", Release{Tag: "v0.3.0-beta.1", Version: "0.3.0~beta.1", Channel: ChannelStable}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newReleaseKit(t)
+			url, sha := k.serve(releaseBase+"v0.3.0-beta.1/", "0.3.0~beta.1")
+			rel := tc.entry
+			rel.Assets = map[string]Asset{"amd64": {URL: url, SHA256: sha}}
+			e, inst, _ := k.engine("0.2.0", ChannelStable, map[Channel][]Release{ChannelStable: {rel}})
+
+			if err := e.Apply(ctx); !errors.Is(err, ErrReleaseMismatch) {
+				t.Fatalf("Apply = %v, want ErrReleaseMismatch", err)
+			}
+			if len(inst.Calls) != 0 {
+				t.Fatalf("installer called %v", inst.Calls)
+			}
+			if _, err := e.Status(ctx, true); !errors.Is(err, ErrReleaseMismatch) {
+				t.Fatalf("Status = %v, want ErrReleaseMismatch rather than an offered beta", err)
+			}
+		})
+	}
+}
+
+func TestApply_BetaChannelInstallsBetaAndStable(t *testing.T) {
+	ctx := context.Background()
+	t.Run("newer beta", func(t *testing.T) {
+		k := newReleaseKit(t)
+		url, sha := k.serve(releaseBase+"v0.3.0-beta.2/", "0.3.0~beta.2")
+		e, inst, _ := k.engine("0.3.0~beta.1", ChannelBeta, map[Channel][]Release{
+			ChannelBeta: {release("v0.3.0-beta.2", "0.3.0~beta.2", ChannelBeta, url, sha)},
+		})
+		if err := e.Apply(ctx); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(inst.Calls) != 1 {
+			t.Fatalf("installer calls = %v, want 1", inst.Calls)
+		}
+	})
+	t.Run("stable that follows the running beta", func(t *testing.T) {
+		k := newReleaseKit(t)
+		url, sha := k.serve(releaseBase+"v0.3.0/", "0.3.0")
+		e, inst, _ := k.engine("0.3.0~beta.2", ChannelBeta, map[Channel][]Release{
+			ChannelBeta: {release("v0.3.0", "0.3.0", ChannelStable, url, sha)},
+		})
+		if err := e.Apply(ctx); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(inst.Calls) != 1 {
+			t.Fatalf("installer calls = %v, want 1", inst.Calls)
+		}
+	})
+}
+
+func TestStatus_NothingAvailableUnlessHeadIsNewerThanRunning(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, current, head, tag string
+		channel                  Channel
+		wantAvailable            bool
+	}{
+		{"running newer than head", "0.3.0", "0.2.0", "v0.2.0", ChannelStable, false},
+		{"running equal to head", "0.2.0", "0.2.0", "v0.2.0", ChannelStable, false},
+		{"stable head older than running beta", "0.3.0~beta.2", "0.2.0", "v0.2.0", ChannelStable, false},
+		{"stable head follows running beta", "0.3.0~beta.2", "0.3.0", "v0.3.0", ChannelStable, true},
+		{"running version unreadable", "dev", "0.2.0", "v0.2.0", ChannelStable, false},
+		{"head newer", "0.1.9", "0.2.0", "v0.2.0", ChannelStable, true},
+		{"numeric not lexical", "0.9.0", "0.10.0", "v0.10.0", ChannelStable, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newReleaseKit(t)
+			url, sha := k.serve(releaseBase+tc.tag+"/", tc.head)
+			e, inst, _ := k.engine(tc.current, tc.channel, map[Channel][]Release{
+				tc.channel: {release(tc.tag, tc.head, ChannelStable, url, sha)},
+			})
+			st, err := e.Status(ctx, true)
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if (st.Available != nil) != tc.wantAvailable {
+				t.Fatalf("available = %+v, want available=%v", st.Available, tc.wantAvailable)
+			}
+			if tc.wantAvailable {
+				return
+			}
+			if err := e.Apply(ctx); !errors.Is(err, ErrNotAvailable) {
+				t.Fatalf("Apply = %v, want ErrNotAvailable", err)
+			}
+			if len(inst.Calls) != 0 {
+				t.Fatalf("installer called %v", inst.Calls)
+			}
+		})
+	}
+}
+
+func TestRollback_InstallsOnlyTheRecordedPreviousVersion(t *testing.T) {
+	ctx := context.Background()
+	prepare := func(t *testing.T, k *releaseKit, previousFileVersion string) (*Engine, *FakeInstaller) {
+		t.Helper()
+		url, sha := k.serve(releaseBase+"v0.1.0/", previousFileVersion)
+		e, inst, settings := k.engine("0.2.0", ChannelStable, map[Channel][]Release{
+			ChannelStable: {release("v0.1.0", "0.1.0", ChannelStable, url, sha)},
+		})
+		settings.Row.PreviousVersion = "0.1.0"
+		dir := filepath.Join(e.StateDir, "backups", "pre-migration")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		snap := filepath.Join(dir, "hoserva-pre-migration-v20260919223737-0000000001.db")
+		if err := os.WriteFile(snap, []byte("rows"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.WriteRollbackTarget(dir, snap); err != nil {
+			t.Fatal(err)
+		}
+		return e, inst
+	}
+
+	t.Run("older version recorded as previous is installed", func(t *testing.T) {
+		e, inst := prepare(t, newReleaseKit(t), "0.1.0")
+		if err := e.Rollback(ctx); err != nil {
+			t.Fatalf("Rollback: %v", err)
+		}
+		if len(inst.Calls) != 1 {
+			t.Fatalf("installer calls = %v, want 1", inst.Calls)
+		}
+	})
+	t.Run("signed file naming another version is refused", func(t *testing.T) {
+		e, inst := prepare(t, newReleaseKit(t), "0.0.5")
+		if err := e.Rollback(ctx); !errors.Is(err, ErrReleaseMismatch) {
+			t.Fatalf("Rollback = %v, want ErrReleaseMismatch", err)
+		}
+		if len(inst.Calls) != 0 {
+			t.Fatalf("installer called %v", inst.Calls)
+		}
+	})
+	t.Run("version other than the recorded one is not found", func(t *testing.T) {
+		k := newReleaseKit(t)
+		e, inst := prepare(t, k, "0.1.0")
+		e.Settings.(*MemorySettings).Row.PreviousVersion = "0.0.9"
+		if err := e.Rollback(ctx); err == nil {
+			t.Fatal("Rollback installed a version that is not the recorded previous one")
+		}
+		if len(inst.Calls) != 0 {
+			t.Fatalf("installer called %v", inst.Calls)
+		}
+	})
 }

@@ -3,6 +3,7 @@ package update
 import (
 	"errors"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -10,8 +11,6 @@ func TestAllowURL_RejectsSubstringAndAPIHosts(t *testing.T) {
 	e := &Engine{IndexURL: DefaultIndexURL}
 	ok := []string{
 		DefaultIndexURL,
-		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/hoserva_0.2.0_amd64.deb",
-		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
 	}
 	for _, raw := range ok {
 		if err := e.allowURL(raw); err != nil {
@@ -26,6 +25,8 @@ func TestAllowURL_RejectsSubstringAndAPIHosts(t *testing.T) {
 		"http://github.com/mdg-labs/hoserva/releases/download/v0.2.0/pkg.deb",
 		"https://github.com/mdg-labs/hoserva/archive/refs/tags/v0.2.0.tar.gz",
 		"https://objects.githubusercontent.com/github-production-release-asset/pkg.deb",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/hoserva_0.2.0_amd64.deb",
+		"https://hoserva.dev/releases/other.json",
 	}
 	for _, raw := range denied {
 		err := e.allowURL(raw)
@@ -91,4 +92,41 @@ func mustURL(t *testing.T, raw string) *url.URL {
 		t.Fatal(err)
 	}
 	return u
+}
+
+func TestAllowReleaseURL_AcceptsOnlyTheTagDirectoryOfTheProjectRepository(t *testing.T) {
+	const base = "https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/"
+	for _, raw := range []string{
+		base + "hoserva_0.2.0_amd64.deb",
+		base + "SHA256SUMS",
+		base + "SHA256SUMS.sig",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.3.0-beta.1/hoserva_0.3.0~beta.1_amd64.deb",
+	} {
+		tag := strings.Split(strings.TrimPrefix(raw, "https://github.com/mdg-labs/hoserva/releases/download/"), "/")[0]
+		if err := allowReleaseURL(raw, tag); err != nil {
+			t.Errorf("allowReleaseURL(%q) = %v, want nil", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		"http://github.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://github.com/Mdg-Labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://github.com/attacker/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://github.com/mdg-labs/hoserva2/releases/download/v0.2.0/SHA256SUMS",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.1.0/SHA256SUMS",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/a/SHA256SUMS",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/../v0.1.0/SHA256SUMS",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/%2e%2e/SHA256SUMS",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS?x=1",
+		"https://github.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS#x",
+		"https://github.com:444/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://user@github.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://github.com.attacker.example/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://api.github.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+		"https://objects.githubusercontent.com/mdg-labs/hoserva/releases/download/v0.2.0/SHA256SUMS",
+	} {
+		if err := allowReleaseURL(raw, "v0.2.0"); !errors.Is(err, ErrIndexURL) {
+			t.Errorf("allowReleaseURL(%q) = %v, want ErrIndexURL", raw, err)
+		}
+	}
 }
