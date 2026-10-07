@@ -64,7 +64,7 @@ The script reads the token from a variable, so the token never appears in the sc
    #!/usr/bin/env bash
    set -euo pipefail
 
-   curl --silent --show-error --fail --insecure \
+   curl --silent --show-error --fail \
      --header "Authorization: Bearer $HOSERVA_TOKEN" \
      "https://$HOSERVA_HOST:8008/api/v1/disks" \
      | jq -r '.disks[] | [.device, "\(.sizeBytes / 1e12 * 10 | round / 10) TB", (.model // "unknown")] | @tsv'
@@ -83,7 +83,9 @@ The script reads the token from a variable, so the token never appears in the sc
 
 The script prints one line per disk: the device, its size and its model. Your output lists your own disks.
 
-`--fail` makes `curl` exit with an error on any non-success status, so `set -e` stops the script instead of passing an error message to `jq`. `--insecure` skips the certificate check, which is needed for Hoserva's default self-signed certificate. If you have installed a certificate your computer trusts, remove it.
+`--fail` makes `curl` exit with an error on any non-success status, so `set -e` stops the script instead of passing an error message to `jq`.
+
+`curl` checks the server's certificate, and with Hoserva's default self-signed certificate that check fails. Give Hoserva a certificate your computer trusts: issue a Let's Encrypt certificate (see [Exposing services safely](../guides/exposing-safely.mdx#which-certificate-does-the-ui-use)), or save a copy of the self-signed certificate and add `--cacert` with its path to the `curl` line. For a one-off test on a network you control, you can add `--insecure` to the `curl` line, which skips the check. Do not keep it in a script you reuse: anyone who can intercept the connection could then pose as your server and receive the token.
 
 The operation behind the call is [List disks](./api/list-disks.api.mdx). Every operation page in the [API reference](./api.md) shows the role it needs and an example request in the same form.
 
@@ -119,7 +121,7 @@ Revoke a token when a script is retired or the token may have leaked. A revoked 
 
 | What you see | Likely cause | What to do |
 |---|---|---|
-| `curl` reports a certificate problem | Hoserva's default certificate is self-signed | Add `--insecure`, or trust the certificate on your computer |
+| `curl` reports a certificate problem | Hoserva's default certificate is self-signed | Trust the certificate on your computer, or add `--cacert` with a saved copy of it. Use `--insecure` only for a one-off test on a network you control |
 | `401` with the code `unauthorized` | The token is wrong, was revoked, or the header is missing | Check `HOSERVA_TOKEN`, and create a new token if you cannot find the value |
 | `403` with the code `forbidden` | The token's scope is too narrow for the operation | Create a token with the **Admin** scope, if the script really needs it |
 | The connection times out or is refused | Your computer is outside the networks Hoserva accepts | See [Exposing services safely](../guides/exposing-safely.mdx) |
