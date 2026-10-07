@@ -71,7 +71,7 @@ func removeEntry(parent int, name string, mode uint32) error {
 		return err
 	}
 	defer func() { _ = unix.Close(fd) }()
-	names, err := readNames(fd)
+	names, err := ReadNames(fd)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return nil
@@ -100,7 +100,10 @@ func unlinkat(parent int, name string, flags int) error {
 	return nil
 }
 
-func readNames(dirfd int) ([]string, error) {
+// ReadNames lists the names in the directory dirfd and leaves dirfd open for
+// the caller. The listing shares the descriptor's offset, so a descriptor
+// is listed once.
+func ReadNames(dirfd int) ([]string, error) {
 	dup, err := unix.Dup(dirfd)
 	if err != nil {
 		return nil, err

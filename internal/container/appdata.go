@@ -207,7 +207,7 @@ func removeAppdataDirs(ctx context.Context, roots, plan []string) ([]string, err
 				beforeAppdataRootOpen(root)
 			}
 			var err error
-			if fd, err = openResolvedDir(root); err != nil {
+			if fd, err = beneath.OpenResolvedDir(root); err != nil {
 				return deleted, fmt.Errorf("opening appdata location %s: %w", root, err)
 			}
 			rootFDs[root] = fd
@@ -228,29 +228,4 @@ func removeAppdataDirs(ctx context.Context, roots, plan []string) ([]string, err
 		deleted = append(deleted, p)
 	}
 	return deleted, nil
-}
-
-// openResolvedDir opens the absolute, symlink-free directory path by walking
-// each of its components from "/" with O_NOFOLLOW, so no component, the last
-// included, is resolved by name a second time.
-func openResolvedDir(path string) (int, error) {
-	if !filepath.IsAbs(path) {
-		return -1, fmt.Errorf("%s is not an absolute path", path)
-	}
-	fd, err := beneath.OpenRoot("/")
-	if err != nil {
-		return -1, err
-	}
-	for _, c := range strings.Split(strings.Trim(filepath.ToSlash(path), "/"), "/") {
-		if c == "" {
-			continue
-		}
-		next, err := beneath.Open(fd, c, unix.O_RDONLY|unix.O_DIRECTORY)
-		_ = unix.Close(fd)
-		if err != nil {
-			return -1, err
-		}
-		fd = next
-	}
-	return fd, nil
 }

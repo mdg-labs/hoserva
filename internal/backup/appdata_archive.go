@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
 // An appdata archive is a tar.zst holding, in order: the header entry, one
@@ -423,29 +426,50 @@ func appdataEntryDir(name string, n int) (int, string, bool) {
 }
 
 type appdataDirMeta struct {
-	path string
+	tree int
+	rel  string
 	hdr  *tar.Header
 }
 
-// extractAppdata unpacks the archive's trees into targets, one directory
-// per tree, each of which must not exist yet. It creates only directories,
-// regular files and symbolic links, and refuses an entry that would be
-// written through a symbolic link the archive itself created, so nothing
-// lands outside its target. Ownership is restored when running as root.
-func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
+// beforeAppdataMeta, when set, runs after the archive's entries are written
+// and before ownership, modes and times are applied to its directories, so
+// a test can rearrange the tree at that moment.
+var beforeAppdataMeta func()
+
+// extract unpacks the archive's trees into targets, one directory per tree,
+// each of which must not exist yet. Everything is done relative to
+// descriptors: a target is created in its held parent and every entry is
+// created, and every directory's ownership, mode and times are applied,
+// through the descriptor of the directory it lies in, which is opened from
+// the one above with O_NOFOLLOW. It creates only directories, regular files
+// and symbolic links, and refuses an entry that would be written through a
+// symbolic link, so nothing lands outside its target. Ownership is restored
+// when running as root.
+func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
 	if len(targets) != len(hdr.Dirs) {
 		return errors.New("extracting appdata: one target per archived directory is required")
 	}
-	roots := make([]string, len(targets))
+	walkers := make([]*beneath.Walker, len(targets))
+	defer func() {
+		for _, w := range walkers {
+			if w != nil {
+				w.Close()
+			}
+		}
+	}()
 	for i, t := range targets {
-		if err := os.Mkdir(t, 0o700); err != nil {
+		parent, name, err := p.parent(t)
+		if err != nil {
+			return err
+		}
+		if err := unix.Mkdirat(parent, name, 0o700); err != nil {
 			return fmt.Errorf("creating %s: %w", t, err)
 		}
-		real, err := filepath.EvalSymlinks(t)
+		fd, err := beneath.Open(parent, name, unix.O_RDONLY|unix.O_DIRECTORY)
 		if err != nil {
-			return fmt.Errorf("resolving %s: %w", t, err)
+			return fmt.Errorf("opening %s: %w", t, err)
 		}
-		roots[i] = real
+		walkers[i] = beneath.NewWalkerAt(fd)
 	}
 
 	in, err := os.Open(archivePath)
@@ -461,7 +485,6 @@ func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, 
 	tr := tar.NewReader(zr)
 
 	asRoot := os.Geteuid() == 0
-	checked := map[string]bool{}
 	var dirs []appdataDirMeta
 	for {
 		e, err := tr.Next()
@@ -483,108 +506,264 @@ func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, 
 		}
 		rel = path.Clean(strings.TrimSuffix(rel, "/"))
 		if rel == "." || rel == "" {
-			dirs = append(dirs, appdataDirMeta{path: targets[i], hdr: e})
+			dirs = append(dirs, appdataDirMeta{tree: i, hdr: e})
 			continue
 		}
 		if !filepath.IsLocal(filepath.FromSlash(rel)) {
 			return fmt.Errorf("archive entry %q escapes its directory", e.Name)
 		}
-		dst := filepath.Join(targets[i], filepath.FromSlash(rel))
-		if err := requireInside(roots[i], filepath.Dir(dst), checked); err != nil {
+		dir, base := path.Split(rel)
+		dfd, resolved, release, err := openTreeDir(walkers[i], strings.TrimSuffix(dir, "/"))
+		if err != nil {
 			return fmt.Errorf("archive entry %q: %w", e.Name, err)
 		}
-		switch e.Typeflag {
-		case tar.TypeDir:
-			if err := os.Mkdir(dst, 0o700); err != nil {
-				return fmt.Errorf("creating %s: %w", dst, err)
-			}
-			dirs = append(dirs, appdataDirMeta{path: dst, hdr: e})
-		case tar.TypeReg:
-			if err := extractAppdataFile(tr, e, dst, asRoot); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			if err := os.Symlink(e.Linkname, dst); err != nil {
-				return fmt.Errorf("creating symlink %s: %w", dst, err)
-			}
-			if asRoot {
-				if err := os.Lchown(dst, e.Uid, e.Gid); err != nil {
-					return fmt.Errorf("restoring owner of %s: %w", dst, err)
-				}
-			}
-		default:
-			return fmt.Errorf("archive entry %q has an unsupported type", e.Name)
-		}
-	}
-	for i := len(dirs) - 1; i >= 0; i-- {
-		m := dirs[i]
-		if err := applyAppdataMeta(m.path, m.hdr, asRoot); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func requireInside(root, dir string, checked map[string]bool) error {
-	if checked[dir] {
-		return nil
-	}
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return fmt.Errorf("resolving %s: %w", dir, err)
-	}
-	if real != root && !strings.HasPrefix(real, root+string(filepath.Separator)) {
-		return fmt.Errorf("%s resolves outside %s", dir, root)
-	}
-	checked[dir] = true
-	return nil
-}
-
-func extractAppdataFile(r io.Reader, e *tar.Header, dst string, asRoot bool) error {
-	f, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", dst, err)
-	}
-	if _, err := io.Copy(f, r); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("writing %s: %w", dst, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("writing %s: %w", dst, err)
-	}
-	return applyAppdataMeta(dst, e, asRoot)
-}
-
-func applyAppdataMeta(p string, e *tar.Header, asRoot bool) error {
-	if asRoot {
-		if err := os.Lchown(p, e.Uid, e.Gid); err != nil {
-			return fmt.Errorf("restoring owner of %s: %w", p, err)
-		}
-	}
-	mode := e.FileInfo().Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
-	if err := os.Chmod(p, mode); err != nil {
-		return fmt.Errorf("restoring mode of %s: %w", p, err)
-	}
-	if err := os.Chtimes(p, e.ModTime, e.ModTime); err != nil {
-		return fmt.Errorf("restoring times of %s: %w", p, err)
-	}
-	return nil
-}
-
-// syncAppdataTree flushes every regular file and directory under root to
-// disk, so a tree that is about to be renamed into place is not left
-// partly empty by a power loss right after the rename.
-func syncAppdataTree(root string) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		err = extractAppdataEntry(tr, e, dfd, base, filepath.Join(targets[i], filepath.FromSlash(rel)), asRoot)
+		release()
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && !d.Type().IsRegular() {
-			return nil
+		if e.Typeflag == tar.TypeDir {
+			dirs = append(dirs, appdataDirMeta{tree: i, rel: path.Join(resolved, base), hdr: e})
 		}
-		if err := fsyncPath(p); err != nil {
-			return fmt.Errorf("syncing %s: %w", p, err)
+	}
+	if beforeAppdataMeta != nil {
+		beforeAppdataMeta()
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		m := dirs[i]
+		if err := p.applyDirMeta(walkers[m.tree], targets[m.tree], m, asRoot); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return nil
+}
+
+func (p *heldDirs) applyDirMeta(w *beneath.Walker, target string, m appdataDirMeta, asRoot bool) error {
+	if m.rel == "" {
+		parent, name, err := p.parent(target)
+		if err != nil {
+			return err
+		}
+		return applyAppdataMeta(w.Root(), parent, name, target, m.hdr, asRoot)
+	}
+	dir, base := path.Split(m.rel)
+	pfd, err := w.Dir(strings.TrimSuffix(dir, "/"), nil)
+	if err != nil {
+		return fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
+	}
+	fd, err := beneath.Open(pfd, base, unix.O_RDONLY|unix.O_DIRECTORY)
+	if err != nil {
+		return fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	return applyAppdataMeta(fd, pfd, base, filepath.Join(target, filepath.FromSlash(m.rel)), m.hdr, asRoot)
+}
+
+func extractAppdataEntry(r io.Reader, e *tar.Header, dfd int, base, dst string, asRoot bool) error {
+	switch e.Typeflag {
+	case tar.TypeDir:
+		if err := unix.Mkdirat(dfd, base, 0o700); err != nil {
+			return fmt.Errorf("creating %s: %w", dst, err)
+		}
+	case tar.TypeReg:
+		return extractAppdataFile(r, e, dfd, base, dst, asRoot)
+	case tar.TypeSymlink:
+		if err := unix.Symlinkat(e.Linkname, dfd, base); err != nil {
+			return fmt.Errorf("creating symlink %s: %w", dst, err)
+		}
+		if asRoot {
+			if err := unix.Fchownat(dfd, base, e.Uid, e.Gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+				return fmt.Errorf("restoring owner of %s: %w", dst, err)
+			}
+		}
+	default:
+		return fmt.Errorf("archive entry %q has an unsupported type", e.Name)
+	}
+	return nil
+}
+
+// maxTreeLinks is how many symbolic links resolving one directory may
+// follow, as many as the operating system follows.
+const maxTreeLinks = 255
+
+// openTreeDir opens the directory rel below the walker's root, following
+// the symbolic links the archive itself created as long as they stay inside
+// the tree: it returns the directory's descriptor, its path below the root
+// with every link resolved, and a function that releases the descriptor.
+// Links are resolved here, one component at a time, through descriptors: an
+// absolute target, one climbing above the root, a missing component and
+// anything that is not a directory are refused.
+func openTreeDir(w *beneath.Walker, rel string) (int, string, func(), error) {
+	if fd, err := w.Dir(rel, nil); err == nil {
+		return fd, rel, func() {}, nil
+	} else if !errors.Is(err, beneath.ErrSymlink) {
+		return -1, "", nil, err
+	}
+	var held []int
+	var names []string
+	release := func() {
+		for _, fd := range held {
+			_ = unix.Close(fd)
+		}
+	}
+	cur := w.Root()
+	todo := strings.Split(rel, "/")
+	links := 0
+	for len(todo) > 0 {
+		c := todo[0]
+		todo = todo[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if len(held) == 0 {
+				release()
+				return -1, "", nil, errors.New("resolves outside its directory")
+			}
+			_ = unix.Close(held[len(held)-1])
+			held, names = held[:len(held)-1], names[:len(names)-1]
+			if cur = w.Root(); len(held) > 0 {
+				cur = held[len(held)-1]
+			}
+			continue
+		}
+		var st unix.Stat_t
+		if err := unix.Fstatat(cur, c, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			release()
+			return -1, "", nil, fmt.Errorf("resolving %s: %w", c, err)
+		}
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFLNK:
+			if links++; links > maxTreeLinks {
+				release()
+				return -1, "", nil, fmt.Errorf("%s is part of a loop of links", c)
+			}
+			buf := make([]byte, unix.PathMax)
+			n, err := unix.Readlinkat(cur, c, buf)
+			if err != nil {
+				release()
+				return -1, "", nil, fmt.Errorf("reading link %s: %w", c, err)
+			}
+			target := string(buf[:n])
+			if strings.HasPrefix(target, "/") {
+				release()
+				return -1, "", nil, fmt.Errorf("%s resolves outside its directory", c)
+			}
+			todo = append(strings.Split(target, "/"), todo...)
+		case unix.S_IFDIR:
+			fd, err := beneath.Open(cur, c, unix.O_RDONLY|unix.O_DIRECTORY)
+			if err != nil {
+				release()
+				return -1, "", nil, err
+			}
+			held, names = append(held, fd), append(names, c)
+			cur = fd
+		default:
+			release()
+			return -1, "", nil, fmt.Errorf("%s is not a directory", c)
+		}
+	}
+	if len(held) == 0 {
+		fd, err := unix.FcntlInt(uintptr(w.Root()), unix.F_DUPFD_CLOEXEC, 0)
+		if err != nil {
+			return -1, "", nil, err
+		}
+		return fd, "", func() { _ = unix.Close(fd) }, nil
+	}
+	return cur, strings.Join(names, "/"), release, nil
+}
+
+func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display string, asRoot bool) error {
+	fd, err := unix.Openat(dirfd, name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", display, err)
+	}
+	f := os.NewFile(uintptr(fd), name)
+	if _, err := io.Copy(f, r); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing %s: %w", display, err)
+	}
+	if err := applyAppdataMeta(fd, dirfd, name, display, e, asRoot); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", display, err)
+	}
+	return nil
+}
+
+// applyAppdataMeta sets ownership and mode through fd, and times through
+// the entry's name in the directory dirfd without following a link there.
+func applyAppdataMeta(fd, dirfd int, name, display string, e *tar.Header, asRoot bool) error {
+	if asRoot {
+		if err := unix.Fchown(fd, e.Uid, e.Gid); err != nil {
+			return fmt.Errorf("restoring owner of %s: %w", display, err)
+		}
+	}
+	if err := unix.Fchmod(fd, unixMode(e.FileInfo().Mode())); err != nil {
+		return fmt.Errorf("restoring mode of %s: %w", display, err)
+	}
+	ts := unix.NsecToTimespec(e.ModTime.UnixNano())
+	if err := unix.UtimesNanoAt(dirfd, name, []unix.Timespec{ts, ts}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return fmt.Errorf("restoring times of %s: %w", display, err)
+	}
+	return nil
+}
+
+func unixMode(m fs.FileMode) uint32 {
+	v := uint32(m.Perm())
+	if m&fs.ModeSetuid != 0 {
+		v |= unix.S_ISUID
+	}
+	if m&fs.ModeSetgid != 0 {
+		v |= unix.S_ISGID
+	}
+	if m&fs.ModeSticky != 0 {
+		v |= unix.S_ISVTX
+	}
+	return v
+}
+
+// syncAppdataTree flushes every regular file and directory under the
+// directory dirfd to disk, so a tree that is about to be renamed into place
+// is not left partly empty by a power loss right after the rename. It
+// descends through descriptors and follows no link.
+func syncAppdataTree(dirfd int, display string) error {
+	if err := unix.Fsync(dirfd); err != nil {
+		return fmt.Errorf("syncing %s: %w", display, err)
+	}
+	names, err := beneath.ReadNames(dirfd)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", display, err)
+	}
+	for _, n := range names {
+		var st unix.Stat_t
+		if err := unix.Fstatat(dirfd, n, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return fmt.Errorf("syncing %s: %w", filepath.Join(display, n), err)
+		}
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFDIR:
+			fd, err := beneath.Open(dirfd, n, unix.O_RDONLY|unix.O_DIRECTORY)
+			if err != nil {
+				return fmt.Errorf("syncing %s: %w", filepath.Join(display, n), err)
+			}
+			err = syncAppdataTree(fd, filepath.Join(display, n))
+			_ = unix.Close(fd)
+			if err != nil {
+				return err
+			}
+		case unix.S_IFREG:
+			fd, err := beneath.Open(dirfd, n, unix.O_RDONLY|unix.O_NONBLOCK)
+			if err != nil {
+				return fmt.Errorf("syncing %s: %w", filepath.Join(display, n), err)
+			}
+			err = unix.Fsync(fd)
+			_ = unix.Close(fd)
+			if err != nil {
+				return fmt.Errorf("syncing %s: %w", filepath.Join(display, n), err)
+			}
+		}
+	}
+	return nil
 }

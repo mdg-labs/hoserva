@@ -18,7 +18,17 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 )
+
+// extractAppdata unpacks into targets whose parents already exist, holding
+// the parents only for the call.
+func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
+	dirs := &heldDirs{}
+	defer dirs.close()
+	return dirs.extract(ctx, archivePath, hdr, targets)
+}
 
 func packTestTree(t *testing.T, dir string) (string, appdataHeader, appdataTrailer) {
 	t.Helper()
@@ -566,5 +576,71 @@ func TestCopyExactly_ReportsAFileThatShrankOrGrew(t *testing.T) {
 	out.Reset()
 	if changed, err := copyExactly(&out, strings.NewReader("abcd"), 4); err != nil || changed || out.String() != "abcd" {
 		t.Fatalf("an unchanged file: %q, changed=%v, err=%v", out.String(), changed, err)
+	}
+}
+
+func TestAppdataExtract_AppliesDirectoryMetadataBeneathTheTreeNotThroughASwappedDirectory(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	archive, hdr := craftedArchive(t, []*tar.Header{
+		{Name: "data/0/", Typeflag: tar.TypeDir, Mode: 0o700, ModTime: mtime},
+		{Name: "data/0/sub/", Typeflag: tar.TypeDir, Mode: 0o500, ModTime: mtime},
+	}, nil)
+	target := filepath.Join(t.TempDir(), "tree")
+	beforeAppdataMeta = func() {
+		sub := filepath.Join(target, "sub")
+		if err := os.Rename(sub, sub+".moved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, sub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeAppdataMeta = nil })
+
+	if err := extractAppdata(context.Background(), archive, hdr, []string{target}); !errors.Is(err, beneath.ErrSymlink) {
+		t.Fatalf("extractAppdata = %v, want it to refuse the directory replaced by a link", err)
+	}
+	after, err := os.Lstat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("the directory outside the tree was changed: mode %v -> %v, mtime %v -> %v", before.Mode(), after.Mode(), before.ModTime(), after.ModTime())
+	}
+}
+
+func TestAppdataExtract_AppliesModesToADirectoryMadeThroughALinkInsideTheTree(t *testing.T) {
+	mtime := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
+	archive, hdr := craftedArchive(t, []*tar.Header{
+		{Name: "data/0/", Typeflag: tar.TypeDir, Mode: 0o750, ModTime: mtime},
+		{Name: "data/0/d/", Typeflag: tar.TypeDir, Mode: 0o755, ModTime: mtime},
+		{Name: "data/0/d/e/", Typeflag: tar.TypeDir, Mode: 0o755, ModTime: mtime},
+		{Name: "data/0/d/e/up", Typeflag: tar.TypeSymlink, Linkname: "..", Mode: 0o777, ModTime: mtime},
+		{Name: "data/0/d/e/up/sub/", Typeflag: tar.TypeDir, Mode: 0o500, ModTime: mtime},
+		{Name: "data/0/d/e/up/sub/f", Typeflag: tar.TypeReg, Mode: 0o640, ModTime: mtime},
+	}, map[string]string{"data/0/d/e/up/sub/f": "x"})
+	target := filepath.Join(t.TempDir(), "tree")
+	if err := extractAppdata(context.Background(), archive, hdr, []string{target}); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(target, "d", "sub")
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o700) })
+	info, err := os.Lstat(sub)
+	if err != nil || info.Mode().Perm() != 0o500 || !info.ModTime().Equal(mtime) {
+		t.Fatalf("d/sub = %v, %v, want a 0500 directory with the archived time", info, err)
+	}
+	if got := readFile(t, filepath.Join(sub, "f")); got != "x" {
+		t.Fatalf("d/sub/f = %q", got)
+	}
+	if info, err := os.Lstat(target); err != nil || info.Mode().Perm() != 0o750 {
+		t.Fatalf("the tree's own mode = %v, %v, want 0750", info, err)
 	}
 }
