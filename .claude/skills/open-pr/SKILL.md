@@ -1,6 +1,6 @@
 ---
 name: open-pr
-description: Opens (or updates) the dev→main promotion pull request, titled for what actually changed (never "release"/"promote" framing — this project doesn't cut a release here, it's a branch promotion), with a description generated from the commits and issues on dev since main last moved. Use when the maintainer says "open a PR to main", "promote dev", "release dev to main", or similar. Never touches main directly and never merges — it only prepares and files the dev→main PR.
+description: Opens (or updates) the dev→main promotion pull request, titled for everything the PR implements (never "release"/"promote" framing — this project doesn't cut a release here, it's a branch promotion), with a description generated from the commits and issues on dev since main last moved. Use when the maintainer says "open a PR to main", "promote dev", "release dev to main", or similar. Never touches main directly and never merges — it only prepares and files the dev→main PR.
 argument-hint: (no arguments — always operates on origin/dev → origin/main)
 allowed-tools:
   - Read
@@ -116,14 +116,17 @@ checks and is the maintainer's call.
      "release" event at this step (that's the separate, later, tag-triggered
      release.yml). Never `chore(release): promote dev to main` or any
      "release"/"promote" framing.
-     - One commit clearly dominates (e.g. the only `safety-critical` one,
-       or the only non-chore one): reuse its own Conventional Commits
-       subject line verbatim, e.g. `fix(shares): close TOCTOU race in
-       DeleteFile`.
-     - Several commits are comparably significant: pick the single most
-       consequential one as the base subject and note the rest are
-       included in the body, not the title — don't try to cram every
-       commit into one title.
+     - The title names **everything the PR implements**, as one
+       Conventional Commits-style line: the shared type and scope, then
+       each piece of work in a few words, e.g.
+       `feat(site): landing page, coss theme, API reference, docs under /docs/ and migration special cases`.
+       Never title it after one commit or one issue. Group closely related
+       commits under one phrase so the line stays readable. When the work
+       spans several areas, use the type that fits most of it and leave
+       the scope out.
+     - Re-check the title against the full commit list before creating or
+       updating the PR: every issue in `## Issues closed` and every
+       uncounted commit must fall under some phrase in it.
    - **Body** (write to a scratchpad temp file for `--body-file`):
      - `## Summary` — one or two sentences on what this promotion contains.
      - `## Issues closed` — bulleted `Fixes #n — <title>` list.
