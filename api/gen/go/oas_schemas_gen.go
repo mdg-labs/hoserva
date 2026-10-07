@@ -24036,7 +24036,7 @@ func (s *UpdateBackupDestinationRequest) SetRetention(val OptBackupRetention) {
 	s.Retention = val
 }
 
-// Release channel the update check reads from the signed index.
+// Release channel the update check reads from the release index.
 // Ref: #/components/schemas/UpdateChannel
 type UpdateChannel string
 

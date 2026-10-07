@@ -117,10 +117,11 @@ func (UnimplementedHandler) ApplyNetworkSettings(ctx context.Context, req *Apply
 
 // ApplyUpdate implements applyUpdate operation.
 //
-// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
-// runs a config backup, and installs it in a transient systemd unit. Refused while a Parity,
-// Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not
-// match is never installed, and a notification is raised.
+// Downloads the `.deb` the release index points to and installs it only if the signed SHA256SUMS names
+// that package at the index entry's version and the version is newer than the running one. It verifies
+// the download against the signed SHA256SUMS, runs a config backup, and installs it in a transient
+// systemd unit. Refused while a Parity, Array-write or Topology job is running; the error names that
+// job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
 //
 // POST /settings/updates/apply
 func (UnimplementedHandler) ApplyUpdate(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
@@ -178,8 +179,8 @@ func (UnimplementedHandler) CancelJob(ctx context.Context, params CancelJobParam
 
 // CheckForUpdate implements checkForUpdate operation.
 //
-// Fetches the signed release index for the configured channel. A user-initiated check runs even when
-// the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+// Fetches the release index for the configured channel. A user-initiated check runs even when the
+// periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
 //
 // POST /settings/updates/check
 func (UnimplementedHandler) CheckForUpdate(ctx context.Context) (r *UpdateStatus, _ error) {
@@ -1150,9 +1151,9 @@ func (UnimplementedHandler) GetUPSSettings(ctx context.Context) (r *UPSSettings,
 // GetUpdateStatus implements getUpdateStatus operation.
 //
 // Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
-// Debian updates and whether a reboot is required. The update check reads only the signed release
-// index on the project site — never the GitHub API and never a system-wide `apt update`. When the
-// check is disabled, `availableVersion` is omitted rather than fetched.
+// Debian updates and whether a reboot is required. The update check reads only the release index on
+// the project site — never the GitHub API and never a system-wide `apt update`. When the check is
+// disabled, `availableVersion` is omitted rather than fetched.
 //
 // GET /settings/updates
 func (UnimplementedHandler) GetUpdateStatus(ctx context.Context) (r *UpdateStatus, _ error) {
@@ -2134,10 +2135,10 @@ func (UnimplementedHandler) RevokeSession(ctx context.Context, params RevokeSess
 
 // RollbackUpdate implements rollbackUpdate operation.
 //
-// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
-// snapshot, and installs the previous package. There are no down migrations — rollback is previous
-// package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error
-// names that job.
+// Downloads the recorded previous version's `.deb`, verifies it against the signed SHA256SUMS naming
+// that version, restores that version's pre-migration database snapshot, and installs the previous
+// package. There are no down migrations — rollback is previous package plus its snapshot. Refused
+// while a Parity, Array-write or Topology job is running; the error names that job.
 //
 // POST /settings/updates/rollback
 func (UnimplementedHandler) RollbackUpdate(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {

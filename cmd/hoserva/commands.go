@@ -1597,7 +1597,7 @@ func updateCmd() *cobra.Command {
 	var check, confirm bool
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update Hoserva from its signed release index (Q67)",
+		Short: "Update Hoserva from its release index, verified against the signed checksums (Q67)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newAPIClient()
 			if err != nil {
@@ -1622,7 +1622,7 @@ func updateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&check, "check", false, "Check the signed release index without installing")
+	cmd.Flags().BoolVar(&check, "check", false, "Check the release index without installing")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm installing the update (required)")
 	return cmd
 }

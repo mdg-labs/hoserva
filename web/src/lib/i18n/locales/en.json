@@ -2881,7 +2881,7 @@
         "beta": "Beta"
       },
       "updateCheck": "Check for updates",
-      "updateCheckDescription": "Read the signed release index for the selected channel (Q67).",
+      "updateCheckDescription": "Read the release index for the selected channel (Q67).",
       "dependenciesTitle": "Storage engine packages",
       "dependenciesEmpty": "Installed mergerfs and SnapRAID versions are not reported yet.",
       "dependencyInRange": "At or above {{floor}}",
