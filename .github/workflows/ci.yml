@@ -57,6 +57,10 @@ env:
   # api/package.json pins the exact package versions this runs against.
   # web/'s Node version is pinned separately, in web/.nvmrc (Q8, issue #21).
   NODE_VERSION: "24.21.0"
+  # Where the test targets write their JUnit XML (doc 06 §7). Absolute, because
+  # vitest runs from web/. Each test-running job uploads it as the artifact
+  # test-results-<job>; the test-report job renders them all.
+  TEST_REPORT_DIR: ${{ github.workspace }}/test-results
 
 jobs:
   release-signing-pubkey:
@@ -133,6 +137,7 @@ jobs:
           install-only: true
       - run: make lint-go
       - run: make test-go
+      - run: make test-devenv
       - run: make packaging-test
       # The Unraid prepare script's fixture tests and shellcheck (issue
       # #556). They need shellcheck, jq, python3 and unzip on the runner;
@@ -152,6 +157,15 @@ jobs:
       # API.
       - run: make lint-gh
       - run: make test-gh
+      # doc 06 §7: every suite writes JUnit XML under TEST_REPORT_DIR; the
+      # test-report job renders all of them into the run summary.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-lint-and-unit
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
 
   corpus:
     name: Unraid template corpus (Q36, doc 06 §2)
@@ -167,6 +181,15 @@ jobs:
       # clean-conversion rate falls below the one recorded in its
       # manifest.txt.
       - run: make test-corpus
+      # doc 06 §7: every suite writes JUnit XML under TEST_REPORT_DIR; the
+      # test-report job renders all of them into the run summary.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-corpus
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
 
   api:
     name: API contract (D18, Q63)
@@ -250,6 +273,15 @@ jobs:
         run: make web-scan-outbound
       - name: Check the outbound-request allowlist
         run: make web-outbound-test
+      # doc 06 §7: every suite writes JUnit XML under TEST_REPORT_DIR; the
+      # test-report job renders all of them into the run summary.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-web
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
 
   # The docs site (issue #82, Q3, Q90). Every push and pull request runs the
   # job; the build itself runs only when something it depends on changed, so
@@ -373,6 +405,15 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-destroy
+      # doc 06 §7: every suite writes JUnit XML under TEST_REPORT_DIR; the
+      # test-report job renders all of them into the run summary.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-lab
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
 
   pages-site:
     name: Pages site assembly (Q66)
@@ -381,4 +422,60 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: scripts/release/test-pages-site.sh
+      - run: make test-pages-site
+      # doc 06 §7: every suite writes JUnit XML under TEST_REPORT_DIR; the
+      # test-report job renders all of them into the run summary.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-pages-site
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
+
+  # One combined report of every suite above (doc 06 §7). It runs whether the
+  # jobs it needs passed or not, lists each job's conclusion — a job that
+  # failed before it wrote a report, or one that runs no tests, still has a
+  # row — and succeeds whenever it rendered a summary: the suites own the
+  # gate, this job only reports. It holds no permission beyond contents: read,
+  # and the artifacts it reads are data, never code.
+  test-report:
+    name: Test report (doc 06 §7)
+    if: always()
+    needs:
+      - release-signing-pubkey
+      - dco
+      - lint-and-unit
+      - corpus
+      - api
+      - deb
+      - web
+      - site-build
+      - lab
+      - pages-site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      # No artifact at all (every job died before its upload) is not an error
+      # here: the renderer then says no reports were found.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: test-results-*
+          path: ${{ runner.temp }}/test-results
+      - name: Render the combined report
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "$NEEDS_JSON" > "$RUNNER_TEMP/needs.json"
+          go run ./scripts/devenv/testreport -needs "$RUNNER_TEMP/needs.json" "$RUNNER_TEMP/test-results" > "$RUNNER_TEMP/test-summary.md"
+          cat "$RUNNER_TEMP/test-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-summary
+          path: ${{ runner.temp }}/test-summary.md

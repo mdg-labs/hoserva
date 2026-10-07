@@ -29,6 +29,24 @@ function keepDistPlaceholder(): Plugin {
 // build (Q8, Q49 — no outbound requests from the built app).
 const mockAddr = process.env.MOCK_ADDR ?? "127.0.0.1:8090";
 
+// TEST_REPORT_DIR (doc 06 §7) makes vitest also write a JUnit file there.
+// Naming any reporter replaces vitest's defaults, so when it is set the
+// defaults are listed again: `default`, and `github-actions` — which writes
+// the run summary — only on a GitHub Actions runner, as vitest itself does.
+// Unset, the keys are left out entirely (an explicit `reporters: undefined`
+// makes vitest fail at startup) and vitest behaves as before.
+const reportDir = process.env.TEST_REPORT_DIR;
+const reportOptions = reportDir
+  ? {
+      reporters: [
+        "default",
+        ...(process.env.GITHUB_ACTIONS === "true" ? ["github-actions"] : []),
+        "junit",
+      ],
+      outputFile: { junit: path.resolve(reportDir, "web-vitest.xml") },
+    }
+  : {};
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), keepDistPlaceholder()],
   resolve: {
@@ -81,5 +99,6 @@ export default defineConfig({
     // without this, vitest's default glob also picks up *.spec.ts there and
     // fails importing @playwright/test's own test().
     exclude: [...configDefaults.exclude, "e2e/**"],
+    ...reportOptions,
   },
 });

@@ -41,6 +41,9 @@ scripts/vm/images/
 web/test-results/
 web/playwright-report/
 
+# JUnit reports a run writes when TEST_REPORT_DIR points here (doc 06 §7).
+/test-results/
+
 # Go
 *.test
 

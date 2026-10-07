@@ -88,7 +88,7 @@ echo "run-lab-tests[$HOSERVA_LAB_ID]: resetting standing array before test-neste
 lab_exec bash /src/scripts/devenv/destroy-array.sh
 lab_exec bash /src/scripts/devenv/create-array.sh
 failed=0
-if lab_exec bash /src/scripts/devenv/test-nested-loop-detach.sh; then
+if "$HERE/junit-step.sh" lab test-nested-loop-detach.sh -- "${compose_cmd[@]}" exec -T lab bash /src/scripts/devenv/test-nested-loop-detach.sh; then
   echo "run-lab-tests[$HOSERVA_LAB_ID]: PASS test-nested-loop-detach.sh"
 else
   echo "run-lab-tests[$HOSERVA_LAB_ID]: FAIL test-nested-loop-detach.sh" >&2
@@ -110,7 +110,20 @@ for i in "${!binaries[@]}"; do
   lab_exec bash /src/scripts/devenv/create-array.sh
 
   echo "run-lab-tests[$HOSERVA_LAB_ID]: running $container_bin (-test.run '^TestLab') for ./$pkg_dir"
-  if lab_exec "$container_bin" -test.v -test.count=1 -test.run '^TestLab'; then
+  if [[ -n "${TEST_REPORT_DIR:-}" ]]; then
+    # doc 06 §7: test2json runs the binary in the container and turns its
+    # -test.v=test2json output into events; gotestsum writes them as JUnit,
+    # one file per package, and exits non-zero when the binary does.
+    mkdir -p -- "$TEST_REPORT_DIR"
+    import_path="$("$GO" list -tags lab -f '{{.ImportPath}}' "./$pkg_dir")"
+    run_pkg=("$GO" tool gotestsum --raw-command --format standard-verbose
+      --junitfile "$TEST_REPORT_DIR/lab-go-${pkg_dir//\//-}.xml"
+      -- "$GO" tool test2json -t -p "$import_path"
+      "${compose_cmd[@]}" exec -T lab "$container_bin" -test.v=test2json -test.count=1 -test.run '^TestLab')
+  else
+    run_pkg=(lab_exec "$container_bin" -test.v -test.count=1 -test.run '^TestLab')
+  fi
+  if "${run_pkg[@]}"; then
     echo "run-lab-tests[$HOSERVA_LAB_ID]: PASS ./$pkg_dir"
   else
     echo "run-lab-tests[$HOSERVA_LAB_ID]: FAIL ./$pkg_dir" >&2
