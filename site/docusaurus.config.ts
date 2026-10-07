@@ -45,6 +45,9 @@ const config: Config = {
   tagline: 'An open-source home server platform for mixed-size disks',
   url: 'https://hoserva.dev',
   baseUrl: '/',
+  // The icons and screenshots of the catalog export (scripts/devenv/catalog-export),
+  // served at /apps/<id>/.
+  staticDirectories: ['static', '.catalog/static'],
   favicon: undefined,
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
@@ -84,6 +87,7 @@ const config: Config = {
   ],
   plugins: [
     './plugins/tailwind',
+    './plugins/catalog',
     'docusaurus-plugin-sass',
     [
       'docusaurus-plugin-openapi-docs',
@@ -115,6 +119,8 @@ const config: Config = {
         ...(hasVersions
           ? [{type: 'docsVersionDropdown' as const, position: 'right' as const}]
           : []),
+        {to: '/apps', label: 'Apps', position: 'left'},
+        {to: '/docs/', label: 'Docs', position: 'left'},
         {
           href: 'https://github.com/mdg-labs/hoserva',
           label: 'GitHub',

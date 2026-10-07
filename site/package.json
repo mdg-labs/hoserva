@@ -9,7 +9,7 @@
     "build": "npm run gen-api && docusaurus build --out-dir dist",
     "serve": "docusaurus serve --dir dist",
     "typecheck": "tsc",
-    "check": "node scripts/check-layout.mjs . dist && node scripts/check-external.mjs . dist && node scripts/check-api.mjs . dist && node scripts/check-versioning.mjs",
+    "check": "node scripts/check-layout.mjs . dist && node scripts/check-external.mjs . dist && node scripts/check-catalog.mjs . dist && node scripts/check-api.mjs . dist && node scripts/check-versioning.mjs",
     "docs:version": "node scripts/version-docs.mjs",
     "clear": "docusaurus clear"
   },

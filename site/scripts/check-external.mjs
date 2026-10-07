@@ -17,11 +17,12 @@ if (!fs.existsSync(buildDir)) {
 }
 
 // Source: any mention in what is committed. Skipped are installed packages,
-// build output, the lockfile (it lists the transitive packages of the preset)
-// and this file, which names the patterns.
+// build output, the lockfile (it lists the transitive packages of the preset),
+// the catalog export (signed content; what it adds to the build is checked in
+// the build output below) and this file, which names the patterns.
 const sourcePattern =
   /fonts\.(googleapis|gstatic)\.com|googletagmanager|google-analytics|gtag|plugin-google-|algolia|docsearch|plausible|posthog|matomo|umami|mixpanel|hotjar|segment\.(com|io)|cdn\.jsdelivr|unpkg\.com|cdnjs/i;
-const skip = new Set(['node_modules', 'dist', '.docusaurus', '.openapi', 'package-lock.json', 'check-external.mjs']);
+const skip = new Set(['node_modules', 'dist', '.docusaurus', '.openapi', '.catalog', 'package-lock.json', 'check-external.mjs']);
 // The generated API reference carries base64 blobs that can contain any of the
 // patterns by chance; what it renders is checked in the build output instead.
 const generatedApi = /^(docs|versioned_docs[\\/][^\\/]+)[\\/]reference[\\/]api$/;

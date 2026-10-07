@@ -5,6 +5,8 @@
 // so the result does not depend on which versions have been released.
 // The first snapshot is made from a specification with one operation renamed,
 // so the build has to show each version's API reference from its own copy.
+// The copy also gets an empty catalog, so the same build proves that /apps
+// shows its empty state and the build passes when the catalog has no template.
 // usage: node scripts/check-versioning.mjs   (run from site/, after npm ci)
 import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -30,6 +32,10 @@ try {
   for (const entry of fs.readdirSync(modules)) {
     if (entry !== '.cache') fs.symlinkSync(path.join(modules, entry), path.join(copy, 'node_modules', entry));
   }
+
+  fs.rmSync(path.join(copy, '.catalog'), {recursive: true, force: true});
+  fs.mkdirSync(path.join(copy, '.catalog'));
+  fs.writeFileSync(path.join(copy, '.catalog', 'index.json'), JSON.stringify({serial: 1, templates: []}));
 
   const node = (cwdScript, args, env) => {
     const result = spawnSync(process.execPath, [cwdScript, ...args], {
@@ -78,6 +84,21 @@ try {
   });
   if (api.status !== 0) {
     throw new Error('the versioned API reference check failed');
+  }
+
+  const catalog = spawnSync(process.execPath, [path.join(siteDir, 'scripts', 'check-catalog.mjs'), copy, path.join(copy, 'dist')], {
+    stdio: 'inherit',
+  });
+  if (catalog.status !== 0) {
+    throw new Error('the empty-catalog check failed');
+  }
+
+  const escaping = spawnSync(process.execPath, ['--test', path.join(siteDir, 'scripts', 'html-text.test.mjs')], {
+    cwd: siteDir,
+    stdio: 'inherit',
+  });
+  if (escaping.status !== 0) {
+    throw new Error('the check of how catalog titles are matched in built pages failed');
   }
 
   const layout = spawnSync(process.execPath, [path.join(siteDir, 'scripts', 'check-layout.mjs'), copy, path.join(copy, 'dist')], {

@@ -102,8 +102,10 @@ write_entry "$entries/c.json" "v0.10.0-beta.2" "0.10.0~beta.2" "beta"
 write_entry "$entries/d.json" "v0.10.0-beta.12" "0.10.0~beta.12" "beta"
 
 docs="$work/docs"
-mkdir -p "$docs/getting-started" "$docs/catalog" "$docs/releases" "$docs/apt/pool"
+mkdir -p "$docs/getting-started" "$docs/catalog" "$docs/releases" "$docs/apt/pool" "$docs/apps/jellyfin"
 echo 'DOCS-ROOT' >"$docs/index.html"
+echo 'app-list' >"$docs/apps/index.html"
+echo 'app-page' >"$docs/apps/jellyfin/index.html"
 echo 'getting-started' >"$docs/getting-started/index.html"
 echo 'from-docs-catalog' >"$docs/catalog/evil.html"
 echo 'from-docs-releases' >"$docs/releases/index.json"
@@ -115,6 +117,8 @@ mkdir -p "$out1"
 assert_contains "$out1/index.html" "DOCS-ROOT" "docs root kept"
 assert_contains "$out1/getting-started/index.html" "getting-started" "docs subtree kept"
 assert_no_path "$out1/catalog" "a docs catalog/ tree must not be published at /catalog/"
+assert_contains "$out1/apps/index.html" "app-list" "the app list at /apps is not wiped with /catalog/"
+assert_contains "$out1/apps/jellyfin/index.html" "app-page" "an app page under /apps is kept"
 assert_no_path "$out1/releases/from-docs" "docs must not land in /releases/"
 assert_no_path "$out1/apt" "apt stripped from the Pages artifact"
 assert_eq "$(python3 -c 'import json,sys; c=json.load(sys.stdin)["channels"]; print(c["stable"][0]["tag"], c["stable"][1]["tag"], c["beta"][0]["tag"], c["beta"][1]["tag"])' <"$out1/releases/index.json")" \
@@ -133,6 +137,7 @@ set -euo pipefail
 # Fixture make: only `make -C <repo> site-build`, which writes the build
 # output the way `npm run build` does.
 printf '%s\n' "$*" >>"${HOSERVA_TEST_MAKE_LOG:?}"
+printf 'CATALOG_LIVE_URL=%s\n' "${CATALOG_LIVE_URL-unset}" >>"$HOSERVA_TEST_MAKE_LOG"
 [ "${1:-}" = "-C" ] && [ "${3:-}" = "site-build" ] || { echo "make mock: unexpected invocation $*" >&2; exit 1; }
 case "${HOSERVA_TEST_MAKE_MODE:-ok}" in
   ok) rm -rf "$2/site/dist"; mkdir -p "$2/site/dist"; echo 'BUILT-DOCS' >"$2/site/dist/index.html" ;;
@@ -144,10 +149,23 @@ chmod +x "$site_bin/make"
 
 out3="$work/out3"
 mkdir -p "$out3"
-HOSERVA_TEST_MAKE_LOG="$work/make.log" PATH="$site_bin:$PATH" "$assemble" "$out3" "$empty_entries"
+HOSERVA_TEST_MAKE_LOG="$work/make.log" CATALOG_LIVE_URL=https://catalog.example.test/ PATH="$site_bin:$PATH" "$assemble" "$out3" "$empty_entries"
 assert_contains "$out3/index.html" "BUILT-DOCS" "a site/ project is built and used as the docs root"
 assert_contains "$work/make.log" "-C $fake_repo site-build" "the site is built through make site-build"
+assert_contains "$work/make.log" "CATALOG_LIVE_URL=https://catalog.example.test/" "the live catalog URL reaches make site-build, and so the catalog export"
 assert_file "$out3/releases/index.json" "release index next to built docs"
+
+# The deploy follows the catalog: a daily schedule, a catalog-published
+# dispatch and the live URL on the assembly step; the build runs the Go export
+# through make site-build.
+repo_root="$(cd "$script_dir/../.." && pwd)"
+pages_yml="$repo_root/.github/workflows/pages.yml"
+assert_contains "$pages_yml" "schedule:" "pages.yml runs on a schedule"
+assert_contains "$pages_yml" "cron:" "pages.yml has a daily cron"
+assert_contains "$pages_yml" "types: [catalog-published]" "pages.yml starts from a catalog-published dispatch"
+assert_contains "$pages_yml" "CATALOG_LIVE_URL: https://catalog.hoserva.dev/" "pages.yml hands the live catalog to the site build"
+assert_contains "$pages_yml" "actions/setup-go" "pages.yml sets Go up for the catalog export"
+assert_contains "$repo_root/Makefile" "site-build: site-catalog" "make site-build exports the catalog first"
 
 out4="$work/out4"
 mkdir -p "$out4"

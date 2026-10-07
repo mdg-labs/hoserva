@@ -292,7 +292,7 @@ $(error invalid LAYOUT: must not contain '$$' — no Make or shell expansion syn
 endif
 export LAYOUT
 
-.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak vm-migration-suite hooks-install
+.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-catalog site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak vm-migration-suite hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -312,11 +312,22 @@ web-build:
 	cd web && $(NPM) run build
 	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
 
+# The catalog behind hoserva.dev/apps: scripts/devenv/catalog-export verifies
+# the signed archive with the code and key hoservad uses and writes the plain
+# site/.catalog/ the site plugin reads. The source is the pinned snapshot, so
+# a local or CI build needs no live fetch; when CATALOG_LIVE_URL is set (the
+# Pages deploy sets it) the live catalog is used instead if it verifies and is
+# not older than the pin, and the pinned snapshot otherwise. The directory is
+# removed first, so a build never renders an export left by an earlier run.
+site-catalog: catalog-snapshot
+	rm -rf site/.catalog
+	$(GO) run ./scripts/devenv/catalog-export -pin scripts/devenv/catalog.pin -snapshot internal/template/snapshot -out site/.catalog
+
 # site/ (issue #82, Q3, Q90): the Docusaurus docs site. The build is written
 # to site/dist, which scripts/release/assemble-pages-site.sh publishes at the
 # root of hoserva.dev (running this target itself). dist is removed first, so
 # the index.html check below cannot pass on a build left by an earlier run.
-site-build:
+site-build: site-catalog
 	@echo "site: npm ci"
 	cd site && $(NPM) ci --no-audit --no-fund
 	@echo "site: typecheck"

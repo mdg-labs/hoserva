@@ -190,6 +190,9 @@ export default function Home(): ReactNode {
             <Button size="xl" variant="outline" render={<Link to="/docs/" />}>
               Read the documentation
             </Button>
+            <Button size="xl" variant="outline" render={<Link to="/apps" />}>
+              Browse apps
+            </Button>
           </div>
         </section>
 

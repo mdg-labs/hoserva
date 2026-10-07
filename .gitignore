@@ -63,6 +63,11 @@ web/dist/*
 site/dist/
 site/.docusaurus/
 
+# site/.catalog/ is the verified export of the catalog archive that /apps is
+# built from (scripts/devenv/catalog-export, run by `make site-build`):
+# derived from the pinned snapshot or the live catalog, never committed.
+site/.catalog/
+
 # internal/template/snapshot/ (the pinned catalog archive embedded via
 # internal/template/snapshot.go, Q65) is fetched by `make catalog-snapshot`
 # from scripts/devenv/catalog.pin, never committed. Its .gitkeep placeholder
