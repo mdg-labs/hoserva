@@ -9,7 +9,7 @@
     "build": "npm run gen-api && docusaurus build --out-dir dist",
     "serve": "docusaurus serve --dir dist",
     "typecheck": "tsc",
-    "check": "node scripts/check-layout.mjs . dist && node scripts/check-external.mjs . dist && node scripts/check-api.mjs . dist && node scripts/check-versioning.mjs",
+    "check": "node scripts/check-layout.mjs . dist && node scripts/check-external.mjs . dist && node scripts/check-catalog.mjs . dist && node scripts/check-api.mjs . dist && node scripts/check-versioning.mjs",
     "docs:version": "node scripts/version-docs.mjs",
     "clear": "docusaurus clear"
   },
@@ -44,8 +44,15 @@
     "typescript": "5.9.3"
   },
   "overrides": {
+    "katex": "^0.18.2",
+    "openapi-to-postmanv2": {
+      "js-yaml": "^4.3.2"
+    },
+    "postcss-selector-parser": "^7.1.6",
     "serialize-javascript": "^7.0.5",
-    "uuid": "^11.1.1"
+    "tinypool": "^2.1.2",
+    "uuid": "^11.1.1",
+    "yaml": "^1.10.3"
   },
   "engines": {
     "node": ">=20.0"

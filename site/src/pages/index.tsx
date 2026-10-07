@@ -83,7 +83,7 @@ const limits: Topic[] = [
     title: 'Not a general container manager',
     text: 'App support is narrow on purpose. It takes you from choosing an application to having it running. It is not a tool for managing arbitrary containers, images and networks.',
     link: '/docs/guides/backing-up-your-data',
-    linkText: 'See how an app is installed',
+    linkText: 'See an example install: a backup app',
   },
   {
     title: 'Not a hosted service',
@@ -189,6 +189,9 @@ export default function Home(): ReactNode {
             </Button>
             <Button size="xl" variant="outline" render={<Link to="/docs/" />}>
               Read the documentation
+            </Button>
+            <Button size="xl" variant="outline" render={<Link to="/apps" />}>
+              Browse apps
             </Button>
           </div>
         </section>

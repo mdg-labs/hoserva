@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -128,7 +129,7 @@ func TestMockCatalogMarksAnInstalledTemplateAndNamesItsSource(t *testing.T) {
 		return out
 	}
 	before := installed()
-	if len(before) != 4 || before["aio-notes"] || before["risky-agent"] {
+	if len(before) != 5 || before["aio-notes"] || before["risky-agent"] {
 		t.Fatalf("before = %v", before)
 	}
 	if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{Name: apiv1.NewOptString("notes")}, apiv1.InstallTemplateParams{ID: "aio-notes"}); err != nil {
@@ -401,5 +402,24 @@ func TestMockRefusesAnExtraParameterPortTheHostHolds(t *testing.T) {
 	}
 	if _, err := h.PreviewTemplateInstall(ctx, req("-p 9100:80"), apiv1.PreviewTemplateInstallParams{ID: "jellyfin"}); err != nil {
 		t.Errorf("a free port was refused: %v", err)
+	}
+}
+
+func TestMockCatalogHasATemplateWithoutAnIconWhoseIconAnswers404(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "plain-notes"}); err != nil {
+		t.Fatalf("the icon-less template is not shown: %v", err)
+	}
+	_, err = h.GetCatalogTemplateIcon(ctx, apiv1.GetCatalogTemplateIconParams{ID: "plain-notes"})
+	var me *mockError
+	if !errors.As(err, &me) || me.statusCode != 404 || me.code != "template_icon_not_found" {
+		t.Fatalf("icon of the icon-less template: %v, want 404 template_icon_not_found", err)
+	}
+	if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "plain-notes"}); err != nil {
+		t.Fatalf("installing the icon-less template: %v", err)
 	}
 }

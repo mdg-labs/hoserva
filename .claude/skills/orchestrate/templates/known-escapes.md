@@ -74,6 +74,7 @@ existing line by adding its PR number.
 - **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
 - **errors** — a fixed deadline sized for the small case applied to a transfer whose size is unbounded (a multi-gigabyte archive over rclone), so large inputs fail on size alone — PR 453
 - **errors** — a caller accepts a helper's exit 0 as a result while the helper exits 0 with empty output when its input is missing (`dev-diff.sh --list` without a local `dev`), so "unavailable" reads as "empty" — PR 575
+- **errors** — a step allowed to fail (`continue-on-error` on an artifact download) feeds a reporter that cannot tell its failure from an expected empty result, so a failed download reads as "no reports were found" — PR 714
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
@@ -91,6 +92,7 @@ existing line by adding its PR number.
 - **drift** — a hand-kept web list of an API enum (notification event types) not extended when the spec gains a value, so the new value gets no settings row or label — PR 531
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-copy** — help text describes an action as only a check when it can carry out the operation itself (opening an override re-runs the sync, which proceeds if the guard now clears) — PR 688
+- **ui-copy** — a link label promises general content ("how an app is installed") while its target covers one case (the backup-app walk-through), so most readers who follow it land on unrelated content — PR 714
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **ui-states** — a download's object URL revoked in the same task as `anchor.click()`, so a browser that resolves the download asynchronously finds the blob gone and saves nothing, with no error shown — PR 589
 - **ui-states** — a reload that settles an unanswered save replaces the editor's unsent text with the server's copy and keeps nothing to restore it from, including edits made between a failed reload and its retry — PR 555

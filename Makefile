@@ -14,6 +14,19 @@ CMDS         := hoservad hoserva mockapi
 # install method; `npm` is assumed present, exactly like `$(GO)` above.
 NPM          ?= npm
 
+# JUnit reporting (doc 06 §7). With TEST_REPORT_DIR set, every test target
+# below also writes JUnit XML under it — go test through gotestsum, each
+# shell suite script through scripts/devenv/junit-step.sh, vitest through
+# its junit reporter — and with it unset, every target behaves exactly as
+# without any of this. The path is made absolute because vitest runs from
+# web/. Use an empty or fresh directory: a case is appended to its suite's
+# file on every run.
+ifneq ($(strip $(TEST_REPORT_DIR)),)
+override TEST_REPORT_DIR := $(abspath $(TEST_REPORT_DIR))
+export TEST_REPORT_DIR
+endif
+JUNIT        := scripts/devenv/junit-step.sh
+
 # The loop-device lab (doc 06 §3, Q45). HOSERVA_LAB_ID namespaces the
 # container name, the compose project (so two ids never share a network)
 # and the bind-mounted image/mount root, so parallel labs never collide.
@@ -292,7 +305,7 @@ $(error invalid LAYOUT: must not contain '$$' — no Make or shell expansion syn
 endif
 export LAYOUT
 
-.PHONY: build test test-unit test-go test-corpus test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak vm-migration-suite hooks-install
+.PHONY: build test test-unit test-go test-corpus test-devenv test-pages-site test-integration test-lab packaging-test test-unraid-tools lint lint-go lint-sh clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-unraid-fixture lab-unraid-verify lab-require-id gen api-check web-build site-catalog site-build web-check-outbound web-scan-outbound web-outbound-test catalog-snapshot catalog-snapshot-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-unraid-fixture vm-unraid-capture vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak vm-migration-suite hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -312,11 +325,22 @@ web-build:
 	cd web && $(NPM) run build
 	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
 
+# The catalog behind hoserva.dev/apps: scripts/devenv/catalog-export verifies
+# the signed archive with the code and key hoservad uses and writes the plain
+# site/.catalog/ the site plugin reads. The source is the pinned snapshot, so
+# a local or CI build needs no live fetch; when CATALOG_LIVE_URL is set (the
+# Pages deploy sets it) the live catalog is used instead if it verifies and is
+# not older than the pin, and the pinned snapshot otherwise. The directory is
+# removed first, so a build never renders an export left by an earlier run.
+site-catalog: catalog-snapshot
+	rm -rf site/.catalog
+	$(GO) run ./scripts/devenv/catalog-export -pin scripts/devenv/catalog.pin -snapshot internal/template/snapshot -out site/.catalog
+
 # site/ (issue #82, Q3, Q90): the Docusaurus docs site. The build is written
 # to site/dist, which scripts/release/assemble-pages-site.sh publishes at the
 # root of hoserva.dev (running this target itself). dist is removed first, so
 # the index.html check below cannot pass on a build left by an earlier run.
-site-build:
+site-build: site-catalog
 	@echo "site: npm ci"
 	cd site && $(NPM) ci --no-audit --no-fund
 	@echo "site: typecheck"
@@ -331,10 +355,10 @@ site-build:
 # Q49: the built app embeds no outbound request. web-scan-outbound scans an
 # existing web/dist only — CI's web job, which has just built it, runs that.
 web-check-outbound: web-build
-	scripts/devenv/check-web-outbound.sh web/dist
+	$(JUNIT) web-outbound check-web-outbound.sh -- scripts/devenv/check-web-outbound.sh web/dist
 
 web-scan-outbound:
-	scripts/devenv/check-web-outbound.sh web/dist
+	$(JUNIT) web-outbound check-web-outbound.sh -- scripts/devenv/check-web-outbound.sh web/dist
 
 # The curated catalog archive pinned in scripts/devenv/catalog.pin is fetched
 # from its immutable catalog release, checked against the pin and the
@@ -349,7 +373,7 @@ catalog-snapshot:
 # Fixture test for catalog-snapshot.sh's refusals (a failed download, a pin
 # mismatch, a bad signature); it never reaches the network.
 catalog-snapshot-test: catalog-snapshot
-	scripts/devenv/test-catalog-snapshot.sh
+	$(JUNIT) devenv test-catalog-snapshot.sh -- scripts/devenv/test-catalog-snapshot.sh
 
 build: web-build catalog-snapshot
 	@mkdir -p $(BIN_DIR)
@@ -376,7 +400,7 @@ web-test:
 	@echo "web test"
 	cd web && $(NPM) run test
 
-test: test-unit packaging-test test-unraid-tools test-gh web-outbound-test
+test: test-unit test-devenv packaging-test test-unraid-tools test-gh web-outbound-test
 
 # Go's own "./..." wildcard skips "vendor", "testdata" and dot/underscore
 # directories, but not "node_modules" (`go help packages`) — once web/'s
@@ -391,7 +415,12 @@ GO_PACKAGES = $$($(GO) list ./... | grep -v /node_modules/)
 # the web job's lint/test. Local `make test` / `make test-unit` still
 # include web-test (doc 06 §10).
 test-go: catalog-snapshot-test
-	CGO_ENABLED=0 $(GO) test $(GO_PACKAGES)
+	@if [ -n "$$TEST_REPORT_DIR" ]; then \
+		mkdir -p -- "$$TEST_REPORT_DIR" && \
+		CGO_ENABLED=0 $(GO) tool gotestsum --format standard-quiet --junitfile "$$TEST_REPORT_DIR/go-unit.xml" -- $(GO_PACKAGES); \
+	else \
+		CGO_ENABLED=0 $(GO) test $(GO_PACKAGES); \
+	fi
 
 test-unit: test-go
 	$(MAKE) web-test
@@ -403,7 +432,12 @@ test-unit: test-go
 # built web UI, so it has no prerequisites; `make test-go` runs the same
 # test as part of ./... .
 test-corpus:
-	CGO_ENABLED=0 $(GO) test -count=1 -v -run '^(TestUnraidCorpus|TestCorpus)' ./internal/template
+	@if [ -n "$$TEST_REPORT_DIR" ]; then \
+		mkdir -p -- "$$TEST_REPORT_DIR" && \
+		CGO_ENABLED=0 $(GO) tool gotestsum --format standard-verbose --junitfile "$$TEST_REPORT_DIR/go-corpus.xml" -- -count=1 -v -run '^(TestUnraidCorpus|TestCorpus)' ./internal/template; \
+	else \
+		CGO_ENABLED=0 $(GO) test -count=1 -v -run '^(TestUnraidCorpus|TestCorpus)' ./internal/template; \
+	fi
 
 # The .deb's own safety-critical regression tests (issue #42): each script
 # runs the real maintainer script (postinst/postrm) or lib.sh function
@@ -411,44 +445,56 @@ test-corpus:
 # no debhelper or dpkg-buildpackage needed, so this runs anywhere `make
 # test` does.
 packaging-test:
-	scripts/release/test-lib.sh
-	scripts/release/test-postinst.sh
-	scripts/release/test-postrm-purge.sh
-	scripts/release/test-build-deb.sh
-	scripts/release/test-stamp-prepare-script.sh
-	scripts/release/test-publish-release.sh
-	packaging/test-control-depends.sh
-	packaging/test-unattended-upgrades.sh
-	packaging/test-preinst-smartd-dropin.sh
-	packaging/test-postinst-smartd-mask.sh
-	packaging/test-postinst-smartd-survives-upgrade.sh
-	packaging/test-postinst-hoserva-apps.sh
-	packaging/test-udev-storage-rule-ordering.sh
+	$(JUNIT) packaging-test scripts/release/test-lib.sh -- scripts/release/test-lib.sh
+	$(JUNIT) packaging-test scripts/release/test-postinst.sh -- scripts/release/test-postinst.sh
+	$(JUNIT) packaging-test scripts/release/test-postrm-purge.sh -- scripts/release/test-postrm-purge.sh
+	$(JUNIT) packaging-test scripts/release/test-build-deb.sh -- scripts/release/test-build-deb.sh
+	$(JUNIT) packaging-test scripts/release/test-stamp-prepare-script.sh -- scripts/release/test-stamp-prepare-script.sh
+	$(JUNIT) packaging-test scripts/release/test-publish-release.sh -- scripts/release/test-publish-release.sh
+	$(JUNIT) packaging-test packaging/test-control-depends.sh -- packaging/test-control-depends.sh
+	$(JUNIT) packaging-test packaging/test-unattended-upgrades.sh -- packaging/test-unattended-upgrades.sh
+	$(JUNIT) packaging-test packaging/test-preinst-smartd-dropin.sh -- packaging/test-preinst-smartd-dropin.sh
+	$(JUNIT) packaging-test packaging/test-postinst-smartd-mask.sh -- packaging/test-postinst-smartd-mask.sh
+	$(JUNIT) packaging-test packaging/test-postinst-smartd-survives-upgrade.sh -- packaging/test-postinst-smartd-survives-upgrade.sh
+	$(JUNIT) packaging-test packaging/test-postinst-hoserva-apps.sh -- packaging/test-postinst-hoserva-apps.sh
+	$(JUNIT) packaging-test packaging/test-udev-storage-rule-ordering.sh -- packaging/test-udev-storage-rule-ordering.sh
 
 # The Unraid prepare script (issue #556, doc 05 §4 Phase A step 0): run
 # against hand-written fixture roots under tools/unraid/testdata/ with
 # stand-ins for docker, findmnt, lsblk, df and zip, never an Unraid server
 # (D20). Needs jq, python3 and unzip.
 test-unraid-tools:
-	tools/unraid/test-prepare-migration.sh
-	scripts/vm/unraid-sizing-check.sh
-	scripts/vm/migration-suite-coverage-check.sh
-	scripts/vm/migration-suite-check.sh
+	$(JUNIT) unraid-tools tools/unraid/test-prepare-migration.sh -- tools/unraid/test-prepare-migration.sh
+	$(JUNIT) unraid-tools scripts/vm/unraid-sizing-check.sh -- scripts/vm/unraid-sizing-check.sh
+	$(JUNIT) unraid-tools scripts/vm/migration-suite-coverage-check.sh -- scripts/vm/migration-suite-coverage-check.sh
+	$(JUNIT) unraid-tools scripts/vm/migration-suite-check.sh -- scripts/vm/migration-suite-check.sh
 
 # The agent workflow's GitHub client (issue #410): scripts/gh-rest.sh's own
 # contract tests against a fake `gh`, plus the fake-gh tests for the
 # scripts that read GitHub through it — never the live API.
 test-gh:
-	scripts/test-gh-rest.sh
-	scripts/test-issue-status.sh
-	scripts/test-epic-status.sh
-	scripts/test-issue-readiness.sh
-	scripts/test-check-gh-rest.sh
+	$(JUNIT) gh scripts/test-gh-rest.sh -- scripts/test-gh-rest.sh
+	$(JUNIT) gh scripts/test-issue-status.sh -- scripts/test-issue-status.sh
+	$(JUNIT) gh scripts/test-epic-status.sh -- scripts/test-epic-status.sh
+	$(JUNIT) gh scripts/test-issue-readiness.sh -- scripts/test-issue-readiness.sh
+	$(JUNIT) gh scripts/test-check-gh-rest.sh -- scripts/test-check-gh-rest.sh
 
 # Fixture test for the Q49 outbound-request check's allowlist (issue #461);
 # it scans throwaway directories, not the web build.
 web-outbound-test:
-	scripts/devenv/test-check-web-outbound.sh
+	$(JUNIT) web-outbound test-check-web-outbound.sh -- scripts/devenv/test-check-web-outbound.sh
+
+# Fixture tests for the JUnit wrapper, the L3 suite's JUnit writer (no VM) and
+# the PR comment script (a stub gh); the renderer's own tests are Go tests under
+# scripts/devenv/testreport and run with test-go.
+test-devenv:
+	$(JUNIT) devenv test-junit-step.sh -- scripts/devenv/test-junit-step.sh
+	$(JUNIT) devenv test-l3-junit.sh -- scripts/vm/test-l3-junit.sh
+	$(JUNIT) devenv test-pr-comment.sh -- scripts/devenv/test-pr-comment.sh
+
+# The Pages site assembly script's own test (Q66).
+test-pages-site:
+	$(JUNIT) pages-site test-pages-site.sh -- scripts/release/test-pages-site.sh
 
 # Go-only lint: CI's lint-and-unit job calls this so it does not also
 # run the web job's lint/typecheck. Local `make lint` still includes
@@ -486,7 +532,7 @@ lint-gh:
 # shellcheck over the user-run Unraid script and its tests, and over the
 # release helpers that publish it. In CI a missing shellcheck is a failure,
 # as for golangci-lint above.
-SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh \
+SHELL_LINT_FILES = scripts/devenv/unraid-fixture.sh scripts/devenv/test-unraid-fixture.sh scripts/devenv/junit-step.sh scripts/devenv/test-junit-step.sh scripts/vm/l3-junit.sh scripts/vm/test-l3-junit.sh scripts/devenv/pr-comment.sh scripts/devenv/test-pr-comment.sh \
 	scripts/vm/unraid-fixture.sh scripts/vm/unraid-capture.sh scripts/vm/unraid-capture-guest.sh scripts/vm/unraid-lib.sh \
 	scripts/vm/create-vm.sh scripts/vm/unraid-sizing-check.sh \
 	scripts/vm/run-migration-suite.sh scripts/vm/migration-suite-guest.sh scripts/vm/usb-image.sh scripts/vm/migration-suite-coverage-check.sh scripts/vm/migration-suite-check.sh \
@@ -698,7 +744,7 @@ db-migration:
 # (replaying every migration must produce exactly schema.sql) — Q60's
 # sqlite-migrate check, connection-free and safe to run in CI.
 db-check:
-	$(GO) run github.com/mdg-labs/sqlite-migrate/cmd/sqlite-migrate check -schema internal/store/schema/schema.sql -dir internal/store/migrations
+	$(JUNIT) db-check sqlite-migrate-check -- $(GO) run github.com/mdg-labs/sqlite-migrate/cmd/sqlite-migrate check -schema internal/store/schema/schema.sql -dir internal/store/migrations
 
 lab-require-id:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make lab-up)" >&2; exit 1; }
@@ -713,10 +759,10 @@ lab-seed: lab-require-id
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/seed-data.sh --profile "$(LAB_SEED_PROFILE)"
 
 lab-verify-refusal: lab-require-id
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-host-refusal.sh
+	$(JUNIT) lab lab-verify-refusal -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-host-refusal.sh
 
 lab-snapraid-check: lab-require-id
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/snapraid-check.sh
+	$(JUNIT) lab lab-snapraid-check -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/snapraid-check.sh
 
 # The synthetic Unraid source (doc 06 §5, issue #74), built inside the lab on
 # loop devices backed by this lab's own images. VARIANT names a directory under
@@ -731,12 +777,12 @@ lab-snapraid-check: lab-require-id
 # anything and names make vm-unraid-fixture.
 lab-unraid-fixture: lab-require-id
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-fixture VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 "$$VARIANT"
+	$(JUNIT) lab lab-unraid-fixture -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 "$$VARIANT"
 
 lab-unraid-verify: lab-require-id
 	@test -n "$$VARIANT" || { echo "set VARIANT (e.g. make lab-unraid-verify VARIANT=unraid-6.12-xfs-single-parity)" >&2; exit 1; }
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-unraid-fixture.sh
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 --verify "$$VARIANT"
+	$(JUNIT) lab test-unraid-fixture.sh -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-unraid-fixture.sh
+	$(JUNIT) lab lab-unraid-verify -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T -e HOSERVA_FIXTURE_OPTION="$$OPTION" lab bash /src/scripts/devenv/unraid-fixture.sh --tier l2 --verify "$$VARIANT"
 
 # doc 12 §3's planned integration target (issue #219): a Hoserva-generated
 # smb.conf, exercised against a real smbd, inside the lab. gen-smb-conf runs
@@ -752,8 +798,8 @@ lab-unraid-verify: lab-require-id
 # at that same path, run.
 test-integration: lab-require-id
 	$(GO) run ./scripts/devenv/gen-smb-conf > ".lab/$$HOSERVA_LAB_ID/smb.conf.rendered"
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/smb-check.sh
-	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/check-mnt-user-clean.sh
+	$(JUNIT) lab smb-check.sh -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/smb-check.sh
+	$(JUNIT) lab check-mnt-user-clean.sh -- $(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/check-mnt-user-clean.sh
 	$(MAKE) test-lab
 
 # Every //go:build lab Go test (doc 06 §3, issue #328): compile on the

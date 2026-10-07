@@ -33,8 +33,9 @@ var (
 	// catalog index.
 	ErrCatalogUnavailable = errors.New("template: the catalog is not available")
 	// ErrIconNotFound is returned when a template has no icon that can be
-	// served: no such file, not a plain file inside the template's
-	// directory, an extension outside the allow-list, or too large.
+	// served: the template names none, no such file, not a plain file
+	// inside the template's directory, an extension outside the allow-list,
+	// or too large.
 	ErrIconNotFound = errors.New("template: the template has no icon that can be served")
 	// ErrScreenshotNotFound is returned when a template has no screenshot
 	// with that number, or the file cannot be served: no such file, not a
@@ -151,6 +152,9 @@ func iconFile(id string, entry Entry) (name, contentType string, err error) {
 	t, issues := Parse(entry.Data)
 	if t == nil {
 		return "", "", invalidTemplate(id, issues)
+	}
+	if t.Block.Icon == "" {
+		return "", "", fmt.Errorf("%w: template %q names no icon", ErrIconNotFound, id)
 	}
 	ct, ok := iconTypes[strings.ToLower(filepath.Ext(t.Block.Icon))]
 	if !ok {

@@ -1,4 +1,5 @@
-import { defineConfig } from "@playwright/test";
+import { join } from "node:path";
+import { defineConfig, type ReporterDescription } from "@playwright/test";
 
 // The critical-journeys suite (doc 06 §4): runs against a real, already-
 // running Hoserva UI+API — either the L3 VM under `make vm-suite`
@@ -15,6 +16,14 @@ import { defineConfig } from "@playwright/test";
 // on its own (`--project=journey-9`, scripts/vm/run-playwright.sh).
 const baseURL = process.env.HOSERVA_E2E_BASE_URL ?? "http://127.0.0.1:5173";
 
+// With TEST_REPORT_DIR set (doc 06 §7) the run also writes a JUnit file there,
+// named for the project run-playwright.sh selected, so the chromium run and
+// the journey-9 run of one L3 suite do not overwrite each other.
+const reportDir = process.env.TEST_REPORT_DIR;
+const junit: ReporterDescription[] = reportDir
+  ? [["junit", { outputFile: join(reportDir, `playwright-${process.env.HOSERVA_E2E_REPORT_NAME ?? "e2e"}.xml`) }]]
+  : [];
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -22,7 +31,7 @@ export default defineConfig({
   // nightly-l3.yml uploads web/playwright-report/ as a build artifact —
   // the "list" reporter alone only writes to the terminal, so without
   // "html" that upload always finds nothing.
-  reporter: [["list"], ["html", { open: "never" }]],
+  reporter: [["list"], ["html", { open: "never" }], ...junit],
   use: {
     baseURL,
     // The L3 guest's hoservad TLS listener carries a locally-issued

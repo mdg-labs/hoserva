@@ -41,7 +41,7 @@ func Show(ctx context.Context, c Catalog, id string) (*Detail, error) {
 	for n, spec := range t.Block.Inputs {
 		values[n] = defaultString(spec.Default)
 		if spec.Kind == KindSecret {
-			values[n] = secretPlaceholder
+			values[n] = secretPlaceholder(spec.Format)
 		}
 	}
 	return &Detail{

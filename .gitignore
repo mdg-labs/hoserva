@@ -41,6 +41,9 @@ scripts/vm/images/
 web/test-results/
 web/playwright-report/
 
+# JUnit reports a run writes when TEST_REPORT_DIR points here (doc 06 §7).
+/test-results/
+
 # Go
 *.test
 
@@ -62,6 +65,11 @@ web/dist/*
 # scripts/release/assemble-pages-site.sh) and its generated working state.
 site/dist/
 site/.docusaurus/
+
+# site/.catalog/ is the verified export of the catalog archive that /apps is
+# built from (scripts/devenv/catalog-export, run by `make site-build`):
+# derived from the pinned snapshot or the live catalog, never committed.
+site/.catalog/
 
 # internal/template/snapshot/ (the pinned catalog archive embedded via
 # internal/template/snapshot.go, Q65) is fetched by `make catalog-snapshot`

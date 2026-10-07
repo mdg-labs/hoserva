@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="3" failures="0" errors="0" time="1.500000">
+	<testsuite tests="2" failures="0" time="1.000000" name="github.com/mdg-labs/hoserva/internal/pool">
+		<testcase classname="github.com/mdg-labs/hoserva/internal/pool" name="TestCreate" time="0.400000"></testcase>
+		<testcase classname="github.com/mdg-labs/hoserva/internal/pool" name="TestMount" time="0.600000"></testcase>
+	</testsuite>
+	<testsuite tests="1" failures="0" time="0.500000" name="github.com/mdg-labs/hoserva/internal/job">
+		<testcase classname="github.com/mdg-labs/hoserva/internal/job" name="TestQueue" time="0.500000"></testcase>
+	</testsuite>
+</testsuites>

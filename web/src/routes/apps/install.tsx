@@ -412,7 +412,7 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
   const header = (
     <Card>
       <CardPanel className="flex min-w-0 items-start gap-4">
-        <TemplateIcon id={template.id} title={template.title} className="size-16 shrink-0" />
+        <TemplateIcon id={template.id} className="size-16 shrink-0" />
         <div className="flex min-w-0 flex-col gap-2">
           <h1 className="font-heading text-2xl font-semibold">{t("apps.install.title", { title: template.title })}</h1>
           <div className="flex flex-wrap items-center gap-2">

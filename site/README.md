@@ -1,6 +1,6 @@
 # Hoserva documentation site
 
-The public site at <https://hoserva.dev>, built with Docusaurus: a root page (`src/pages/index.tsx`) and the documentation under `/docs/`. The design docs for developers live in `docs/internal/`, not here (Q3). The page structure is doc 05 §7's; the versioning rules are Q90 in `docs/internal/13-open-questions.md`.
+The public site at <https://hoserva.dev>, built with Docusaurus: a root page (`src/pages/index.tsx`), the app list at `/apps` and the documentation under `/docs/`. The design docs for developers live in `docs/internal/`, not here (Q3). The page structure is doc 05 §7's; the versioning rules are Q90 in `docs/internal/13-open-questions.md`.
 
 ```
 make site-build      # from the repository root: npm ci, build, and the layout checks
@@ -10,9 +10,19 @@ cd site && npm start # local dev server
 `npm run build` writes to `site/dist/`, which `scripts/release/assemble-pages-site.sh` publishes as the root of hoserva.dev: the root page at `/` and the docs at `/docs/`. `make site-build` also runs three checks:
 
 - `scripts/check-layout.mjs` — every internal link in the build resolves, the root page has no version banner or `noindex` and links to `/docs/`, and `/docs/`, `/docs/next/` and older versions carry the banners, `noindex` and version dropdown the rules call for.
+- `scripts/check-catalog.mjs` — `/apps` lists every template of `.catalog/index.json` (or shows the empty state when there is none), each has its page, and every icon and screenshot a page shows is in the build.
 - `scripts/check-api.mjs` — every operation, schema and Event type of the specification has a built reference page, and every operation page shows its required role and an `https://` example with the `Authorization` header.
 - `scripts/check-versioning.mjs` — makes two throwaway snapshots in a temporary copy of the site, builds it, and runs the layout and API checks on that, so the "a version exists" layout, and a reference built from each version's own specification, are proven without committing a snapshot.
 - `scripts/check-external.mjs` — no remote font, analytics or hosted-search reference in the source or the build.
+
+## App list
+
+`/apps` and one `/apps/<id>` page per template are built from the signed catalog archive, never fetched by the browser. `make site-build` first runs `make site-catalog`, which runs `scripts/devenv/catalog-export`: it checks the archive and its signature with the code and compiled-in key `hoservad` uses (`internal/template`), and writes `site/.catalog/` (gitignored): `index.json` with each template's public fields, and its icon and screenshots under `static/apps/<id>/`. `plugins/catalog/` reads that directory, adds the routes (`src/components/apps/`), and `staticDirectories` serves the images from `/apps/<id>/`. The site never reads the archive itself, so a later split of `site/` only changes who writes `.catalog/`. A missing or malformed `.catalog/` fails the build.
+
+- **Source.** The default is the pinned snapshot (`scripts/devenv/catalog.pin`, fetched by `make catalog-snapshot`): reproducible, with no live fetch. With `CATALOG_LIVE_URL` set (the Pages deploy sets it to `https://catalog.hoserva.dev/`) the export tries the live `catalog.tar.zst` and `.sig` first. It uses them only if they verify and their serial is not lower than the pin's; on any failure it logs a warning (an Actions annotation in CI) and uses the pinned snapshot, which must itself verify or the export fails. The output directory is replaced only by a complete export.
+- **Freshness.** `pages.yml` runs daily and on a `catalog-published` `repository_dispatch`, and republishes the default branch's site with the newer catalog.
+- **Filters.** The list renders in full without JavaScript; the text and category filters run in the page once it loads. `/apps?category=<name>` opens with that category selected when the catalog has it.
+- **Preview.** `npm start` serves the pages from an existing `.catalog/`; run `make site-catalog` to create it.
 
 ## API reference
 

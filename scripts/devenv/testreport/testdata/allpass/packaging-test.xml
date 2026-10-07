@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="packaging-test" tests="2" failures="0" errors="0" skipped="0" time="3.300">
+<testcase classname="packaging-test" name="scripts/release/test-lib.sh" time="1.000">
+</testcase>
+<testcase classname="packaging-test" name="scripts/release/test-postinst.sh" time="2.300">
+</testcase>
+</testsuite>

@@ -37,7 +37,7 @@
     "icon": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "description": "File name of the icon next to compose.yaml."
+      "description": "File name of the icon next to compose.yaml. Omitted only when no usable icon exists; Hoserva then shows a built-in placeholder."
     },
     "docs": {
       "type": "string",
@@ -144,6 +144,14 @@
             "type": "string",
             "minLength": 1,
             "description": "Help text shown in the install form."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "hex",
+              "laravel-key"
+            ],
+            "description": "Only for secret inputs: the shape of a generated value. hex (the default) is 48 hexadecimal characters; laravel-key is base64: followed by 32 random bytes in base64 - the APP_KEY of a Laravel application. A value typed for a laravel-key secret must have the same shape; any value is accepted for hex."
           },
           "optional": {
             "type": "boolean",
@@ -301,6 +309,31 @@
           {
             "if": {
               "properties": {
+                "kind": {
+                  "enum": [
+                    "path",
+                    "port",
+                    "string",
+                    "timezone",
+                    "device"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "format"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
                 "optional": {
                   "const": true
                 }
@@ -334,7 +367,6 @@
     "revision",
     "title",
     "categories",
-    "icon",
     "docs"
   ],
   "title": "Hoserva x-hoserva template block, schema version 1"

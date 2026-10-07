@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Assembles the GitHub Pages artifact for hoserva.dev (Q66, Q3, Q65):
-# the site build (the root page, with the docs under /docs/; a placeholder
-# until site/ exists) and the release index under /releases/. The catalog is published from its own
+# the site build (the root page, the app list at /apps, with the docs under
+# /docs/; a placeholder until site/ exists) and the release index under
+# /releases/. /apps is built from the signed catalog archive, so it is a
+# different path from the /catalog/ wiped below, and CATALOG_LIVE_URL in the
+# environment reaches `make site-build`, which exports the live archive when it
+# verifies and the pinned snapshot otherwise. The catalog is published from its own
 # repository at catalog.hoserva.dev (Q66, Q65), so this site has no
 # /catalog/ path and strips one if a docs tree tries to add it. Apt is
 # not part of this origin and is stripped too.

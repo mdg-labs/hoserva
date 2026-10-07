@@ -25,7 +25,7 @@ func (f Finding) String() string {
 
 // Lint checks every <id>/compose.yaml under dir: the x-hoserva schema, the
 // rules beyond it, and the directory conventions (the id is the directory's
-// name, the icon exists). It returns the findings in a stable order, and an
+// name, a named icon exists). It returns the findings in a stable order, and an
 // error only when dir itself cannot be read.
 func Lint(dir string) ([]Finding, error) {
 	entries, err := os.ReadDir(dir)
@@ -93,10 +93,12 @@ func lintTemplate(dir, id string) []Finding {
 		issues = append(issues, Issue{Path: []string{BlockKey, "id"}, Line: lineOf(t.root, []string{BlockKey, "id"}),
 			Message: fmt.Sprintf("is %q but the directory is named %q; they must match", t.Block.ID, id)})
 	}
-	icon := filepath.Join(dir, id, t.Block.Icon)
-	if info, err := os.Lstat(icon); err != nil || !info.Mode().IsRegular() {
-		issues = append(issues, Issue{Path: []string{BlockKey, "icon"}, Line: lineOf(t.root, []string{BlockKey, "icon"}),
-			Message: fmt.Sprintf("names %q, which is not a file next to %s", t.Block.Icon, ComposeFile)})
+	if t.Block.Icon != "" {
+		icon := filepath.Join(dir, id, t.Block.Icon)
+		if info, err := os.Lstat(icon); err != nil || !info.Mode().IsRegular() {
+			issues = append(issues, Issue{Path: []string{BlockKey, "icon"}, Line: lineOf(t.root, []string{BlockKey, "icon"}),
+				Message: fmt.Sprintf("names %q, which is not a file next to %s", t.Block.Icon, ComposeFile)})
+		}
 	}
 	for i, shot := range t.Block.Screenshots {
 		p := []string{BlockKey, "screenshots", fmt.Sprint(i)}

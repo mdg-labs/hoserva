@@ -1,11 +1,12 @@
 name: Pages
 
 # One GitHub Pages site at hoserva.dev (Q66, Q3, Q65, Q67): the site build
-# (the root page, with the docs under /docs/; a placeholder until site/
-# exists) and the release index under /releases/. The catalog is published from its own repository at
-# catalog.hoserva.dev, so this site has no /catalog/ path. Apt does not
-# join this origin (#118). HTTPS on the already-connected custom domain is a
-# repository setting, not something this workflow flips.
+# (the root page, the app list at /apps, with the docs under /docs/; a
+# placeholder until site/ exists) and the release index under /releases/. The
+# catalog is published from its own repository at catalog.hoserva.dev, so this
+# site has no /catalog/ path; /apps is built from that published archive. Apt
+# does not join this origin (#118). HTTPS on the already-connected custom
+# domain is a repository setting, not something this workflow flips.
 #
 # Permanent URL — compiled into hoservad, never changes:
 #   https://hoserva.dev/releases/index.json
@@ -17,6 +18,14 @@ name: Pages
 # that woke it. A push to main rebuilds the site/placeholder without
 # racing a still-running Release job. dev pushes don't deploy the
 # live site — CI (ci.yml) still runs on every dev push regardless.
+#
+# The app list follows the catalog: a daily schedule and a repository_dispatch
+# of type catalog-published (sent by the catalog repository) rebuild the site
+# from the default branch, and the build tries the live archive at
+# catalog.hoserva.dev first. scripts/devenv/catalog-export uses it only when it
+# verifies and is not older than the pinned snapshot; otherwise it logs a
+# warning and uses the pinned snapshot, so the catalog's hosting never blocks a
+# deploy.
 
 on:
   push:
@@ -24,6 +33,10 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
+  repository_dispatch:
+    types: [catalog-published]
 
 permissions:
   contents: read
@@ -56,6 +69,11 @@ jobs:
           node-version-file: site/.nvmrc
           cache: npm
           cache-dependency-path: site/package-lock.json
+      # make site-build also runs the catalog export (a Go program) and
+      # `make catalog-snapshot`.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - name: Fetch release-index-entry.json from every GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,6 +84,7 @@ jobs:
         env:
           ENTRIES: ${{ runner.temp }}/entries
           SITE: ${{ runner.temp }}/site
+          CATALOG_LIVE_URL: https://catalog.hoserva.dev/
         run: scripts/release/assemble-pages-site.sh "$SITE" "$ENTRIES"
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

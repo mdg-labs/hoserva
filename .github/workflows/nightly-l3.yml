@@ -43,6 +43,11 @@ name: Nightly L3
 # than their sum. scripts/vm/l3-group-coverage-check.sh fails l3-matrix
 # before either group's VM is created if a step in run-l3-suite.sh's own
 # L3_STEP_ORDER is missing from both groups, or listed in both.
+#
+# Every job writes JUnit XML under TEST_REPORT_DIR and uploads it as the
+# artifact test-results-<job>[-<group>] (doc 06 §7, issue #632); the
+# test-report job renders them all into this run's summary, with each job's
+# conclusion. Reporting never gates: the suites keep their own exit status.
 
 on:
   schedule:
@@ -56,6 +61,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  TEST_REPORT_DIR: ${{ github.workspace }}/test-results
 
 jobs:
   # Every //go:build lab Go test (issue #328, doc 06 §3): compile on the
@@ -99,6 +107,14 @@ jobs:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-destroy
 
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-lab-go
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
+
   # Computes the l3 job's own matrix (issue #392) and fails fast — before
   # either group's VM is created — if run-l3-suite.sh's own step registry
   # and this workflow's two groups have drifted apart. No KVM, no VM,
@@ -114,16 +130,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check every L3 step is in exactly one nightly-l3.yml group
-        run: scripts/vm/l3-group-coverage-check.sh
+        run: scripts/devenv/junit-step.sh l3-matrix l3-group-coverage-check.sh -- scripts/vm/l3-group-coverage-check.sh
 
       - name: Check a malformed l3_steps selection is refused
-        run: scripts/vm/l3-step-selection-check.sh
+        run: scripts/devenv/junit-step.sh l3-matrix l3-step-selection-check.sh -- scripts/vm/l3-step-selection-check.sh
 
       - name: Build this run's matrix
         id: matrix
         env:
           L3_STEPS_INPUT: ${{ github.event.inputs.l3_steps }}
         run: scripts/vm/l3-build-matrix.sh >> "$GITHUB_OUTPUT"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-l3-matrix
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
 
   l3:
     name: L3 VM suite (${{ matrix.group }})
@@ -216,6 +240,7 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
           L3_STEPS: ${{ matrix.l3_steps }}
+          L3_GROUP: ${{ matrix.group }}
         # timeout-minutes here, not only the job's own backstop above,
         # is what actually gives each group its own group-sized
         # bound (l3-build-matrix.sh's own timeout field): 75 for the
@@ -234,6 +259,14 @@ jobs:
             export TAG=v0.0.0-beta.1
           fi
           make vm-suite
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-l3-${{ matrix.group }}
+          path: ${{ env.TEST_REPORT_DIR }}
+          if-no-files-found: ignore
 
       - name: Upload Playwright report
         if: always()
@@ -269,3 +302,53 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make vm-destroy
+
+  # One combined report of every job above (doc 06 §7). It runs whether they
+  # passed or not, lists each job's conclusion — a job that failed before it
+  # wrote a report still has a row — and succeeds whenever it rendered a
+  # summary: the suites own the gate, this job only reports. The artifacts it
+  # reads are data, never code.
+  test-report:
+    name: Test report (doc 06 §7)
+    needs: [lab-go, l3-matrix, l3]
+    if: always() && github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # No artifact at all (every job died before its upload) is not a failed
+      # download: the renderer then says no reports were found. A download that
+      # does fail is allowed too, but the summary says it is incomplete.
+      - name: Download the test results
+        id: download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: test-results-*
+          path: ${{ runner.temp }}/test-results
+
+      - name: Render the combined report
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+        run: |
+          printf '%s' "$NEEDS_JSON" > "$RUNNER_TEMP/needs.json"
+          flags=(-needs "$RUNNER_TEMP/needs.json")
+          if [ "$DOWNLOAD_OUTCOME" = failure ]; then
+            flags+=(-download-failed)
+          fi
+          go run ./scripts/devenv/testreport "${flags[@]}" "$RUNNER_TEMP/test-results" > "$RUNNER_TEMP/test-summary.md"
+          cat "$RUNNER_TEMP/test-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-summary
+          path: ${{ runner.temp }}/test-summary.md

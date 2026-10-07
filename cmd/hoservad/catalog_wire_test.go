@@ -75,3 +75,43 @@ func TestStartTemplates_ACatalogRemovedFromTheStateDirectoryMakesTheListUnavaila
 		t.Fatalf("ListCatalog with no catalog = %d %q, want 503 catalog_unavailable", st.StatusCode, st.Response.Code)
 	}
 }
+
+// TestStartTemplates_ATemplateWithoutAnIconIsListedAndShownAndItsIconAnswers404
+// goes through the handler startTemplates builds: a catalog entry whose
+// template names no icon is listed, shown and installable, and its icon
+// operation answers 404 template_icon_not_found, which the web UI turns into
+// its placeholder.
+func TestStartTemplates_ATemplateWithoutAnIconIsListedAndShownAndItsIconAnswers404(t *testing.T) {
+	ctx := context.Background()
+	stateDir := t.TempDir()
+	h := startedTemplates(t, stateDir)
+
+	catalog := filepath.Join(stateDir, catalogDirName)
+	dir := filepath.Join(catalog, "plain")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := "services:\n  app:\n    image: example/plain:1\nx-hoserva:\n  schema: 1\n  id: plain\n  revision: 1\n  title: Plain\n  categories: [system]\n  docs: https://example.com\n"
+	if err := os.WriteFile(filepath.Join(dir, template.ComposeFile), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index := `{"schema":1,"serial":1,"templates":[{"id":"plain","revision":1,"title":"Plain","categories":["system"],"docs":"https://example.com"}]}`
+	if err := os.WriteFile(filepath.Join(catalog, "index.json"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := h.ListCatalog(ctx)
+	if err != nil || len(list.Templates) != 1 || list.Templates[0].ID != "plain" {
+		t.Fatalf("ListCatalog = %+v, %v", list, err)
+	}
+	if _, err := h.GetCatalogTemplate(ctx, apiv1.GetCatalogTemplateParams{ID: "plain"}); err != nil {
+		t.Fatalf("GetCatalogTemplate: %v", err)
+	}
+	_, err = h.GetCatalogTemplateIcon(ctx, apiv1.GetCatalogTemplateIconParams{ID: "plain"})
+	if st := h.NewError(ctx, err); st.StatusCode != 404 || st.Response.Code != "template_icon_not_found" {
+		t.Fatalf("icon of a template without one = %d %q, want 404 template_icon_not_found", st.StatusCode, st.Response.Code)
+	}
+	if _, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{}, apiv1.InstallTemplateParams{ID: "plain"}); err != nil {
+		t.Fatalf("InstallTemplate: %v", err)
+	}
+}

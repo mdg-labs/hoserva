@@ -177,7 +177,7 @@ export function CatalogDetailPage(): React.ReactElement {
       <Card>
         <CardPanel className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 items-start gap-4">
-            <TemplateIcon id={template.id} title={template.title} className="size-16 shrink-0" />
+            <TemplateIcon id={template.id} className="size-16 shrink-0" />
             <div className="flex min-w-0 flex-col gap-2">
               <h1 className="font-heading text-2xl font-semibold">{template.title}</h1>
               <div className="flex flex-wrap items-center gap-2">

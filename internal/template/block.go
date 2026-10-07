@@ -20,6 +20,9 @@ const (
 	KindTimezone = "timezone"
 	KindDevice   = "device"
 
+	FormatHex        = "hex"
+	FormatLaravelKey = "laravel-key"
+
 	RoleAppdata   = "appdata"
 	RoleShare     = "share"
 	RoleMedia     = "media"
@@ -35,7 +38,7 @@ type Block struct {
 	Revision    int              `json:"revision" yaml:"revision" jsonschema:"minimum=1,description=Increases with every change to the template."`
 	Title       string           `json:"title" yaml:"title" jsonschema:"minLength=1,description=Name shown in the catalog."`
 	Categories  []string         `json:"categories" yaml:"categories" jsonschema:"minItems=1,uniqueItems=true,pattern=^[a-z0-9]+(-[a-z0-9]+)*$,description=Catalog categories."`
-	Icon        string           `json:"icon" yaml:"icon" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml."`
+	Icon        string           `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml. Omitted only when no usable icon exists; Hoserva then shows a built-in placeholder."`
 	Docs        string           `json:"docs" yaml:"docs" jsonschema:"pattern=^https?://,description=Upstream documentation the template was written from."`
 	Maintainer  string           `json:"maintainer,omitempty" yaml:"maintainer,omitempty" jsonschema:"minLength=1,maxLength=100,description=Who maintains the template or the app. Shown in the catalog and used as a filter."`
 	Description string           `json:"description,omitempty" yaml:"description,omitempty" jsonschema:"minLength=1,maxLength=2000,description=Longer plain-text description shown on the template's page. Line breaks are kept; nothing is interpreted as markup."`
@@ -59,6 +62,7 @@ type Input struct {
 	Default     any    `json:"default,omitempty" yaml:"default,omitempty" jsonschema:"oneof_type=string;integer,description=Preset value. A secret has none; it is generated at install time."`
 	Label       string `json:"label,omitempty" yaml:"label,omitempty" jsonschema:"minLength=1,description=Plain-language name shown in the install form."`
 	Description string `json:"description,omitempty" yaml:"description,omitempty" jsonschema:"minLength=1,description=Help text shown in the install form."`
+	Format      string `json:"format,omitempty" yaml:"format,omitempty" jsonschema:"enum=hex,enum=laravel-key,description=Only for secret inputs: the shape of a generated value. hex (the default) is 48 hexadecimal characters; laravel-key is base64: followed by 32 random bytes in base64 - the APP_KEY of a Laravel application. A value typed for a laravel-key secret must have the same shape; any value is accepted for hex."`
 	Optional    bool   `json:"optional,omitempty" yaml:"optional,omitempty" jsonschema:"description=Only for string inputs: the value may be left empty and is then written to .env as an empty value. An optional input has no default."`
 }
 
@@ -112,6 +116,10 @@ func (Input) JSONSchemaExtend(s *jsonschema.Schema) {
 		map[string]any{
 			"if":   whenKind(KindPath, KindPort, KindSecret, KindTimezone, KindDevice),
 			"then": map[string]any{"not": map[string]any{"required": []any{"optional"}}},
+		},
+		map[string]any{
+			"if":   whenKind(KindPath, KindPort, KindString, KindTimezone, KindDevice),
+			"then": map[string]any{"not": map[string]any{"required": []any{"format"}}},
 		},
 		map[string]any{
 			"if": map[string]any{
