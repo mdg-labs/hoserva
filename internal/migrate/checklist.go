@@ -116,23 +116,28 @@ type ScheduleRecord struct {
 // for the succeeded jobs of a type, oldest first, until visit returns true.
 // Finished returns when the migration finished and false while there is no
 // record of it (store.ArrayStore.MigrationFinishedAt): an error is never
-// "finished".
+// "finished". HasCacheDisk reports whether the Hoserva array has a cache disk;
+// an array that cannot be read is an error, never "no cache".
 type ChecklistSources struct {
-	Jobs     func(ctx context.Context, jobType string, visit func(JobRecord) (stop bool)) error
-	Finished func(ctx context.Context) (at time.Time, finished bool, err error)
-	Channels func(ctx context.Context) ([]ChannelRecord, error)
-	Schedule func(ctx context.Context) (ScheduleRecord, error)
+	Jobs         func(ctx context.Context, jobType string, visit func(JobRecord) (stop bool)) error
+	Finished     func(ctx context.Context) (at time.Time, finished bool, err error)
+	HasCacheDisk func(ctx context.Context) (bool, error)
+	Channels     func(ctx context.Context) ([]ChannelRecord, error)
+	Schedule     func(ctx context.Context) (ScheduleRecord, error)
 }
 
 func (c ChecklistSources) configured() bool {
-	return c.Jobs != nil && c.Finished != nil && c.Channels != nil && c.Schedule != nil
+	return c.Jobs != nil && c.Finished != nil && c.HasCacheDisk != nil && c.Channels != nil && c.Schedule != nil
 }
 
 // ChecklistFacts is what the records show. Finished is false until the array
 // record says the migration finished, and then nothing else is read.
+// NoCacheDisk is true when the Hoserva array has no cache disk, so the appdata
+// relocation can never be run.
 type ChecklistFacts struct {
 	Finished          bool
 	FinishedAt        time.Time
+	NoCacheDisk       bool
 	AppdataRelocation *JobRecord
 	InitialSync       *JobRecord
 	FullScrub         *JobRecord
@@ -176,6 +181,11 @@ func (c ChecklistSources) Facts(ctx context.Context) (ChecklistFacts, error) {
 		return f, nil
 	}
 	f.Finished, f.FinishedAt = true, at
+	hasCache, err := c.HasCacheDisk(ctx)
+	if err != nil {
+		return f, fmt.Errorf("reading whether the array has a cache disk: %w", err)
+	}
+	f.NoCacheDisk = !hasCache
 	if f.AppdataRelocation, err = firstJob(ctx, c, JobTypeShareRelocation, func(j JobRecord) bool {
 		return j.Share == appdataShare && j.To == relocationToCache
 	}); err != nil {
@@ -378,7 +388,7 @@ func BuildChecklist(f ChecklistFacts, rec ChecklistRecord, report *Report) Check
 	c := Checklist{Finished: true, FinishedAt: f.FinishedAt}
 
 	appdata := recordItem(ItemAppdataCache, f.AppdataRelocation)
-	if f.AppdataRelocation == nil && sourceHadNoCache(report) {
+	if f.AppdataRelocation == nil && (f.NoCacheDisk || sourceHadNoCache(report)) {
 		appdata.Status = ItemNotApplicable
 	}
 	c.Items = append(c.Items, appdata, recordItem(ItemInitialSync, f.InitialSync), recordItem(ItemFullScrub, f.FullScrub))

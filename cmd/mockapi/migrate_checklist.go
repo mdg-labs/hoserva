@@ -48,6 +48,7 @@ func (h *handler) mockChecklistSources() migrate.ChecklistSources {
 			defer h.migration.mu.Unlock()
 			return h.migration.finishedAt, !h.migration.finishedAt.IsZero(), nil
 		},
+		HasCacheDisk: func(context.Context) (bool, error) { return mockHasCacheDisk(h.scenario), nil },
 		Jobs: func(_ context.Context, jobType string, visit func(migrate.JobRecord) bool) error {
 			h.mu.Lock()
 			var recs []migrate.JobRecord

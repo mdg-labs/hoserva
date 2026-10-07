@@ -156,6 +156,21 @@ func TestMigrationChecklistWiring_AnswersNotConfiguredUntilWiredAndNotYetBeforeT
 	}
 }
 
+func TestMigrationChecklistWiring_AppdataFollowsTheArraysCacheDiskWhenTheScanReadNoRoles(t *testing.T) {
+	r := newChecklistRig(t)
+	r.wire(t)
+	r.finishMigration(t, 10)
+	if got := r.item(t, apiv1.MigrationChecklistItemIdAppdataCache); got.Status != apiv1.MigrationChecklistItemStatusTodo || got.Acknowledgeable {
+		t.Errorf("appdata on an array with a cache disk and no scan = %+v, want todo", got)
+	}
+	if _, err := r.db.ExecContext(context.Background(), "DELETE FROM array_disks WHERE role = 'cache'"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.item(t, apiv1.MigrationChecklistItemIdAppdataCache); got.Status != apiv1.MigrationChecklistItemStatusNotApplicable {
+		t.Errorf("appdata on an array with no cache disk and no scan = %+v, want not applicable", got)
+	}
+}
+
 func TestMigrationChecklistWiring_EachItemIsDerivedFromTheDaemonsRecords(t *testing.T) {
 	r := newChecklistRig(t)
 	r.wire(t)

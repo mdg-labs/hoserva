@@ -23,6 +23,6 @@ func wireMigrationChecklist(handler *api.Handler, jobs *job.Store, arrays *store
 	if handler.Notify == nil || handler.Schedules == nil || jobs == nil || arrays == nil {
 		return errors.New("the notification service, the schedule service, the job store or the array store is not wired")
 	}
-	handler.Migration.ChecklistRecords = api.ChecklistSources(jobs, handler.Notify, handler.Schedules, arrays.MigrationFinishedAt)
+	handler.Migration.ChecklistRecords = api.ChecklistSources(jobs, handler.Notify, handler.Schedules, arrays)
 	return nil
 }

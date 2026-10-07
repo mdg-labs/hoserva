@@ -787,7 +787,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// disk mount units and snapraid.conf, which nothing here has.
 		RegenerateArray: func(context.Context) error { return nil },
 	}
-	migrationSvc.ChecklistRecords = api.ChecklistSources(jobStore, notifySvc, scheduleSvc, arrayStore.MigrationFinishedAt)
+	migrationSvc.ChecklistRecords = api.ChecklistSources(jobStore, notifySvc, scheduleSvc, arrayStore)
 	if scenario == "fresh-install" {
 		prepareContractBareMetal(t, db, h.Backup, dbPath)
 	}

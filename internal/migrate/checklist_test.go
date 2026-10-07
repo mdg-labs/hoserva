@@ -20,12 +20,14 @@ func at(h int) time.Time { return t0.Add(time.Duration(h) * time.Hour) }
 type fakeRecords struct {
 	jobs       map[string][]JobRecord
 	finishedAt time.Time
+	noCache    bool
 	channels   []ChannelRecord
 	schedule   ScheduleRecord
 
 	jobReads, channelReads, scheduleReads int
 	failJobs                              string
 	failFinished                          bool
+	failCache                             bool
 }
 
 func (f *fakeRecords) sources() ChecklistSources {
@@ -47,6 +49,12 @@ func (f *fakeRecords) sources() ChecklistSources {
 				return time.Time{}, false, errors.New("the array record is gone")
 			}
 			return f.finishedAt, !f.finishedAt.IsZero(), nil
+		},
+		HasCacheDisk: func(context.Context) (bool, error) {
+			if f.failCache {
+				return false, errors.New("the array record is gone")
+			}
+			return !f.noCache, nil
 		},
 		Channels: func(context.Context) ([]ChannelRecord, error) { f.channelReads++; return f.channels, nil },
 		Schedule: func(context.Context) (ScheduleRecord, error) { f.scheduleReads++; return f.schedule, nil },
@@ -226,6 +234,44 @@ func TestChecklist_AppdataIsDoneByARelocationOfAppdataToCacheAndNotApplicableWhe
 		if it.Status != ItemDone || it.JobID != "appdata-to-cache" || !it.DoneAt.Equal(at(4)) {
 			t.Errorf("%s: appdata = %+v, want done from the relocation: a record is never overridden", name, it)
 		}
+	}
+}
+
+func TestChecklist_AppdataIsNotApplicableWhenTheArrayHasNoCacheDiskWhateverTheScanRead(t *testing.T) {
+	f := finishedRecords()
+	f.noCache = true
+	for name, r := range map[string]*Report{
+		"a cache in the capture":  reviewWithRoles(UnraidParity, UnraidData, UnraidCache),
+		"no cache in the capture": reviewWithRoles(UnraidParity, UnraidData),
+		"a capture with no roles": reviewWithRoles("", ""),
+		"no review":               {},
+		"no report":               nil,
+	} {
+		it := itemOf(t, buildFrom(t, f, ChecklistRecord{}, r), ItemAppdataCache)
+		if it.Status != ItemNotApplicable || it.JobID != "" || it.Acknowledgeable {
+			t.Errorf("%s: appdata = %+v, want not applicable with no cache disk on the array", name, it)
+		}
+	}
+
+	f.jobs[JobTypeShareRelocation] = []JobRecord{{ID: "appdata-to-cache", Share: "appdata", To: "cache", FinishedAt: at(4)}}
+	it := itemOf(t, buildFrom(t, f, ChecklistRecord{}, nil), ItemAppdataCache)
+	if it.Status != ItemDone || it.JobID != "appdata-to-cache" {
+		t.Errorf("appdata with a record = %+v, want done: a record is never overridden", it)
+	}
+
+	f = finishedRecords()
+	for name, r := range map[string]*Report{"a capture with no roles": reviewWithRoles("", ""), "no report": nil} {
+		if it := itemOf(t, buildFrom(t, f, ChecklistRecord{}, r), ItemAppdataCache); it.Status != ItemTodo {
+			t.Errorf("%s with a cache disk on the array: appdata = %+v, want todo", name, it)
+		}
+	}
+}
+
+func TestChecklist_AnUnreadableArrayIsAnErrorNeverNoCacheDisk(t *testing.T) {
+	f := finishedRecords()
+	f.failCache = true
+	if _, err := f.sources().Facts(ctx0); err == nil || !strings.Contains(err.Error(), "cache disk") {
+		t.Errorf("an unreadable array = %v, want an error naming the cache disk", err)
 	}
 }
 
