@@ -123,6 +123,7 @@ existing line by adding its PR number.
 - **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **doc-drift** — a design doc's command table lists only one of a command's alternative forms (`--flash-backup` without `--flash-device`) — PR 575
 - **doc-drift** — a maintainer doc lists the conditions a release check refuses but omits one the same change added to the check (the versioned API spec beside the versioned docs and sidebar) — PR 708
+- **doc-drift** — a contributor guide states an exact shape ("two files, or one") that a field the same guide documents widens (a template's `screenshots` live in its folder), so a valid layout reads as wrong — catalog PR 97
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
