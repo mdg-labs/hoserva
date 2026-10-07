@@ -40,8 +40,9 @@ jobs:
     timeout-minutes: 10
     steps:
       # The default branch's own scripts, never the pull request's code: the
-      # ref is named, not left to the event, and only the renderer and the
-      # comment script are fetched.
+      # ref is named, not left to the event. The sparse checkout is cone
+      # mode: scripts/devenv/ plus the files at the repository root and
+      # directly in scripts/, all from the default branch.
       - name: Check out the default branch's scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
