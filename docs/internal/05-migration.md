@@ -49,7 +49,7 @@ These properties hold for a standard single-parity XFS Unraid array. Each of the
 | Unraid boots from an internal device, boot + data device (Unraid 7.3) | **Recognised and left alone; its data area is the cache, re-created** (Q23, Q24) | As above for partitions 1–3. Partition 4 is Unraid's cache and follows the cache row: evacuated in Phase A step 5, then re-created, never adopted. Fixture-only (`unraid-internal-boot-shared`, doc 08 §2) |
 | Dual parity | **Supported** (Q19) | Both Unraid parity disks become SnapRAID parity and are fully rewritten — exactly as with single parity |
 | Array with no cache disk | **Supported** | Appdata already lives on the array; Phase D step 18 is optional |
-| Multiple named pools (Unraid 6.9+) | **Supported, flagged** | One pool maps to `/mnt/cache`; paths into other `/mnt/<pool>` names are flagged in template conversion (doc 04 §5) |
+| Multiple named pools (Unraid 6.9+) | **Supported, flagged** | One pool maps to `/mnt/cache`; every `/mnt/<pool>` path is flagged in template conversion, including the pool that becomes the cache when it is not named `cache` (doc 04 §5) |
 | Parity disk smaller than largest data disk | Impossible in Unraid | Non-issue |
 | Unraid 6.12.x and 7.x | **Supported, fixture-verified** (Q24) | Any other version or unrecognised flash layout is refused unless overridden with a recorded warning |
 | VMs present (Phase 3.5) | **Supported, fixture-verified** (Q55, S11) | Domain XML read from `libvirt.img` on the adopted pool, not the Flash Backup; see §1.4, step 26, and doc 14 §5 |

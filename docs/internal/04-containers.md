@@ -119,11 +119,12 @@ Per-container XML files under `/boot/config/plugins/dockerMan/templates-user/` o
 
 ### Path handling
 
-Because the pool is at `/mnt/user` and cache at `/mnt/cache` (decision D10), **paths map identically with no rewriting.** Paths pointing anywhere else are flagged for manual review rather than silently translated:
+Because the pool is at `/mnt/user` and cache at `/mnt/cache` (decision D10), **paths map identically with no rewriting.** Paths pointing anywhere else, and the two cases under `/mnt/cache` below, are flagged for manual review rather than silently translated:
 
 - `/boot`, `/mnt/disks/` (Unassigned Devices), and other Unraid-specific mounts
 - `/mnt/user0` — Unraid's array-only view of shares, which has no Hoserva equivalent path
-- `/mnt/<pool>/` for every Unraid 6.9+ named pool, including the one the migration makes the cache when it is not named `cache` (doc 05 §2): the path does not exist on Hoserva, and the fix is to rewrite it to `/mnt/cache/…`. Only `/mnt/cache` itself maps identically.
+- `/mnt/<pool>/` for every Unraid 6.9+ named pool, including the one the migration makes the cache when it is not named `cache` (doc 05 §2): the path does not exist on Hoserva, and the fix is to rewrite it to `/mnt/cache/…`.
+- `/mnt/cache` itself and anything under Docker's data-root on the cache, `/mnt/cache/docker` (Q62): they hold every container's layers and named volumes, so a bind mount of either is flagged like the privilege summary's outside-the-layout paths below. Every other path under `/mnt/cache` maps identically.
 
 ### Ownership variables
 
