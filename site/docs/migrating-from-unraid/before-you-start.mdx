@@ -144,12 +144,12 @@ If the case has more than four bays, photograph or note which disk sits where. F
 
 ## Check for special cases
 
-Most servers need nothing here. Tick each line that does not apply to you, and read the page for each one that does.
+Most servers need nothing here. Tick each line once it is true for your server. Until it is, read the page the line links to.
 
 - [ ] Every data disk is XFS, ext4 or single-device btrfs. An encrypted disk, a ZFS disk or a member of a multi-device btrfs filesystem is refused, so fix that now: see [Unsupported arrays](./special-cases/unsupported-arrays.mdx), and [btrfs and ext4 data disks](./special-cases/btrfs-and-ext4-data-disks.mdx) for the checks a supported disk has to pass
-- [ ] Unraid is version 6.12.x or 7.x. For any other version, or for a server that boots from an internal device, see [Unraid 7](./special-cases/unraid-7.mdx)
-- [ ] I know whether I have one or two parity disks: [Dual parity](./special-cases/dual-parity.mdx)
-- [ ] I know whether I have no cache disk or several pools: [No cache disk](./special-cases/no-cache-disk.mdx) and [Named pools](./special-cases/named-pools.mdx)
+- [ ] Unraid is version 6.12.x or 7.x and boots from a USB stick, or I have read [Unraid 7](./special-cases/unraid-7.mdx) for any other version or for a server that boots from an internal device
+- [ ] I have one parity disk, or I have read [Dual parity](./special-cases/dual-parity.mdx) for two
+- [ ] I have one cache disk, or I have read [No cache disk](./special-cases/no-cache-disk.mdx) or [Named pools](./special-cases/named-pools.mdx) for a server with no cache disk or with several pools
 
 ## Choose your rollback row before step 10
 
