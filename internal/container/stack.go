@@ -1177,6 +1177,8 @@ func (s *StackService) checkProjectOwned(ctx context.Context, name string) error
 type stackPlan struct {
 	// paths are the bind-mount directories to delete.
 	paths []string
+	// roots are the appdata locations paths lie inside.
+	roots []string
 	// containers are the IDs and names of the stack's own containers, which
 	// `compose down` must have removed before anything is deleted.
 	containers map[string]string
@@ -1217,6 +1219,7 @@ func (s *StackService) planAppdata(ctx context.Context, name string) (stackPlan,
 	if err := s.checkStackDirUnshared(name, others); err != nil {
 		return stackPlan{}, err
 	}
+	plan.roots = roots
 	plan.paths, err = planAppdataDeletion(stack, others, roots)
 	return plan, err
 }
@@ -1342,7 +1345,7 @@ func (s *StackService) Remove(ctx context.Context, name string, deleteAppdata bo
 			return res, err
 		}
 	} else {
-		deleted, err := removeAppdataDirs(ctx, plan.paths)
+		deleted, err := removeAppdataDirs(ctx, plan.roots, plan.paths)
 		res.DeletedPaths = append(res.DeletedPaths, deleted...)
 		if err != nil {
 			return res, fmt.Errorf("the containers of stack %s were removed but its appdata was not fully deleted: %w", name, err)

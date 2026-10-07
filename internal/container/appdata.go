@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -148,29 +151,106 @@ func dropNested(paths []string) []string {
 	return out
 }
 
+// beforeAppdataRootOpen, when set, runs after an appdata location is
+// resolved and before its descriptor is opened, so a test can rearrange the
+// tree at that moment.
+var beforeAppdataRootOpen func(root string)
+
+// beforeAppdataRemove, when set, runs just before each planned directory is
+// removed, so a test can rearrange the tree at that moment.
+var beforeAppdataRemove func(path string)
+
 // removeAppdataDirs removes each planned directory tree and returns the
-// ones it removed. Each path is resolved again first, so a path swapped
-// for a symlink after planning is refused rather than followed.
-func removeAppdataDirs(ctx context.Context, plan []string) ([]string, error) {
+// ones it removed. Each root is resolved once and then opened once by
+// walking every component of the resolved path from "/" without following a
+// symbolic link, and every plan path is removed relative to the root that
+// holds it the same way, so a component swapped for a link after planning,
+// the last one of the root included, is refused rather than followed. A plan
+// path that no longer exists is skipped.
+func removeAppdataDirs(ctx context.Context, roots, plan []string) ([]string, error) {
+	var resolvedRoots []string
+	for _, r := range roots {
+		real, err := filepath.EvalSymlinks(r)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("resolving appdata location %s: %w", r, err)
+		}
+		resolvedRoots = append(resolvedRoots, real)
+	}
+	rootFDs := map[string]int{}
+	defer func() {
+		for _, fd := range rootFDs {
+			_ = unix.Close(fd)
+		}
+	}()
+
 	var deleted []string
 	for _, p := range plan {
 		if err := ctx.Err(); err != nil {
 			return deleted, err
 		}
-		real, err := filepath.EvalSymlinks(p)
+		root := ""
+		for _, r := range resolvedRoots {
+			if within(r, p) {
+				root = r
+				break
+			}
+		}
+		if root == "" {
+			return deleted, fmt.Errorf("%s is not inside an appdata location; not deleting it", p)
+		}
+		fd, ok := rootFDs[root]
+		if !ok {
+			if beforeAppdataRootOpen != nil {
+				beforeAppdataRootOpen(root)
+			}
+			var err error
+			if fd, err = openResolvedDir(root); err != nil {
+				return deleted, fmt.Errorf("opening appdata location %s: %w", root, err)
+			}
+			rootFDs[root] = fd
+		}
+		rel, err := filepath.Rel(root, p)
 		if err != nil {
+			return deleted, fmt.Errorf("deleting %s: %w", p, err)
+		}
+		if beforeAppdataRemove != nil {
+			beforeAppdataRemove(p)
+		}
+		if err := beneath.RemoveAll(fd, filepath.ToSlash(rel)); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return deleted, fmt.Errorf("resolving %s: %w", p, err)
-		}
-		if real != p {
-			return deleted, fmt.Errorf("%s changed after it was planned for deletion; not deleting it", p)
-		}
-		if err := os.RemoveAll(p); err != nil {
 			return deleted, fmt.Errorf("deleting %s: %w", p, err)
 		}
 		deleted = append(deleted, p)
 	}
 	return deleted, nil
+}
+
+// openResolvedDir opens the absolute, symlink-free directory path by walking
+// each of its components from "/" with O_NOFOLLOW, so no component, the last
+// included, is resolved by name a second time.
+func openResolvedDir(path string) (int, error) {
+	if !filepath.IsAbs(path) {
+		return -1, fmt.Errorf("%s is not an absolute path", path)
+	}
+	fd, err := beneath.OpenRoot("/")
+	if err != nil {
+		return -1, err
+	}
+	for _, c := range strings.Split(strings.Trim(filepath.ToSlash(path), "/"), "/") {
+		if c == "" {
+			continue
+		}
+		next, err := beneath.Open(fd, c, unix.O_RDONLY|unix.O_DIRECTORY)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, err
+		}
+		fd = next
+	}
+	return fd, nil
 }

@@ -202,12 +202,12 @@ func (l *Lifecycle) Remove(ctx context.Context, id string, deleteAppdata bool) (
 		return RemoveResult{}, fmt.Errorf("removing container %q (state %s): %w", c.Name, c.State, ErrRunning)
 	}
 
-	var plan []string
+	var plan, roots []string
 	if deleteAppdata {
 		if l.AppdataRoots == nil {
 			return RemoveResult{}, ErrAppdataUnavailable
 		}
-		roots, err := l.AppdataRoots(ctx)
+		roots, err = l.AppdataRoots(ctx)
 		if err != nil {
 			return RemoveResult{}, fmt.Errorf("finding the appdata location: %w", err)
 		}
@@ -234,7 +234,7 @@ func (l *Lifecycle) Remove(ctx context.Context, id string, deleteAppdata bool) (
 	if !deleteAppdata {
 		return RemoveResult{}, nil
 	}
-	deleted, err := removeAppdataDirs(ctx, plan)
+	deleted, err := removeAppdataDirs(ctx, roots, plan)
 	if err != nil {
 		return RemoveResult{DeletedPaths: deleted}, fmt.Errorf("container %q was removed but its appdata was not fully deleted: %w", c.Name, err)
 	}
