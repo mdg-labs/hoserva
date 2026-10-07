@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -65,10 +66,16 @@ func rootCmd() *cobra.Command {
 
 func runCLI() int {
 	if err := rootCmd().Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "hoserva: %v\n", err)
+		writeError(os.Stderr, err)
 		return exitError
 	}
 	return exitOK
+}
+
+// writeError prints a failure for a terminal. A daemon's message can quote
+// what a template or an imported file said, so it is escaped.
+func writeError(w io.Writer, err error) {
+	_, _ = fmt.Fprintf(w, "hoserva: %s\n", safeBlock(err.Error()))
 }
 
 func apiCtx() context.Context {

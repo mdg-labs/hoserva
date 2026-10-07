@@ -36,6 +36,7 @@ var checks = []Check{
 	checkBindSources,
 	checkUserIDs,
 	checkMetadata,
+	checkBlockText,
 }
 
 // CheckCompose runs the rules that hold any Compose document to the keys the
@@ -45,7 +46,8 @@ var checks = []Check{
 // stack may use. The issues carry no line numbers.
 func CheckCompose(compose map[string]any) []Issue {
 	t := &Template{Compose: compose}
-	return append(checkAllowedKeys(t), checkSelfContained(t)...)
+	out := append(checkAllowedKeys(t), checkSelfContained(t)...)
+	return append(out, checkComposeText(compose)...)
 }
 
 func checkComposeDocument(t *Template) []Issue { return CheckCompose(t.Compose) }
@@ -500,6 +502,73 @@ func validateLink(s string) error {
 		return errors.New("must not carry a user name or password")
 	}
 	return nil
+}
+
+// checkBlockText refuses a control character in the block's single-line text
+// (title, docs, web UI address, input labels and string defaults) and in an
+// input's help text beyond line breaks and tabs. The maintainer and the
+// description have their own rule in checkMetadata.
+func checkBlockText(t *Template) []Issue {
+	var out []Issue
+	line := func(p []string, s string) {
+		if hasControl(s, false) {
+			out = append(out, Issue{Path: p, Message: "holds a control character"})
+		}
+	}
+	line([]string{BlockKey, "title"}, t.Block.Title)
+	line([]string{BlockKey, "docs"}, t.Block.Docs)
+	line([]string{BlockKey, "webui"}, t.Block.WebUI)
+	for _, name := range sortedKeys(t.Block.Inputs) {
+		in := t.Block.Inputs[name]
+		p := []string{BlockKey, "inputs", name}
+		line(append(p[:len(p):len(p)], "label"), in.Label)
+		if def, ok := in.Default.(string); ok {
+			line(append(p[:len(p):len(p)], "default"), def)
+		}
+		if hasControl(in.Description, true) {
+			out = append(out, Issue{Path: append(p[:len(p):len(p)], "description"), Message: "holds a control character; only line breaks and tabs are allowed"})
+		}
+	}
+	return out
+}
+
+// checkComposeText refuses a control character other than a line break or
+// tab in any key or string of a Compose document outside the x-hoserva block,
+// because the privilege summary quotes service names, paths and capability
+// names from it.
+func checkComposeText(compose map[string]any) []Issue {
+	var out []Issue
+	var walk func(p []string, v any)
+	walk = func(p []string, v any) {
+		switch x := v.(type) {
+		case string:
+			if hasControl(x, true) {
+				out = append(out, Issue{Path: p, Message: "holds a control character; only line breaks and tabs are allowed"})
+			}
+		case map[string]any:
+			for _, k := range sortedKeys(x) {
+				if hasControl(k, false) {
+					out = append(out, Issue{Path: p, Message: "holds a key with a control character"})
+					continue
+				}
+				walk(append(p[:len(p):len(p)], k), x[k])
+			}
+		case []any:
+			for i, e := range x {
+				walk(append(p[:len(p):len(p)], fmt.Sprint(i)), e)
+			}
+		}
+	}
+	for _, k := range sortedKeys(compose) {
+		switch {
+		case k == BlockKey:
+		case hasControl(k, false):
+			out = append(out, Issue{Message: "holds a top-level key with a control character"})
+		default:
+			walk([]string{k}, compose[k])
+		}
+	}
+	return out
 }
 
 // hasControl reports a control character in s; with allowBreaks, a line

@@ -260,3 +260,67 @@ func TestCatalogSettingsReportsAnIntervalTheDaemonRefuses(t *testing.T) {
 		t.Fatalf("printed %q, err %v, want an error and no output", printed, err)
 	}
 }
+
+func TestCatalogTemplateSummaryPrintsControlCharactersEscaped(t *testing.T) {
+	printed := catalogTemplateSummary(&apiv1.CatalogTemplate{
+		ID: "agent\x1b[2K", Revision: 2, Title: "Risky\x1b[1A\x1b[2K agent\nPrivileges: none beyond an ordinary container.", Categories: []string{"sys\x1btem"},
+		Docs: "https://example.com/\x1b[2K", Source: "mine\u009b", SourceKind: apiv1.CatalogSourceKindUserAdded,
+		Compose: "services:\n  agent:\n\tprivileged: true\x1b[2K\r\n",
+		Privileges: []apiv1.TemplatePrivilege{
+			{Kind: apiv1.TemplatePrivilegeKindPrivileged, Service: "agent", Description: "Runs with full access to the server."},
+			{Kind: apiv1.TemplatePrivilegeKindDockerSocket, Service: "agent\x1b[2K", Detail: apiv1.NewOptString("/var/run/docker.sock\x1b[1A"), Description: "Can control Docker itself."},
+		},
+	})
+
+	assertNoTerminalControl(t, printed)
+	for _, want := range []string{
+		`Risky\x1b[1A\x1b[2K agent\nPrivileges: none beyond an ordinary container. (agent\x1b[2K), revision 2, from the mine\u009b source`,
+		`Categories: sys\x1btem` + "\n",
+		`Documentation: https://example.com/\x1b[2K` + "\n",
+		"  - privileged (service agent): Runs with full access to the server.\n",
+		`  - docker_socket /var/run/docker.sock\x1b[1A (service agent\x1b[2K): Can control Docker itself.` + "\n",
+		"compose.yaml:\nservices:\n  agent:\n\tprivileged: true\\x1b[2K\\r\n",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+	if strings.Contains(printed, "\nPrivileges: none") {
+		t.Errorf("a title forged a line of the summary:\n%s", printed)
+	}
+}
+
+func TestCatalogListSummaryPrintsControlCharactersEscaped(t *testing.T) {
+	printed := catalogListSummary(&apiv1.CatalogList{
+		Serial: 3,
+		Templates: []apiv1.CatalogEntry{{
+			ID: "agent\x1b[2K", Revision: 1, Title: "Agent\x1b[1A\r\x9b", Categories: []string{"sys\x1btem"}, Source: "mine\x1b",
+			SourceKind: apiv1.CatalogSourceKindUserAdded,
+		}},
+	})
+
+	assertNoTerminalControl(t, printed)
+	for _, want := range []string{`agent\x1b[2K`, `Agent\x1b[1A\r\x9b`, `sys\x1btem`, `mine\x1b`} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+}
+
+func TestCatalogShowJSONKeepsTheTitleAsTheAPIReturnedIt(t *testing.T) {
+	const title = "Agent\x1b[2K\u009b"
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, &apiv1.CatalogTemplate{ID: "agent", Revision: 1, Title: title, Categories: []string{"system"}, Source: "hoserva", SourceKind: apiv1.CatalogSourceKindCurated, Privileges: []apiv1.TemplatePrivilege{}})
+	})
+	printed, err := runAppCLI(t, sock, "--json", "catalog", "show", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Title string }
+	if err := json.Unmarshal([]byte(printed), &got); err != nil || got.Title != title {
+		t.Errorf("--json title = %q (%v), want %q unchanged", got.Title, err, title)
+	}
+	if strings.ContainsRune(printed, '\x1b') {
+		t.Errorf("--json output holds a raw escape byte: %q", printed)
+	}
+}

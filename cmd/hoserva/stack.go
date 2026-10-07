@@ -177,7 +177,7 @@ func stackConfigSummary(cfg *apiv1.StackConfig, changed bool) string {
 	if changed {
 		fmt.Fprintf(&sb, "Saved the inputs of stack %s. Run `hoserva stack start %s` to apply them.\n", st.Name, st.Name)
 	}
-	fmt.Fprintf(&sb, "Stack %s, installed from %s/%s (revision %s).\n", st.Name, st.Template.Source, st.Template.ID, st.Template.Revision)
+	fmt.Fprintf(&sb, "Stack %s, installed from %s/%s (revision %s).\n", st.Name, safeText(st.Template.Source), safeText(st.Template.ID), safeText(st.Template.Revision))
 	if st.ManuallyEdited {
 		fmt.Fprintln(&sb, "Its docker-compose.yml was edited by hand; changing the inputs never rewrites it.")
 	}
@@ -185,13 +185,13 @@ func stackConfigSummary(cfg *apiv1.StackConfig, changed bool) string {
 	for _, in := range cfg.Inputs {
 		switch {
 		case in.Kind == apiv1.StackConfigInputKindSecret && in.Set.Or(false):
-			fmt.Fprintf(&sb, "  %s: set (the value is never shown)\n", in.Name)
+			fmt.Fprintf(&sb, "  %s: set (the value is never shown)\n", safeText(in.Name))
 		case in.Kind == apiv1.StackConfigInputKindSecret:
-			fmt.Fprintf(&sb, "  %s: not set\n", in.Name)
+			fmt.Fprintf(&sb, "  %s: not set\n", safeText(in.Name))
 		case in.ReadOnly:
-			fmt.Fprintf(&sb, "  %s: %s (read-only; change it in the Compose file)\n", in.Name, valueOrNotSet(in.Value.Or("")))
+			fmt.Fprintf(&sb, "  %s: %s (read-only; change it in the Compose file)\n", safeText(in.Name), safeText(valueOrNotSet(in.Value.Or(""))))
 		default:
-			fmt.Fprintf(&sb, "  %s: %s\n", in.Name, valueOrNotSet(in.Value.Or("")))
+			fmt.Fprintf(&sb, "  %s: %s\n", safeText(in.Name), safeText(valueOrNotSet(in.Value.Or(""))))
 		}
 	}
 	return sb.String()

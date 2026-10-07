@@ -145,7 +145,7 @@ func catalogListSummary(list *apiv1.CatalogList) string {
 		if e.Installed {
 			installed = "yes"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", e.ID, e.Title, e.Revision, strings.Join(e.Categories, ","), e.Source, catalogSourceBadge(e.SourceKind, e.Signed), installed)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", safeText(e.ID), safeText(e.Title), e.Revision, safeText(strings.Join(e.Categories, ",")), safeText(e.Source), catalogSourceBadge(e.SourceKind, e.Signed), installed)
 	}
 	_ = tw.Flush()
 	return sb.String()
@@ -153,24 +153,20 @@ func catalogListSummary(list *apiv1.CatalogList) string {
 
 func catalogTemplateSummary(t *apiv1.CatalogTemplate) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s (%s), revision %d, from the %s source (%s).\n", t.Title, t.ID, t.Revision, t.Source, catalogSourceBadge(t.SourceKind, t.Signed))
+	fmt.Fprintf(&sb, "%s (%s), revision %d, from the %s source (%s).\n", safeText(t.Title), safeText(t.ID), t.Revision, safeText(t.Source), catalogSourceBadge(t.SourceKind, t.Signed))
 	if t.SourceKind == apiv1.CatalogSourceKindUserAdded && !t.Signed {
 		fmt.Fprintln(&sb, "This source is unsigned: nothing proves the template came from its publisher.")
 	}
-	fmt.Fprintf(&sb, "Categories: %s\nDocumentation: %s\n", strings.Join(t.Categories, ", "), t.Docs)
+	fmt.Fprintf(&sb, "Categories: %s\nDocumentation: %s\n", safeText(strings.Join(t.Categories, ", ")), safeText(t.Docs))
 	if len(t.Privileges) == 0 {
 		fmt.Fprintln(&sb, "Privileges: none beyond an ordinary container.")
 	} else {
 		fmt.Fprintln(&sb, "Privileges this template asks for:")
 		for _, p := range t.Privileges {
-			detail := ""
-			if d := p.Detail.Or(""); d != "" {
-				detail = " " + d
-			}
-			fmt.Fprintf(&sb, "  - %s%s (service %s): %s\n", p.Kind, detail, p.Service, p.Description)
+			sb.WriteString(privilegeLine(p))
 		}
 	}
-	fmt.Fprintf(&sb, "\ncompose.yaml:\n%s", t.Compose)
+	fmt.Fprintf(&sb, "\ncompose.yaml:\n%s", safeBlock(t.Compose))
 	if !strings.HasSuffix(t.Compose, "\n") {
 		sb.WriteString("\n")
 	}

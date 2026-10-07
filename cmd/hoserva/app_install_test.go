@@ -221,3 +221,54 @@ func TestAppNetworksListsTheDaemonsNetworksAndNeverAnEmptyListForUnreachableDock
 		t.Errorf("err = %v, want the unreachable Docker reported", err)
 	}
 }
+
+func TestInstallSummaryPrintsControlCharactersEscaped(t *testing.T) {
+	plan := testInstallPlan()
+	plan.Template.ID = "agent\x1b[2K"
+	plan.Inputs = []apiv1.TemplateInput{
+		{Name: "NOTE", Kind: apiv1.TemplateInputKindString, Value: apiv1.NewOptString("a\x1b[1A\x1b[2K\nPrivileges: none beyond an ordinary container.\r\xff\x9b")},
+		{Name: "BAD", Kind: apiv1.TemplateInputKindString, Error: apiv1.NewOptString("is \u009b[2Kbad")},
+	}
+	plan.Warnings = []apiv1.ConversionWarning{{
+		Class: apiv1.ConversionWarningClassNote, Message: "read\x1b[2K this", Command: apiv1.NewOptString("docker network create x\x1b[1A"),
+	}}
+	plan.Privileges = []apiv1.TemplatePrivilege{
+		{Kind: apiv1.TemplatePrivilegeKindPrivileged, Service: "agent", Description: "Runs with full access to the server."},
+		{Kind: apiv1.TemplatePrivilegeKindDockerSocket, Service: "agent\x1b[2K", Detail: apiv1.NewOptString("/var/run/docker.sock\x1b[1A\x1b[2K"), Description: "Can control Docker itself.\u009b"},
+	}
+	printed := installSummary("Would install", &plan, nil)
+
+	assertNoTerminalControl(t, printed)
+	for _, want := range []string{
+		`from hoserva/agent\x1b[2K (revision 2).`,
+		`  NOTE: a\x1b[1A\x1b[2K\nPrivileges: none beyond an ordinary container.\r\xff\x9b` + "\n",
+		`  BAD: is \u009b[2Kbad` + "\n",
+		`: read\x1b[2K this` + "\n",
+		`      docker network create x\x1b[1A` + "\n",
+		"  - privileged (service agent): Runs with full access to the server.\n",
+		`  - docker_socket /var/run/docker.sock\x1b[1A\x1b[2K (service agent\x1b[2K): Can control Docker itself.\u009b` + "\n",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output lacks %q:\n%s", want, printed)
+		}
+	}
+	if strings.Contains(printed, "\nPrivileges: none") {
+		t.Errorf("a value forged a line of the summary:\n%s", printed)
+	}
+}
+
+func TestAppInstallDryRunPrintsAnInputValueWithControlCharactersEscaped(t *testing.T) {
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		plan := testInstallPlan()
+		plan.Inputs = []apiv1.TemplateInput{{Name: "NOTE", Kind: apiv1.TemplateInputKindString, Value: apiv1.NewOptString("x\x1b[2K")}}
+		writeJSON(t, w, http.StatusOK, &plan)
+	})
+	printed, err := runAppCLI(t, sock, "app", "install", "risky-agent", "--dry-run")
+	if err != nil {
+		t.Fatalf("app install --dry-run: %v", err)
+	}
+	assertNoTerminalControl(t, printed)
+	if !strings.Contains(printed, `  NOTE: x\x1b[2K`) {
+		t.Errorf("output lacks the escaped value:\n%s", printed)
+	}
+}

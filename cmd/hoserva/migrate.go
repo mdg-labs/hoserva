@@ -138,7 +138,11 @@ func printMigrationReport(c *apiv1.Client, w io.Writer) error {
 	if err != nil {
 		return mapAPIErr(err)
 	}
-	_, err = io.Copy(w, doc.Data)
+	text, err := io.ReadAll(doc.Data)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, safeBlock(string(text)))
 	return err
 }
 
@@ -176,10 +180,10 @@ func migrateStatusCmd() *cobra.Command {
 			}
 			fmt.Printf("Migration: %s\n", migrationPhaseLabels[m.Phase])
 			if e, ok := m.ScanError.Get(); ok {
-				fmt.Printf("Scan error: %s\n", e)
+				fmt.Printf("Scan error: %s\n", safeText(e))
 			}
 			if dev, ok := m.SourceDevice.Get(); ok {
-				fmt.Printf("Source: the Unraid USB stick at %s\n", dev)
+				fmt.Printf("Source: the Unraid USB stick at %s\n", safeText(dev))
 			}
 			switch {
 			case m.ZipOnly:
@@ -188,11 +192,11 @@ func migrateStatusCmd() *cobra.Command {
 				fmt.Println("Flash devices: none attached")
 			}
 			for _, d := range m.FlashDevices {
-				fmt.Printf("Flash device: %s (%s)\n", d.Device, strings.TrimSpace(d.Model.Or("")+fmt.Sprintf(" %.1f GiB", float64(d.Size)/(1<<30))))
+				fmt.Printf("Flash device: %s (%s)\n", safeText(d.Device), safeText(strings.TrimSpace(d.Model.Or("")+fmt.Sprintf(" %.1f GiB", float64(d.Size)/(1<<30)))))
 			}
 			if r, ok := m.Report.Get(); ok {
 				if v, ok := r.UnraidVersion.Get(); ok {
-					fmt.Printf("Unraid version: %s\n", v)
+					fmt.Printf("Unraid version: %s\n", safeText(v))
 				}
 				if r.UnverifiedLayout {
 					fmt.Println("Unverified layout: the scan went ahead only because --unverified-layout overrode the refusal")
@@ -305,20 +309,20 @@ func printMigrationTemplates(w io.Writer, list *apiv1.MigrationTemplates) {
 		if t.Counted {
 			counted = "yes"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\n", t.File, t.Name, t.Class, counted, t.Status, t.WarningCount)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\n", safeText(t.File), safeText(t.Name), t.Class, counted, t.Status, t.WarningCount)
 	}
 	for _, p := range list.ComposeProjects {
-		_, _ = fmt.Fprintf(tw, "%s\tCompose Manager project\t\t\t%s\t\n", p.Name, p.Status)
+		_, _ = fmt.Fprintf(tw, "%s\tCompose Manager project\t\t\t%s\t\n", safeText(p.Name), p.Status)
 	}
 	_ = tw.Flush()
 	for _, t := range list.Templates {
 		if e, ok := t.Error.Get(); ok {
-			_, _ = fmt.Fprintf(w, "\n%s could not be converted: %s\n", t.File, e)
+			_, _ = fmt.Fprintf(w, "\n%s could not be converted: %s\n", safeText(t.File), safeText(e))
 		}
 	}
 	for _, p := range list.ComposeProjects {
 		if e, ok := p.Error.Get(); ok {
-			_, _ = fmt.Fprintf(w, "\n%s: %s\n", p.Name, e)
+			_, _ = fmt.Fprintf(w, "\n%s: %s\n", safeText(p.Name), safeText(e))
 		}
 	}
 }
@@ -328,7 +332,7 @@ func printMigrationTemplates(w io.Writer, list *apiv1.MigrationTemplates) {
 // privileges it asks for.
 func migrationPreviewReport(pv *apiv1.MigrationTemplatePreview) string {
 	if e, ok := pv.Error.Get(); ok {
-		return fmt.Sprintf("%s could not be previewed: %s\n\n=== Source ===\n%s\n", pv.Name, e, strings.TrimRight(pv.Source, "\n"))
+		return fmt.Sprintf("%s could not be previewed: %s\n\n=== Source ===\n%s\n", safeText(pv.Name), safeText(e), safeBlock(strings.TrimRight(pv.Source, "\n")))
 	}
 	conv := &apiv1.UnraidConversion{
 		Source: pv.Source, Compose: pv.Compose.Or(""), Warnings: pv.Warnings, Privileges: pv.Privileges,
@@ -338,7 +342,7 @@ func migrationPreviewReport(pv *apiv1.MigrationTemplatePreview) string {
 		return conversionReport(pv.Name, conv)
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "=== Compose Manager project %s: compose.yaml (not converted, nothing is applied) ===\n%s", pv.Name, pv.Source)
+	fmt.Fprintf(&sb, "=== Compose Manager project %s: compose.yaml (not converted, nothing is applied) ===\n%s", safeText(pv.Name), safeBlock(pv.Source))
 	if !strings.HasSuffix(pv.Source, "\n") {
 		sb.WriteString("\n")
 	}
@@ -347,11 +351,7 @@ func migrationPreviewReport(pv *apiv1.MigrationTemplatePreview) string {
 		sb.WriteString("none beyond an ordinary container\n")
 	}
 	for _, p := range pv.Privileges {
-		detail := ""
-		if d := p.Detail.Or(""); d != "" {
-			detail = " " + d
-		}
-		fmt.Fprintf(&sb, "  - %s%s (service %s): %s\n", p.Kind, detail, p.Service, p.Description)
+		sb.WriteString(privilegeLine(p))
 	}
 	return sb.String()
 }
@@ -422,7 +422,7 @@ func printMigrationVerify(w io.Writer, v apiv1.MigrationVerify) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SCOPE\tFILES EXPECTED\tFILES FOUND\tBYTES EXPECTED\tBYTES FOUND\tSAMPLE HASHED\tRESULT")
 	row := func(kind string, s apiv1.MigrationVerifyScope) {
-		name := s.Name
+		name := safeText(s.Name)
 		if name == "" {
 			name = "(files in the pool's root)"
 		}
@@ -440,19 +440,19 @@ func printMigrationVerify(w io.Writer, v apiv1.MigrationVerify) {
 	}
 	_ = tw.Flush()
 	if e, ok := v.Error.Get(); ok {
-		_, _ = fmt.Fprintf(w, "\nThe verify did not finish: %s\n", e)
+		_, _ = fmt.Fprintf(w, "\nThe verify did not finish: %s\n", safeText(e))
 	}
 	for _, group := range [][]apiv1.MigrationVerifyScope{v.Disks, v.Shares} {
 		for _, s := range group {
 			if s.Passed {
 				continue
 			}
-			name := s.Name
+			name := safeText(s.Name)
 			if name == "" {
 				name = "(pool root)"
 			}
 			if p, ok := s.Problem.Get(); ok {
-				_, _ = fmt.Fprintf(w, "\n%s: %s\n", name, p)
+				_, _ = fmt.Fprintf(w, "\n%s: %s\n", name, safeText(p))
 			}
 			for _, l := range []struct {
 				what string
@@ -466,7 +466,7 @@ func printMigrationVerify(w io.Writer, v apiv1.MigrationVerify) {
 				}
 				_, _ = fmt.Fprintf(w, "\n%s: %d %s\n", name, l.list.Total, l.what)
 				for _, p := range l.list.Paths {
-					_, _ = fmt.Fprintf(w, "  %s\n", p)
+					_, _ = fmt.Fprintf(w, "  %s\n", safeText(p))
 				}
 				if int64(len(l.list.Paths)) < l.list.Total {
 					_, _ = fmt.Fprintf(w, "  ... and %d more\n", l.list.Total-int64(len(l.list.Paths)))
@@ -477,7 +477,7 @@ func printMigrationVerify(w io.Writer, v apiv1.MigrationVerify) {
 	if v.Duplicates > 0 {
 		_, _ = fmt.Fprintf(w, "\n%d path(s) are on more than one disk and are shown once through the pool, from the first disk; they are not counted as missing or extra:\n", v.Duplicates)
 		for _, d := range v.DuplicateSample {
-			_, _ = fmt.Fprintf(w, "  %s (%s)\n", d.Path, strings.Join(d.Disks, ", "))
+			_, _ = fmt.Fprintf(w, "  %s (%s)\n", safeText(d.Path), safeText(strings.Join(d.Disks, ", ")))
 		}
 	}
 }
@@ -672,7 +672,9 @@ func printJobLog(c *apiv1.Client, id uuid.UUID, what string) {
 	}
 	defer func() { _ = zr.Close() }()
 	fmt.Printf("%s log:\n", strings.ToUpper(what[:1])+what[1:])
-	if _, err := io.Copy(os.Stdout, zr); err != nil {
+	text, err := io.ReadAll(zr)
+	fmt.Print(safeBlock(string(text)))
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "The %s's log could not be read to its end: %v\n", what, err)
 	}
 	fmt.Println()
@@ -758,13 +760,13 @@ func migrateInitializeParityCmd() *cobra.Command {
 // unprotected window, what rollback means for this layout, every device erased
 // and the string to type back.
 func printParityInit(w io.Writer, pi apiv1.MigrationParityInit) {
-	_, _ = fmt.Fprintf(w, "THE POINT OF NO RETURN\n\n%s\n\n", pi.UnprotectedWindow)
+	_, _ = fmt.Fprintf(w, "THE POINT OF NO RETURN\n\n%s\n\n", safeBlock(pi.UnprotectedWindow))
 	for _, line := range pi.Rollback {
-		_, _ = fmt.Fprintf(w, "Rollback: %s\n", line)
+		_, _ = fmt.Fprintf(w, "Rollback: %s\n", safeText(line))
 	}
 	_, _ = fmt.Fprintln(w)
 	if p, ok := pi.Problem.Get(); ok {
-		_, _ = fmt.Fprintf(w, "It cannot be offered now: %s\n", p)
+		_, _ = fmt.Fprintf(w, "It cannot be offered now: %s\n", safeText(p))
 		return
 	}
 	if pi.Finishing {
@@ -775,9 +777,9 @@ func printParityInit(w io.Writer, pi apiv1.MigrationParityInit) {
 		if e.Partition {
 			what = "this partition only; the rest of its disk is left alone"
 		}
-		line := fmt.Sprintf("Erases the %s %s (%s)", e.Role, e.Device, what)
+		line := fmt.Sprintf("Erases the %s %s (%s)", e.Role, safeText(e.Device), what)
 		if sn, ok := e.Serial.Get(); ok {
-			line += ", serial " + sn
+			line += ", serial " + safeText(sn)
 		}
 		if sz, ok := e.Size.Get(); ok {
 			line += fmt.Sprintf(", %.1f GiB", float64(sz)/(1<<30))
@@ -785,7 +787,7 @@ func printParityInit(w io.Writer, pi apiv1.MigrationParityInit) {
 		_, _ = fmt.Fprintln(w, line)
 	}
 	if c, ok := pi.Confirmation.Get(); ok {
-		_, _ = fmt.Fprintf(w, "Confirmation: %s\n", c)
+		_, _ = fmt.Fprintf(w, "Confirmation: %s\n", safeText(c))
 	}
 }
 
@@ -806,18 +808,18 @@ func printSeeded(c *apiv1.Client) error {
 		if !ok {
 			continue
 		}
-		line := fmt.Sprintf("Share %s: %s", sh.Name, sh.CacheMode)
+		line := fmt.Sprintf("Share %s: %s", safeText(string(sh.Name)), sh.CacheMode)
 		if t, ok := m.TargetCacheMode.Get(); ok {
 			line += fmt.Sprintf(", cache mode %s once the cache exists", t)
 		}
 		fmt.Println(line)
 		for _, n := range m.Notes {
-			fmt.Printf("  %s\n", n)
+			fmt.Printf("  %s\n", safeText(n))
 		}
 	}
 	for _, u := range users.Users {
 		if u.Role == apiv1.UserRoleShareOnly && !u.HasCredential {
-			fmt.Printf("Account %s: no password set yet\n", u.Username)
+			fmt.Printf("Account %s: no password set yet\n", safeText(u.Username))
 		}
 	}
 	return nil
@@ -917,12 +919,12 @@ func printImportMapping(w io.Writer, mapping []apiv1.MigrationImportDisk) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "ROLE\tDISK")
 	for _, d := range mapping {
-		name := "serial " + d.Serial.Or("")
+		name := "serial " + safeText(d.Serial.Or(""))
 		switch {
 		case d.Wwn.Or("") != "":
-			name = "WWN " + d.Wwn.Value
+			name = "WWN " + safeText(d.Wwn.Value)
 		case d.ById.Or("") != "":
-			name = "boot-disk partition " + d.ById.Value + " (PARTUUID " + d.PartUuid.Or("") + ")"
+			name = "boot-disk partition " + safeText(d.ById.Value) + " (PARTUUID " + safeText(d.PartUuid.Or("")) + ")"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\n", d.Role, name)
 	}

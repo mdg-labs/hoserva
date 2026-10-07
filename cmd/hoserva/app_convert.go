@@ -68,19 +68,19 @@ func readTemplateFile(name string) (string, error) {
 
 func conversionReport(file string, res *apiv1.UnraidConversion) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "=== Unraid template (%s) ===\n%s\n", file, strings.TrimRight(res.Source, "\n"))
-	fmt.Fprintf(&sb, "\n=== Generated Compose (nothing is applied) ===\n%s", res.Compose)
+	fmt.Fprintf(&sb, "=== Unraid template (%s) ===\n%s\n", safeText(file), safeBlock(strings.TrimRight(res.Source, "\n")))
+	fmt.Fprintf(&sb, "\n=== Generated Compose (nothing is applied) ===\n%s", safeBlock(res.Compose))
 	if !strings.HasSuffix(res.Compose, "\n") {
 		sb.WriteString("\n")
 	}
 	fmt.Fprintf(&sb, "\n=== Warnings (%d) ===\n", len(res.Warnings))
 	for _, w := range res.Warnings {
-		fmt.Fprintf(&sb, "[%s] %s\n", w.Class, w.Message)
+		fmt.Fprintf(&sb, "[%s] %s\n", safeText(string(w.Class)), safeText(w.Message))
 		if d := w.Detail.Or(""); d != "" {
-			fmt.Fprintf(&sb, "    %s\n", d)
+			fmt.Fprintf(&sb, "    %s\n", safeText(d))
 		}
 		if cmd := w.Command.Or(""); cmd != "" {
-			fmt.Fprintf(&sb, "    command: %s\n", cmd)
+			fmt.Fprintf(&sb, "    command: %s\n", safeText(cmd))
 		}
 	}
 	sb.WriteString("\n=== Privileges ===\n")
@@ -88,11 +88,7 @@ func conversionReport(file string, res *apiv1.UnraidConversion) string {
 		sb.WriteString("none beyond an ordinary container\n")
 	}
 	for _, p := range res.Privileges {
-		detail := ""
-		if d := p.Detail.Or(""); d != "" {
-			detail = " " + d
-		}
-		fmt.Fprintf(&sb, "  - %s%s (service %s): %s\n", p.Kind, detail, p.Service, p.Description)
+		sb.WriteString(privilegeLine(p))
 	}
 	if res.Clean {
 		sb.WriteString("\nThe Compose file needs no manual action.\n")

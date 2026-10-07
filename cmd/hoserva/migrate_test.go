@@ -1018,3 +1018,56 @@ func TestMigrateStatusInInitializingPrintsWhatIsLeft(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrateReportAndImportLogPrintControlCharactersEscaped(t *testing.T) {
+	d := importDaemon(t)
+	d.importLog = "share \"a\x1b[2K\" was not created\r\nsecond\u009b line\n"
+	printed, err := runBackupCLI(t, d.sock, "migrate", "import", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoTerminalControl(t, printed)
+	if want := `share "a\x1b[2K" was not created\r` + "\n" + `second\u009b line` + "\n"; !strings.Contains(printed, want) {
+		t.Errorf("import output lacks the escaped log %q:\n%s", want, printed)
+	}
+
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/markdown")
+		_, _ = w.Write([]byte("# Report\n\n| Share | a\x1b[2K |\n"))
+	})
+	printed, err = runAppCLI(t, sock, "migrate", "report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoTerminalControl(t, printed)
+	if want := "# Report\n\n| Share | a\\x1b[2K |\n"; printed != want {
+		t.Errorf("migrate report = %q, want %q", printed, want)
+	}
+}
+
+func TestMigrateStatusPrintsControlCharactersEscaped(t *testing.T) {
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		m := apiv1.Migration{
+			Phase:        apiv1.MigrationPhaseScanFailed,
+			ScanError:    apiv1.NewOptString("could not read\x1b[2K the capture"),
+			SourceDevice: apiv1.NewOptString("/dev/sdb\x1b[1A"),
+			FlashDevices: []apiv1.MigrationFlashDevice{{Device: "/dev/sdc\u009b", Model: apiv1.NewOptString("Flash\x1b[2K")}},
+		}
+		out, err := m.MarshalJSON()
+		if err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	})
+	printed, err := runAppCLI(t, sock, "migrate", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoTerminalControl(t, printed)
+	for _, want := range []string{`Scan error: could not read\x1b[2K the capture`, `/dev/sdb\x1b[1A`, `Flash device: /dev/sdc\u009b (Flash\x1b[2K `} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("status output lacks %q:\n%s", want, printed)
+		}
+	}
+}

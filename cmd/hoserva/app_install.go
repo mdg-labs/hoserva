@@ -149,7 +149,7 @@ func appNetworksCmd() *cobra.Command {
 				return fmt.Errorf("the networks cannot be listed: %s", res.Message.Or("Docker is not reachable"))
 			}
 			for _, n := range res.Networks {
-				fmt.Printf("%s\t%s\n", n.Name, n.Driver)
+				fmt.Printf("%s\t%s\n", safeText(n.Name), safeText(n.Driver))
 			}
 			return nil
 		},
@@ -180,7 +180,7 @@ func installSummary(verb string, plan *apiv1.TemplateInstallPlan, stack *apiv1.S
 }
 
 func writeInstallSummary(w *strings.Builder, verb string, plan *apiv1.TemplateInstallPlan, stack *apiv1.Stack) {
-	fmt.Fprintf(w, "%s stack %q from %s/%s (revision %s).\n", verb, plan.Name, plan.Template.Source, plan.Template.ID, plan.Template.Revision)
+	fmt.Fprintf(w, "%s stack %q from %s/%s (revision %s).\n", verb, plan.Name, safeText(plan.Template.Source), safeText(plan.Template.ID), safeText(plan.Template.Revision))
 	if stack == nil {
 		fmt.Fprintln(w, "Nothing was created.")
 	} else {
@@ -190,23 +190,23 @@ func writeInstallSummary(w *strings.Builder, verb string, plan *apiv1.TemplateIn
 	for _, in := range plan.Inputs {
 		switch {
 		case in.Generated:
-			fmt.Fprintf(w, "  %s: generated, written only to the stack's .env\n", in.Name)
+			fmt.Fprintf(w, "  %s: generated, written only to the stack's .env\n", safeText(in.Name))
 		case in.RequestedValue.Set:
-			fmt.Fprintf(w, "  %s: %s (port %s is already in use, so the next free port was used)\n", in.Name, in.Value.Or(""), in.RequestedValue.Or(""))
+			fmt.Fprintf(w, "  %s: %s (port %s is already in use, so the next free port was used)\n", safeText(in.Name), safeText(in.Value.Or("")), safeText(in.RequestedValue.Or("")))
 		case in.Error.Or("") != "":
-			fmt.Fprintf(w, "  %s: %s\n", in.Name, in.Error.Or(""))
+			fmt.Fprintf(w, "  %s: %s\n", safeText(in.Name), safeText(in.Error.Or("")))
 		case in.Value.Or("") == "":
-			fmt.Fprintf(w, "  %s: not set\n", in.Name)
+			fmt.Fprintf(w, "  %s: not set\n", safeText(in.Name))
 		default:
-			fmt.Fprintf(w, "  %s: %s\n", in.Name, in.Value.Or(""))
+			fmt.Fprintf(w, "  %s: %s\n", safeText(in.Name), safeText(in.Value.Or("")))
 		}
 	}
 	if len(plan.Warnings) > 0 {
 		fmt.Fprintln(w, "Warnings:")
 		for _, warning := range plan.Warnings {
-			fmt.Fprintf(w, "  - %s: %s\n", warning.Class, warning.Message)
+			fmt.Fprintf(w, "  - %s: %s\n", safeText(string(warning.Class)), safeText(warning.Message))
 			if cmd := warning.Command.Or(""); cmd != "" {
-				fmt.Fprintf(w, "      %s\n", cmd)
+				fmt.Fprintf(w, "      %s\n", safeText(cmd))
 			}
 		}
 	}
@@ -216,10 +216,6 @@ func writeInstallSummary(w *strings.Builder, verb string, plan *apiv1.TemplateIn
 	}
 	fmt.Fprintln(w, "Privileges this template asks for:")
 	for _, p := range plan.Privileges {
-		detail := ""
-		if d := p.Detail.Or(""); d != "" {
-			detail = " " + d
-		}
-		fmt.Fprintf(w, "  - %s%s (service %s): %s\n", p.Kind, detail, p.Service, p.Description)
+		fmt.Fprint(w, privilegeLine(p))
 	}
 }
