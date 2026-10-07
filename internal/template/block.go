@@ -38,7 +38,7 @@ type Block struct {
 	Revision    int              `json:"revision" yaml:"revision" jsonschema:"minimum=1,description=Increases with every change to the template."`
 	Title       string           `json:"title" yaml:"title" jsonschema:"minLength=1,description=Name shown in the catalog."`
 	Categories  []string         `json:"categories" yaml:"categories" jsonschema:"minItems=1,uniqueItems=true,pattern=^[a-z0-9]+(-[a-z0-9]+)*$,description=Catalog categories."`
-	Icon        string           `json:"icon" yaml:"icon" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml."`
+	Icon        string           `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml. Omitted only when no usable icon exists; Hoserva then shows a built-in placeholder."`
 	Docs        string           `json:"docs" yaml:"docs" jsonschema:"pattern=^https?://,description=Upstream documentation the template was written from."`
 	Maintainer  string           `json:"maintainer,omitempty" yaml:"maintainer,omitempty" jsonschema:"minLength=1,maxLength=100,description=Who maintains the template or the app. Shown in the catalog and used as a filter."`
 	Description string           `json:"description,omitempty" yaml:"description,omitempty" jsonschema:"minLength=1,maxLength=2000,description=Longer plain-text description shown on the template's page. Line breaks are kept; nothing is interpreted as markup."`

@@ -3030,7 +3030,7 @@ export interface paths {
         };
         /**
          * Get a catalog template's icon
-         * @description The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG) chosen by the file's extension, never by its content. A file that is not a plain file inside the template's own directory (a symlink, however it points), has another extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and subresources beyond the image itself, so an SVG cannot run code when it is opened directly.
+         * @description The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG) chosen by the file's extension, never by its content. A template that names no icon has none to serve: 404 `template_icon_not_found`, and the web UI shows its placeholder. A file that is not a plain file inside the template's own directory (a symlink, however it points), has another extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and subresources beyond the image itself, so an SVG cannot run code when it is opened directly.
          */
         get: operations["getCatalogTemplateIcon"];
         put?: never;

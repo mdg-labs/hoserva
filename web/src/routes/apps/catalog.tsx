@@ -75,7 +75,7 @@ function CatalogCard({ entry }: { entry: CatalogEntry }): React.ReactElement {
     <Card className="relative w-full transition-colors focus-within:ring-2 focus-within:ring-ring hover:bg-accent/30">
       <CardPanel className="flex h-full flex-col gap-3">
         <div className="flex items-start gap-3">
-          <TemplateIcon id={entry.id} title={entry.title} className="shrink-0" />
+          <TemplateIcon id={entry.id} className="shrink-0" />
           <div className="flex min-w-0 flex-col gap-1">
             <Link
               to={catalogDetailPath(entry.id)}

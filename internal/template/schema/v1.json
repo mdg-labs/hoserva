@@ -37,7 +37,7 @@
     "icon": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "description": "File name of the icon next to compose.yaml."
+      "description": "File name of the icon next to compose.yaml. Omitted only when no usable icon exists; Hoserva then shows a built-in placeholder."
     },
     "docs": {
       "type": "string",
@@ -367,7 +367,6 @@
     "revision",
     "title",
     "categories",
-    "icon",
     "docs"
   ],
   "title": "Hoserva x-hoserva template block, schema version 1"

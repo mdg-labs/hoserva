@@ -22,8 +22,9 @@ import (
 	"github.com/mdg-labs/hoserva/internal/template"
 )
 
-// mockTemplates is this mock's catalog: three templates covering the input
-// kinds the install form shows, and every privilege the summary reports.
+// mockTemplates is this mock's catalog: templates covering the input kinds
+// the install form shows, every privilege the summary reports, and one with
+// no icon.
 // They are read by the production resolver, so the mock cannot accept an
 // install the real one refuses.
 var mockTemplates = map[string]string{
@@ -96,6 +97,26 @@ x-hoserva:
     WEBUI_PORT:  { kind: port, default: 3000 }
     DB_PASSWORD: { kind: secret, label: Database password }
 `,
+	"plain-notes": `services:
+  notes:
+    image: registry.example.com/plain-notes/plain-notes:2.0.1
+    volumes:
+      - ${APPDATA}/plain-notes:/data
+    ports:
+      - ${WEBUI_PORT}:8080
+x-hoserva:
+  schema: 1
+  id: plain-notes
+  revision: 1
+  title: Plain Notes
+  categories: [productivity]
+  docs: https://example.com/plain-notes/docs
+  maintainer: Example Notes Project
+  webui: http://{host}:${WEBUI_PORT}
+  inputs:
+    APPDATA:    { kind: path, role: appdata, default: /mnt/cache/appdata }
+    WEBUI_PORT: { kind: port, default: 8080 }
+`,
 	"risky-agent": `services:
   agent:
     image: registry.example.com/agent/agent:1.0.0
@@ -121,7 +142,7 @@ x-hoserva:
 `,
 }
 
-// mockIcons is each mock template's icon file.
+// mockIcons is each mock template's icon file; plain-notes has none.
 var mockIcons = map[string][]byte{
 	"jellyfin":    []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#6a5acd"/></svg>`),
 	"aio-notes":   []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" fill="#2e8b57"/></svg>`),

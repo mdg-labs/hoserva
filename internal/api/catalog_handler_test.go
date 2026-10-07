@@ -244,6 +244,22 @@ func TestCatalog_DetailAndIconErrors(t *testing.T) {
 	}
 }
 
+func TestCatalog_ATemplateWithoutAnIconIsShownAndItsIconAnswers404(t *testing.T) {
+	h := newCatalogHandler(t)
+	cat := h.Catalog.(template.MapCatalog)
+	cat.Templates = map[string]string{"bare": strings.Replace(tplTemplate("bare", ""), "  icon: icon.svg\n", "", 1)}
+	h.Catalog = cat
+	srv := catalogServer(t, h)
+	resp, body := catalogGet(t, srv, "/catalog/bare")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"id":"bare"`) {
+		t.Fatalf("the template's page: %d %s", resp.StatusCode, body)
+	}
+	resp, body = catalogGet(t, srv, "/catalog/bare/icon")
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "template_icon_not_found") {
+		t.Errorf("its icon: %d %s, want 404 template_icon_not_found", resp.StatusCode, body)
+	}
+}
+
 func TestCatalog_IconIsServedWithAnAllowListedTypeAndLockedDownHeaders(t *testing.T) {
 	srv := catalogServer(t, newCatalogHandler(t))
 	resp, body := catalogGet(t, srv, "/catalog/probe/icon")
