@@ -161,6 +161,15 @@ func TestNoReports(t *testing.T) {
 	mustContain(t, out, "**No test reports were found.**")
 }
 
+func TestDownloadFailed(t *testing.T) {
+	const notice = "**The test results could not be downloaded, so this report is incomplete.**"
+	out := renderDir(t, t.TempDir(), "-download-failed")
+	mustContain(t, out, notice, "**No test reports were found.**")
+	if out := renderDir(t, t.TempDir()); strings.Contains(out, notice) {
+		t.Fatalf("notice without -download-failed:\n%s", out)
+	}
+}
+
 func TestNestedArtifactDirectories(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "test-results-web")

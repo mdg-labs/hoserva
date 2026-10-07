@@ -324,9 +324,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # No artifact at all (every job died before its upload) is not an error
-      # here: the renderer then says no reports were found.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      # No artifact at all (every job died before its upload) is not a failed
+      # download: the renderer then says no reports were found. A download that
+      # does fail is allowed too, but the summary says it is incomplete.
+      - name: Download the test results
+        id: download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           pattern: test-results-*
@@ -335,9 +338,14 @@ jobs:
       - name: Render the combined report
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
         run: |
           printf '%s' "$NEEDS_JSON" > "$RUNNER_TEMP/needs.json"
-          go run ./scripts/devenv/testreport -needs "$RUNNER_TEMP/needs.json" "$RUNNER_TEMP/test-results" > "$RUNNER_TEMP/test-summary.md"
+          flags=(-needs "$RUNNER_TEMP/needs.json")
+          if [ "$DOWNLOAD_OUTCOME" = failure ]; then
+            flags+=(-download-failed)
+          fi
+          go run ./scripts/devenv/testreport "${flags[@]}" "$RUNNER_TEMP/test-results" > "$RUNNER_TEMP/test-summary.md"
           cat "$RUNNER_TEMP/test-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

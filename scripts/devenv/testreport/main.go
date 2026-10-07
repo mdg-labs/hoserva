@@ -281,7 +281,7 @@ func suiteLabel(path string) string {
 	return strings.TrimSuffix(path, filepath.Ext(path))
 }
 
-func render(reports []report, needs map[string]string) string {
+func render(reports []report, needs map[string]string, downloadFailed bool) string {
 	var w strings.Builder
 	var total counts
 	var broken, empties int
@@ -296,6 +296,9 @@ func render(reports []report, needs map[string]string) string {
 	}
 
 	fmt.Fprint(&w, "## Test report\n\n")
+	if downloadFailed {
+		fmt.Fprint(&w, "**The test results could not be downloaded, so this report is incomplete.**\n\n")
+	}
 	switch {
 	case len(reports) == 0:
 		fmt.Fprint(&w, "**No test reports were found.**\n\n")
@@ -468,11 +471,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	runURL := fl.String("run-url", "", "with -comment: the workflow run's URL")
 	sha := fl.String("sha", "", "with -comment: the commit the run tested")
 	when := fl.String("time", "", "with -comment: when the run finished, RFC 3339")
+	downloadFailed := fl.Bool("download-failed", false, "say that downloading the reports failed, so the summary is incomplete")
 	if err := fl.Parse(args); err != nil {
 		return 2
 	}
 	if *commentPath != "" {
-		if fl.NArg() != 0 || *needsPath != "" {
+		if fl.NArg() != 0 || *needsPath != "" || *downloadFailed {
 			_, _ = fmt.Fprintln(stderr, "usage: testreport -comment summary.md -run-url URL -sha SHA -time RFC3339")
 			return 2
 		}
@@ -483,7 +487,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if fl.NArg() != 1 {
-		_, _ = fmt.Fprintln(stderr, "usage: testreport [-needs needs.json] <dir>")
+		_, _ = fmt.Fprintln(stderr, "usage: testreport [-needs needs.json] [-download-failed] <dir>")
 		return 2
 	}
 	var needs map[string]string
@@ -494,7 +498,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	if _, err := io.WriteString(stdout, render(collect(fl.Arg(0)), needs)); err != nil {
+	if _, err := io.WriteString(stdout, render(collect(fl.Arg(0)), needs, *downloadFailed)); err != nil {
 		_, _ = fmt.Fprintln(stderr, "testreport:", err)
 		return 1
 	}
