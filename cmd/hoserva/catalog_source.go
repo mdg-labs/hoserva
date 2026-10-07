@@ -132,7 +132,7 @@ func catalogSourceAddCmd() *cobra.Command {
 				emit(src)
 				return nil
 			}
-			fmt.Printf("Added catalog source %s (%s).\n", src.ID, catalogSourceBadge(src.Kind, src.Signed))
+			fmt.Printf("Added catalog source %s (%s).\n", safeText(src.ID), catalogSourceBadge(src.Kind, src.Signed))
 			if !src.Signed {
 				fmt.Println("This source is unsigned: nothing proves its archive came from its publisher. Its templates are badged unsigned and still show every privilege they ask for.")
 			}
@@ -169,7 +169,7 @@ func catalogSourceListSummary(list *apiv1.CatalogSourceList) string {
 		if at, ok := s.LastRefreshedAt.Get(); ok {
 			refreshed = at.UTC().Format("2006-01-02 15:04 UTC")
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, kind, trust, serial, refreshed, s.URL)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", safeText(s.ID), kind, trust, serial, refreshed, safeText(s.URL))
 	}
 	_ = tw.Flush()
 	return sb.String()
@@ -209,7 +209,7 @@ func stackTemplateUpdateSummary(name string, u *apiv1.StackTemplateUpdate) strin
 	switch u.Status {
 	case apiv1.StackTemplateUpdateStatusUpdateAvailable:
 		fmt.Fprintf(&sb, "Template update available for stack %s: revision %d is installed, revision %d is available from source %s (%s).\n",
-			name, u.InstalledRevision.Or(0), u.AvailableRevision.Or(0), u.Source.Or(""), catalogSourceBadge(u.SourceKind.Or(apiv1.CatalogSourceKindUserAdded), u.Signed.Or(false)))
+			safeText(name), u.InstalledRevision.Or(0), u.AvailableRevision.Or(0), safeText(u.Source.Or("")), catalogSourceBadge(u.SourceKind.Or(apiv1.CatalogSourceKindUserAdded), u.Signed.Or(false)))
 		if u.ManuallyEdited {
 			sb.WriteString("This stack's Compose file was edited by hand: the diff is against the edited file, and applying the update would overwrite those edits.\n")
 		}
@@ -217,15 +217,15 @@ func stackTemplateUpdateSummary(name string, u *apiv1.StackTemplateUpdate) strin
 			sb.WriteString("The source is unsigned: nothing proves this revision came from its publisher.\n")
 		}
 		sb.WriteString("Nothing was changed.\n\n")
-		sb.WriteString(u.Diff.Or(""))
+		sb.WriteString(safeBlock(u.Diff.Or("")))
 	case apiv1.StackTemplateUpdateStatusUpToDate:
-		fmt.Fprintf(&sb, "Stack %s is up to date: revision %d is installed and the source lists revision %d.\n", name, u.InstalledRevision.Or(0), u.AvailableRevision.Or(0))
+		fmt.Fprintf(&sb, "Stack %s is up to date: revision %d is installed and the source lists revision %d.\n", safeText(name), u.InstalledRevision.Or(0), u.AvailableRevision.Or(0))
 	case apiv1.StackTemplateUpdateStatusNotFromTemplate:
-		fmt.Fprintf(&sb, "Stack %s was not installed from a template, so there is nothing to compare.\n", name)
+		fmt.Fprintf(&sb, "Stack %s was not installed from a template, so there is nothing to compare.\n", safeText(name))
 	case apiv1.StackTemplateUpdateStatusSourceRemoved:
-		fmt.Fprintf(&sb, "The catalog source stack %s was installed from (%s) is no longer a source, so no update can be offered.\n", name, u.Source.Or(""))
+		fmt.Fprintf(&sb, "The catalog source stack %s was installed from (%s) is no longer a source, so no update can be offered.\n", safeText(name), safeText(u.Source.Or("")))
 	case apiv1.StackTemplateUpdateStatusTemplateRemoved:
-		fmt.Fprintf(&sb, "Source %s no longer lists the template %s, so no update can be offered.\n", u.Source.Or(""), u.TemplateId.Or(""))
+		fmt.Fprintf(&sb, "Source %s no longer lists the template %s, so no update can be offered.\n", safeText(u.Source.Or("")), safeText(u.TemplateId.Or("")))
 	}
 	return sb.String()
 }

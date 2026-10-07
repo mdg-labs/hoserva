@@ -428,6 +428,183 @@ cmd_pr_comment() {
   cmd_issue_comment "$1" "$2" "$3"
 }
 
+# --- security advisories -------------------------------------------------
+#
+# Repository security advisories (Q91): where a Critical or High finding is
+# recorded instead of a public issue. Every write subcommand takes
+# --dry-run, which prints the method, the path and the JSON body it would
+# send and calls nothing — the way to check a write without creating or
+# changing a real advisory. JSON bodies are built with jq from --arg and
+# --rawfile values and sent with `gh api --input -`, never assembled as a
+# string.
+
+ADVISORY_STATES="triage draft published closed"
+ADVISORY_SEVERITIES="critical high medium low"
+
+require_ghsa() {
+  [[ $2 =~ ^GHSA(-[2-9cfghjmpqrvwx]{4}){3}$ ]] || die "$1: not a GHSA id: $2"
+}
+
+require_one_of() {
+  local what=$1 value=$2 allowed=$3 item
+  for item in $allowed; do
+    [[ $value == "$item" ]] && return 0
+  done
+  die "$what: '$value' is not one of: ${allowed// /, }"
+}
+
+# Sends one advisory write — or, with ADV_DRY_RUN=1, prints what it would
+# send and sends nothing. $1 method, $2 path below repos/$REPO, $3 JSON body.
+advisory_send() {
+  local method=$1 path=$2 body=$3
+  if [[ $ADV_DRY_RUN == 1 ]]; then
+    printf '%s repos/%s/%s\n%s\n' "$method" "$REPO" "$path" "$body"
+    return 0
+  fi
+  gh api --method "$method" "repos/$REPO/$path" --input - <<<"$body"
+}
+
+# GitHub pages this endpoint with before/after cursors, not page numbers,
+# so one request for the largest page is made, and a full page is refused
+# rather than silently truncated.
+cmd_advisory_list() {
+  local state="" jqf=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --state) [[ $# -ge 2 ]] || die "advisory-list: --state needs a value"; state=$2; shift 2 ;;
+      --jq) [[ $# -ge 2 ]] || die "advisory-list: --jq needs a value"; jqf=$2; shift 2 ;;
+      *) die "advisory-list: unrecognized argument: $1" ;;
+    esac
+  done
+  local path="repos/$REPO/security-advisories?per_page=100"
+  if [[ -n $state ]]; then
+    require_one_of "advisory-list --state" "$state" "$ADVISORY_STATES"
+    path+="&state=$state"
+  fi
+  local out
+  out=$(gh api "$path") || die "advisory-list: could not list security advisories"
+  [[ $(jq 'length' <<<"$out") -lt 100 ]] \
+    || die "advisory-list: 100 advisories came back, which may be only the first page; narrow it with --state"
+  print_json "$out" "$jqf"
+}
+
+cmd_advisory_get() {
+  [[ $# -ge 1 ]] || die "usage: advisory-get <ghsa_id> [--jq f]"
+  local id=$1; shift
+  require_ghsa advisory-get "$id"
+  parse_optional_jq "$@"
+  local out
+  out=$(gh api "repos/$REPO/security-advisories/$id") \
+    || die "advisory-get: could not read $id"
+  print_json "$out" "$JQF"
+}
+
+# Reads the field flags advisory-create and advisory-update share into
+# ADV_SUMMARY, ADV_DESC_FILE, ADV_SEVERITY, ADV_CWES and ADV_DRY_RUN;
+# $1 names the calling subcommand for its errors.
+parse_advisory_fields() {
+  local who=$1; shift
+  ADV_SUMMARY="" ADV_DESC_FILE="" ADV_SEVERITY="" ADV_DRY_RUN=0
+  ADV_CWES=()
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --summary) [[ $# -ge 2 ]] || die "$who: --summary needs a value"; ADV_SUMMARY=$2; shift 2 ;;
+      --description-file) [[ $# -ge 2 ]] || die "$who: --description-file needs a value"; ADV_DESC_FILE=$2; shift 2 ;;
+      --severity) [[ $# -ge 2 ]] || die "$who: --severity needs a value"; ADV_SEVERITY=$2; shift 2 ;;
+      --cwe) [[ $# -ge 2 ]] || die "$who: --cwe needs a value"; ADV_CWES+=("$2"); shift 2 ;;
+      --dry-run) ADV_DRY_RUN=1; shift ;;
+      *) die "$who: unrecognized argument: $1" ;;
+    esac
+  done
+  [[ -z $ADV_SEVERITY ]] || require_one_of "$who --severity" "$ADV_SEVERITY" "$ADVISORY_SEVERITIES"
+  local cwe
+  for cwe in ${ADV_CWES[@]+"${ADV_CWES[@]}"}; do
+    [[ $cwe =~ ^CWE-[0-9]+$ ]] || die "$who --cwe: '$cwe' is not a CWE id like CWE-22"
+  done
+  [[ -z $ADV_DESC_FILE || -f $ADV_DESC_FILE ]] || die "$who: description file not found: $ADV_DESC_FILE"
+}
+
+# Prints the JSON body holding only the fields that were given. The
+# description is read from its file by jq itself, so its text is never
+# interpolated into anything.
+advisory_fields_json() {
+  local desc_args=()
+  [[ -n $ADV_DESC_FILE ]] && desc_args=(--rawfile description "$ADV_DESC_FILE")
+  local cwes_json='[]'
+  if (( ${#ADV_CWES[@]} )); then
+    cwes_json=$(printf '%s\n' "${ADV_CWES[@]}" | jq -R . | jq -cs .)
+  fi
+  jq -cn --arg summary "$ADV_SUMMARY" --arg severity "$ADV_SEVERITY" \
+    --argjson cwes "$cwes_json" ${desc_args[@]+"${desc_args[@]}"} '
+    {}
+    + (if $summary != "" then {summary: $summary} else {} end)
+    + (if $ARGS.named | has("description") then {description: $ARGS.named.description} else {} end)
+    + (if $severity != "" then {severity: $severity} else {} end)
+    + (if ($cwes | length) > 0 then {cwe_ids: $cwes} else {} end)'
+}
+
+cmd_advisory_create() {
+  parse_advisory_fields advisory-create "$@"
+  [[ -n $ADV_SUMMARY && -n $ADV_DESC_FILE && -n $ADV_SEVERITY ]] \
+    || die "usage: advisory-create --summary <s> --description-file <f> --severity critical|high|medium|low [--cwe CWE-n]... [--dry-run]"
+  local fields body
+  fields=$(advisory_fields_json) || die "advisory-create: could not build the request body"
+  body=$(jq -c '. + {vulnerabilities: []}' <<<"$fields")
+  advisory_send POST security-advisories "$body" || die "advisory-create: failed"
+}
+
+cmd_advisory_update() {
+  [[ $# -ge 1 ]] \
+    || die "usage: advisory-update <ghsa_id> [--summary s] [--description-file f] [--severity s] [--cwe CWE-n]... [--dry-run]"
+  local id=$1; shift
+  require_ghsa advisory-update "$id"
+  parse_advisory_fields advisory-update "$@"
+  if [[ -z $ADV_SUMMARY && -z $ADV_DESC_FILE && -z $ADV_SEVERITY ]] && (( ${#ADV_CWES[@]} == 0 )); then
+    die "advisory-update: nothing to change"
+  fi
+  local body
+  body=$(advisory_fields_json) || die "advisory-update: could not build the request body"
+  advisory_send PATCH "security-advisories/$id" "$body" || die "advisory-update: could not update $id"
+}
+
+# Moves an advisory to a new state: triage to draft (accept), anything to
+# closed (reject), a draft to published (publish).
+advisory_set_state() {
+  local who=$1 state=$2; shift 2
+  local id="" dry=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --dry-run) dry=1; shift ;;
+      -*) die "$who: unrecognized argument: $1" ;;
+      *) [[ -z $id ]] || die "$who: unrecognized argument: $1"; id=$1; shift ;;
+    esac
+  done
+  [[ -n $id ]] || die "usage: $who <ghsa_id> [--dry-run]"
+  require_ghsa "$who" "$id"
+  ADV_DRY_RUN=$dry
+  advisory_send PATCH "security-advisories/$id" "$(jq -cn --arg s "$state" '{state: $s}')" \
+    || die "$who: could not move $id to $state"
+}
+
+cmd_advisory_accept() { advisory_set_state advisory-accept draft "$@"; }
+cmd_advisory_reject() { advisory_set_state advisory-reject closed "$@"; }
+cmd_advisory_publish() { advisory_set_state advisory-publish published "$@"; }
+
+cmd_advisory_fork() {
+  local id="" dry=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --dry-run) dry=1; shift ;;
+      -*) die "advisory-fork: unrecognized argument: $1" ;;
+      *) [[ -z $id ]] || die "advisory-fork: unrecognized argument: $1"; id=$1; shift ;;
+    esac
+  done
+  [[ -n $id ]] || die "usage: advisory-fork <ghsa_id> [--dry-run]"
+  require_ghsa advisory-fork "$id"
+  ADV_DRY_RUN=$dry
+  advisory_send POST "security-advisories/$id/forks" '{}' || die "advisory-fork: could not fork $id"
+}
+
 # --- repo ------------------------------------------------------------
 
 cmd_repo_view() {
@@ -457,8 +634,52 @@ cmd_paged() {
   print_json "$out" "$JQF"
 }
 
+usage() {
+  cat <<'USAGE_EOF'
+Usage: gh-rest.sh <subcommand> [args...]
+
+Issues
+  issue-view <n> [--jq f]
+  issue-comments <n> [--jq f]
+  issue-list [--state s] [--label l] [--jq f]
+  issue-search <terms> [--state s] [--jq f]
+  issue-create --title t --body-file f [--label l]... [--milestone t]
+  issue-edit <n> [--title t] [--body-file f] [--milestone t] [--add-label l]... [--remove-label l]...
+  issue-comment <n> --body-file f
+Relationships
+  parent <n> [--jq f]
+  sub-issues <n> [--jq f]
+  add-sub-issue <epic> <n>
+  remove-sub-issue <epic> <n>
+  blocked-by <n> [--jq f]
+  blocking <n> [--jq f]
+  add-blocked-by <n> <dep>
+  remove-blocked-by <n> <dep>
+Pull requests
+  pr-view <n> [--jq f]
+  pr-list [--base b] [--head h] [--state s] [--jq f]
+  pr-create --base b --head h --title t --body-file f
+  pr-edit <n> [--title t] [--body-file f]
+  pr-comment <n> --body-file f
+Security advisories (Q91; write subcommands take --dry-run, which prints the
+method, path and JSON body and sends nothing)
+  advisory-list [--state triage|draft|published|closed] [--jq f]
+  advisory-get <ghsa_id> [--jq f]
+  advisory-create --summary s --description-file f --severity critical|high|medium|low [--cwe CWE-n]... [--dry-run]
+  advisory-update <ghsa_id> [--summary s] [--description-file f] [--severity s] [--cwe CWE-n]... [--dry-run]
+  advisory-accept <ghsa_id> [--dry-run]     triage to draft
+  advisory-reject <ghsa_id> [--dry-run]     to closed
+  advisory-fork <ghsa_id> [--dry-run]       temporary private fork
+  advisory-publish <ghsa_id> [--dry-run]
+Repository
+  repo-view [--jq f]
+  label-list [--jq f]
+  paged <repo-relative-path> [--jq f]
+USAGE_EOF
+}
+
 main() {
-  [[ $# -ge 1 ]] || die "usage: gh-rest.sh <subcommand> [args...]"
+  [[ $# -ge 1 ]] || { usage >&2; exit 1; }
   local sub=$1; shift
   case $sub in
     issue-view) cmd_issue_view "$@" ;;
@@ -484,7 +705,16 @@ main() {
     repo-view) cmd_repo_view "$@" ;;
     label-list) cmd_label_list "$@" ;;
     paged) cmd_paged "$@" ;;
-    *) die "unknown subcommand: $sub" ;;
+    advisory-list) cmd_advisory_list "$@" ;;
+    advisory-get) cmd_advisory_get "$@" ;;
+    advisory-create) cmd_advisory_create "$@" ;;
+    advisory-update) cmd_advisory_update "$@" ;;
+    advisory-accept) cmd_advisory_accept "$@" ;;
+    advisory-reject) cmd_advisory_reject "$@" ;;
+    advisory-fork) cmd_advisory_fork "$@" ;;
+    advisory-publish) cmd_advisory_publish "$@" ;;
+    help | -h | --help) usage ;;
+    *) die "unknown subcommand: $sub (gh-rest.sh help lists them)" ;;
   esac
 }
 

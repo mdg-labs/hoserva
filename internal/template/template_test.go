@@ -115,6 +115,75 @@ func TestVersion1TemplateValidatesWithCurrentValidator(t *testing.T) {
 	}
 }
 
+func TestLintRefusesControlCharactersInTemplateText(t *testing.T) {
+	cases := []struct{ name, old, replacement, want string }{
+		{"title", "  title: Jellyfin\n", "  title: \"Jelly\\x1bfin\"\n", "x-hoserva.title: holds a control character"},
+		{"title with a line break", "  title: Jellyfin\n", "  title: \"Jelly\\nfin\"\n", "x-hoserva.title: holds a control character"},
+		{"docs address", "  docs: https://docs.linuxserver.io/images/docker-jellyfin/\n", "  docs: \"https://example.com/\\x1b[2K\"\n", "x-hoserva.docs: holds a control character"},
+		{"input label", "label: Media library", "label: \"Media\\x1b[2K\"", "x-hoserva.inputs.MEDIA.label: holds a control character"},
+		{"input description", "label: Media library", "label: Media library, description: \"a\\x9bb\"", "x-hoserva.inputs.MEDIA.description: holds a control character"},
+		{"input default", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    NOTE: { kind: string, default: \"a\\x1b[2Kb\" }", "x-hoserva.inputs.NOTE.default: holds a control character"},
+		{"input default with a C1 character", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    NOTE: { kind: string, default: \"a\\u009bb\" }", "x-hoserva.inputs.NOTE.default: holds a control character"},
+		{"service name", "services:\n  jellyfin:", "services:\n  \"jelly\\x1bfin\":", "services: holds a key with a control character"},
+		{"environment value", "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: \"a\\x1b[2Kb\"", "services.jellyfin.environment.EXTRA: holds a control character"},
+		{"environment name", "TZ: ${TZ}", "TZ: ${TZ}\n      \"EX\\x1bTRA\": a", "services.jellyfin.environment: holds a key with a control character"},
+		{"volume", "- ${APPDATA}/jellyfin:/config", "- \"${APPDATA}/jellyfin:/con\\x1b[2Kfig\"", "services.jellyfin.volumes.0: holds a control character"},
+		{"extension key", "    restart: unless-stopped\n", "    restart: unless-stopped\n    \"x-a\\x1bb\": 1\n", "services.jellyfin: holds a key with a control character"},
+		{"top-level extension key", "\nx-hoserva:", "\n\"x-a\\x1bb\": 1\nx-hoserva:", "holds a top-level key with a control character"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lintStrings(t, catalogWith(t, tc.old, tc.replacement))
+			if joined := strings.Join(got, "\n"); !strings.Contains(joined, tc.want) {
+				t.Fatalf("findings do not mention %q:\n%s", tc.want, joined)
+			}
+		})
+	}
+}
+
+func TestLintAcceptsLineBreaksAndTabsInComposeStrings(t *testing.T) {
+	dir := catalogWith(t, "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: \"a\\tb\\nc\"")
+	if got := lintStrings(t, dir); len(got) != 0 {
+		t.Fatalf("lint refused a line break and a tab in a Compose string:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestCheckComposeRefusesControlCharactersInAnyComposeDocument(t *testing.T) {
+	compose := map[string]any{"services": map[string]any{"web": map[string]any{
+		"image":       "example/web:1",
+		"environment": []any{"A=b\x1b[2K"},
+	}}}
+	issues := CheckCompose(compose)
+	if len(issues) != 1 || strings.Join(issues[0].Path, ".") != "services.web.environment.0" || !strings.Contains(issues[0].Message, "control character") {
+		t.Fatalf("CheckCompose = %v, want one control-character issue on services.web.environment.0", issues)
+	}
+	compose["services"].(map[string]any)["web"].(map[string]any)["environment"] = []any{"A=b\tc\nd"}
+	if issues := CheckCompose(compose); len(issues) != 0 {
+		t.Fatalf("CheckCompose refused a tab and a line break: %v", issues)
+	}
+}
+
+func TestCheckImportedComposeExemptsOnlyTheVersionKeyFromTheAllowList(t *testing.T) {
+	svc := func() map[string]any {
+		return map[string]any{"web": map[string]any{"image": "example/web:1"}}
+	}
+	if issues := CheckImportedCompose(map[string]any{"version": "3", "services": svc()}); len(issues) != 0 {
+		t.Errorf("CheckImportedCompose(version) = %v, want none", issues)
+	}
+	if issues := CheckCompose(map[string]any{"version": "3", "services": svc()}); len(issues) == 0 {
+		t.Error("CheckCompose accepted a top-level version")
+	}
+	if issues := CheckImportedCompose(map[string]any{"version": "3", "services": svc(), "models": map[string]any{}}); len(issues) != 1 {
+		t.Errorf("CheckImportedCompose(version, models) = %v, want one issue on models", issues)
+	}
+	for _, v := range []string{"3\x1b[2K", "3\u009b"} {
+		issues := CheckImportedCompose(map[string]any{"version": v, "services": svc()})
+		if len(issues) != 1 || strings.Join(issues[0].Path, ".") != "version" || !strings.Contains(issues[0].Message, "control character") {
+			t.Errorf("CheckImportedCompose(version %q) = %v, want one control-character issue on version", v, issues)
+		}
+	}
+}
+
 func TestLintReportsMalformedTemplates(t *testing.T) {
 	cases := []struct {
 		name, old, replacement string

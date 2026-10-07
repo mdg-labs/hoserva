@@ -61,3 +61,21 @@ but there is no issue to comment on or label: post nothing, move no
 `status:*` label, and return `F<i>: PASS` or `F<i>: FAIL` with the blocking
 findings as your final message, which is the whole verdict. A finding marked
 safety-critical gets layer 5 in full and the before/after test run.
+
+A dispatch may name a **private security advisory** (`GHSA-…`) instead of an
+issue. Then you post nothing and move no label — your returned verdict
+(`<GHSA-id>: PASS` or `FAIL`, with the blocking findings) is the whole
+record. The commit must end in the `Refs: GHSA-…` trailer and carry no
+`Fixes` line, and its message, comments, test names and fixtures must be
+neutral: a commit message that includes reproduction or exploit detail —
+steps, a payload, a trace, an attacker narrative, a quotation of the advisory
+— is a blocking finding. In a finding, name the line and the kind of detail,
+never the detail.
+
+Security is judged against `docs/internal/15-threat-model.md`, which you cite
+rather than restate. A diff touching a path doc 15 §3 names as an entry
+point's owner is checked against the §4 invariants anchored there, and a
+violated invariant is a blocking finding that names its `Tn`. A dispatch may
+carry a **security history** (commits that fixed a security issue on the
+paths the diff touches): a diff that removes or weakens a guard one of them
+added is blocking.

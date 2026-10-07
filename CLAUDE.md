@@ -27,6 +27,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 | `12-repo-architecture.md` | Repo layout, agent workflow |
 | `13-open-questions.md` | **Every unsettled question, each with a recommended default** |
 | `14-virtual-machines.md` | VM management, libvirt/KVM, PCI/USB passthrough, Unraid VM migration |
+| `15-threat-model.md` | Anything security-relevant: attackers, entry points, security invariants `T1`…, accepted residuals, the severity rubric |
 
 **Decisions vs. defaults.** A `Dn` in doc 00 §5 is settled — reopening it needs a new reason, not a new preference. A `Qn` in doc 13 is a recommended default the docs are written to — follow it, and if your work shows it is wrong, say so in your report or issue rather than silently diverging. Work that settles or changes a default updates its doc 13 entry in the same change.
 
@@ -96,6 +97,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 - **Never close an issue by hand** (`gh issue close`) unless the maintainer explicitly asks.
 - Don't open an issue for something finished in the same session — that's bookkeeping theatre.
 - **`dev` is the working branch; `main` is release-only** (Q46). `orchestrate` lands verified commits on local `dev`: executors in isolated scratch clones, an independent verifier per attempt, landing only after a PASS. **Every landed commit is pushed to `dev` immediately after landing** — including `safety-critical` ones — one push per issue: `dev` is a working branch, not a release branch, so the review gate that matters is the independent verifier's PASS before landing, not a manual pre-push read. A commit is held back from pushing only when the issue itself carries an open `blockedBy` added during the same run — that one waits for the maintainer to read and push, because a fresh dependency limits trust in the fix, not because of its `safety-critical` label. `main` only moves via a `dev → main` pull request, gated by GitHub's required status checks (doc 12 §6) — nothing reaches it without passing CI in a clean environment first.
+- **Security audits are the `security-audit` skill** (`/security-audit [scope …]`): Opus `security-reviewer` agents review the code unit by unit in a read-only clone, an independent Opus `security-verifier` refutes every candidate in theory, and the result is one Markdown report under `~/.local/state/hoserva-audit/` that is never committed. It changes no code and files nothing; Critical and High findings are marked `withhold: true` and go to private advisories, never public issues (Q91, doc 15 §7).
 
 ## Label set
 
@@ -103,8 +105,10 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 |---|---|
 | Type (exactly one) | `feat`, `bug`, `chore`, `docs`, `spike` |
 | Area | `area:storage`, `area:api`, `area:web`, `area:cli`, `area:shares`, `area:containers`, `area:vm`, `area:migration`, `area:backup`, `area:packaging`, `area:devenv`, `area:site` |
-| Extras | `epic`, `safety-critical`, `needs-sudo`, `blocked` |
+| Extras | `epic`, `safety-critical`, `needs-sudo`, `blocked`, `security` |
 | Status (machine-managed) | `status:new`, `status:ready`, `status:in-progress`, `status:in-review`, `status:implemented`, `status:closed`, `status:cancelled` |
+
+`security` marks a public issue for a security defect or hardening (doc 15). A finding the doc 15 rubric rates Critical or High is a private security advisory instead, never a public issue (Q91).
 
 ## Area → paths
 

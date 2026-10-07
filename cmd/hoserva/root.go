@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -26,6 +27,8 @@ func rootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hoserva",
 		Short: "Hoserva command-line interface",
+		// writeError is the only place an error is printed, escaped.
+		SilenceErrors: true,
 	}
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Emit machine-readable JSON")
 	cmd.PersistentFlags().StringVar(&socketPath, "socket", defaultSocket, "Path to hoservad's Unix socket")
@@ -64,11 +67,22 @@ func rootCmd() *cobra.Command {
 }
 
 func runCLI() int {
-	if err := rootCmd().Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "hoserva: %v\n", err)
+	return execute(rootCmd(), os.Stderr)
+}
+
+func execute(root *cobra.Command, stderr io.Writer) int {
+	root.SetErr(stderr)
+	if err := root.Execute(); err != nil {
+		writeError(stderr, err)
 		return exitError
 	}
 	return exitOK
+}
+
+// writeError prints a failure for a terminal. A daemon's message can quote
+// what a template or an imported file said, so it is escaped.
+func writeError(w io.Writer, err error) {
+	_, _ = fmt.Fprintf(w, "hoserva: %s\n", safeBlock(err.Error()))
 }
 
 func apiCtx() context.Context {

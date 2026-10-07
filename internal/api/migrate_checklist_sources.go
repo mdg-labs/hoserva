@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/migrate"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // checklistJobPage is how many succeeded jobs of one type the checklist reads at
@@ -19,14 +19,15 @@ const checklistJobPage = 200
 // ChecklistSources are the records the post-migration checklist reads in the
 // daemon: the job history for the relocation, the initial sync, the scrub and
 // the fix, the array record's stamp of when the migration finished
-// (store.ArrayStore.MigrationFinishedAt), the notification channels, and the
-// nightly chain's schedule.
-func ChecklistSources(jobs *job.Store, channels *notify.Service, schedules *ScheduleService, finished func(context.Context) (time.Time, bool, error)) migrate.ChecklistSources {
+// (store.ArrayStore.MigrationFinishedAt), whether the array has a cache disk,
+// the notification channels, and the nightly chain's schedule.
+func ChecklistSources(jobs *job.Store, channels *notify.Service, schedules *ScheduleService, arrays *store.ArrayStore) migrate.ChecklistSources {
 	return migrate.ChecklistSources{
-		Jobs:     checklistJobs(jobs),
-		Finished: finished,
-		Channels: checklistChannels(channels),
-		Schedule: checklistSchedule(schedules),
+		Jobs:         checklistJobs(jobs),
+		Finished:     arrays.MigrationFinishedAt,
+		HasCacheDisk: checklistHasCacheDisk(arrays),
+		Channels:     checklistChannels(channels),
+		Schedule:     checklistSchedule(schedules),
 	}
 }
 
@@ -96,6 +97,23 @@ func checklistJobRecord(j *job.Job) (migrate.JobRecord, error) {
 		rec.Share, rec.To = p.Share, p.To
 	}
 	return rec, nil
+}
+
+// checklistHasCacheDisk reads the array's topology. An array that cannot be
+// read is an error, never "no cache disk".
+func checklistHasCacheDisk(arrays *store.ArrayStore) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		_, disks, err := arrays.GetArray(ctx)
+		if err != nil {
+			return false, fmt.Errorf("reading the array's disks: %w", err)
+		}
+		for _, d := range disks {
+			if d.Role == store.ArrayRoleCache {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 }
 
 func checklistChannels(svc *notify.Service) func(context.Context) ([]migrate.ChannelRecord, error) {

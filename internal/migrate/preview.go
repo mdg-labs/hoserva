@@ -7,6 +7,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -40,6 +41,7 @@ const (
 	FailureInvalidYAML       = "invalid_yaml"
 	FailureMultipleDocuments = "multiple_documents"
 	FailureNoServices        = "no_services"
+	FailureNotAccepted       = "not_accepted"
 )
 
 // Preview is what a template's conversion, or a Compose Manager project's
@@ -118,6 +120,8 @@ func (o *Outcome) FailureText() string {
 		return "compose.yaml holds more than one YAML document"
 	case FailureNoServices:
 		return "compose.yaml declares no services"
+	case FailureNotAccepted:
+		return "compose.yaml uses what a stack of Hoserva does not accept"
 	}
 	return ""
 }
@@ -204,8 +208,13 @@ func previewTemplate(data []byte, networks []template.NetworkDef) *Preview {
 // review as a converted stack: its privileges are computed from the file's own
 // content. The file is not converted, and a second YAML document is refused
 // because Compose merges every document, so one could add what the summary
-// never sees. A file without a services mapping runs nothing of its own, so it
-// is not counted as a previewed project.
+// never sees. For the same reason a file is refused when it uses a key the
+// template allow list refuses (template.CheckImportedCompose), whatever the key
+// does: the summary reads only the keys the list accepts, except the obsolete
+// top-level version, which Compose ignores and is exempt from the list (its
+// value is still checked for control characters, and the file is passed on as
+// written). A file without a services
+// mapping runs nothing of its own, so it is not counted as a previewed project.
 func previewCompose(data []byte) *Preview {
 	p := &Preview{Source: string(data), Compose: string(data)}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -223,10 +232,30 @@ func previewCompose(data []byte) *Preview {
 		p.Compose, p.Failure, p.Error = "", FailureNoServices, "compose.yaml declares no services"
 		return p
 	}
+	if issues := template.CheckImportedCompose(compose); len(issues) > 0 {
+		p.Compose, p.Failure, p.Error = "", FailureNotAccepted, notAcceptedText(issues)
+		return p
+	}
 	for _, pr := range (&template.Template{Compose: compose}).Privileges(nil) {
 		p.Privileges = append(p.Privileges, PreviewPrivilege{Kind: pr.Kind, Service: pr.Service, Detail: pr.Detail, Description: pr.Description})
 	}
 	return p
+}
+
+const maxIssuesShown = 10
+
+func notAcceptedText(issues []template.Issue) string {
+	var sb strings.Builder
+	sb.WriteString("compose.yaml uses what a stack of Hoserva does not accept")
+	for i, is := range issues {
+		if i == maxIssuesShown {
+			fmt.Fprintf(&sb, "; and %d more", len(issues)-i)
+			break
+		}
+		sb.WriteString("; ")
+		sb.WriteString(is.String())
+	}
+	return sb.String()
 }
 
 // countPreviews fills in the report's conversion counts from the outcomes.

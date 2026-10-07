@@ -2876,9 +2876,9 @@ paths:
           content:
             application/json:
               schema:
-                nullable: true
-                allOf:
+                oneOf:
                   - $ref: '#/components/schemas/MoverRunResult'
+                  - type: 'null'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2901,9 +2901,9 @@ paths:
           content:
             application/json:
               schema:
-                nullable: true
-                allOf:
+                oneOf:
                   - $ref: '#/components/schemas/CacheUsageBreakdown'
+                  - type: 'null'
         default:
           $ref: '#/components/responses/Error'
 
@@ -10839,9 +10839,9 @@ components:
         nfs:
           $ref: '#/components/schemas/ShareNFS'
         usage:
-          nullable: true
-          allOf:
+          oneOf:
             - $ref: '#/components/schemas/ShareUsage'
+            - type: 'null'
           # Design refs: doc 03 §4.1-4.2
           description: >-
             Null when this share has not been through a sync since it was
@@ -10980,9 +10980,8 @@ components:
             succeeds for it; there is no separate action that clears it short of
             deleting the account.
         lastLogin:
-          type: string
+          type: [string, 'null']
           format: date-time
-          nullable: true
           # Design refs: doc 03 §7
           description: >-
             When this account last completed sign-in, tracked at authentication

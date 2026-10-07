@@ -54,8 +54,8 @@ func TestMockChecklist_DerivesEachItemFromTheMocksOwnRecords(t *testing.T) {
 	if err != nil || !c.Finished || len(c.Items) != 7 {
 		t.Fatalf("checklist after the point of no return = %+v %v, want finished with 7 items", c, err)
 	}
-	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdAppdataCache); got.Status != apiv1.MigrationChecklistItemStatusTodo {
-		t.Errorf("appdata = %+v, want todo: the mock's source had a cache", got)
+	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdAppdataCache); got.Status != apiv1.MigrationChecklistItemStatusNotApplicable {
+		t.Errorf("appdata = %+v, want not applicable: the mock's migrated array has no cache disk, so its relocation is refused with no_cache_disk", got)
 	}
 	if got := checklistItem(t, h, apiv1.MigrationChecklistItemIdInitialSync); got.Status != apiv1.MigrationChecklistItemStatusTodo {
 		t.Errorf("initial sync before its job succeeded = %+v, want todo", got)

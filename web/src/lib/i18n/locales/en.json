@@ -1671,7 +1671,7 @@
     "disk": {
       "title": "Cache disk",
       "none": "No cache disk",
-      "noneDescription": "Assign a cache disk in the setup wizard or pool overview.",
+      "noneDescription": "A cache disk is chosen when the array is created, in the setup wizard or with the Cache role in the migration review step.",
       "usageUnavailable": "Used space not available"
     },
     "shares": {

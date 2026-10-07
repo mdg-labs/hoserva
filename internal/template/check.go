@@ -28,16 +28,49 @@ const (
 type Check func(t *Template) []Issue
 
 var checks = []Check{
-	checkAllowedKeys,
+	checkComposeDocument,
 	checkServices,
 	checkReservedInputs,
 	checkReferences,
 	checkPathDefaults,
 	checkBindSources,
-	checkSelfContained,
 	checkUserIDs,
 	checkMetadata,
+	checkBlockText,
 }
+
+// CheckCompose runs the rules that hold any Compose document to the keys the
+// privilege summary classifies and to its own content: the allow list and the
+// self-contained check. A template's Check applies it, and so does the
+// migration's preview of a Compose Manager project (through
+// CheckImportedCompose), so the two cannot disagree on what a stack may use.
+// The issues carry no line numbers.
+func CheckCompose(compose map[string]any) []Issue {
+	t := &Template{Compose: compose}
+	out := append(checkAllowedKeys(t), checkSelfContained(t)...)
+	return append(out, checkComposeText(compose)...)
+}
+
+// CheckImportedCompose is CheckCompose for an imported Compose Manager
+// project. The obsolete top-level version key, which Compose ignores, is
+// exempt from the allow list and the self-contained check, so a project is not
+// refused for it alone; its value is still held to the control-character rule
+// like every other string of the file.
+func CheckImportedCompose(compose map[string]any) []Issue {
+	rest := make(map[string]any, len(compose))
+	for k, v := range compose {
+		if k != "version" {
+			rest[k] = v
+		}
+	}
+	out := CheckCompose(rest)
+	if v, ok := compose["version"]; ok {
+		out = append(out, checkComposeText(map[string]any{"version": v})...)
+	}
+	return out
+}
+
+func checkComposeDocument(t *Template) []Issue { return CheckCompose(t.Compose) }
 
 // Check runs every rule beyond the schema and returns what it found, in a
 // stable order.
@@ -489,6 +522,73 @@ func validateLink(s string) error {
 		return errors.New("must not carry a user name or password")
 	}
 	return nil
+}
+
+// checkBlockText refuses a control character in the block's single-line text
+// (title, docs, web UI address, input labels and string defaults) and in an
+// input's help text beyond line breaks and tabs. The maintainer and the
+// description have their own rule in checkMetadata.
+func checkBlockText(t *Template) []Issue {
+	var out []Issue
+	line := func(p []string, s string) {
+		if hasControl(s, false) {
+			out = append(out, Issue{Path: p, Message: "holds a control character"})
+		}
+	}
+	line([]string{BlockKey, "title"}, t.Block.Title)
+	line([]string{BlockKey, "docs"}, t.Block.Docs)
+	line([]string{BlockKey, "webui"}, t.Block.WebUI)
+	for _, name := range sortedKeys(t.Block.Inputs) {
+		in := t.Block.Inputs[name]
+		p := []string{BlockKey, "inputs", name}
+		line(append(p[:len(p):len(p)], "label"), in.Label)
+		if def, ok := in.Default.(string); ok {
+			line(append(p[:len(p):len(p)], "default"), def)
+		}
+		if hasControl(in.Description, true) {
+			out = append(out, Issue{Path: append(p[:len(p):len(p)], "description"), Message: "holds a control character; only line breaks and tabs are allowed"})
+		}
+	}
+	return out
+}
+
+// checkComposeText refuses a control character other than a line break or
+// tab in any key or string of a Compose document outside the x-hoserva block,
+// because the privilege summary quotes service names, paths and capability
+// names from it.
+func checkComposeText(compose map[string]any) []Issue {
+	var out []Issue
+	var walk func(p []string, v any)
+	walk = func(p []string, v any) {
+		switch x := v.(type) {
+		case string:
+			if hasControl(x, true) {
+				out = append(out, Issue{Path: p, Message: "holds a control character; only line breaks and tabs are allowed"})
+			}
+		case map[string]any:
+			for _, k := range sortedKeys(x) {
+				if hasControl(k, false) {
+					out = append(out, Issue{Path: p, Message: "holds a key with a control character"})
+					continue
+				}
+				walk(append(p[:len(p):len(p)], k), x[k])
+			}
+		case []any:
+			for i, e := range x {
+				walk(append(p[:len(p):len(p)], fmt.Sprint(i)), e)
+			}
+		}
+	}
+	for _, k := range sortedKeys(compose) {
+		switch {
+		case k == BlockKey:
+		case hasControl(k, false):
+			out = append(out, Issue{Message: "holds a top-level key with a control character"})
+		default:
+			walk([]string{k}, compose[k])
+		}
+	}
+	return out
 }
 
 // hasControl reports a control character in s; with allowBreaks, a line

@@ -72,7 +72,7 @@ func printMigrationContainers(w io.Writer, l *apiv1.MigrationContainers) {
 		if p := t.AutostartPosition.Or(0); p > 0 {
 			class = fmt.Sprintf("%s (#%d)", class, p)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", t.File, t.Name, class, t.Status, t.WarningCount, sel, t.Stack.Or("-"))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", safeText(t.File), safeText(t.Name), class, t.Status, t.WarningCount, sel, safeText(t.Stack.Or("-")))
 	}
 	for _, p := range l.ComposeProjects {
 		sel := ""
@@ -82,18 +82,18 @@ func printMigrationContainers(w io.Writer, l *apiv1.MigrationContainers) {
 		case !p.Creatable:
 			sel = "cannot be created"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\tCompose Manager project\t\t%s\t\t%s\t%s\n", p.Name, p.Status, sel, p.Stack.Or("-"))
+		_, _ = fmt.Fprintf(tw, "%s\tCompose Manager project\t\t%s\t\t%s\t%s\n", safeText(p.Name), p.Status, sel, safeText(p.Stack.Or("-")))
 	}
 	_ = tw.Flush()
 	for _, t := range l.Templates {
 		if e, ok := t.Error.Get(); ok {
-			_, _ = fmt.Fprintf(w, "\n%s could not be converted: %s\n", t.File, e)
+			_, _ = fmt.Fprintf(w, "\n%s could not be converted: %s\n", safeText(t.File), safeText(e))
 		}
 	}
 	if len(l.ByHand) > 0 {
 		_, _ = fmt.Fprintln(w, "\nNo template, recreate by hand (nothing is generated for these):")
 		for _, b := range l.ByHand {
-			_, _ = fmt.Fprintf(w, "  %s  %s\n", b.Name, b.Image.Or("(image not in the capture)"))
+			_, _ = fmt.Fprintf(w, "  %s  %s\n", safeText(b.Name), safeText(b.Image.Or("(image not in the capture)")))
 		}
 	}
 	if len(l.Stacks) == 0 {
@@ -118,13 +118,13 @@ func printMigrationContainers(w io.Writer, l *apiv1.MigrationContainers) {
 		if s.Awaiting {
 			state += " (awaiting confirmation)"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, state, s.Source, wait, check)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", safeText(s.Name), state, safeText(s.Source), wait, check)
 	}
 	_ = tw.Flush()
 	if a, ok := l.Awaiting.Get(); ok {
-		_, _ = fmt.Fprintf(w, "\n%s is started and not confirmed: run `hoserva migrate containers check %s` and `confirm %s`, or stop it, before starting another.\n", a, a, a)
+		_, _ = fmt.Fprintf(w, "\n%s is started and not confirmed: run `hoserva migrate containers check %s` and `confirm %s`, or stop it, before starting another.\n", safeText(a), safeText(a), safeText(a))
 	} else if n, ok := l.Next.Get(); ok {
-		_, _ = fmt.Fprintf(w, "\nNext: `hoserva migrate containers start %s`.\n", n)
+		_, _ = fmt.Fprintf(w, "\nNext: `hoserva migrate containers start %s`.\n", safeText(n))
 	}
 }
 
@@ -216,12 +216,12 @@ func printStackResults(w io.Writer, res *apiv1.MigrationStacksCreated) {
 	for _, r := range res.Results {
 		switch r.Status {
 		case apiv1.MigrationStackResultStatusCreated:
-			_, _ = fmt.Fprintf(w, "created stack %s from %s (stopped)\n", r.Stack, r.Name)
+			_, _ = fmt.Fprintf(w, "created stack %s from %s (stopped)\n", safeText(r.Stack), safeText(r.Name))
 		case apiv1.MigrationStackResultStatusAlreadyCreated:
-			_, _ = fmt.Fprintf(w, "stack %s from %s was already created\n", r.Stack, r.Name)
+			_, _ = fmt.Fprintf(w, "stack %s from %s was already created\n", safeText(r.Stack), safeText(r.Name))
 		default:
 			e, _ := r.Error.Get()
-			_, _ = fmt.Fprintf(w, "stack %s from %s was NOT created: %s (%s)\n", r.Stack, r.Name, e.Message, e.Code)
+			_, _ = fmt.Fprintf(w, "stack %s from %s was NOT created: %s (%s)\n", safeText(r.Stack), safeText(r.Name), safeText(e.Message), safeText(string(e.Code)))
 		}
 	}
 	_, _ = fmt.Fprintln(w, "\nStart them one at a time with `hoserva migrate containers start NAME`, in the order `hoserva migrate containers` lists them.")
@@ -317,7 +317,7 @@ func printDataCheck(w io.Writer, c *apiv1.MigrationContainerCheck) {
 	if !c.Running {
 		running = "NOT running"
 	}
-	_, _ = fmt.Fprintf(w, "Stack %s: %s\n", c.Stack, running)
+	_, _ = fmt.Fprintf(w, "Stack %s: %s\n", safeText(c.Stack), running)
 	if len(c.Paths) == 0 {
 		_, _ = fmt.Fprintln(w, "No bind mount under /mnt/user or /mnt/cache: nothing to check.")
 		return
@@ -327,13 +327,13 @@ func printDataCheck(w io.Writer, c *apiv1.MigrationContainerCheck) {
 	for _, p := range c.Paths {
 		status := string(p.Status)
 		if e := p.Error.Or(""); e != "" {
-			status += " (" + strings.TrimSpace(e) + ")"
+			status += " (" + safeText(strings.TrimSpace(e)) + ")"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", status, p.Path, p.Destination, p.Container)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", status, safeText(p.Path), safeText(p.Destination), safeText(p.Container))
 	}
 	_ = tw.Flush()
 	if c.AllOk {
-		_, _ = fmt.Fprintf(w, "\nEvery path exists and holds data. If that is what you expect, `hoserva migrate containers confirm %s`.\n", c.Stack)
+		_, _ = fmt.Fprintf(w, "\nEvery path exists and holds data. If that is what you expect, `hoserva migrate containers confirm %s`.\n", safeText(c.Stack))
 	}
 }
 
@@ -363,10 +363,10 @@ func migrateContainersConfirmCmd() *cobra.Command {
 				emit(st)
 				return nil
 			}
-			fmt.Printf("Stack %s is confirmed.\n", st.Name)
+			fmt.Printf("Stack %s is confirmed.\n", safeText(st.Name))
 			if list, err := c.ListMigrationContainers(apiCtx()); err == nil {
 				if n, ok := list.Next.Get(); ok {
-					fmt.Printf("Next: `hoserva migrate containers start %s`.\n", n)
+					fmt.Printf("Next: `hoserva migrate containers start %s`.\n", safeText(n))
 				} else {
 					fmt.Println("Every created stack is confirmed.")
 				}

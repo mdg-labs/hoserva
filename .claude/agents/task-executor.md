@@ -64,3 +64,18 @@ names every one of them — and you report a drafted reply per
 finding instead of posting one. Whether a finding is real was decided before
 you were dispatched; if the code shows otherwise, change nothing for it and
 report the evidence. Everything else above applies unchanged.
+
+A dispatch may name a **private security advisory** (`GHSA-…`) instead of an
+issue. Then there is no issue to claim and no label to move: you make no
+GitHub write at all, and your commit ends in the `Refs: GHSA-…` trailer the
+dispatch gives you instead of a `Fixes` line. Its message is neutral — what
+the code now does, with no reproduction, payload, trace, attacker narrative,
+severity or quotation of the advisory, and the same for every comment, test
+name and fixture you add. The advisory is not public, and a commit message is.
+Everything else above applies unchanged.
+
+A dispatch may carry a **security history**: earlier commits on the paths in
+your scope that fixed a security issue, under the heading "Security fixes on
+these paths — don't undo the guard they added". Read the ones that touch what
+you change and keep the guard each added; a change that would have to loosen
+one is not made — report it instead.

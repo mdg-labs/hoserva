@@ -103,10 +103,30 @@ a finding is real.
    always the false-positive case; say so explicitly in the reply rather
    than silently skipping it.
 3. **Give each finding one verdict**: real, false positive, safety-weakening
-   (a false positive that specifically asks to loosen a safety rule), or
-   deferred (real but out of scope for this PR — see below). A false
+   (a false positive that specifically asks to loosen a safety rule),
+   deferred (real but out of scope for this PR — see below), or withheld (a
+   security finding that rates Critical or High — next item). A false
    positive or deferred finding is not touched in the code; note the
    reasoning (false positive) or why it is out of scope (deferred).
+4. **Check a security finding against doc 15 before fixing it.** A finding
+   CodeRabbit marks as security is real only if it passes the anti-inflation
+   rules of `docs/internal/15-threat-model.md` §6 — a reachable entry point,
+   a named attacker, the production defaults, not admin-by-design or an
+   accepted residual. Re-derive the path from entry point to outcome yourself;
+   do not take CodeRabbit's description of it. A finding that fails a rule is
+   a **false positive**: it is not fixed, and its reply names the rule it
+   fails and the doc 15 section — never "not exploitable" alone. One that
+   holds is rated with §6, and the rating decides where it goes (Q91, doc 15
+   §7):
+   - **Medium, Low or Info** — **real**; fix it as any other finding.
+   - **Critical or High** — **withheld**. Do not discuss it further on the
+     PR: no fix commit, no explanation in the reply, no issue. Record it as a
+     draft advisory with `scripts/gh-rest.sh advisory-create` (severity from
+     §6, the description naming the entry point, attacker and path), tell the
+     maintainer the id and that `orchestrate --advisory <id>` fixes it, and
+     reply on the PR with one neutral line that it is tracked outside this
+     review. A finding in the same round that shares its root cause is
+     withheld too.
 
 ## Choose the fix path
 
@@ -255,6 +275,7 @@ No CodeRabbit comment is left unanswered. For each:
   `pulls/<n>/comments/<comment_id>/replies`) do not need it.
 - **False positive** → reply with the concrete reason (cite the code/doc
   that shows the concern doesn't apply).
+- **Withheld** → the one neutral line from Triage, nothing else.
 - **Deferred / out of scope for this PR** → reply with the issue number
   it now lives on (see next section).
 

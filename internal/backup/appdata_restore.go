@@ -11,6 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
 // AppdataRestoreRequest names one archive on one destination and the
@@ -254,12 +258,64 @@ func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, des
 	return nil
 }
 
+// heldDirs holds a descriptor for each directory that contains one of
+// the directories being restored, opened once with no link followed in any
+// component and kept for the whole restore. The restored tree is created,
+// unpacked, swapped and removed through them, never by re-resolving a path,
+// so a parent replaced by a link after it was opened changes nothing.
+type heldDirs struct {
+	fds map[string]int
+}
+
+// parent returns the held descriptor of the directory containing path and
+// path's name in it, opening the directory the first time.
+func (p *heldDirs) parent(path string) (int, string, error) {
+	dir := filepath.Dir(path)
+	fd, ok := p.fds[dir]
+	if !ok {
+		var err error
+		if fd, err = beneath.OpenResolvedDir(dir); err != nil {
+			return -1, "", fmt.Errorf("opening %s: %w", dir, err)
+		}
+		if p.fds == nil {
+			p.fds = map[string]int{}
+		}
+		p.fds[dir] = fd
+	}
+	return fd, filepath.Base(path), nil
+}
+
+func (p *heldDirs) close() {
+	for _, fd := range p.fds {
+		_ = unix.Close(fd)
+	}
+	p.fds = nil
+}
+
+// beforeAppdataParents and afterAppdataParents, when set, run just before
+// replaceAppdata opens the directories it works in and just after, so a test
+// can rearrange the tree at those moments.
+var beforeAppdataParents, afterAppdataParents func()
+
 // replaceAppdata unpacks the archive next to each live directory and swaps
 // it in.
 func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader) error {
 	id, err := randomID()
 	if err != nil {
 		return err
+	}
+	parents := &heldDirs{}
+	defer parents.close()
+	if beforeAppdataParents != nil {
+		beforeAppdataParents()
+	}
+	for _, d := range hdr.Dirs {
+		if _, _, err := parents.parent(d); err != nil {
+			return err
+		}
+	}
+	if afterAppdataParents != nil {
+		afterAppdataParents()
 	}
 	fresh := make([]string, len(hdr.Dirs))
 	swaps := make([]appdataSwap, len(hdr.Dirs))
@@ -269,30 +325,53 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 	}
 	removeFresh := func() {
 		for _, f := range fresh {
-			_ = os.RemoveAll(f)
+			_ = parents.removeAll(f)
 		}
 	}
 	_, _ = fmt.Fprintf(out, "restoring %s\n", hdr.Container)
-	if err := extractAppdata(ctx, archive, hdr, fresh); err != nil {
+	if err := parents.extract(ctx, archive, hdr, fresh); err != nil {
 		removeFresh()
 		return fmt.Errorf("unpacking the archive: %w", err)
 	}
 	for _, f := range fresh {
-		if err := syncAppdataTree(f); err != nil {
+		if err := parents.syncTree(f); err != nil {
 			removeFresh()
 			return err
 		}
 	}
-	if err := swapAppdataDirs(swaps); err != nil {
+	if err := parents.swap(swaps); err != nil {
 		removeFresh()
 		return err
 	}
 	for _, s := range swaps {
-		if err := os.RemoveAll(s.old); err != nil {
+		if err := parents.removeAll(s.old); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			_, _ = fmt.Fprintf(out, "warning: the appdata that was replaced is still at %s: %v\n", s.old, err)
 		}
 	}
 	return nil
+}
+
+// removeAll removes the tree at path, which must be a sibling of the
+// directories this restore holds, relative to its held parent.
+func (p *heldDirs) removeAll(path string) error {
+	parent, name, err := p.parent(path)
+	if err != nil {
+		return err
+	}
+	return beneath.RemoveAll(parent, name)
+}
+
+func (p *heldDirs) syncTree(path string) error {
+	parent, name, err := p.parent(path)
+	if err != nil {
+		return err
+	}
+	fd, err := beneath.Open(parent, name, unix.O_RDONLY|unix.O_DIRECTORY)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	return syncAppdataTree(fd, path)
 }
 
 func randomID() (string, error) {
@@ -344,58 +423,81 @@ type appdataSwap struct {
 	live, fresh, old string
 }
 
-// swapAppdataDirs puts each fresh tree in place of its live directory,
-// keeping the live one at old. If any step fails, everything already
-// swapped is put back, so the live appdata is either all replaced or all
-// as it was.
-func swapAppdataDirs(swaps []appdataSwap) error {
+// swap puts each fresh tree in place of its live directory, keeping the
+// live one at old, all of which are siblings in one held parent. If any
+// step fails, everything already swapped is put back, so the live appdata
+// is either all replaced or all as it was.
+func (p *heldDirs) swap(swaps []appdataSwap) error {
 	for i, s := range swaps {
-		if err := swapOne(s); err != nil {
-			if rerr := rollbackSwaps(swaps[:i]); rerr != nil {
+		if err := p.swapOne(s); err != nil {
+			if rerr := p.rollback(swaps[:i]); rerr != nil {
 				return fmt.Errorf("swapping in %s: %w (and putting the earlier ones back failed: %w)", s.live, err, rerr)
 			}
 			return fmt.Errorf("swapping in %s: %w", s.live, err)
 		}
 	}
 	for _, s := range swaps {
-		if err := fsyncDir(filepath.Dir(s.live)); err != nil {
+		parent, _, err := p.parent(s.live)
+		if err != nil {
 			return err
+		}
+		if err := unix.Fsync(parent); err != nil {
+			return fmt.Errorf("syncing directory %s: %w", filepath.Dir(s.live), err)
 		}
 	}
 	return nil
 }
 
-func swapOne(s appdataSwap) error {
-	_, err := os.Lstat(s.live)
-	switch {
+func renameat(parent int, from, to string) error {
+	if err := unix.Renameat(parent, from, parent, to); err != nil {
+		return fmt.Errorf("renaming %s to %s: %w", from, to, err)
+	}
+	return nil
+}
+
+func (p *heldDirs) swapOne(s appdataSwap) error {
+	parent, live, err := p.parent(s.live)
+	if err != nil {
+		return err
+	}
+	fresh, old := filepath.Base(s.fresh), filepath.Base(s.old)
+	var st unix.Stat_t
+	switch err := unix.Fstatat(parent, live, &st, unix.AT_SYMLINK_NOFOLLOW); {
 	case err == nil:
-		if err := os.Rename(s.live, s.old); err != nil {
+		if err := renameat(parent, live, old); err != nil {
 			return err
 		}
-		if err := os.Rename(s.fresh, s.live); err != nil {
-			if rerr := os.Rename(s.old, s.live); rerr != nil {
+		if err := renameat(parent, fresh, live); err != nil {
+			if rerr := renameat(parent, old, live); rerr != nil {
 				return fmt.Errorf("%w (and putting %s back failed: %w)", err, s.live, rerr)
 			}
 			return err
 		}
 		return nil
-	case errors.Is(err, fs.ErrNotExist):
-		return os.Rename(s.fresh, s.live)
+	case errors.Is(err, unix.ENOENT):
+		return renameat(parent, fresh, live)
 	default:
-		return err
+		return fmt.Errorf("reading %s: %w", s.live, err)
 	}
 }
 
-func rollbackSwaps(done []appdataSwap) error {
+func (p *heldDirs) rollback(done []appdataSwap) error {
 	var errs []error
 	for i := len(done) - 1; i >= 0; i-- {
 		s := done[i]
-		if err := os.Rename(s.live, s.fresh); err != nil {
+		parent, live, err := p.parent(s.live)
+		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if _, err := os.Lstat(s.old); err == nil {
-			if err := os.Rename(s.old, s.live); err != nil {
+		fresh, old := filepath.Base(s.fresh), filepath.Base(s.old)
+		if err := renameat(parent, live, fresh); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		var st unix.Stat_t
+		if err := unix.Fstatat(parent, old, &st, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+			if err := renameat(parent, old, live); err != nil {
 				errs = append(errs, err)
 			}
 		}

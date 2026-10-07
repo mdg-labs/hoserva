@@ -182,3 +182,96 @@ func TestWalker_OpenedErrorDropsTheDirectoryAndIsReportedAgain(t *testing.T) {
 		t.Fatalf("opened called %d times for a, want it again on the second walk", calls)
 	}
 }
+
+func TestOpenResolvedDir_RefusesALinkInAnyComponentTheLastIncluded(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	mkdirs(t, base, "real/inner")
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "real"), filepath.Join(base, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	fd, err := OpenResolvedDir(filepath.Join(base, "real", "inner"))
+	if err != nil {
+		t.Fatalf("OpenResolvedDir(real directory) = %v", err)
+	}
+	var want, got unix.Stat_t
+	if err := unix.Stat(filepath.Join(base, "real", "inner"), &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Fstat(fd, &got); err != nil {
+		t.Fatal(err)
+	}
+	_ = unix.Close(fd)
+	if got.Ino != want.Ino || got.Dev != want.Dev {
+		t.Fatalf("the descriptor is not the directory asked for: %+v vs %+v", got, want)
+	}
+
+	for _, p := range []string{
+		filepath.Join(base, "link"),
+		filepath.Join(base, "alias"),
+		filepath.Join(base, "alias", "inner"),
+	} {
+		if fd, err := OpenResolvedDir(p); !errors.Is(err, ErrSymlink) {
+			if err == nil {
+				_ = unix.Close(fd)
+			}
+			t.Errorf("OpenResolvedDir(%s) = %v, want ErrSymlink", p, err)
+		}
+	}
+	if _, err := OpenResolvedDir(filepath.Join(base, "missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("OpenResolvedDir(missing) = %v, want ErrNotExist", err)
+	}
+	if _, err := OpenResolvedDir("relative/dir"); err == nil {
+		t.Error("OpenResolvedDir(relative path) succeeded")
+	}
+}
+
+func TestNewWalkerAt_WalksBeneathTheDescriptorItWasGivenAndOwnsIt(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "a/b")
+	fd, err := OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWalkerAt(fd)
+	if w.Root() != fd {
+		t.Fatalf("Root() = %d, want %d", w.Root(), fd)
+	}
+	dfd, err := w.Dir("a/b", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkdirat(dfd, "made", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(t, filepath.Join(root, "a", "b", "made")) {
+		t.Fatal("the directory was not made beneath the walker's root")
+	}
+	w.Close()
+	if err := unix.Fstat(fd, &unix.Stat_t{}); !errors.Is(err, unix.EBADF) {
+		t.Fatalf("Fstat after Close = %v, want EBADF: the walker owns its root", err)
+	}
+}
+
+func TestReadNames_ListsADirectoryAndLeavesItsDescriptorOpen(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "d", "e")
+	fd := openTestRoot(t, root)
+	names, err := ReadNames(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("ReadNames = %v, want d and e", names)
+	}
+	if err := unix.Fstat(fd, &unix.Stat_t{}); err != nil {
+		t.Fatalf("the descriptor was closed by ReadNames: %v", err)
+	}
+}

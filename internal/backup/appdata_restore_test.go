@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/beneath"
 	"github.com/mdg-labs/hoserva/internal/container"
 )
 
@@ -155,6 +156,26 @@ func TestAppdataRestore_ReplacesAppdataAfterSnapshottingTheCurrentState(t *testi
 	}
 }
 
+func TestAppdataRestore_RestoresIntoAnAbsentDirectoryWithoutWarning(t *testing.T) {
+	rig := newRestoreRig(t)
+	if err := os.RemoveAll(rig.dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want the archived v1", got)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "sub", "keep")); got != "kept" {
+		t.Fatalf("sub/keep = %q", got)
+	}
+	if strings.Contains(rig.out.String(), "warning:") {
+		t.Fatalf("a restore into an absent directory warned:\n%s", rig.out)
+	}
+}
+
 func TestAppdataRestore_CorruptArchiveIsRefusedBeforeAnythingIsStopped(t *testing.T) {
 	rig := newRestoreRig(t)
 	for key, data := range rig.rclone.Files() {
@@ -274,6 +295,12 @@ func TestAppdataRestore_RestartsTheContainerWhenExtractionFails(t *testing.T) {
 	if alpha.State != "running" {
 		t.Fatalf("alpha = %s after the failed restore, want running", alpha.State)
 	}
+}
+
+func swapAppdataDirs(swaps []appdataSwap) error {
+	dirs := &heldDirs{}
+	defer dirs.close()
+	return dirs.swap(swaps)
 }
 
 func TestSwapAppdataDirs_RollsBackWhatItAlreadySwappedWhenALaterOneFails(t *testing.T) {
@@ -495,5 +522,135 @@ func TestAppdataRestore_RefusesWhenARunningSharerIsOutsideTheJobsScope(t *testin
 	}
 	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("journal written by a refused restore: %v", err)
+	}
+}
+
+// outsideTree is a directory the restore has no business with, holding a
+// copy of the container's directory name so that a restore which reaches it
+// by name finds something to replace.
+type outsideTree struct{ dir string }
+
+func newOutsideTree(t *testing.T) outsideTree {
+	t.Helper()
+	o := outsideTree{dir: t.TempDir()}
+	for rel, content := range map[string]string{"alpha/config": "outside", "alpha/sub/keep": "outside-kept", "other": "outside-other"} {
+		p := filepath.Join(o.dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return o
+}
+
+func (o outsideTree) listing(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(o.dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		content := ""
+		if d.Type().IsRegular() {
+			content = readFile(t, p)
+		}
+		b.WriteString(p + " " + info.Mode().String() + " " + content + "\n")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+func (o outsideTree) requireUntouched(t *testing.T, want string) {
+	t.Helper()
+	if got := o.listing(t); got != want {
+		t.Fatalf("the directory outside the appdata location changed:\nbefore:\n%safter:\n%s", want, got)
+	}
+}
+
+// swapParentForLink moves the appdata location aside and puts a link to
+// outside where it was.
+func (r *restoreRig) swapParentForLink(t *testing.T, outside outsideTree) string {
+	t.Helper()
+	moved := r.appdata + ".moved"
+	if err := os.Rename(r.appdata, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside.dir, r.appdata); err != nil {
+		t.Fatal(err)
+	}
+	return moved
+}
+
+func TestAppdataRestore_RefusesWhenTheParentBecomesALinkAfterValidation(t *testing.T) {
+	rig := newRestoreRig(t)
+	if err := rig.store.CreateDestination(context.Background(), Destination{
+		ID: DefaultPoolID, Name: "Pool", Type: TypeLocal, Path: rig.poolDir, Enabled: true,
+		Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	outside := newOutsideTree(t)
+	want := outside.listing(t)
+	var moved string
+	beforeAppdataParents = func() { moved = rig.swapParentForLink(t, outside) }
+	t.Cleanup(func() { beforeAppdataParents = nil })
+
+	err := rig.restore(t)
+	if !errors.Is(err, beneath.ErrSymlink) {
+		t.Fatalf("Restore = %v, want a refusal because the parent is a link\n%s", err, rig.out)
+	}
+	outside.requireUntouched(t, want)
+	if got := readFile(t, filepath.Join(moved, "alpha", "config")); got != "v2-live" {
+		t.Fatalf("the live config = %q, want it untouched", got)
+	}
+	entries, err := os.ReadDir(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the live appdata location holds %d entries, want alpha only", len(entries))
+	}
+	alpha, _ := rig.engine.Inspect(context.Background(), "alpha")
+	if alpha.State != "running" {
+		t.Fatalf("alpha = %s after the refused restore, want it started again", alpha.State)
+	}
+}
+
+func TestAppdataRestore_WorksInTheDirectoriesItOpenedWhenAParentIsSwappedForALinkLater(t *testing.T) {
+	rig := newRestoreRig(t)
+	if err := rig.store.CreateDestination(context.Background(), Destination{
+		ID: DefaultPoolID, Name: "Pool", Type: TypeLocal, Path: rig.poolDir, Enabled: true,
+		Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	outside := newOutsideTree(t)
+	want := outside.listing(t)
+	var moved string
+	afterAppdataParents = func() { moved = rig.swapParentForLink(t, outside) }
+	t.Cleanup(func() { afterAppdataParents = nil })
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	outside.requireUntouched(t, want)
+	if got := readFile(t, filepath.Join(moved, "alpha", "config")); got != "v1" {
+		t.Fatalf("config = %q in the directory the restore opened, want the archived v1", got)
+	}
+	entries, err := os.ReadDir(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the directory the restore opened holds %d entries after the restore, want alpha only", len(entries))
 	}
 }

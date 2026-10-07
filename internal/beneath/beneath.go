@@ -10,6 +10,7 @@ package beneath
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -26,6 +27,33 @@ func OpenRoot(dir string) (int, error) {
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return -1, fmt.Errorf("open %s: %w", dir, err)
+	}
+	return fd, nil
+}
+
+// OpenResolvedDir opens the absolute, symlink-free directory path by walking
+// each of its components from "/" with O_NOFOLLOW, so no component, the last
+// included, is resolved by name a second time: a path that has since become
+// a symbolic link anywhere is an error wrapping ErrSymlink. The caller
+// closes the descriptor.
+func OpenResolvedDir(path string) (int, error) {
+	if !filepath.IsAbs(path) {
+		return -1, fmt.Errorf("%s is not an absolute path", path)
+	}
+	fd, err := OpenRoot("/")
+	if err != nil {
+		return -1, err
+	}
+	for _, c := range strings.Split(strings.Trim(filepath.ToSlash(path), "/"), "/") {
+		if c == "" {
+			continue
+		}
+		next, err := Open(fd, c, unix.O_RDONLY|unix.O_DIRECTORY)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, err
+		}
+		fd = next
 	}
 	return fd, nil
 }
@@ -82,6 +110,12 @@ func NewWalker(dir string) (*Walker, error) {
 		return nil, err
 	}
 	return &Walker{root: fd}, nil
+}
+
+// NewWalkerAt makes the directory descriptor dirfd a Walker's root. The
+// Walker owns dirfd from here on and closes it in Close.
+func NewWalkerAt(dirfd int) *Walker {
+	return &Walker{root: dirfd}
 }
 
 // Close releases every descriptor the Walker holds.

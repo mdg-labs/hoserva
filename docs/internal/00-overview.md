@@ -23,6 +23,7 @@
 | **12-repo-architecture.md** | Monorepo layout, `CLAUDE.md` strategy, agent-driven development workflow |
 | **13-open-questions.md** | **Every unsettled question, each with a recommended default** — the docs are written to those defaults |
 | **14-virtual-machines.md** | VM management scope, libvirt/KVM architecture, PCI/USB passthrough, Unraid VM migration |
+| **15-threat-model.md** | Assets, attackers, entry points mapped to code, security invariants, accepted residuals and the severity rubric |
 
 Where a section says *(Qn)*, the choice it describes is a recommended default from doc 13, not a settled decision.
 
