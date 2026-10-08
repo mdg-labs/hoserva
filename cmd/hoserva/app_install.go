@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,6 +23,7 @@ func appInstallCmd() *cobra.Command {
 		cpus        float64
 		memoryMiB   int
 		extraParams string
+		planDigest  string
 	)
 	cmd := &cobra.Command{
 		Use:   "install TEMPLATE-ID",
@@ -30,7 +32,8 @@ func appInstallCmd() *cobra.Command {
 			"and creates the stack under /var/lib/hoserva/stacks. The privileges the template's Compose content " +
 			"asks for are always printed, with every warning about the settings below. A network that does not " +
 			"exist is reported with the command that creates it and refuses the install; Hoserva never creates one. " +
-			"With --dry-run nothing is created: the same resolution is shown.",
+			"With --dry-run nothing is created: the same resolution is shown, with a plan digest. Pass that digest " +
+			"with --plan-digest to install only if the template is still what was shown.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			values, err := parseSets(sets)
@@ -46,6 +49,12 @@ func appInstallCmd() *cobra.Command {
 			}
 			if err := setContainerSettings(cmd, req, network, restart, cpus, memoryMiB, extraParams); err != nil {
 				return err
+			}
+			if cmd.Flags().Changed("plan-digest") {
+				if planDigest == "" {
+					return errors.New("--plan-digest needs a value; leave the flag out to install without checking the plan")
+				}
+				req.PlanDigest = apiv1.NewOptString(planDigest)
 			}
 			c, err := newAPIClient()
 			if err != nil {
@@ -65,7 +74,7 @@ func appInstallCmd() *cobra.Command {
 			}
 			res, err := c.InstallTemplate(apiCtx(), req, apiv1.InstallTemplateParams{ID: args[0]})
 			if err != nil {
-				return mapAPIErr(err)
+				return templateChangedErr(mapAPIErr(err))
 			}
 			if jsonOutput {
 				emit(res)
@@ -78,12 +87,23 @@ func appInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Stack name; defaults to the template id")
 	cmd.Flags().StringArrayVar(&sets, "set", nil, "Input value as NAME=VALUE; repeat for each input")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what the install would do without creating anything")
+	cmd.Flags().StringVar(&planDigest, "plan-digest", "", "Install only if the plan is still the one with this digest, as --dry-run printed it")
 	cmd.Flags().StringVar(&network, "network", "", "Network mode: bridge, host or the name of an existing Docker network (a template with one service)")
 	cmd.Flags().StringVar(&restart, "restart", "", "Restart policy: no, always, unless-stopped or on-failure")
 	cmd.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the service, from 0.01 to 1024 (a template with one service)")
 	cmd.Flags().IntVar(&memoryMiB, "memory-mib", 0, "Memory limit of the service in MiB, from 6 (a template with one service)")
 	cmd.Flags().StringVar(&extraParams, "extra-params", "", "docker run flags to translate into the service, such as \"--cap-add NET_ADMIN\"; never run by a shell (a template with one service)")
 	return cmd
+}
+
+// templateChangedErr says in plain words that an install bound to a plan
+// digest was refused because the template is no longer what was previewed.
+func templateChangedErr(err error) error {
+	var status *apiv1.ErrorStatusCode
+	if errors.As(err, &status) && status.Response.Code == "template_changed" {
+		return errors.New("the template changed since it was previewed, so nothing was installed; run the command with --dry-run to read what it is now, and pass its new plan digest with --plan-digest")
+	}
+	return err
 }
 
 // setContainerSettings puts the flags that were given into the request. A
@@ -185,6 +205,10 @@ func writeInstallSummary(w *strings.Builder, verb string, plan *apiv1.TemplateIn
 		fmt.Fprintln(w, "Nothing was created.")
 	} else {
 		fmt.Fprintln(w, "The stack is created but not started.")
+	}
+	fmt.Fprintf(w, "Plan digest: %s\n", safeText(plan.Digest))
+	if stack == nil {
+		fmt.Fprintln(w, "Pass it with --plan-digest to install only if the template is still what is shown here.")
 	}
 	fmt.Fprintln(w, "Inputs:")
 	for _, in := range plan.Inputs {

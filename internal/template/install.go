@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -19,6 +22,10 @@ import (
 
 	"github.com/mdg-labs/hoserva/internal/container"
 )
+
+// ErrTemplateChanged is returned by an install bound to the digest of a
+// previewed plan when the plan it would install now has another one.
+var ErrTemplateChanged = errors.New("template: the template changed since it was previewed")
 
 // StackCreator stores a stack and generates its files, reports the host
 // ports the existing stacks publish, started or not, and reads and replaces
@@ -64,6 +71,10 @@ type PlanRequest struct {
 	Values map[string]string
 	// Advanced are the container settings chosen beside the inputs.
 	Advanced Advanced
+	// PlanDigest, when non-nil, is the Digest of the plan the user was shown;
+	// an install whose plan differs is refused with ErrTemplateChanged, an
+	// empty value included. A preview ignores it.
+	PlanDigest *string
 }
 
 // ResolvedInput is one input with the value it resolves to.
@@ -110,8 +121,30 @@ type Plan struct {
 	// AdvancedAvailable is false for a template with several services, which
 	// network mode, resource limits and extra parameters cannot be applied to.
 	AdvancedAvailable bool
+	// Digest identifies what installing would write and ask the user to
+	// accept: the source, id, revision, Compose text and privilege summary.
+	// A preview and an install of the same request have the same one.
+	Digest string
 
 	env string
+}
+
+// planDigest is the hex SHA-256 of the fields of a plan that an approval of
+// it covers. It hashes a JSON encoding, so no field's text can run into the
+// next one's.
+func planDigest(p *Plan) string {
+	b, err := json.Marshal(struct {
+		Source     string
+		ID         string
+		Revision   int
+		Compose    string
+		Privileges []Privilege
+	}{p.Source, p.ID, p.Revision, p.Compose, p.Privileges})
+	if err != nil {
+		panic("template: encoding a plan digest: " + err.Error())
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // Preview resolves the inputs and computes the privilege summary. It creates
@@ -138,6 +171,9 @@ func (in *Installer) Install(ctx context.Context, req PlanRequest) (*Plan, conta
 	p, err := in.plan(ctx, req, true)
 	if err != nil {
 		return nil, container.Stack{}, err
+	}
+	if req.PlanDigest != nil && *req.PlanDigest != p.Digest {
+		return nil, container.Stack{}, fmt.Errorf("%w: %s is not the revision that was previewed", ErrTemplateChanged, p.ID)
 	}
 	st, err := in.Stacks.Create(ctx, container.NewStack{
 		Name:             p.Name,
@@ -266,7 +302,7 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 	for _, n := range sortedKeys(t.Block.Inputs) {
 		env.WriteString(n + "=" + dotenvValue(res.values[n]) + "\n")
 	}
-	return &Plan{
+	p := &Plan{
 		Source:     entry.Source,
 		ID:         t.Block.ID,
 		Revision:   t.Block.Revision,
@@ -279,7 +315,9 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 		Warnings:          adv.warnings,
 		AdvancedAvailable: adv.available,
 		env:               env.String(),
-	}, nil
+	}
+	p.Digest = planDigest(p)
+	return p, nil
 }
 
 // resolveRequest is what resolve is asked for. With installed set, the

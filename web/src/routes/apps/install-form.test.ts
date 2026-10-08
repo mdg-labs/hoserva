@@ -92,6 +92,7 @@ const plan = {
   warnings: [],
   advancedAvailable: true,
   compose: "",
+  digest: "",
 };
 
 describe("portConflict", () => {

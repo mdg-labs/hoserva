@@ -6064,7 +6064,12 @@ paths:
         `invalid_template_input` whose `details.input` names it, and a
         `networkMode` that names a network that does not exist with 409
         `network_missing` (the message holds the `docker network create`
-        command); nothing is written in either case.
+        command); nothing is written in either case. A request that carries
+        `planDigest` is refused with 409 `template_changed` when the plan
+        this install would write has another digest, because the catalog was
+        refreshed or another source supplied the template since the
+        preview; nothing is created, and a new preview shows what the
+        template is now.
       tags: [templates]
       x-hoserva-role: admin
       requestBody:
@@ -8754,6 +8759,18 @@ components:
             `extraParams`) and is never moved, and a port that cannot be checked
             is refused too. Under host networking Docker ignores published
             ports, so none is checked.
+        planDigest:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          # Design refs: doc 04 §7, doc 15 T7
+          description: >-
+            The `digest` of the plan the caller was shown. Only
+            `installTemplate` reads it; `previewTemplateInstall` ignores it.
+            When given and the plan the install would write now has another
+            digest, the install is refused with 409 `template_changed` before
+            anything is created. Absent installs whatever the template is now; a value that is not a
+            64-character lowercase hex digest is refused with 400, never read
+            as absent.
 
     TemplateInput:
       type: object
@@ -8902,10 +8919,17 @@ components:
 
     TemplateInstallPlan:
       type: object
-      required: [template, title, name, inputs, privileges, warnings, advancedAvailable, compose]
+      required: [template, title, name, inputs, privileges, warnings, advancedAvailable, compose, digest]
       properties:
         template:
           $ref: '#/components/schemas/StackTemplate'
+        digest:
+          type: string
+          description: >-
+            Hex SHA-256 over the plan's template source, id and revision, its
+            `compose` text and its `privileges`. A preview and an install of
+            the same request have the same digest. Pass it as `planDigest` to
+            `installTemplate` to install only what was shown.
         title:
           type: string
         name:

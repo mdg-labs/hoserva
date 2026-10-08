@@ -36,6 +36,8 @@ func mapTemplateErrorKind(name string, err error, verb string) error {
 		return &apiError{code: "template_invalid", statusCode: 422, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidInput):
 		return &apiError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
+	case errors.Is(err, template.ErrTemplateChanged):
+		return &apiError{code: "template_changed", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrNetworkMissing):
 		return &apiError{code: "network_missing", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrGPUUnavailable):
@@ -50,9 +52,10 @@ func mapTemplateErrorKind(name string, err error, verb string) error {
 
 func planRequest(id string, req *apiv1.TemplateInstallRequest) template.PlanRequest {
 	return template.PlanRequest{
-		ID:     id,
-		Name:   req.Name.Or(""),
-		Values: req.Values.Or(nil),
+		ID:         id,
+		Name:       req.Name.Or(""),
+		Values:     req.Values.Or(nil),
+		PlanDigest: optStringPtr(req.PlanDigest),
 		Advanced: template.Advanced{
 			NetworkMode: req.NetworkMode.Or(""),
 			Restart:     string(req.Restart.Or("")),
@@ -152,6 +155,7 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 
 		AdvancedAvailable: p.AdvancedAvailable,
 		Compose:           p.Compose,
+		Digest:            p.Digest,
 	}
 	for i, in := range p.Inputs {
 		ti := apiv1.TemplateInput{
@@ -189,6 +193,13 @@ func planToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 }
 
 func optFloat(o apiv1.OptFloat64) *float64 {
+	if v, ok := o.Get(); ok {
+		return &v
+	}
+	return nil
+}
+
+func optStringPtr(o apiv1.OptString) *string {
 	if v, ok := o.Get(); ok {
 		return &v
 	}

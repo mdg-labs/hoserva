@@ -1095,3 +1095,124 @@ func TestInstallWritesEveryInputAsAnEnvValueComposeReadsBackExactly(t *testing.T
 		})
 	}
 }
+
+const digestProbeHead = "x-hoserva:\n  schema: 1\n  id: probe\n  title: Probe\n  categories: [system]\n  icon: icon.svg\n  docs: https://example.com\n"
+
+func digestProbe(revision int, service string) string {
+	return "services:\n  probe:\n    image: x\n" + service + digestProbeHead + "  revision: " + strconv.Itoa(revision) + "\n"
+}
+
+func TestInstallRefusesATemplateThatChangedSinceThePreviewAndCreatesNothing(t *testing.T) {
+	in, stacks := newInstaller(t)
+	in.Catalog = MapCatalog{Source: "curated", Templates: map[string]string{"probe": digestProbe(1, "")}}
+	preview, err := in.Preview(context.Background(), PlanRequest{ID: "probe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Catalog = MapCatalog{Source: "curated", Templates: map[string]string{"probe": digestProbe(2, "    privileged: true\n")}}
+	_, _, err = in.Install(context.Background(), PlanRequest{ID: "probe", PlanDigest: &preview.Digest})
+	if !errors.Is(err, ErrTemplateChanged) {
+		t.Fatalf("err = %v, want ErrTemplateChanged", err)
+	}
+	if len(stacks.created) != 0 {
+		t.Errorf("a template that changed since the preview created %d stacks", len(stacks.created))
+	}
+
+	changed, err := in.Preview(context.Background(), PlanRequest{ID: "probe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := in.Install(context.Background(), PlanRequest{ID: "probe", PlanDigest: &changed.Digest}); err != nil {
+		t.Fatalf("install with the matching digest: %v", err)
+	}
+	if _, _, err := in.Install(context.Background(), PlanRequest{ID: "probe", Name: "probe2"}); err != nil {
+		t.Fatalf("install with no digest: %v", err)
+	}
+	if len(stacks.created) != 2 {
+		t.Errorf("created %d stacks, want 2", len(stacks.created))
+	}
+}
+
+func TestPlanDigestChangesWithWhatWouldBeInstalled(t *testing.T) {
+	digest := func(source string, revision int, service string) string {
+		t.Helper()
+		in, _ := newInstaller(t)
+		in.Catalog = MapCatalog{Source: source, Templates: map[string]string{"probe": digestProbe(revision, service)}}
+		p, err := in.Preview(context.Background(), PlanRequest{ID: "probe"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Digest == "" {
+			t.Fatal("plan has no digest")
+		}
+		return p.Digest
+	}
+	base := digest("curated", 1, "")
+	if again := digest("curated", 1, ""); again != base {
+		t.Errorf("the same template gave %s and %s", base, again)
+	}
+	for name, got := range map[string]string{
+		"source":     digest("mine", 1, ""),
+		"revision":   digest("curated", 2, ""),
+		"compose":    digest("curated", 1, "    command: [run]\n"),
+		"privileges": digest("curated", 1, "    privileged: true\n"),
+	} {
+		if got == base {
+			t.Errorf("a changed %s left the digest as it was", name)
+		}
+	}
+}
+
+func TestPlanDigestChangesWhenOnlyThePrivilegesChange(t *testing.T) {
+	in, _ := newInstaller(t)
+	a, err := in.Preview(context.Background(), PlanRequest{ID: "risky-agent", Values: map[string]string{"HOST_DATA": "/mnt/user/media"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := in.Preview(context.Background(), PlanRequest{ID: "risky-agent", Values: map[string]string{"HOST_DATA": "/etc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Digest == b.Digest {
+		t.Error("a path outside the pool adds a privilege and must change the digest")
+	}
+}
+
+func TestPreviewAndInstallOfTheSameRequestHaveTheSameDigest(t *testing.T) {
+	for _, req := range []PlanRequest{
+		{ID: "jellyfin"},
+		{ID: "risky-agent"},
+		{ID: "aio-notes", Values: map[string]string{}},
+	} {
+		in, _ := newInstaller(t)
+		preview, err := in.Preview(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: %v", req.ID, err)
+		}
+		installed, _, err := in.Install(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: %v", req.ID, err)
+		}
+		if preview.Digest != installed.Digest {
+			t.Errorf("%s: preview digest %s, install digest %s", req.ID, preview.Digest, installed.Digest)
+		}
+		req.PlanDigest = &preview.Digest
+		in2, _ := newInstaller(t)
+		if _, _, err := in2.Install(context.Background(), req); err != nil {
+			t.Errorf("%s: install bound to the preview's digest: %v", req.ID, err)
+		}
+	}
+}
+
+func TestInstallRefusesAnEmptyPlanDigestInsteadOfReadingItAsAbsent(t *testing.T) {
+	in, stacks := newInstaller(t)
+	in.Catalog = MapCatalog{Source: "curated", Templates: map[string]string{"probe": digestProbe(1, "    privileged: true\n")}}
+	empty := ""
+	_, _, err := in.Install(context.Background(), PlanRequest{ID: "probe", PlanDigest: &empty})
+	if !errors.Is(err, ErrTemplateChanged) {
+		t.Fatalf("err = %v, want ErrTemplateChanged", err)
+	}
+	if len(stacks.created) != 0 {
+		t.Errorf("an install bound to an empty digest created %d stacks", len(stacks.created))
+	}
+}

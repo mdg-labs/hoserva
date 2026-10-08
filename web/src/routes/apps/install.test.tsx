@@ -85,6 +85,7 @@ function plan(inputs: unknown[], extra: Record<string, unknown> = {}) {
     warnings: [],
     advancedAvailable: true,
     compose: "# written by the install\n" + COMPOSE,
+    digest: "digest-1",
     ...extra,
   };
 }
@@ -316,7 +317,7 @@ describe("InstallPage", () => {
     fireEvent.click(screen.getByRole("button", INSTALL_BUTTON));
     await waitFor(() => expect(callsTo("/templates/{id}/install")).toHaveLength(1));
     expect(callsTo("/templates/{id}/install")[0][1]).toEqual(
-      expect.objectContaining({ body: { values: { DB_PASSWORD: "hunter2-hunter2" } } }),
+      expect.objectContaining({ body: { values: { DB_PASSWORD: "hunter2-hunter2" }, planDigest: "digest-1" } }),
     );
   });
 
@@ -338,7 +339,7 @@ describe("InstallPage", () => {
 
     expect(await screen.findByText("jellyfin is installed.")).toBeInTheDocument();
     expect(callsTo("/templates/{id}/install")[0][1]).toEqual(
-      expect.objectContaining({ params: { path: { id: "jellyfin" } }, body: {} }),
+      expect.objectContaining({ params: { path: { id: "jellyfin" } }, body: { planDigest: "digest-1" } }),
     );
     await waitFor(() => expect(callsTo("/stacks/{name}/start")).toHaveLength(1));
     expect(callsTo("/stacks/{name}/start")[0][1]).toEqual({ params: { path: { name: "jellyfin" } } });
@@ -429,6 +430,34 @@ describe("InstallPage", () => {
     expect(screen.getByLabelText("Name of the app's setup")).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("tells the user the app changed, installs nothing and shows the new privilege summary before another install", async () => {
+    let previews = 0;
+    const risky = [{ kind: "privileged", service: "jellyfin", description: "Has full access to this server." }];
+    setup({
+      preview: () =>
+        ok(previews++ === 0 ? plan([PORT_INPUT, APPDATA_INPUT]) : plan([PORT_INPUT, APPDATA_INPUT], { digest: "digest-2", privileges: risky })),
+      install: (body) =>
+        (body as { planDigest?: string }).planDigest === "digest-1"
+          ? fail("template_changed", "template: the template changed since it was previewed")
+          : ok(installed()),
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", INSTALL_BUTTON));
+
+    expect(
+      await screen.findByText("This app changed after you reviewed it, so nothing was installed. The summary below is updated: read it again before installing."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Has full access to this server.")).toBeInTheDocument();
+    expect(callsTo("/templates/{id}/preview")).toHaveLength(2);
+    expect(callsTo("/stacks/{name}/start")).toHaveLength(0);
+    await waitFor(() => expect(screen.getByRole("button", INSTALL_BUTTON)).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("button", INSTALL_BUTTON));
+    await waitFor(() => expect(callsTo("/templates/{id}/install")).toHaveLength(2));
+    expect(callsTo("/templates/{id}/install")[1][1]).toEqual(expect.objectContaining({ body: { planDigest: "digest-2" } }));
+  });
+
   it("lets a renamed stack through to the install", async () => {
     setup({});
     renderPage();
@@ -440,7 +469,9 @@ describe("InstallPage", () => {
     fireEvent.click(screen.getByRole("button", INSTALL_BUTTON));
 
     await waitFor(() => expect(callsTo("/templates/{id}/install")).toHaveLength(1));
-    expect(callsTo("/templates/{id}/install")[0][1]).toEqual(expect.objectContaining({ body: { name: "media-jelly" } }));
+    expect(callsTo("/templates/{id}/install")[0][1]).toEqual(
+      expect.objectContaining({ body: { name: "media-jelly", planDigest: "digest-1" } }),
+    );
   });
 
   it("sends one install however fast the button is pressed", async () => {
@@ -663,7 +694,9 @@ describe("InstallPage", () => {
     await waitFor(() => expect(screen.getByRole("button", INSTALL_BUTTON)).toBeEnabled());
     fireEvent.click(screen.getByRole("button", INSTALL_BUTTON));
     await waitFor(() => expect(callsTo("/templates/{id}/install")).toHaveLength(1));
-    expect(callsTo("/templates/{id}/install")[0][1]).toEqual(expect.objectContaining({ body: { restart: "always" } }));
+    expect(callsTo("/templates/{id}/install")[0][1]).toEqual(
+      expect.objectContaining({ body: { restart: "always", planDigest: "digest-1" } }),
+    );
   });
 
   it("sends the resource limits and the extra parameters", async () => {

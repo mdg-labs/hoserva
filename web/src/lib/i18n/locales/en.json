@@ -87,6 +87,7 @@
       "loadFailed": "Could not load this app from the catalog.",
       "previewFailed": "Could not work out what installing this app would do.",
       "installFailed": "Could not install the app.",
+      "templateChanged": "This app changed after you reviewed it, so nothing was installed. The summary below is updated: read it again before installing.",
       "installUnconfirmed": "The app may have been installed anyway: check Installed apps before trying again.",
       "optional": "Optional",
       "submit": "Install {{title}}",

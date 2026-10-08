@@ -539,6 +539,8 @@ func mapMockTemplateErrorKind(name string, err error) error {
 		return &mockError{code: "template_invalid", statusCode: 422, message: err.Error()}
 	case errors.Is(err, template.ErrInvalidInput):
 		return &mockError{code: "invalid_template_input", statusCode: 400, message: err.Error()}
+	case errors.Is(err, template.ErrTemplateChanged):
+		return &mockError{code: "template_changed", statusCode: 409, message: err.Error()}
 	case errors.Is(err, template.ErrNetworkMissing):
 		return &mockError{code: "network_missing", statusCode: 409, message: err.Error()}
 	case errors.Is(err, container.ErrUnavailable):
@@ -764,7 +766,11 @@ func mockPlanRequest(id string, req *apiv1.TemplateInstallRequest) template.Plan
 	if v, ok := req.MemoryMiB.Get(); ok {
 		adv.MemoryMiB = &v
 	}
-	return template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil), Advanced: adv}
+	pr := template.PlanRequest{ID: id, Name: req.Name.Or(""), Values: req.Values.Or(nil), Advanced: adv}
+	if v, ok := req.PlanDigest.Get(); ok {
+		pr.PlanDigest = &v
+	}
+	return pr
 }
 
 func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
@@ -778,6 +784,7 @@ func mockPlanToAPI(p *template.Plan) apiv1.TemplateInstallPlan {
 
 		AdvancedAvailable: p.AdvancedAvailable,
 		Compose:           p.Compose,
+		Digest:            p.Digest,
 	}
 	for i, w := range p.Warnings {
 		out.Warnings[i] = apiv1.ConversionWarning{
