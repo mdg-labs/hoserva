@@ -144,10 +144,13 @@ others:
 - **Nothing is written to a public GitHub surface** — no issue, comment,
   label, status label, epic rollup, branch (step 7's `ci/<unit-id>` run
   included), pull request or any text naming it, beyond the `Refs:` trailer
-  of its landing commit (step 8). Verdicts, findings and the run log stay in
-  this session and the report (step 12). It has no `status:*` label, so
-  every `issue-status.sh` / `epic-status.sh` call in this skill, and in its
-  templates, is skipped for it.
+  of its landing commit (step 8). The one GitHub write allowed for it is the
+  private `advisory-comment` you post on the advisory itself once its fix is
+  pushed to `origin/dev` (step 8), which only people who can see the advisory
+  read; the executor and verifier make no advisory write. Verdicts, findings
+  and the run log stay in this session and the report (step 12). It has no
+  `status:*` label, so every `issue-status.sh` / `epic-status.sh` call in this
+  skill, and in its templates, is skipped for it.
 - **No comments, relationships or epic.** Step 1's comment and relationship
   reads, and step 1a (it always lands in `mdg-labs/hoserva`), do not apply.
 - **The readiness gate (step 1b) is read by hand** from the description, since
@@ -789,6 +792,19 @@ git cherry-pick -n FETCH_HEAD
   appears nowhere else in the message, and the message stays neutral
   (step 0a). The push is the same `git push origin dev`.
 
+  Once that push has succeeded, record the fix on the advisory itself: write
+  a short comment to a file in your scratchpad naming the **full** commit SHA
+  and its subject line, and saying that the commit is on `dev` and not yet on
+  `main` or in a release, then
+  ```
+  scripts/gh-rest.sh advisory-comment <GHSA-id> --body-file <file>
+  ```
+  Only the advisory's viewers see it. One comment per landed commit; a push
+  that was held back or rejected posts nothing. A failed comment is reported
+  with the id in step 12 and never retried blindly — read the advisory's
+  comments with `advisory-comments <GHSA-id>` first, since a failure after the
+  request was sent can leave the comment posted.
+
   For a `mdg-labs/hoserva-catalog` landing the trailers are
   `Fixes mdg-labs/hoserva#<issue-number>` and, only if it is really the
   epic's last, `Fixes mdg-labs/hoserva#<epic-number>` — never the bare
@@ -939,10 +955,12 @@ above.
   closer read even though they're already on `origin/dev`
 - **Commits held back by a fresh `blockedBy`** — landed locally, not pushed, because step 11 filed a follow-up against them during this run (their own list, even if empty: "none this run")
 - **Advisory targets** — each by its GHSA id (this report stays local):
-  landed commit and whether it reached `origin/dev`, or why it did not. For
+  landed commit and whether it reached `origin/dev`, or why it did not, and
+  whether its `advisory-comment` was posted (its `html_url`) or failed. For
   every one that landed: the fix is on `dev`, and once it reaches `main` the
-  maintainer runs `scripts/gh-rest.sh advisory-publish <GHSA-id>` — nothing
-  else records it (Q91). "none this run" when there were none.
+  maintainer runs `scripts/gh-rest.sh advisory-publish <GHSA-id>` — the
+  comment records the fix on `dev` only, not its release (Q91). "none this
+  run" when there were none.
 - What's blocked and why (`needs-sudo` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
 - Bundles and why
 - What step 11 routed: pulled into this run (issue → commit), deferred
@@ -1004,5 +1022,5 @@ report as your final message.
 - **Surfaced findings are filed and routed as they arrive** — pulled into this run when they belong to its scope, otherwise attached to the open epic they belong to.
 - **Every written artifact uses its template** — dispatch prompts, the executor's report, the verifier's comment.
 - **Every dispatch prompt is passed inline in full** — never as a pointer to a file holding it.
-- **An advisory unit writes nothing to a public GitHub surface.** No issue, comment, label, `status:*` call, epic rollup, `ci/` branch or pull-request text; its commit message is neutral and carries `Refs: <GHSA-id>` and no `Fixes`; its verifier is Opus and posts nothing; Discord gets a count only (step 0a, step 13).
+- **An advisory unit writes nothing to a public GitHub surface.** No issue, comment, label, `status:*` call, epic rollup, `ci/` branch or pull-request text; its commit message is neutral and carries `Refs: <GHSA-id>` and no `Fixes`; its verifier is Opus and posts nothing; the only GitHub write is your one private `advisory-comment` after its fix is pushed to `dev`; Discord gets a count only (step 0a, step 8, step 13).
 - **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message — unless it was started with `--no-discord`.

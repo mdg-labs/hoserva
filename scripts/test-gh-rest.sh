@@ -167,6 +167,18 @@ case "\$method \$path" in
     body='{"ghsa_id":"GHSA-2345-cfgh-jmpq"}' ;;
   "POST repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpq/forks")
     body='{}' ;;
+  "GET repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpq/comments?per_page=100")
+    body='[{"id":41,"body":"first note","html_url":"https://x/security/advisories/GHSA-2345-cfgh-jmpq#advisory-comment-41"},{"id":42,"body":"second note","html_url":"https://x/security/advisories/GHSA-2345-cfgh-jmpq#advisory-comment-42"}]' ;;
+  "GET repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpr/comments?per_page=100")
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  "GET repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpx/comments?per_page=100")
+    body="\$(hundred 100 400000)" ;;
+  "POST repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpq/comments")
+    body='{"id":43,"body":"posted","html_url":"https://x/security/advisories/GHSA-2345-cfgh-jmpq#advisory-comment-43"}' ;;
+  "POST repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpr/comments")
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  "POST repos/\$repo/security-advisories/GHSA-2345-cfgh-jmpv/comments")
+    body='{"id":44}' ;;
   "GET repos/\$repo/pulls/80/comments?per_page=100&page=1")
     body='[{"id":1,"body":"inline finding"}]' ;;
   *)
@@ -435,6 +447,88 @@ refused() {
   set -e
   assert_eq "$([ "$rc" -ne 0 ] && echo refused)" "refused" "$why"
 }
+# Advisory comments: an endpoint GitHub does not document.
+out="$(run advisory-comments "$GHSA" --jq '[.[].id]')"
+assert_eq "$out" "[41,42]" "advisory-comments lists the advisory's comments"
+: >"$LOG"
+out="$(run advisory-comments "$GHSA")"
+assert_eq "$(jq 'length' <<<"$out")" "2" "advisory-comments without --jq prints the whole array"
+assert_contains "$LOG" "api repos/$REPO/security-advisories/$GHSA/comments?per_page=100" "advisory-comments GETs the advisory's comments endpoint"
+assert_not_contains "$LOG" "--method" "advisory-comments only reads"
+
+set +e
+run advisory-comments GHSA-2345-cfgh-jmpr >/dev/null 2>"$work/adv-cmt.err"
+rc=$?
+set -e
+assert_eq "$([ "$rc" -ne 0 ] && echo failed)" "failed" "advisory-comments fails when the request fails"
+if ! grep -q "GHSA-2345-cfgh-jmpr" "$work/adv-cmt.err"; then
+  note "FAIL: the advisory-comments failure should name the advisory id"
+  fail=1
+fi
+set +e
+run advisory-comments GHSA-2345-cfgh-jmpx >/dev/null 2>"$work/adv-cmt-full.err"
+rc=$?
+set -e
+assert_eq "$([ "$rc" -ne 0 ] && echo refused)" "refused" "a full page of advisory comments is refused, not returned as if complete"
+if ! grep -q "may be only the first page" "$work/adv-cmt-full.err"; then
+  note "FAIL: the full-page refusal of advisory-comments should say why"
+  fail=1
+fi
+
+# shellcheck disable=SC2016
+printf 'Fix on dev: abc "quoted" $(not run) `ticks`\nsecond line\n' >"$work/comment.md"
+: >"$LOG"
+out="$(run advisory-comment "$GHSA" --body-file "$work/comment.md")"
+assert_eq "$out" "https://x/security/advisories/$GHSA#advisory-comment-43" "advisory-comment prints the new comment's html_url"
+assert_contains "$LOG" "api --method POST repos/$REPO/security-advisories/$GHSA/comments --input -" "advisory-comment POSTs to the advisory's comments endpoint"
+body_line="$(grep '^body: ' "$LOG")"
+assert_eq "$(jq -c 'keys' <<<"${body_line#body: }")" '["body"]' "advisory-comment sends only a body field"
+assert_eq "$(jq -r '.body' <<<"${body_line#body: }")" "$(cat "$work/comment.md")" "advisory-comment carries the file verbatim, metacharacters included"
+
+: >"$LOG"
+out="$(run advisory-comment --dry-run "$GHSA" --body-file "$work/comment.md")"
+assert_eq "$(head -n1 <<<"$out")" "POST repos/$REPO/security-advisories/$GHSA/comments" "advisory-comment --dry-run prints the method and path"
+assert_eq "$(tail -n1 <<<"$out" | jq -r '.body')" "$(cat "$work/comment.md")" "advisory-comment --dry-run prints the JSON body"
+assert_eq "$(wc -c <"$LOG" | tr -d ' ')" "0" "advisory-comment --dry-run never calls gh"
+
+set +e
+run advisory-comment GHSA-2345-cfgh-jmpr --body-file "$work/comment.md" >/dev/null 2>"$work/adv-post.err"
+rc=$?
+set -e
+assert_eq "$([ "$rc" -ne 0 ] && echo failed)" "failed" "advisory-comment fails when the request fails"
+if ! grep -q "GHSA-2345-cfgh-jmpr" "$work/adv-post.err"; then
+  note "FAIL: the advisory-comment failure should name the advisory id"
+  fail=1
+fi
+set +e
+run advisory-comment GHSA-2345-cfgh-jmpv --body-file "$work/comment.md" >/dev/null 2>"$work/adv-nourl.err"
+rc=$?
+set -e
+assert_eq "$([ "$rc" -ne 0 ] && echo failed)" "failed" "advisory-comment fails when the response carries no html_url"
+if ! grep -q "GHSA-2345-cfgh-jmpv" "$work/adv-nourl.err"; then
+  note "FAIL: the missing-html_url failure should name the advisory id"
+  fail=1
+fi
+
+: >"$work/empty.md"
+printf ' \n\t\n' >"$work/blank.md"
+: >"$LOG"
+refused "advisory-comment refuses a missing body file" advisory-comment "$GHSA" --body-file "$work/missing.md"
+refused "advisory-comment refuses an empty body file" advisory-comment "$GHSA" --body-file "$work/empty.md"
+refused "advisory-comment refuses a whitespace-only body file" advisory-comment "$GHSA" --body-file "$work/blank.md"
+refused "advisory-comment refuses a directory as the body file" advisory-comment "$GHSA" --body-file "$work"
+refused "advisory-comment needs --body-file" advisory-comment "$GHSA"
+refused "advisory-comment needs an id" advisory-comment --body-file "$work/comment.md"
+refused "advisory-comment refuses a non-GHSA id" advisory-comment "../issues/1" --body-file "$work/comment.md"
+refused "advisory-comment refuses an unknown flag" advisory-comment "$GHSA" --body-file "$work/comment.md" --bogus
+refused "advisory-comment refuses a second positional argument" advisory-comment "$GHSA" extra --body-file "$work/comment.md"
+refused "advisory-comment refuses --body-file with no value" advisory-comment "$GHSA" --body-file
+refused "advisory-comments refuses a non-GHSA id" advisory-comments 123
+refused "advisory-comments refuses an unknown flag" advisory-comments "$GHSA" --bogus
+refused "advisory-comments needs an id" advisory-comments
+assert_eq "$(wc -c <"$LOG" | tr -d ' ')" "0" "no refused advisory-comment command reached gh"
+
+: >"$LOG"
 refused "advisory-list refuses an unknown flag" advisory-list --bogus
 refused "advisory-list refuses an unknown state" advisory-list --state open
 refused "advisory-get refuses an unknown flag" advisory-get "$GHSA" --bogus
@@ -456,7 +550,7 @@ done
 assert_eq "$(wc -c <"$LOG" | tr -d ' ')" "0" "no refused advisory command reached gh"
 
 out="$(run help)"
-for sub in advisory-list advisory-get advisory-create advisory-update advisory-accept advisory-reject advisory-fork advisory-publish; do
+for sub in advisory-list advisory-get advisory-create advisory-update advisory-accept advisory-reject advisory-fork advisory-publish advisory-comments advisory-comment; do
   case "$out" in
     *"  $sub "*) : ;;
     *) note "FAIL: usage text does not list $sub"; fail=1 ;;

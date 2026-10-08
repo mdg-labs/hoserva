@@ -591,9 +591,10 @@ maintainer has approved *that* report in step 4.
      because the reporter chose the private path; moving it to a public issue is
      the maintainer's call, made with the reporter (`SECURITY.md`).
    - **Not confirmed** (`REFUTED`, `DUPLICATE …`, `ACCEPTED-RESIDUAL …`) —
-     `scripts/gh-rest.sh advisory-reject <ghsa_id>`. The helper has no way to
-     comment on an advisory, so the drafted `reporter_reply` is shown to the
-     maintainer to send from the advisory's page; it is never sent from here.
+     `scripts/gh-rest.sh advisory-reject <ghsa_id>`. The drafted `reporter_reply`
+     is shown to the maintainer and is never sent from here, by design; the
+     maintainer may send it from the advisory's page or with
+     `scripts/gh-rest.sh advisory-comment <ghsa_id> --body-file <file>`.
    A failed call is reported with the id and left as it is; the report stays in
    `triage` if it never got as far as `advisory-accept` or `advisory-reject`, so
    running the mode again picks it up. When the maintainer asks to preview,

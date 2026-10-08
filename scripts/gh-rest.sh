@@ -605,6 +605,56 @@ cmd_advisory_fork() {
   advisory_send POST "security-advisories/$id/forks" '{}' || die "advisory-fork: could not fork $id"
 }
 
+# GitHub does not document the comments endpoint of a repository security
+# advisory (observed working on 2026-10-07), so it may change without
+# notice. Like advisory-list it makes one request for the largest page and
+# refuses a full page rather than risk returning a truncated history.
+cmd_advisory_comments() {
+  [[ $# -ge 1 ]] || die "usage: advisory-comments <ghsa_id> [--jq f]"
+  local id=$1; shift
+  require_ghsa advisory-comments "$id"
+  parse_optional_jq "$@"
+  local out
+  out=$(gh api "repos/$REPO/security-advisories/$id/comments?per_page=100") \
+    || die "advisory-comments: could not read the comments of $id"
+  [[ $(jq 'length' <<<"$out") -lt 100 ]] \
+    || die "advisory-comments: 100 comments came back for $id, which may be only the first page"
+  print_json "$out" "$JQF"
+}
+
+# Posts one comment on an advisory (undocumented endpoint, see above) and
+# prints the new comment's html_url. The body file is read by jq itself.
+cmd_advisory_comment() {
+  local id="" bodyfile="" dry=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --body-file) [[ $# -ge 2 ]] || die "advisory-comment: --body-file needs a value"; bodyfile=$2; shift 2 ;;
+      --dry-run) dry=1; shift ;;
+      -*) die "advisory-comment: unrecognized argument: $1" ;;
+      *) [[ -z $id ]] || die "advisory-comment: unrecognized argument: $1"; id=$1; shift ;;
+    esac
+  done
+  [[ -n $id && -n $bodyfile ]] || die "usage: advisory-comment <ghsa_id> --body-file <f> [--dry-run]"
+  require_ghsa advisory-comment "$id"
+  [[ -f $bodyfile && -r $bodyfile ]] || die "advisory-comment: body file not found or unreadable: $bodyfile"
+  grep -q '[^[:space:]]' "$bodyfile" || die "advisory-comment: body file is empty: $bodyfile"
+  local body
+  body=$(jq -cn --rawfile body "$bodyfile" '{body: $body}') \
+    || die "advisory-comment: could not build the request body"
+  ADV_DRY_RUN=$dry
+  if [[ $dry == 1 ]]; then
+    advisory_send POST "security-advisories/$id/comments" "$body"
+    return 0
+  fi
+  local out url
+  out=$(advisory_send POST "security-advisories/$id/comments" "$body") \
+    || die "advisory-comment: could not comment on $id"
+  url=$(jq -r '.html_url // empty' <<<"$out") || url=""
+  [[ -n $url ]] \
+    || die "advisory-comment: the request for $id succeeded but the response had no html_url; read the comments with advisory-comments before posting again"
+  printf '%s\n' "$url"
+}
+
 # --- repo ------------------------------------------------------------
 
 cmd_repo_view() {
@@ -671,6 +721,10 @@ method, path and JSON body and sends nothing)
   advisory-reject <ghsa_id> [--dry-run]     to closed
   advisory-fork <ghsa_id> [--dry-run]       temporary private fork
   advisory-publish <ghsa_id> [--dry-run]
+  advisory-comments <ghsa_id> [--jq f]
+  advisory-comment <ghsa_id> --body-file f [--dry-run]   prints the new comment's html_url
+  (the two comment commands use an endpoint GitHub does not document,
+  observed working on 2026-10-07; it may change without notice)
 Repository
   repo-view [--jq f]
   label-list [--jq f]
@@ -713,6 +767,8 @@ main() {
     advisory-reject) cmd_advisory_reject "$@" ;;
     advisory-fork) cmd_advisory_fork "$@" ;;
     advisory-publish) cmd_advisory_publish "$@" ;;
+    advisory-comments) cmd_advisory_comments "$@" ;;
+    advisory-comment) cmd_advisory_comment "$@" ;;
     help | -h | --help) usage ;;
     *) die "unknown subcommand: $sub (gh-rest.sh help lists them)" ;;
   esac
