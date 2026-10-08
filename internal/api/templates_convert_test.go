@@ -14,7 +14,7 @@ const convertTemplateXML = `<?xml version="1.0"?>
   <Repository>example.com/files:2.0</Repository>
   <Network>br0</Network>
   <Overview>Serves files.</Overview>
-  <ExtraParams>--cap-add=NET_ADMIN --exotic-flag=1</ExtraParams>
+  <ExtraParams>--cap-add=NET_ADMIN --runtime=nvidia --gpus all --exotic-flag=1</ExtraParams>
   <Config Name="Data" Target="/data" Mode="rw" Type="Path">/mnt/disks/usb/data</Config>
   <Config Name="Token" Target="TOKEN" Description="API token" Mask="true" Type="Variable">abc</Config>
 </Container>`
@@ -56,8 +56,9 @@ func TestConvertUnraidTemplate_ReturnsComposeBesideTheSourceWithEveryWarning(t *
 	for _, p := range got.Privileges {
 		kinds[p.Kind] = true
 	}
-	if !kinds[apiv1.TemplatePrivilegeKindAddedCapabilities] || !kinds[apiv1.TemplatePrivilegeKindHostPath] {
-		t.Errorf("privileges = %+v, want added capabilities and a host path", got.Privileges)
+	if !kinds[apiv1.TemplatePrivilegeKindAddedCapabilities] || !kinds[apiv1.TemplatePrivilegeKindHostPath] ||
+		!kinds[apiv1.TemplatePrivilegeKindGpuReservation] || !kinds[apiv1.TemplatePrivilegeKindContainerRuntime] {
+		t.Errorf("privileges = %+v, want added capabilities, a host path, a GPU reservation and a container runtime", got.Privileges)
 	}
 	if got.Metadata.Title != "files" || got.Metadata.Overview.Or("") != "Serves files." {
 		t.Errorf("metadata = %+v", got.Metadata)

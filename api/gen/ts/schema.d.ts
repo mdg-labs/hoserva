@@ -4439,10 +4439,10 @@ export interface components {
         };
         TemplatePrivilege: {
             /** @enum {string} */
-            kind: "privileged" | "host_network" | "host_pid" | "host_cgroup" | "device_cgroup_rules" | "added_capabilities" | "confinement_disabled" | "group_add" | "docker_socket" | "host_path";
+            kind: "privileged" | "host_network" | "host_pid" | "host_cgroup" | "device_cgroup_rules" | "added_capabilities" | "confinement_disabled" | "group_add" | "docker_socket" | "host_path" | "gpu_reservation" | "container_runtime";
             /** @description The Compose service that asks for it. */
             service: string;
-            /** @description The path, process namespace, rules, capabilities, security options or groups concerned, comma-separated when there are several; absent for `privileged`, `host_network` and `host_cgroup`. */
+            /** @description The path, process namespace, rules, capabilities, security options, groups, device reservations or runtime concerned, comma-separated when there are several (the entries of `gpu_reservation` are separated by a semicolon, each one listing its own driver, count or device ids and capabilities with commas); absent for `privileged`, `host_network` and `host_cgroup`. */
             detail?: string;
             /** @description Plain-language explanation of what it grants. */
             description: string;

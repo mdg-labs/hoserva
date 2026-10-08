@@ -24,6 +24,8 @@ const KIND_LABELS: Record<TemplatePrivilege["kind"], string> = {
   group_add: "privilegeSummary.kinds.group_add",
   docker_socket: "privilegeSummary.kinds.docker_socket",
   host_path: "privilegeSummary.kinds.host_path",
+  gpu_reservation: "privilegeSummary.kinds.gpu_reservation",
+  container_runtime: "privilegeSummary.kinds.container_runtime",
 };
 
 export function PrivilegeSummary({
