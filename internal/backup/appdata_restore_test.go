@@ -649,8 +649,8 @@ func TestAppdataRestore_WorksInTheDirectoriesItOpenedWhenAParentIsSwappedForALin
 	outside := newOutsideTree(t)
 	want := outside.listing(t)
 	var moved string
-	afterAppdataParents = func() { moved = rig.swapParentForLink(t, outside) }
-	t.Cleanup(func() { afterAppdataParents = nil })
+	beforeAppdataUnpack = func() { moved = rig.swapParentForLink(t, outside) }
+	t.Cleanup(func() { beforeAppdataUnpack = nil })
 
 	if err := rig.restore(t); err != nil {
 		t.Fatalf("Restore: %v\n%s", err, rig.out)
@@ -741,8 +741,8 @@ func TestAppdataRestore_SwapsOnlyTheDirectoryIdentityRecordedBeforeTheUnpack(t *
 	rig.withLocalSnapshotDestination(t)
 	other := newOtherAppdata()
 	var aside string
-	afterAppdataParents = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
-	t.Cleanup(func() { afterAppdataParents = nil })
+	beforeAppdataUnpack = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	t.Cleanup(func() { beforeAppdataUnpack = nil })
 
 	if err := rig.restore(t); err == nil {
 		t.Fatalf("Restore succeeded over a directory other than the one it recorded\n%s", rig.out)
@@ -768,8 +768,8 @@ func TestAppdataRestore_DoesNotSwapOverADirectoryThatWasAbsentWhenRecorded(t *te
 		t.Fatal(err)
 	}
 	other := newOtherAppdata()
-	afterAppdataParents = func() { other.create(t, rig.dir) }
-	t.Cleanup(func() { afterAppdataParents = nil })
+	beforeAppdataUnpack = func() { other.create(t, rig.dir) }
+	t.Cleanup(func() { beforeAppdataUnpack = nil })
 
 	if err := rig.restore(t); err == nil {
 		t.Fatalf("Restore succeeded over a directory that appeared after it recorded none\n%s", rig.out)
@@ -852,13 +852,13 @@ func TestAppdataRestore_RemovesOnlyTheTreeItUnpackedWhenARefusedRestoreFindsTheN
 	rig.withLocalSnapshotDestination(t)
 	other := newOtherAppdata()
 	var aside string
-	afterAppdataParents = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	beforeAppdataUnpack = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
 	var replaced []string
 	beforeAppdataCleanup = func() {
 		beforeAppdataCleanup = nil
 		replaced = rig.replaceEveryRestoreNameWithOtherAppdata(t, newOtherAppdata())
 	}
-	t.Cleanup(func() { afterAppdataParents, beforeAppdataCleanup = nil, nil })
+	t.Cleanup(func() { beforeAppdataUnpack, beforeAppdataCleanup = nil, nil })
 
 	if err := rig.restore(t); err == nil {
 		t.Fatalf("Restore succeeded over a directory other than the one it recorded\n%s", rig.out)
@@ -1051,4 +1051,119 @@ func TestAppdataRestore_SwapsOnlyTheTreeItUnpacked(t *testing.T) {
 		t.Fatal("the hook did not find the restore's work directory")
 	}
 	other.requireIntactAt(t, tree)
+}
+
+func (r *restoreRig) requireNoPreRestoreSnapshot(t *testing.T) {
+	t.Helper()
+	for _, n := range r.archives(t, r.poolDir) {
+		if _, _, reason, _, ok := parseAppdataName(n); ok && reason == ReasonPreRestore {
+			t.Fatalf("a pre-restore snapshot was written to the pool destination: %s", n)
+		}
+	}
+}
+
+// requireRefusedBeforeAnyWrite checks that the restore failed in the snapshot
+// step, that the other application's directory is intact at the restored
+// directory's name and the directory the restore started from is intact where
+// it was moved, and that nothing was unpacked, swapped or snapshotted.
+func (r *restoreRig) requireRefusedBeforeAnyWrite(t *testing.T, err error, other otherAppdata, aside string) {
+	t.Helper()
+	if !errors.Is(err, ErrPreRestoreSnapshot) {
+		t.Fatalf("Restore = %v, want ErrPreRestoreSnapshot\n%s", err, r.out)
+	}
+	other.requireIntactAt(t, r.dir)
+	if aside != "" {
+		if got := readFile(t, filepath.Join(aside, "config")); got != "v2-live" {
+			t.Fatalf("the directory the restore started from: config = %q, want v2-live", got)
+		}
+		if got := readFile(t, filepath.Join(aside, "sub", "keep")); got != "kept" {
+			t.Fatalf("the directory the restore started from: sub/keep = %q", got)
+		}
+		r.requireNothingLeftNextToLive(t, "alpha", "alpha.aside")
+	} else {
+		r.requireNothingLeftNextToLive(t, "alpha")
+	}
+	r.requireNoPreRestoreSnapshot(t)
+	alpha, _ := r.engine.Inspect(context.Background(), "alpha")
+	if alpha.State != "running" {
+		t.Fatalf("alpha = %s after the refused restore, want it started again", alpha.State)
+	}
+}
+
+func TestAppdataRestore_RefusesToSnapshotADirectoryOtherThanTheRecordedOne(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var aside string
+	afterAppdataRecord = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	t.Cleanup(func() { afterAppdataRecord = nil })
+
+	err := rig.restore(t)
+	rig.requireRefusedBeforeAnyWrite(t, err, other, aside)
+}
+
+func TestAppdataRestore_RefusesASnapshotWhoseDirectoryChangesWhileItIsPacked(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var aside string
+	afterAppdataPack = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	t.Cleanup(func() { afterAppdataPack = nil })
+
+	err := rig.restore(t)
+	rig.requireRefusedBeforeAnyWrite(t, err, other, aside)
+}
+
+func TestAppdataRestore_RefusesToSnapshotADirectoryThatWasAbsentWhenRecorded(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	if err := os.RemoveAll(rig.dir); err != nil {
+		t.Fatal(err)
+	}
+	other := newOtherAppdata()
+	afterAppdataRecord = func() { other.create(t, rig.dir) }
+	t.Cleanup(func() { afterAppdataRecord = nil })
+
+	err := rig.restore(t)
+	rig.requireRefusedBeforeAnyWrite(t, err, other, "")
+}
+
+func TestAppdataRestore_RefusesToSnapshotADirectoryThatIsGoneSinceItWasRecorded(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	aside := rig.dir + ".aside"
+	afterAppdataRecord = func() {
+		if err := os.Rename(rig.dir, aside); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { afterAppdataRecord = nil })
+
+	err := rig.restore(t)
+	if !errors.Is(err, ErrPreRestoreSnapshot) {
+		t.Fatalf("Restore = %v, want ErrPreRestoreSnapshot\n%s", err, rig.out)
+	}
+	if _, err := os.Lstat(rig.dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("something was put at the name the restore found gone: %v", err)
+	}
+	if got := readFile(t, filepath.Join(aside, "config")); got != "v2-live" {
+		t.Fatalf("the directory the restore started from: config = %q, want v2-live", got)
+	}
+	rig.requireNothingLeftNextToLive(t, "alpha.aside")
+	rig.requireNoPreRestoreSnapshot(t)
+}
+
+func TestAppdataRestore_TheRevertBeforeAnUpdateRefusesADirectoryOtherThanTheRecordedOne(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	var aside string
+	afterAppdataRecord = func() { aside = rig.putOtherAppdataInPlaceOfLive(t, other) }
+	t.Cleanup(func() { afterAppdataRecord = nil })
+
+	snaps := UpdateSnapshots{Appdata: rig.svc}
+	ref := container.SnapshotRef{Archive: rig.archive.Name, DestinationID: rig.archive.DestinationID}
+	rig.out.Reset()
+	err := snaps.Restore(context.Background(), "alpha", ref, nil, rig.out)
+	rig.requireRefusedBeforeAnyWrite(t, err, other, aside)
 }

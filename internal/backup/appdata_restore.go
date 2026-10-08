@@ -112,7 +112,9 @@ func invalidArchivef(format string, args ...any) error {
 // (doc 10 §2). Nothing is changed until the archive has been fetched,
 // decrypted and verified end to end and every directory it names has been
 // checked to lie inside the appdata location. Then the container, and
-// every running container sharing those directories, is stopped, a snapshot of the appdata about to be replaced
+// every running container sharing those directories, is stopped, the
+// directories it will replace are opened by their parents and each one's
+// identity is recorded, a snapshot of the appdata about to be replaced
 // is written to the destinations, and only if that snapshot was written
 // somewhere is the appdata replaced: the archive is unpacked next to the
 // live directories first and swapped in by renames, so a failure while
@@ -188,10 +190,19 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 		}
 	}
 
-	if err := a.snapshotAppdata(ctx, out, dests, hdr, passphrase, staging, req.Archive); err != nil {
+	parents := &heldDirs{}
+	defer parents.close()
+	if beforeAppdataParents != nil {
+		beforeAppdataParents()
+	}
+	recorded, err := parents.recordAll(hdr.Dirs)
+	if err != nil {
 		return err
 	}
-	return a.replaceAppdata(ctx, out, plain, hdr)
+	if err := a.snapshotAppdata(ctx, out, dests, hdr, parents, recorded, passphrase, staging, req.Archive); err != nil {
+		return err
+	}
+	return a.replaceAppdata(ctx, out, plain, hdr, parents, recorded)
 }
 
 // fetchVerifiedAppdata is the read-only part of a restore that the preview
@@ -218,16 +229,24 @@ func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRe
 }
 
 // snapshotAppdata writes the appdata the restore is about to replace to
-// the destinations, and fails unless at least one holds it. Retention never
-// prunes the archive being restored, so a restore that fails after its
+// the destinations, and fails unless at least one holds it. Before packing,
+// and again after, it checks relative to the held parents that each restored
+// directory is still the entry recorded for it (or still absent, if none was
+// recorded) and refuses otherwise, before anything is uploaded. The packing
+// itself resolves the paths by name, so the two checks bracket it. Retention
+// never prunes the archive being restored, so a restore that fails after its
 // snapshot can be run again from the same archive.
-func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, passphrase, staging, archive string) error {
+func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, parents *heldDirs, recorded []liveIdentity, passphrase, staging, archive string) error {
+	if afterAppdataRecord != nil {
+		afterAppdataRecord()
+	}
+	if err := parents.requireRecorded(restoring.Dirs, recorded); err != nil {
+		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
+	}
 	var existing []string
-	for _, d := range restoring.Dirs {
-		if _, err := os.Lstat(d); err == nil {
+	for i, d := range restoring.Dirs {
+		if recorded[i].present {
 			existing = append(existing, d)
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%w: reading %s: %w", ErrPreRestoreSnapshot, d, err)
 		}
 	}
 	if len(existing) == 0 {
@@ -243,6 +262,13 @@ func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, des
 		Stopped: true, DatabaseImage: restoring.DatabaseImage, Reason: string(ReasonPreRestore), Dirs: existing,
 	}); err != nil {
 		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
+	}
+	if afterAppdataPack != nil {
+		afterAppdataPack()
+	}
+	if err := parents.requireRecorded(restoring.Dirs, recorded); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("%w: after packing: %w", ErrPreRestoreSnapshot, err)
 	}
 	if _, _, err := verifyAppdata(path); err != nil {
 		return fmt.Errorf("%w: verifying it: %w", ErrPreRestoreSnapshot, err)
@@ -292,10 +318,14 @@ func (p *heldDirs) close() {
 	p.fds = nil
 }
 
-// beforeAppdataParents and afterAppdataParents, when set, run just before
-// replaceAppdata opens the directories it works in and just after, so a test
-// can rearrange the tree at those moments.
-var beforeAppdataParents, afterAppdataParents func()
+// beforeAppdataParents, when set, runs in Restore just before it opens the
+// directories it works in and records the identity of each restored
+// directory. afterAppdataRecord runs just after the identities are recorded,
+// before the snapshot checks them, and afterAppdataPack after the snapshot is
+// packed, before it checks them again. beforeAppdataUnpack runs in
+// replaceAppdata after the snapshot, before anything is unpacked. A test uses
+// them to rearrange the tree at those moments.
+var beforeAppdataParents, afterAppdataRecord, afterAppdataPack, beforeAppdataUnpack func()
 
 // beforeAppdataMoveAside, when set, runs in swapOne after the live entry has
 // been checked and just before it is renamed to its old name.
@@ -342,6 +372,34 @@ func (p *heldDirs) recordLive(path string) (liveIdentity, error) {
 	default:
 		return liveIdentity{}, fmt.Errorf("reading %s: %w", path, err)
 	}
+}
+
+// recordAll records the identity of the entry at each of dirs.
+func (p *heldDirs) recordAll(dirs []string) ([]liveIdentity, error) {
+	recorded := make([]liveIdentity, len(dirs))
+	for i, d := range dirs {
+		var err error
+		if recorded[i], err = p.recordLive(d); err != nil {
+			return nil, err
+		}
+	}
+	return recorded, nil
+}
+
+// requireRecorded refuses unless the entry at each of dirs, read without
+// following a link relative to its held parent, is the one recorded for it:
+// the same device and inode, or absent where none was recorded.
+func (p *heldDirs) requireRecorded(dirs []string, recorded []liveIdentity) error {
+	for i, d := range dirs {
+		now, err := p.recordLive(d)
+		if err != nil {
+			return err
+		}
+		if now != recorded[i] {
+			return fmt.Errorf("%s is not the directory the restore recorded", d)
+		}
+	}
+	return nil
 }
 
 // restoreWork is the directory a restore creates next to a live directory
@@ -417,25 +475,15 @@ func (p *heldDirs) makeWork(path string) (restoreWork, error) {
 }
 
 // replaceAppdata unpacks the archive next to each live directory and swaps
-// it in.
-func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader) error {
+// it in, replacing only the entries recorded in recorded, which Restore read
+// through parents before the snapshot.
+func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader, parents *heldDirs, recorded []liveIdentity) error {
 	id, err := randomID()
 	if err != nil {
 		return err
 	}
-	parents := &heldDirs{}
-	defer parents.close()
-	if beforeAppdataParents != nil {
-		beforeAppdataParents()
-	}
-	recorded := make([]liveIdentity, len(hdr.Dirs))
-	for i, d := range hdr.Dirs {
-		if recorded[i], err = parents.recordLive(d); err != nil {
-			return err
-		}
-	}
-	if afterAppdataParents != nil {
-		afterAppdataParents()
+	if beforeAppdataUnpack != nil {
+		beforeAppdataUnpack()
 	}
 	works := make([]restoreWork, 0, len(hdr.Dirs))
 	swaps := make([]appdataSwap, len(hdr.Dirs))
