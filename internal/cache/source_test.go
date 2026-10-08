@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -520,4 +521,137 @@ func TestSourceStampMatches(t *testing.T) {
 			}
 		})
 	}
+}
+
+// identityOpenChecker is an open-file checker that knows which files are open
+// by their device and inode, as the real one does, and swaps a directory the
+// moment it is asked about a path or an identity: after the mover chose the
+// source and before the checker resolved anything, the window a share user
+// has. A question about a path resolves to whatever the path names by then.
+type identityOpenChecker struct {
+	open map[devIno]bool
+	swap func()
+}
+
+func openIdentity(t *testing.T, path string) map[devIno]bool {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	return map[devIno]bool{{dev: uint64(st.Dev), ino: st.Ino}: true}
+}
+
+func (c identityOpenChecker) IsOpen(_ context.Context, path string) (bool, error) {
+	c.swap()
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return false, nil
+	}
+	return c.open[devIno{dev: uint64(st.Dev), ino: st.Ino}], nil
+}
+
+func (c identityOpenChecker) IsOpenFile(_ context.Context, dev, ino uint64) (bool, error) {
+	c.swap()
+	return c.open[devIno{dev: dev, ino: ino}], nil
+}
+
+type identityOpenSnapshot struct{ identityOpenChecker }
+
+func (s identityOpenSnapshot) IsOpen(path string) (bool, error) {
+	return s.identityOpenChecker.IsOpen(context.Background(), path)
+}
+
+func (s identityOpenSnapshot) IsOpenFile(dev, ino uint64) (bool, error) {
+	return s.identityOpenChecker.IsOpenFile(context.Background(), dev, ino)
+}
+
+func (c identityOpenChecker) Snapshot(context.Context) (OpenSnapshot, error) {
+	return identityOpenSnapshot{c}, nil
+}
+
+func assertSkippedOpenNothingCopied(t *testing.T, report Report, rel, outside, movedDir, target string) {
+	t.Helper()
+	e, ok := resultFor(report, rel)
+	if !ok || e.Result != ResultSkippedOpen {
+		t.Errorf("entry for %s = %+v, want skipped as open", rel, e)
+	}
+	if _, err := os.Lstat(target); err == nil {
+		t.Errorf("%s was copied although its source is open", target)
+	}
+	assertFileContent(t, filepath.Join(movedDir, filepath.Base(rel)), swapReal)
+	assertFileContent(t, filepath.Join(outside, filepath.Base(rel)), "outside data")
+}
+
+func TestRun_OpenSourceIsSkippedWhenItsDirectoryIsSwappedBeforeTheOpenCheck(t *testing.T) {
+	s := newShare(t, "docs")
+	reports := filepath.Join(s.CachePath, "reports")
+	mustWrite(t, filepath.Join(reports, "Q3.txt"), swapReal)
+	outside := outsideWith(t, "Q3.txt")
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = identityOpenChecker{open: openIdentity(t, filepath.Join(reports, "Q3.txt")), swap: swapOnce(t, reports, outside)}
+	report, err := Run(context.Background(), []Share{s}, Config{SkipGracePeriod: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertSkippedOpenNothingCopied(t, report, "reports/Q3.txt", outside, reports+".moved", filepath.Join(s.ArrayPath, "reports", "Q3.txt"))
+}
+
+func TestRelocateToCache_OpenSourceIsSkippedWhenItsDirectoryIsSwappedBeforeTheOpenCheck(t *testing.T) {
+	s := relocateShare(t, "docs", 1)
+	reports := filepath.Join(s.Branches[0], "reports")
+	mustWrite(t, filepath.Join(reports, "Q3.txt"), swapReal)
+	outside := outsideWith(t, "Q3.txt")
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = identityOpenChecker{open: openIdentity(t, filepath.Join(reports, "Q3.txt")), swap: swapOnce(t, reports, outside)}
+	deps.Sync = func(context.Context, []parity.ManifestEntry) error { return nil }
+	report, err := RelocateToCache(context.Background(), s, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RelocateToCache: %v", err)
+	}
+	assertSkippedOpenNothingCopied(t, report, "reports/Q3.txt", outside, reports+".moved", filepath.Join(s.CachePath, "reports", "Q3.txt"))
+}
+
+func TestRunRebalance_OpenSourceIsSkippedWhenItsDirectoryIsSwappedBeforeTheOpenCheck(t *testing.T) {
+	plan, source, target := rebalanceSwapFixture(t)
+	reports := filepath.Join(source, "reports")
+	outside := outsideWith(t, "Q3.txt")
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Open = identityOpenChecker{open: openIdentity(t, filepath.Join(reports, "Q3.txt")), swap: swapOnce(t, reports, outside)}
+	deps.Sync = func(context.Context, []parity.ManifestEntry) error { return nil }
+	report, err := RunRebalance(context.Background(), plan, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	assertSkippedOpenNothingCopied(t, report, "reports/Q3.txt", outside, reports+".moved", filepath.Join(target, "reports", "Q3.txt"))
+}
+
+func TestPlanEvacuation_RunViaRunRebalance_OpenSourceIsSkippedWhenItsDirectoryIsSwappedBeforeTheOpenCheck(t *testing.T) {
+	base := t.TempDir()
+	disk1, disk2 := filepath.Join(base, "disk1"), filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	reports := filepath.Join(s.Branches[0], "reports")
+	mustWrite(t, filepath.Join(reports, "Q3.txt"), swapReal)
+	if err := os.MkdirAll(filepath.Join(s.Branches[1], "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := outsideWith(t, "Q3.txt")
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Usage = fakeUsage(map[string]DiskUsage{s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900}})
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if err != nil {
+		t.Fatalf("PlanEvacuation: %v", err)
+	}
+	deps.Open = identityOpenChecker{open: openIdentity(t, filepath.Join(reports, "Q3.txt")), swap: swapOnce(t, reports, outside)}
+	deps.Sync = func(context.Context, []parity.ManifestEntry) error { return nil }
+	report, err := RunRebalance(context.Background(), plan, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	assertSkippedOpenNothingCopied(t, report, "reports/Q3.txt", outside, reports+".moved", filepath.Join(s.Branches[1], "reports", "Q3.txt"))
 }

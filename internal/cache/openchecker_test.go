@@ -97,3 +97,51 @@ func TestDeps_ZeroValueSelectsProcOpenChecker(t *testing.T) {
 		t.Fatalf("an injected Open was replaced: got %T", got)
 	}
 }
+
+// The real snapshot answers for the held entry by its identity: the path
+// replaced by a link to another file does not change the answer, and an entry
+// whose identity cannot be read is an error, never "not open".
+func TestIsOpenSource_RealSnapshotAnswersByIdentityNotPath(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc/self/fd on this platform")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "held-open.bin")
+	other := filepath.Join(dir, "closed.bin")
+	for _, p := range []string{path, other} {
+		if err := os.WriteFile(p, []byte("x"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+
+	open, err := shareOpenChecker(context.Background(), ProcOpenChecker{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := isOpenSource(context.Background(), open, info, other); err != nil || !got {
+		t.Fatalf("isOpenSource(held entry, path of a closed file) = %v, %v, want true", got, err)
+	}
+	otherInfo, err := os.Lstat(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := isOpenSource(context.Background(), open, otherInfo, path); err != nil || got {
+		t.Fatalf("isOpenSource(closed entry, path of the open file) = %v, %v, want false", got, err)
+	}
+	if _, err := isOpenSource(context.Background(), open, fakeInfo{}, path); err == nil {
+		t.Fatal("isOpenSource of an entry with no device and inode succeeded, want an error")
+	}
+}
+
+type fakeInfo struct{ os.FileInfo }
+
+func (fakeInfo) Sys() any { return nil }

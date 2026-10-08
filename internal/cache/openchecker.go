@@ -145,6 +145,12 @@ func (s procOpenSnapshot) IsOpen(path string) (bool, error) {
 	return s[devIno{dev: uint64(st.Dev), ino: st.Ino}], nil
 }
 
+// IsOpenFile reports whether the file with this device and inode was in the
+// open set at snapshot time.
+func (s procOpenSnapshot) IsOpenFile(dev, ino uint64) (bool, error) {
+	return s[devIno{dev: dev, ino: ino}], nil
+}
+
 // Snapshot walks /proc once and returns an OpenSnapshot that can answer
 // IsOpen for any number of paths afterward without repeating the walk.
 func (c ProcOpenChecker) Snapshot(ctx context.Context) (OpenSnapshot, error) {
@@ -182,6 +188,7 @@ func (c ProcOpenChecker) Snapshot(ctx context.Context) (OpenSnapshot, error) {
 }
 
 var _ Snapshotter = ProcOpenChecker{}
+var _ fileOpenSnapshot = procOpenSnapshot(nil)
 
 // snapshotChecker adapts an OpenSnapshot back onto OpenChecker, so the
 // mover's pre-copy check can use whichever one a share's snapshot

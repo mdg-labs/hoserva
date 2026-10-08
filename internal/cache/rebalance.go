@@ -610,7 +610,7 @@ func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps D
 	}
 
 	if canBeOpen(srcInfo.Mode()) {
-		open, oerr := preCopyOpen.IsOpen(ctx, src.path)
+		open, oerr := src.isOpen(ctx, preCopyOpen)
 		if oerr != nil {
 			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: oerr.Error()}, nil
 		}

@@ -438,7 +438,7 @@ func moveEntry(ctx context.Context, s Share, rel string, src *sourceEntry, grace
 	}
 
 	if canBeOpen(srcInfo.Mode()) {
-		open, err := preCopyOpen.IsOpen(ctx, src.path)
+		open, err := src.isOpen(ctx, preCopyOpen)
 		if err != nil {
 			return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 		}

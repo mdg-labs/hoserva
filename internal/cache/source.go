@@ -198,15 +198,49 @@ type fileOpenChecker interface {
 	IsOpenFile(ctx context.Context, dev, ino uint64) (bool, error)
 }
 
-func isOpenSource(ctx context.Context, open OpenChecker, info os.FileInfo, root, rel string) (bool, error) {
-	if c, ok := open.(fileOpenChecker); ok {
-		st, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return false, fmt.Errorf("no device and inode for %s", rel)
+// fileOpenSnapshot is the same capability of an OpenSnapshot, which is what
+// the pre-copy check of a pass reads (shareOpenChecker).
+type fileOpenSnapshot interface {
+	IsOpenFile(dev, ino uint64) (bool, error)
+}
+
+// isOpenSource reports whether the entry described by info, found beneath a
+// held directory, is open. A checker, or a snapshot, that answers by identity
+// is asked for the device and inode of info; one that cannot is asked for
+// path. A source whose identity cannot be read is an error, never "not open".
+func isOpenSource(ctx context.Context, open OpenChecker, info os.FileInfo, path string) (bool, error) {
+	if sc, ok := open.(snapshotChecker); ok {
+		if snap, ok := sc.snap.(fileOpenSnapshot); ok {
+			dev, ino, err := identityOf(info, path)
+			if err != nil {
+				return false, err
+			}
+			return snap.IsOpenFile(dev, ino)
 		}
-		return c.IsOpenFile(ctx, uint64(st.Dev), uint64(st.Ino))
 	}
-	return open.IsOpen(ctx, filepath.Join(root, rel))
+	if c, ok := open.(fileOpenChecker); ok {
+		dev, ino, err := identityOf(info, path)
+		if err != nil {
+			return false, err
+		}
+		return c.IsOpenFile(ctx, dev, ino)
+	}
+	return open.IsOpen(ctx, path)
+}
+
+func identityOf(info os.FileInfo, path string) (dev, ino uint64, err error) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, fmt.Errorf("no device and inode for %s", path)
+	}
+	return uint64(st.Dev), st.Ino, nil
+}
+
+// isOpen asks open about the entry itself, by the identity the walk found it
+// with, so a directory swapped after the entry was held cannot redirect the
+// question to another file.
+func (s *sourceEntry) isOpen(ctx context.Context, open OpenChecker) (bool, error) {
+	return isOpenSource(ctx, open, s.info, s.path)
 }
 
 // sourceStamp is what a copy read of its source: the size and modification
@@ -273,7 +307,7 @@ func removeSource(ctx context.Context, root, rel string, deps Deps, entry Entry,
 		return entry
 	}
 	if canBeOpen(info.Mode()) {
-		open, err := isOpenSource(ctx, deps.Open, info, root, rel)
+		open, err := isOpenSource(ctx, deps.Open, info, filepath.Join(root, rel))
 		if err != nil {
 			entry.Result, entry.Err = ResultMovedPendingDelete, err.Error()
 			return entry

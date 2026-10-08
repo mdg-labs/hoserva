@@ -397,7 +397,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 	}
 
 	if canBeOpen(srcInfo.Mode()) {
-		open, oerr := preCopyOpen.IsOpen(ctx, src.path)
+		open, oerr := src.isOpen(ctx, preCopyOpen)
 		if oerr != nil {
 			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: oerr.Error()}, nil
 		}
