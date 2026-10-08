@@ -103,6 +103,20 @@ func code(script string) string {
 	return b.String()
 }
 
+// stagesFrom reports whether script invokes the stager with dir as its
+// second argument, the directory it reads the packages from.
+func stagesFrom(script, dir string) bool {
+	for _, line := range strings.Split(script, "\n") {
+		args := strings.Fields(line)
+		for i, a := range args {
+			if a == "scripts/release/stage-release-artifacts.sh" && i+2 < len(args) && strings.Trim(args[i+2], `"'`) == dir {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func stripComments(n *yaml.Node) {
 	n.HeadComment, n.LineComment, n.FootComment = "", "", ""
 	for _, c := range n.Content {
@@ -218,7 +232,7 @@ func check(data []byte) []string {
 		}
 		staged := false
 		for _, s := range j.Steps {
-			if strings.Contains(s.Run, "scripts/release/stage-release-artifacts.sh") && downloadPath != "" && strings.Contains(s.Run, downloadPath) {
+			if downloadPath != "" && stagesFrom(code(s.Run), downloadPath) {
 				staged = true
 			}
 		}
