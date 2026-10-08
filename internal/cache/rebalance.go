@@ -537,7 +537,7 @@ func rebalanceRecheckSafe(ctx context.Context, deps Deps, batchSize int) (bool, 
 }
 
 // rebalanceCopyBatch copies and verifies every file in batch (mover.go's
-// own copyMoveFile, reused unchanged — it already writes a temp-suffixed
+// own copyEntry, reused unchanged — it already writes a temp-suffixed
 // copy, verifies, fsyncs and renames it into place regardless of which
 // direction src and dst run) and returns the manifest the batch's own
 // guarded syncs need. It never touches a source file.
@@ -575,18 +575,19 @@ func rebalanceCopyBatch(ctx context.Context, batch []RebalanceMove, cfg Config, 
 // batch — is recognized (isSamePendingCopy) and folded back into the
 // manifest rather than copied again.
 func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps Deps, preCopyOpen OpenChecker) (entry *Entry, manifestEntry *parity.ManifestEntry) {
-	src := filepath.Join(mv.SourceBranch, mv.RelPath)
 	dst := filepath.Join(mv.TargetBranch, mv.RelPath)
 	sourceDisk := filepath.Dir(mv.SourceBranch)
 	targetDisk := filepath.Dir(mv.TargetBranch)
 
-	srcInfo, statErr := os.Lstat(src)
+	src, statErr := openSource(sourceDisk, filepath.Join(mv.Share, mv.RelPath))
 	if statErr != nil {
 		if errors.Is(statErr, fs.ErrNotExist) {
 			return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultSkippedGone}, nil
 		}
 		return &Entry{Share: mv.Share, Path: mv.RelPath, Result: ResultFailed, Err: statErr.Error()}, nil
 	}
+	defer src.Close()
+	srcInfo := src.info
 	kind := entryKind(srcInfo.Mode())
 	if srcInfo.Mode()&fs.ModeSocket != 0 {
 		return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultSkippedSocket, Reason: socketReason}, nil
@@ -596,7 +597,7 @@ func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps D
 	}
 
 	if dstInfo, derr := os.Lstat(dst); derr == nil {
-		same, checkErr := isSamePendingCopy(src, dst, srcInfo, dstInfo, cfg.VerifyChecksum)
+		same, checkErr := isSamePendingCopy(src, dst, dstInfo, cfg.VerifyChecksum)
 		if checkErr != nil {
 			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: checkErr.Error()}, nil
 		}
@@ -609,7 +610,7 @@ func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps D
 	}
 
 	if canBeOpen(srcInfo.Mode()) {
-		open, oerr := preCopyOpen.IsOpen(ctx, src)
+		open, oerr := preCopyOpen.IsOpen(ctx, src.path)
 		if oerr != nil {
 			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultFailed, Err: oerr.Error()}, nil
 		}
@@ -618,7 +619,7 @@ func rebalanceCopyItem(ctx context.Context, mv RebalanceMove, cfg Config, deps D
 		}
 	}
 
-	if err := copyMoveFile(src, dst, targetDisk, srcInfo, cfg, deps); err != nil {
+	if err := copyEntry(src, dst, targetDisk, cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
 			return &Entry{Share: mv.Share, Path: mv.RelPath, Kind: kind, Result: ResultConflict}, nil
 		}
@@ -662,7 +663,7 @@ func rebalanceDeleteBatch(ctx context.Context, deps Deps, hooks RunHooks, report
 // share a batch.
 func finishRebalanceDelete(ctx context.Context, me parity.ManifestEntry, deps Deps) Entry {
 	share, rel := splitManifestRelPath(me.RelPath)
-	return removeSource(ctx, me.SourceDisk, me.RelPath, deps, Entry{Share: share, Path: rel, Bytes: me.Size})
+	return removeSource(ctx, me.SourceDisk, me.RelPath, deps, Entry{Share: share, Path: rel, Bytes: me.Size}, sourceStamp{size: me.Size, mtime: me.MTime})
 }
 
 // splitManifestRelPath splits a ManifestEntry.RelPath ("<share>/<rel>",

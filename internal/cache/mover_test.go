@@ -1081,9 +1081,10 @@ func TestRemoveSource_ResolvesTheParentWithoutFollowingLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := testDeps(NewFakeOpenChecker())
+	stamp := stampOfPath(t, filepath.Join(root, "real", "f.txt"))
 
 	for _, rel := range []string{"link/f.txt", "alias/f.txt"} {
-		e := removeSource(context.Background(), root, rel, deps, Entry{})
+		e := removeSource(context.Background(), root, rel, deps, Entry{}, stamp)
 		if e.Result != ResultFailed || !strings.Contains(e.Err, "is a symbolic link") {
 			t.Errorf("removeSource(%s) = %+v, want failed naming the symlink", rel, e)
 		}
@@ -1094,13 +1095,13 @@ func TestRemoveSource_ResolvesTheParentWithoutFollowingLinks(t *testing.T) {
 		}
 	}
 
-	if e := removeSource(context.Background(), root, "real/f.txt", deps, Entry{}); e.Result != ResultMoved {
+	if e := removeSource(context.Background(), root, "real/f.txt", deps, Entry{}, stamp); e.Result != ResultMoved {
 		t.Errorf("removeSource(real/f.txt) = %+v, want moved", e)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "real", "f.txt")); !os.IsNotExist(err) {
 		t.Errorf("the source is still there: %v", err)
 	}
-	if e := removeSource(context.Background(), root, "real/f.txt", deps, Entry{}); e.Result != ResultFailed {
+	if e := removeSource(context.Background(), root, "real/f.txt", deps, Entry{}, stamp); e.Result != ResultFailed {
 		t.Errorf("removeSource of a missing source = %+v, want failed", e)
 	}
 }
@@ -1114,7 +1115,7 @@ func TestRemoveSource_UnlinksASymlinkSourceWithoutFollowingIt(t *testing.T) {
 	open := NewFakeOpenChecker()
 	open.SetOpen(filepath.Join(root, "ln"), true)
 
-	e := removeSource(context.Background(), root, "ln", testDeps(open), Entry{})
+	e := removeSource(context.Background(), root, "ln", testDeps(open), Entry{}, stampOfPath(t, filepath.Join(root, "ln")))
 	if e.Result != ResultMoved || e.Kind != "symlink" {
 		t.Errorf("removeSource = %+v, want a moved symlink", e)
 	}
@@ -1129,7 +1130,7 @@ func TestRemoveSource_AnOpenSourceIsKeptPendingDelete(t *testing.T) {
 	open := NewFakeOpenChecker()
 	open.SetOpen(filepath.Join(root, "d", "f.txt"), true)
 
-	e := removeSource(context.Background(), root, "d/f.txt", testDeps(open), Entry{})
+	e := removeSource(context.Background(), root, "d/f.txt", testDeps(open), Entry{}, stampOfPath(t, filepath.Join(root, "d", "f.txt")))
 	if e.Result != ResultMovedPendingDelete {
 		t.Errorf("removeSource = %+v, want moved_pending_delete", e)
 	}

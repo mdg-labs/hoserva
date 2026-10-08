@@ -10,7 +10,7 @@ import (
 )
 
 // renameNoReplace is renameat2(2) within the directory dirfd that fails if
-// newname already exists (RENAME_NOREPLACE). copyMoveFile uses it for the
+// newname already exists (RENAME_NOREPLACE). copyEntry uses it for the
 // final rename into the array so a file created there during the copy
 // cannot be silently discarded (doc 09 §2: a conflict is never
 // auto-resolved).
@@ -21,7 +21,7 @@ import (
 // asking mergerfs, but once that check finds nothing, completing the
 // rename itself needs flags support mergerfs doesn't have, and the syscall
 // fails outright with EINVAL — on every mergerfs version, not a gap a
-// mount option or version pin can close. copyMoveFile's tmp file and dst
+// mount option or version pin can close. copyEntry's tmp file and dst
 // are always same-directory siblings, so this EINVAL can only mean "the
 // destination filesystem can't carry the flag through", never rename(2)'s
 // unrelated "directory into its own subdirectory" EINVAL case.

@@ -168,7 +168,8 @@ func copySparse(out, in *os.File, size int64, hash io.Writer, holes bool) error 
 // descriptor opened on the node itself with O_PATH|O_NOFOLLOW, so nothing
 // it does follows a symlink. It never follows a symlink of the source and
 // never touches src.
-func copyNode(src, dst, dstRoot string, parentfd int, srcInfo os.FileInfo, deps Deps) error {
+func copyNode(src *sourceEntry, dst, dstRoot string, parentfd int, deps Deps) error {
+	srcInfo := src.info
 	name := filepath.Base(dst)
 	tmpName := name + tempSuffix + deps.UUID()
 	st, ok := srcInfo.Sys().(*syscall.Stat_t)
@@ -183,7 +184,7 @@ func copyNode(src, dst, dstRoot string, parentfd int, srcInfo os.FileInfo, deps 
 	switch kind {
 	case "symlink":
 		var err error
-		if linkTarget, err = os.Readlink(src); err != nil {
+		if linkTarget, err = src.readlink(); err != nil {
 			return fmt.Errorf("read symlink: %w", err)
 		}
 		if err := unix.Symlinkat(linkTarget, parentfd, tmpName); err != nil {
@@ -233,7 +234,7 @@ func copyNode(src, dst, dstRoot string, parentfd int, srcInfo os.FileInfo, deps 
 		if err := unix.Chmod(fdPath(nfd), perm); err != nil {
 			return fmt.Errorf("preserve mode: %w", err)
 		}
-		if err := copyXattrs(src, fdPath(nfd)); err != nil {
+		if err := src.copyXattrsTo(fdPath(nfd)); err != nil {
 			return err
 		}
 	}
@@ -297,13 +298,14 @@ func verifyNode(parentfd int, tmp string, nfd int, srcInfo os.FileInfo, linkTarg
 // sameNode reports whether dst is an earlier run's published copy of the
 // non-regular src: same type, same link target or device number. Size and
 // mtime are compared by the caller (isSamePendingCopy), as for a file.
-func sameNode(src, dst string, srcInfo, dstInfo os.FileInfo) (bool, error) {
+func sameNode(src *sourceEntry, dst string, dstInfo os.FileInfo) (bool, error) {
+	srcInfo := src.info
 	if srcInfo.Mode().Type() != dstInfo.Mode().Type() {
 		return false, nil
 	}
 	switch {
 	case srcInfo.Mode()&fs.ModeSymlink != 0:
-		a, err := os.Readlink(src)
+		a, err := src.readlink()
 		if err != nil {
 			return false, fmt.Errorf("read source symlink: %w", err)
 		}

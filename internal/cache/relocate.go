@@ -271,7 +271,7 @@ func RelocateToCache(ctx context.Context, share Share, cfg Config, deps Deps, ho
 }
 
 // relocateCopyPhase walks share.Branches in order, copying and verifying
-// every eligible file onto share.CachePath (copyMoveFile, reused
+// every eligible file onto share.CachePath (copyEntry, reused
 // unchanged from the mover — it already writes a temp-suffixed copy,
 // verifies it, fsyncs it and renames it into place regardless of which
 // direction src and dst run). It never touches a source file. Terminal
@@ -359,16 +359,17 @@ branchLoop:
 // call); the pre-unlink re-check inside finishRelocateDelete always uses
 // deps.Open directly instead, never preCopyOpen.
 func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string, cfg Config, deps Deps, preCopyOpen OpenChecker) (entry *Entry, manifestEntry *parity.ManifestEntry) {
-	src := filepath.Join(branch, rel)
 	dst := filepath.Join(share.CachePath, rel)
 
-	srcInfo, statErr := os.Lstat(src)
+	src, statErr := openSource(disk, filepath.Join(share.Name, rel))
 	if statErr != nil {
 		if errors.Is(statErr, fs.ErrNotExist) {
 			return &Entry{Share: share.Name, Path: rel, Result: ResultSkippedGone}, nil
 		}
 		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: statErr.Error()}, nil
 	}
+	defer src.Close()
+	srcInfo := src.info
 	kind := entryKind(srcInfo.Mode())
 	if srcInfo.Mode()&fs.ModeSocket != 0 {
 		return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultSkippedSocket, Reason: socketReason}, nil
@@ -383,7 +384,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 	// fold it back into the manifest, the same "duplicate, never a gap"
 	// principle Run's own resume logic follows.
 	if dstInfo, derr := os.Lstat(dst); derr == nil {
-		same, checkErr := isSamePendingCopy(src, dst, srcInfo, dstInfo, cfg.VerifyChecksum)
+		same, checkErr := isSamePendingCopy(src, dst, dstInfo, cfg.VerifyChecksum)
 		if checkErr != nil {
 			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: checkErr.Error()}, nil
 		}
@@ -396,7 +397,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 	}
 
 	if canBeOpen(srcInfo.Mode()) {
-		open, oerr := preCopyOpen.IsOpen(ctx, src)
+		open, oerr := preCopyOpen.IsOpen(ctx, src.path)
 		if oerr != nil {
 			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultFailed, Err: oerr.Error()}, nil
 		}
@@ -405,7 +406,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 		}
 	}
 
-	if err := copyMoveFile(src, dst, filepath.Dir(share.CachePath), srcInfo, cfg, deps); err != nil {
+	if err := copyEntry(src, dst, filepath.Dir(share.CachePath), cfg, deps); err != nil {
 		if errors.Is(err, errTargetAppeared) {
 			return &Entry{Share: share.Name, Path: rel, Kind: kind, Result: ResultConflict}, nil
 		}
@@ -452,7 +453,7 @@ func finishRelocateDelete(ctx context.Context, share Share, me parity.ManifestEn
 	// prefix back off for Entry.Path, which stays share-relative like
 	// every other Entry this package produces.
 	rel := strings.TrimPrefix(me.RelPath, share.Name+"/")
-	return removeSource(ctx, me.SourceDisk, me.RelPath, deps, Entry{Share: share.Name, Path: rel, Bytes: me.Size})
+	return removeSource(ctx, me.SourceDisk, me.RelPath, deps, Entry{Share: share.Name, Path: rel, Bytes: me.Size}, sourceStamp{size: me.Size, mtime: me.MTime})
 }
 
 // PrecheckResult is the open-file half of what a caller shows before
