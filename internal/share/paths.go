@@ -150,20 +150,8 @@ func removeConfined(fs FS, root, rel string) error {
 		return fmt.Errorf("%w: %q", ErrPathEscapes, rel)
 	}
 	dirTarget := filepath.Dir(target)
-	dirRel, err := filepath.Rel(resolvedRoot, dirTarget)
-	if err != nil || !pathInside(dirRel) {
-		// confineSharePathOnFS returns target unresolved (built from the
-		// raw root, not resolvedRoot) when the leaf doesn't exist, so a
-		// symlinked root makes the resolvedRoot-relative check above fail
-		// even though target is still confined to root by construction
-		// (confineSharePath already refused any rel that escapes it).
-		// Retrying against root recovers that case without weakening the
-		// check: it only ever succeeds here because dirTarget was built by
-		// joining exactly this root, and unlinkConfined's own
-		// RESOLVE_IN_ROOT|RESOLVE_NO_SYMLINKS reopen still guards removal.
-		dirRel, err = filepath.Rel(filepath.Clean(root), dirTarget)
-	}
-	if err != nil || !pathInside(dirRel) {
+	dirRel, ok := rootRelative(resolvedRoot, root, dirTarget)
+	if !ok {
 		return fmt.Errorf("%w: %q", ErrPathEscapes, rel)
 	}
 	leaf, err := fs.Lstat(target)
@@ -177,6 +165,24 @@ func removeConfined(fs FS, root, rel string) error {
 		return err
 	}
 	return nil
+}
+
+// rootRelative returns target relative to resolvedRoot, or failing that
+// relative to root. confineSharePathOnFS returns a target that does not exist
+// unresolved (built from the raw root, not resolvedRoot), so a symlinked root
+// makes the resolvedRoot-relative form fail even though target is still
+// confined to root by construction (confineSharePath already refused any rel
+// that escapes it). The retry only ever succeeds because target was built by
+// joining exactly this root.
+func rootRelative(resolvedRoot, root, target string) (string, bool) {
+	rel, err := filepath.Rel(resolvedRoot, target)
+	if err != nil || !pathInside(rel) {
+		rel, err = filepath.Rel(filepath.Clean(root), target)
+	}
+	if err != nil || !pathInside(rel) {
+		return "", false
+	}
+	return rel, true
 }
 
 func pathInside(relToRoot string) bool {

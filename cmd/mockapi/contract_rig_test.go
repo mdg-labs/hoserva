@@ -66,15 +66,16 @@ func (contractShareMounter) Unmount(context.Context, string) error   { return ni
 // against this in-memory no-op instead of share.OSFS.
 type contractShareFS struct{}
 
-func (contractShareFS) MkdirAll(string, os.FileMode) error       { return nil }
-func (contractShareFS) Chmod(string, os.FileMode) error          { return nil }
-func (contractShareFS) Chown(string, int, int) error             { return nil }
-func (contractShareFS) RemoveAll(string) error                   { return nil }
-func (contractShareFS) RemoveConfined(string, string) error      { return nil }
-func (contractShareFS) ReadDir(string) ([]os.DirEntry, error)    { return nil, nil }
+func (contractShareFS) MkdirAll(string, os.FileMode) error  { return nil }
+func (contractShareFS) Chmod(string, os.FileMode) error     { return nil }
+func (contractShareFS) Chown(string, int, int) error        { return nil }
+func (contractShareFS) RemoveAll(string) error              { return nil }
+func (contractShareFS) RemoveConfined(string, string) error { return nil }
+func (contractShareFS) ListConfined(string, string) ([]share.BrowseEntry, error) {
+	return nil, nil
+}
 func (contractShareFS) Lstat(path string) (os.FileInfo, error)   { return os.Stat(os.DevNull) }
 func (contractShareFS) EvalSymlinks(path string) (string, error) { return path, nil }
-func (contractShareFS) GetXattr(string, string) ([]byte, error)  { return nil, nil }
 
 // contractCipher is a minimal, reversible SettingsCipher/UPSSocketPermissions
 // secret cipher, matching the pattern internal/api's own settings_handler_
