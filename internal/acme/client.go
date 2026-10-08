@@ -6,6 +6,7 @@ package acme
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -64,9 +65,15 @@ type CertView struct {
 	Domain   string
 }
 
+// ErrBackupLeft is what Install wraps when the new pair is installed and
+// served but the previous pair's backup files could not be removed. Every
+// caller treats the certificate as installed.
+var ErrBackupLeft = errors.New("the previous TLS pair's backup could not be removed")
+
 // Installer swaps the listener's certificate files. Install must not
 // generate a self-signed fallback: a failed call leaves the previous
-// files in place.
+// files in place, except that an error wrapping ErrBackupLeft means the
+// new pair is already installed.
 type Installer interface {
 	Current() (CertView, error)
 	Install(certPEM, keyPEM []byte) error

@@ -28,11 +28,20 @@ import (
 // generates one itself.
 var errTLSKeyReadable = fmt.Errorf("TLS key file must not be group- or world-readable (mode 0600)")
 
-// errTLSBackupLeft reports that a completed install could not delete the
-// previous pair's .bak files. The new pair is live; a caller still serves
-// it, but a later start with the live pair missing could restore the old
-// one from them.
-var errTLSBackupLeft = fmt.Errorf("the previous TLS pair's backup could not be removed")
+// errTLSBackupLeft reports that a completed install could not remove, or
+// could not durably remove, the previous pair's .bak files. The new pair is
+// live and a caller must treat it as installed; the error is only a warning
+// that a later start with the live pair missing could restore the old one
+// from them. It is the acme package's sentinel so the ACME service and the
+// API layer recognise it without importing this package.
+var errTLSBackupLeft = acme.ErrBackupLeft
+
+// Seams for the removal and the final directory sync in removeTLSBackups,
+// so a test can fail either.
+var (
+	removeTLSBackupFile = os.Remove
+	syncTLSBackupDir    = fsyncDir
+)
 
 func checkTLSKeyPermissions(path string) error {
 	info, err := os.Stat(path)
@@ -287,14 +296,17 @@ func installTLSCertificate(certPath, keyPath string, certPEM, keyPEM []byte) err
 func removeTLSBackups(certPath, keyPath string) error {
 	var errs []error
 	for _, path := range []string{certPath + ".bak", keyPath + ".bak"} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := removeTLSBackupFile(path); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err)
 		}
+	}
+	if err := syncTLSBackupDir(filepath.Dir(certPath)); err != nil {
+		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%w: %w", errTLSBackupLeft, errors.Join(errs...))
 	}
-	return fsyncDir(filepath.Dir(certPath))
+	return nil
 }
 
 func snapshotTLSPair(certPath, keyPath string) error {

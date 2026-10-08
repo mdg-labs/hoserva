@@ -102,15 +102,23 @@ func (h *httpsControl) install(certPEM, keyPEM []byte) error {
 	return installErr
 }
 
+// Regenerate returns the new certificate's view even when it also returns
+// errTLSBackupLeft: the new pair is served in that case, and the caller
+// decides whether the leftover backup is worth a warning.
 func (h *httpsControl) Regenerate(context.Context) (api.TLSCertView, error) {
 	certPEM, keyPEM, err := generateSelfSignedCertificate()
 	if err != nil {
 		return api.TLSCertView{}, fmt.Errorf("generating self-signed certificate: %w", err)
 	}
-	if err := h.install(certPEM, keyPEM); err != nil {
+	installErr := h.install(certPEM, keyPEM)
+	if installErr != nil && !errors.Is(installErr, errTLSBackupLeft) {
+		return api.TLSCertView{}, installErr
+	}
+	view, err := h.Certificate()
+	if err != nil {
 		return api.TLSCertView{}, err
 	}
-	return h.Certificate()
+	return view, installErr
 }
 
 func (h *httpsControl) AllowAllSources() bool {

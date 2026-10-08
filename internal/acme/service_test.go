@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,6 +128,71 @@ func TestIssueSuccessInstallsLetsEncryptCert(t *testing.T) {
 	}
 	if installer.View.Kind != KindLetsEncrypt {
 		t.Fatalf("kind = %s, want lets_encrypt", installer.View.Kind)
+	}
+}
+
+func TestIssueTreatsBackupLeftAsInstalled(t *testing.T) {
+	for _, renew := range []bool{false, true} {
+		db := newTestDB(t)
+		st := NewStore(db)
+		installer := &RecordingInstaller{View: CertView{Kind: KindSelfSigned, NotAfter: time.Now().Add(time.Hour)}}
+		installer.InstallFn = func(certPEM, keyPEM []byte) error {
+			installer.View.Kind = KindLetsEncrypt
+			return fmt.Errorf("%w: remove hoserva.crt.bak: permission denied", ErrBackupLeft)
+		}
+		pub := &FakePublisher{}
+		client := &FakeClient{IssueFn: func(context.Context, IssueRequest) (*Certificate, error) {
+			return &Certificate{
+				CertPEM:       []byte("cert"),
+				KeyPEM:        []byte("key"),
+				AccountKeyPEM: []byte("account"),
+				NotAfter:      time.Now().Add(90 * 24 * time.Hour),
+				Domain:        "nas.example.com",
+			}, nil
+		}}
+		svc := &Service{Store: st, Cipher: FakeCipher{}, Client: client, Installer: installer, Publisher: pub}
+		if err := svc.Configure(context.Background(), Setup{
+			Domain:             "nas.example.com",
+			Provider:           ProviderCloudflare,
+			CloudflareAPIToken: "token",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetLastError(context.Background(), "earlier failure"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := svc.Issue(context.Background(), renew); err != nil {
+			t.Fatalf("renew=%v: Issue = %v, want nil: the new certificate is installed", renew, err)
+		}
+		cfg, err := st.Get(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := FakeCipher{}.Decrypt(cfg.AccountKey)
+		if err != nil || string(plain) != "account" {
+			t.Fatalf("renew=%v: stored account key = %q, %v; want the issued one", renew, plain, err)
+		}
+		if cfg.LastError != "" {
+			t.Fatalf("renew=%v: lastError = %q, want cleared", renew, cfg.LastError)
+		}
+		if len(pub.Events) != 1 {
+			t.Fatalf("renew=%v: notify events = %#v, want exactly one", renew, pub.Events)
+		}
+		wantTitle := issueBackupLeftTitle
+		if renew {
+			wantTitle = renewalBackupLeftTitle
+		}
+		title, msg := pub.Events[0][1], pub.Events[0][2]
+		if title != wantTitle {
+			t.Fatalf("renew=%v: title = %q, want %q", renew, title, wantTitle)
+		}
+		if !strings.Contains(msg, "new certificate is in use") || !strings.Contains(msg, "backup file") {
+			t.Fatalf("renew=%v: message %q must say the new certificate is in use and a backup file was left", renew, msg)
+		}
+		if strings.Contains(msg, "still in use") || strings.Contains(msg, "not replaced") {
+			t.Fatalf("renew=%v: message %q reports the old certificate as in use", renew, msg)
+		}
 	}
 }
 

@@ -200,6 +200,85 @@ func TestRemoveTLSBackups_ReportsWhatItCouldNotRemove(t *testing.T) {
 	}
 }
 
+// failBackupCleanup makes removeTLSBackups fail the way a stuck delete or a
+// failed directory sync would, and restores the real functions afterwards.
+func failBackupCleanup(t *testing.T, failRemove, failSync bool) {
+	t.Helper()
+	origRemove, origSync := removeTLSBackupFile, syncTLSBackupDir
+	t.Cleanup(func() { removeTLSBackupFile, syncTLSBackupDir = origRemove, origSync })
+	if failRemove {
+		removeTLSBackupFile = func(path string) error {
+			return &os.PathError{Op: "remove", Path: path, Err: errors.New("input/output error")}
+		}
+	}
+	if failSync {
+		syncTLSBackupDir = func(dir string) error {
+			return errors.New("syncing directory " + dir + ": input/output error")
+		}
+	}
+}
+
+func TestHTTPSControlInstall_ServesNewPairWhenBackupCleanupFails(t *testing.T) {
+	for name, c := range map[string]struct{ remove, sync bool }{
+		"removal fails":         {remove: true},
+		"directory sync fails":  {sync: true},
+		"removal and sync fail": {remove: true, sync: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, tlsDir := newTestHTTPSControl(t)
+			initial := servedKey(t, h)
+			failBackupCleanup(t, c.remove, c.sync)
+
+			issuedCert, issuedKey, err := generateNamedCertificate("nas.example.com")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = h.Install(issuedCert, issuedKey)
+			if !errors.Is(err, errTLSBackupLeft) || !errors.Is(err, acme.ErrBackupLeft) {
+				t.Fatalf("Install error = %v, want errTLSBackupLeft", err)
+			}
+			if servedKey(t, h).Equal(initial) {
+				t.Fatal("the old key pair is still served although the new one is on disk")
+			}
+			assertDiskMatchesServed(t, h, tlsDir)
+			view, err := h.Current()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Domain != "nas.example.com" {
+				t.Fatalf("served certificate domain = %q, want the installed one", view.Domain)
+			}
+		})
+	}
+}
+
+func TestHTTPSControlRegenerate_ServesNewPairWhenBackupCleanupFails(t *testing.T) {
+	h, tlsDir := newTestHTTPSControl(t)
+	initial := servedKey(t, h)
+	failBackupCleanup(t, false, true)
+
+	view, err := h.Regenerate(context.Background())
+	if !errors.Is(err, acme.ErrBackupLeft) {
+		t.Fatalf("Regenerate error = %v, want the backup-left error", err)
+	}
+	if view.Kind == "" {
+		t.Fatal("Regenerate returned no certificate view for the pair it installed")
+	}
+	if servedKey(t, h).Equal(initial) {
+		t.Fatal("the old key pair is still served although the new one is on disk")
+	}
+	assertDiskMatchesServed(t, h, tlsDir)
+}
+
+func TestRemoveTLSBackups_ReportsFailedDirectorySyncAsBackupLeft(t *testing.T) {
+	dir := t.TempDir()
+	failBackupCleanup(t, false, true)
+	err := removeTLSBackups(filepath.Join(dir, "hoserva.crt"), filepath.Join(dir, "hoserva.key"))
+	if !errors.Is(err, errTLSBackupLeft) {
+		t.Fatalf("removeTLSBackups error = %v, want errTLSBackupLeft", err)
+	}
+}
+
 func assertNoTLSBackups(t *testing.T, tlsDir string) {
 	t.Helper()
 	for _, name := range []string{"hoserva.crt.bak", "hoserva.key.bak"} {

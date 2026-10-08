@@ -13,6 +13,8 @@ const (
 	eventCertificateRenewalFailed = "certificate_renewal_failed"
 	issueFailedTitle              = "Certificate issue failed"
 	renewalFailedTitle            = "Certificate renewal failed"
+	issueBackupLeftTitle          = "Certificate issued, backup file left behind"
+	renewalBackupLeftTitle        = "Certificate renewed, backup file left behind"
 )
 
 // ErrInvalidSetup marks a caller-supplied Let's Encrypt configuration
@@ -204,8 +206,10 @@ func (s *Service) Issue(ctx context.Context, renew bool) error {
 	if err != nil {
 		return s.fail(ctx, renew, err)
 	}
-	if err := s.Installer.Install(issued.CertPEM, issued.KeyPEM); err != nil {
-		return s.fail(ctx, renew, fmt.Errorf("acme: installing issued certificate: %w", err))
+	installErr := s.Installer.Install(issued.CertPEM, issued.KeyPEM)
+	backupLeft := errors.Is(installErr, ErrBackupLeft)
+	if installErr != nil && !backupLeft {
+		return s.fail(ctx, renew, fmt.Errorf("acme: installing issued certificate: %w", installErr))
 	}
 	if len(issued.AccountKeyPEM) > 0 {
 		enc, encErr := s.Cipher.Encrypt(issued.AccountKeyPEM)
@@ -214,7 +218,25 @@ func (s *Service) Issue(ctx context.Context, renew bool) error {
 		}
 	}
 	_ = s.Store.SetLastError(ctx, "")
+	if backupLeft {
+		s.warnBackupLeft(ctx, renew, installErr)
+	}
 	return nil
+}
+
+// warnBackupLeft tells the admin the new certificate is in use although a
+// backup file of the previous one could not be removed. The issuance still
+// counts as successful, so this never reports the old certificate as in use.
+func (s *Service) warnBackupLeft(ctx context.Context, renew bool, err error) {
+	if s.Publisher == nil {
+		return
+	}
+	action, title := "issue", issueBackupLeftTitle
+	if renew {
+		action, title = "renewal", renewalBackupLeftTitle
+	}
+	msg := fmt.Sprintf("Let's Encrypt %s succeeded and the new certificate is in use, but a backup file of the previous certificate could not be removed. Remove it from the TLS directory to avoid the previous certificate being restored if the current one goes missing. %s", action, err.Error())
+	_ = s.Publisher.Publish(ctx, eventCertificateRenewalFailed, title, msg)
 }
 
 func (s *Service) solver(cfg *Config, secret string) (DNS01Solver, error) {

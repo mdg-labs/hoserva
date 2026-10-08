@@ -121,7 +121,7 @@ func (h *Handler) RegenerateTLSCertificate(ctx context.Context) (*apiv1.NetworkS
 			return nil, fmt.Errorf("disarming Let's Encrypt renewal: %w", err)
 		}
 	}
-	if _, err := h.HTTPS.Regenerate(ctx); err != nil {
+	if _, err := h.HTTPS.Regenerate(ctx); err != nil && !errors.Is(err, acme.ErrBackupLeft) {
 		return nil, fmt.Errorf("regenerating TLS certificate: %w", err)
 	}
 	st, err := h.Network.Status(ctx)
