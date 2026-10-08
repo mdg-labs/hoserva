@@ -264,7 +264,7 @@ func (in *Installer) plan(ctx context.Context, req PlanRequest, generate bool) (
 	}
 	var env strings.Builder
 	for _, n := range sortedKeys(t.Block.Inputs) {
-		env.WriteString(n + "=" + quoteEnv(res.values[n]) + "\n")
+		env.WriteString(n + "=" + dotenvValue(res.values[n]) + "\n")
 	}
 	return &Plan{
 		Source:     entry.Source,
@@ -629,9 +629,8 @@ func checkSecretFormat(name, format, v string) error {
 	return nil
 }
 
-// checkEnvValue refuses a value the .env file cannot hold as written: a line
-// break would start another variable, and a single quote ends the quoting
-// quoteEnv relies on.
+// checkEnvValue refuses a line break, a NUL byte and a single quote in an
+// input value.
 func checkEnvValue(name, v string) error {
 	if strings.ContainsAny(v, "\n\r\x00'") {
 		return invalidInput(name, "%s must not contain a line break or a single quote", name)
@@ -640,15 +639,6 @@ func checkEnvValue(name, v string) error {
 }
 
 var plainEnvValue = regexp.MustCompile(`^[A-Za-z0-9_./:@%+,=-]*$`)
-
-// quoteEnv writes a value so Compose reads it back exactly: single quotes
-// switch off interpolation and every escape.
-func quoteEnv(v string) string {
-	if plainEnvValue.MatchString(v) {
-		return v
-	}
-	return "'" + v + "'"
-}
 
 // addGPU maps a render device into every service and adds the host's render
 // group (Q82). A template's inputs name no service, so every service gets

@@ -180,8 +180,11 @@ func (in *Installer) configOf(ctx context.Context, st container.Stack, t *Templa
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 
 // parseEnvLine reads one line of a .env file: the variable it defines and its
-// value, with the quoting Compose takes off. A blank line, a comment and a
-// line that defines nothing report false.
+// value, with the quoting Compose takes off: in double quotes the escapes
+// dotenvValue writes (\", \\, \$, \n, \r); in single quotes nothing, so a
+// backslash before the closing quote is read as it was written by older
+// installs. A blank line, a comment and a line that defines nothing report
+// false.
 func parseEnvLine(line string) (key, value string, ok bool) {
 	l := strings.TrimSpace(line)
 	if l == "" || strings.HasPrefix(l, "#") {
@@ -209,8 +212,19 @@ func parseEnvLine(line string) (key, value string, ok bool) {
 			if v[i] == '"' {
 				break
 			}
-			if v[i] == '\\' && i+1 < len(v) && (v[i+1] == '"' || v[i+1] == '\\') {
-				i++
+			if v[i] == '\\' && i+1 < len(v) {
+				switch v[i+1] {
+				case '"', '\\', '$':
+					i++
+				case 'n':
+					i++
+					sb.WriteByte('\n')
+					continue
+				case 'r':
+					i++
+					sb.WriteByte('\r')
+					continue
+				}
 			}
 			sb.WriteByte(v[i])
 		}
@@ -264,12 +278,12 @@ func mergeEnv(env string, names []string, values, current map[string]string) str
 		}
 		if !written[k] {
 			written[k] = true
-			out = append(out, k+"="+quoteEnv(v))
+			out = append(out, k+"="+dotenvValue(v))
 		}
 	}
 	for _, n := range names {
 		if v, ok := write[n]; ok && !written[n] {
-			out = append(out, n+"="+quoteEnv(v))
+			out = append(out, n+"="+dotenvValue(v))
 		}
 	}
 	return strings.Join(out, "\n") + "\n"

@@ -401,8 +401,8 @@ func TestASuppliedSecretIsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env := envLines(stacks.created[0].Env); env["DB_PASSWORD"] != "'my secret'" {
-		t.Errorf(".env DB_PASSWORD = %q, want it single-quoted", env["DB_PASSWORD"])
+	if env := envLines(stacks.created[0].Env); env["DB_PASSWORD"] != `"my secret"` {
+		t.Errorf(".env DB_PASSWORD = %q, want it double-quoted", env["DB_PASSWORD"])
 	}
 	if pw := input(t, plan, "DB_PASSWORD"); pw.Generated || pw.Value != "" {
 		t.Errorf("DB_PASSWORD = %+v", pw)
@@ -584,7 +584,7 @@ func TestPathWithSpacesIsQuotedInTheEnv(t *testing.T) {
 	if _, _, err := in.Install(context.Background(), PlanRequest{ID: "jellyfin", Values: map[string]string{"MEDIA": "/mnt/user/my $media #1"}}); err != nil {
 		t.Fatal(err)
 	}
-	if env := envLines(stacks.created[0].Env); env["MEDIA"] != "'/mnt/user/my $media #1'" {
+	if env := envLines(stacks.created[0].Env); env["MEDIA"] != `"/mnt/user/my \$media #1"` {
 		t.Errorf(".env MEDIA = %q", env["MEDIA"])
 	}
 }
@@ -1048,5 +1048,50 @@ func TestInstallRefusesATemplateWhoseInputIsNamedLikeAReservedDockerVariable(t *
 	_, _, err = in.Install(context.Background(), PlanRequest{ID: "jellyfin"})
 	if !errors.Is(err, ErrInvalidTemplate) || !strings.Contains(err.Error(), "PATH") || len(stacks.created) != 0 {
 		t.Fatalf("err = %v, created = %d, want ErrInvalidTemplate naming PATH and no stack", err, len(stacks.created))
+	}
+}
+
+// envValues are inputs a .env value has to carry that the single-quote form
+// could not write (a backslash before the closing quote) or that Compose
+// treats specially. A single quote and a line break are refused by
+// checkEnvValue and so are not here.
+var envValues = map[string]string{
+	"trailing backslash":    `pass\`,
+	"three trailing":        `pass\\\`,
+	"only a backslash":      `\`,
+	"backslash inside":      `a\b\\c`,
+	"backslash then n":      `a\nb`,
+	"backslash then dollar": `a\$b`,
+	"dollar":                "pa$word",
+	"dollar brace":          "${X}$$",
+	"spaces":                "  two words  ",
+	"hash":                  "a #b #",
+	"double quote":          `say "hi"\`,
+	"equals and colon":      "a=b:c",
+	"unicode":               "pässwörd-日本\\",
+}
+
+func TestInstallWritesEveryInputAsAnEnvValueComposeReadsBackExactly(t *testing.T) {
+	for name, value := range envValues {
+		t.Run(name, func(t *testing.T) {
+			in, stacks := newInstaller(t)
+			_, _, err := in.Install(context.Background(), PlanRequest{ID: "aio-notes", Values: map[string]string{"DB_PASSWORD": value, "SITE_NAME": value}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := stacks.created[0].Env
+			got, err := composeDotenv(env)
+			if err != nil {
+				t.Fatalf("Compose cannot read the .env: %v\n%s", err, env)
+			}
+			for _, k := range []string{"DB_PASSWORD", "SITE_NAME"} {
+				if got[k] != value {
+					t.Errorf("Compose reads %s as %q, want %q\n%s", k, got[k], value, env)
+				}
+			}
+			if got["WEBUI_PORT"] != "3000" {
+				t.Errorf("the line after the values reads %q, want 3000", got["WEBUI_PORT"])
+			}
+		})
 	}
 }
