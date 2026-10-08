@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -960,5 +962,199 @@ func TestRun_PreUnlinkRecheckIgnoresStalePreCopySnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.ArrayPath, "file.bin")); err != nil {
 		t.Fatalf("the copy itself must have completed, since the pre-copy snapshot reported the file closed: %v", err)
+	}
+}
+
+// swapOnce returns a function that moves dir aside as dir+".moved" and puts
+// a symlink to outside in its place, the first time it is called — what a
+// share user who can rename directories and create symlinks in the tree
+// does between the moment a file was chosen and the moment its source is
+// unlinked (#731).
+func swapOnce(t *testing.T, dir, outside string) func() {
+	t.Helper()
+	done := false
+	return func() {
+		if done {
+			return
+		}
+		done = true
+		if err := os.Rename(dir, dir+".moved"); err != nil {
+			t.Errorf("moving %s aside: %v", dir, err)
+			return
+		}
+		if err := os.Symlink(outside, dir); err != nil {
+			t.Errorf("symlinking %s to %s: %v", dir, outside, err)
+		}
+	}
+}
+
+// outsideWith makes a directory outside every tree under test holding one
+// file named name, the file a swapped directory would make root unlink.
+func outsideWith(t *testing.T, name string) string {
+	t.Helper()
+	outside := t.TempDir()
+	mustWrite(t, filepath.Join(outside, name), "outside data")
+	return outside
+}
+
+// assertSwapRefused checks the outcome every source-delete path must have
+// when a directory above the source was swapped for a symlink before the
+// unlink: the outside file is untouched, the entry failed naming the
+// symlink, and the real source — now in the directory moved aside — is
+// still there.
+func assertSwapRefused(t *testing.T, report Report, rel, outside, movedDir string) {
+	t.Helper()
+	name := filepath.Base(rel)
+	if got, err := os.ReadFile(filepath.Join(outside, name)); err != nil || string(got) != "outside data" {
+		t.Errorf("the file outside the tree = %q, %v, want it untouched", got, err)
+	}
+	e, ok := resultFor(report, rel)
+	if !ok || e.Result != ResultFailed || !strings.Contains(e.Err, "is a symbolic link") {
+		t.Errorf("entry for %s = %+v, want failed naming the symlink", rel, e)
+	}
+	if _, err := os.Lstat(filepath.Join(movedDir, name)); err != nil {
+		t.Errorf("the real source was not kept: %v", err)
+	}
+}
+
+func TestRun_SourceDirectorySwappedForASymlinkBeforeTheUnlinkIsRefused(t *testing.T) {
+	s := newShare(t, "docs")
+	mustWrite(t, filepath.Join(s.CachePath, "reports", "Q3.txt"), "quarter")
+	outside := outsideWith(t, "Q3.txt")
+	swap := swapOnce(t, filepath.Join(s.CachePath, "reports"), outside)
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.FsyncDir = func(dirfd int) error {
+		swap()
+		return fsyncDir(dirfd)
+	}
+	report, err := Run(context.Background(), []Share{s}, Config{SkipGracePeriod: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertSwapRefused(t, report, "reports/Q3.txt", outside, filepath.Join(s.CachePath, "reports.moved"))
+}
+
+// swapSnapshotter runs swap when the mover takes its per-share open-file
+// snapshot, which happens after the tree was enumerated and before the first
+// file is looked at.
+type swapSnapshotter struct {
+	*FakeOpenChecker
+	swap func()
+}
+
+type noneOpen struct{}
+
+func (noneOpen) IsOpen(string) (bool, error) { return false, nil }
+
+func (s swapSnapshotter) Snapshot(context.Context) (OpenSnapshot, error) {
+	s.swap()
+	return noneOpen{}, nil
+}
+
+func TestRun_SourceDirectorySwappedForASymlinkBeforeTheFileIsChosenCopiesNothing(t *testing.T) {
+	s := newShare(t, "docs")
+	mustWrite(t, filepath.Join(s.CachePath, "reports", "Q3.txt"), "quarter")
+	outside := outsideWith(t, "Q3.txt")
+	swap := swapOnce(t, filepath.Join(s.CachePath, "reports"), outside)
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = swapSnapshotter{FakeOpenChecker: NewFakeOpenChecker(), swap: swap}
+	report, err := Run(context.Background(), []Share{s}, Config{SkipGracePeriod: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertSwapRefused(t, report, "reports/Q3.txt", outside, filepath.Join(s.CachePath, "reports.moved"))
+	if _, err := os.Lstat(filepath.Join(s.ArrayPath, "reports", "Q3.txt")); err == nil {
+		t.Error("the file outside the tree was copied onto the array")
+	}
+}
+
+func TestRemoveSource_ResolvesTheParentWithoutFollowingLinks(t *testing.T) {
+	root := t.TempDir()
+	outside := outsideWith(t, "f.txt")
+	mustWrite(t, filepath.Join(root, "real", "f.txt"), "mine")
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(NewFakeOpenChecker())
+
+	for _, rel := range []string{"link/f.txt", "alias/f.txt"} {
+		e := removeSource(context.Background(), root, rel, deps, Entry{})
+		if e.Result != ResultFailed || !strings.Contains(e.Err, "is a symbolic link") {
+			t.Errorf("removeSource(%s) = %+v, want failed naming the symlink", rel, e)
+		}
+	}
+	for _, p := range []string{filepath.Join(outside, "f.txt"), filepath.Join(root, "real", "f.txt")} {
+		if _, err := os.Lstat(p); err != nil {
+			t.Errorf("%s was removed: %v", p, err)
+		}
+	}
+
+	if e := removeSource(context.Background(), root, "real/f.txt", deps, Entry{}); e.Result != ResultMoved {
+		t.Errorf("removeSource(real/f.txt) = %+v, want moved", e)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "real", "f.txt")); !os.IsNotExist(err) {
+		t.Errorf("the source is still there: %v", err)
+	}
+	if e := removeSource(context.Background(), root, "real/f.txt", deps, Entry{}); e.Result != ResultFailed {
+		t.Errorf("removeSource of a missing source = %+v, want failed", e)
+	}
+}
+
+func TestRemoveSource_UnlinksASymlinkSourceWithoutFollowingIt(t *testing.T) {
+	root := t.TempDir()
+	outside := outsideWith(t, "target.txt")
+	if err := os.Symlink(filepath.Join(outside, "target.txt"), filepath.Join(root, "ln")); err != nil {
+		t.Fatal(err)
+	}
+	open := NewFakeOpenChecker()
+	open.SetOpen(filepath.Join(root, "ln"), true)
+
+	e := removeSource(context.Background(), root, "ln", testDeps(open), Entry{})
+	if e.Result != ResultMoved || e.Kind != "symlink" {
+		t.Errorf("removeSource = %+v, want a moved symlink", e)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "target.txt")); err != nil {
+		t.Errorf("the link's target was removed: %v", err)
+	}
+}
+
+func TestRemoveSource_AnOpenSourceIsKeptPendingDelete(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "d", "f.txt"), "mine")
+	open := NewFakeOpenChecker()
+	open.SetOpen(filepath.Join(root, "d", "f.txt"), true)
+
+	e := removeSource(context.Background(), root, "d/f.txt", testDeps(open), Entry{})
+	if e.Result != ResultMovedPendingDelete {
+		t.Errorf("removeSource = %+v, want moved_pending_delete", e)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "d", "f.txt")); err != nil {
+		t.Errorf("an open source was removed: %v", err)
+	}
+}
+
+func TestProcOpenChecker_IsOpenFileAnswersByDeviceAndInode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "held.txt")
+	mustWrite(t, path, "held")
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		t.Fatal(err)
+	}
+	c := ProcOpenChecker{}
+	if open, err := c.IsOpenFile(context.Background(), uint64(st.Dev), st.Ino); err != nil || open {
+		t.Fatalf("IsOpenFile before opening = %v, %v, want false", open, err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if open, err := c.IsOpenFile(context.Background(), uint64(st.Dev), st.Ino); err != nil || !open {
+		t.Fatalf("IsOpenFile while open = %v, %v, want true", open, err)
 	}
 }

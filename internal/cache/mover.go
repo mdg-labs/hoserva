@@ -377,13 +377,11 @@ func shareOpenChecker(ctx context.Context, open OpenChecker) (OpenChecker, error
 // (shareOpenChecker); the pre-unlink re-check inside finishPendingDelete
 // always uses deps.Open directly instead, never preCopyOpen.
 func processFile(ctx context.Context, s Share, rel string, grace time.Duration, cfg Config, deps Deps, preCopyOpen OpenChecker) Entry {
-	src := filepath.Join(s.CachePath, rel)
-
 	if matchExclude(s.Exclude, rel) {
 		return Entry{Share: s.Name, Path: rel, Result: ResultSkippedExcluded}
 	}
 
-	srcInfo, err := os.Lstat(src)
+	srcInfo, err := lstatBeneath(s.CachePath, rel)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Entry{Share: s.Name, Path: rel, Result: ResultSkippedGone}
@@ -428,7 +426,7 @@ func moveEntry(ctx context.Context, s Share, rel string, srcInfo os.FileInfo, gr
 		if !same {
 			return Entry{Share: s.Name, Path: rel, Result: ResultConflict}
 		}
-		entry := finishPendingDelete(ctx, s, rel, src, srcInfo.Size(), deps)
+		entry := finishPendingDelete(ctx, s, rel, srcInfo.Size(), deps)
 		if entry.Result == ResultMoved {
 			entry.Reason = "completed a pending relocation from an earlier interrupted run"
 		}
@@ -458,7 +456,7 @@ func moveEntry(ctx context.Context, s Share, rel string, srcInfo os.FileInfo, gr
 		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 	}
 
-	return finishPendingDelete(ctx, s, rel, src, srcInfo.Size(), deps)
+	return finishPendingDelete(ctx, s, rel, srcInfo.Size(), deps)
 }
 
 // finishPendingDelete re-checks the source for an open handle — the
@@ -466,33 +464,8 @@ func moveEntry(ctx context.Context, s Share, rel string, srcInfo os.FileInfo, gr
 // only when it is clear. A source that is (or became) open is left in
 // place: both copies are complete and correct, so nothing is lost, and a
 // later run completes the delete.
-func finishPendingDelete(ctx context.Context, s Share, rel, src string, size int64, deps Deps) Entry {
-	return removeSource(ctx, src, deps, Entry{Share: s.Name, Path: rel, Bytes: size})
-}
-
-// removeSource is the shared last step of every relocation: re-check src
-// for an open handle and, only when it is clear, unlink it. entry carries
-// the identifying fields; its Result is set here. A symlink is never
-// "open" — the checker would stat through it to its target — so it is
-// unlinked without that check.
-func removeSource(ctx context.Context, src string, deps Deps, entry Entry) Entry {
-	if info, err := os.Lstat(src); err != nil || canBeOpen(info.Mode()) {
-		open, err := deps.Open.IsOpen(ctx, src)
-		if err != nil {
-			entry.Result, entry.Err = ResultMovedPendingDelete, err.Error()
-			return entry
-		}
-		if open {
-			entry.Result = ResultMovedPendingDelete
-			return entry
-		}
-	}
-	if err := os.Remove(src); err != nil {
-		entry.Result, entry.Err = ResultFailed, err.Error()
-		return entry
-	}
-	entry.Result = ResultMoved
-	return entry
+func finishPendingDelete(ctx context.Context, s Share, rel string, size int64, deps Deps) Entry {
+	return removeSource(ctx, s.CachePath, rel, deps, Entry{Share: s.Name, Path: rel, Bytes: size})
 }
 
 // isSamePendingCopy reports whether dst is very likely this mover's own

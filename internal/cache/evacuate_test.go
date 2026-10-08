@@ -642,3 +642,34 @@ func TestEvacuationPostCheck_PassesWithOnlyLostAndFoundAndContentFiles(t *testin
 		t.Fatalf("EvacuationPostCheck: %v, want nil", err)
 	}
 }
+
+// TestPlanEvacuation_RunViaRunRebalance_SwappedSourceDirectoryIsNotFollowed
+// proves an evacuation never unlinks through a directory on the evacuating
+// disk that a share user swapped for a symlink after the copy: the file
+// outside the share survives, the entry fails naming the symlink, and the
+// original stays on the disk being emptied (#731).
+func TestPlanEvacuation_RunViaRunRebalance_SwappedSourceDirectoryIsNotFollowed(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	disk2 := filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "nested", "b.bin"), 100)
+	outside := outsideWith(t, "b.bin")
+	swap := swapOnce(t, filepath.Join(s.Branches[0], "nested"), outside)
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Usage = fakeUsage(map[string]DiskUsage{s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900}})
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if err != nil {
+		t.Fatalf("PlanEvacuation: %v", err)
+	}
+	deps.Sync = func(context.Context, []parity.ManifestEntry) error {
+		swap()
+		return nil
+	}
+	report, err := RunRebalance(context.Background(), plan, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	assertSwapRefused(t, report, "nested/b.bin", outside, filepath.Join(s.Branches[0], "nested.moved"))
+}

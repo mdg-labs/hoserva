@@ -447,23 +447,12 @@ func relocateDeletePhase(ctx context.Context, share Share, deps Deps, hooks RunH
 func finishRelocateDelete(ctx context.Context, share Share, me parity.ManifestEntry, deps Deps) Entry {
 	// me.RelPath is disk-relative (share.Name/rel, matching
 	// DiffFile.RelPath's own shape — ManifestEntry's doc comment) so it
-	// already carries the share prefix src needs; rel strips that same
+	// already carries the share prefix the source's path beneath its disk
+	// needs; rel strips that same
 	// prefix back off for Entry.Path, which stays share-relative like
 	// every other Entry this package produces.
-	src := filepath.Join(me.SourceDisk, me.RelPath)
 	rel := strings.TrimPrefix(me.RelPath, share.Name+"/")
-
-	entry := Entry{Share: share.Name, Path: rel, Bytes: me.Size}
-	var note string
-	if info, err := os.Lstat(src); err == nil {
-		entry.Kind = entryKind(info.Mode())
-		note = hardLinkNote(info)
-	}
-	entry = removeSource(ctx, src, deps, entry)
-	if entry.Result == ResultMoved && entry.Reason == "" {
-		entry.Reason = note
-	}
-	return entry
+	return removeSource(ctx, me.SourceDisk, me.RelPath, deps, Entry{Share: share.Name, Path: rel, Bytes: me.Size})
 }
 
 // PrecheckResult is the open-file half of what a caller shows before

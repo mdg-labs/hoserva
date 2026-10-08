@@ -620,3 +620,28 @@ func TestRecordUnreportedSources_UnreadableDirectoryIsAFailedEntry(t *testing.T)
 		t.Fatalf("entries = %+v, want exactly the two above and an incomplete relocation", report.Entries)
 	}
 }
+
+// TestRelocateToCache_SourceDirectorySwappedForASymlinkBeforeTheDeleteIsRefused
+// proves the delete phase never follows a directory a share user swapped for
+// a symlink after the copy: the file outside the share is not removed, the
+// entry fails naming the symlink, and the real array original stays (#731).
+func TestRelocateToCache_SourceDirectorySwappedForASymlinkBeforeTheDeleteIsRefused(t *testing.T) {
+	s := relocateShare(t, "docs", 1)
+	mustWrite(t, filepath.Join(s.Branches[0], "sub", "report.pdf"), "report bytes")
+	outside := outsideWith(t, "report.pdf")
+	swap := swapOnce(t, filepath.Join(s.Branches[0], "sub"), outside)
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Sync = func(context.Context, []parity.ManifestEntry) error {
+		swap()
+		return nil
+	}
+	report, err := RelocateToCache(context.Background(), s, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RelocateToCache: %v", err)
+	}
+	assertSwapRefused(t, report, "sub/report.pdf", outside, filepath.Join(s.Branches[0], "sub.moved"))
+	if len(report.Moved()) != 0 {
+		t.Errorf("Moved() = %+v, want none", report.Moved())
+	}
+}
