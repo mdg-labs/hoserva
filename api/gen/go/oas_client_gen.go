@@ -748,11 +748,19 @@ type Invoker interface {
 	// template content. It holds the source as the flash holds it, the generated Compose (the project's
 	// own `compose.yaml` for a project), every warning, including the writable-layer warning every
 	// converted template carries and any host path into another `/mnt/<pool>`, and the privileges the
-	// Compose content asks for. The source and the Compose hold the template's environment, secrets
-	// included, which is why this is an admin operation and the report's rows never quote them. A template
-	// the converter could not read has `status` `failed` and an `error`, and no Compose. 404
-	// `template_not_found` for a name the report does not list or a Compose Manager project whose
-	// `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
+	// Compose content asks for. The source holds the template's environment, secrets included, which is
+	// why this is an admin operation, and the report's rows never quote it. In the generated Compose a
+	// variable the template masks (`Mask="true"`) with a value is a `${NAME}` reference, and its value
+	// goes to the `.env` of the stack `createMigrationStacks` creates, not to the Compose; this API never
+	// returns that `.env`, but the value is still in `source` and can be quoted by a warning about that
+	// variable. The value stays in the Compose, in clear, only when the variable's name cannot be a
+	// Compose reference (it is not a plain identifier of letters, digits and `_`) or is one a stack's
+	// `.env` may not define because Docker reserves it, which is reported as a `note` warning naming the
+	// variable. Every other variable's value, and a masked variable's empty value, is in the Compose as
+	// written. A Compose Manager project's `compose.yaml` is shown as the project holds it, whatever it
+	// contains. A template the converter could not read has `status` `failed` and an `error`, and no
+	// Compose. 404 `template_not_found` for a name the report does not list or a Compose Manager project
+	// whose `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
 	// `no_template_preview` for a report made before scans converted templates. 409
 	// `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from
 	// the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept
@@ -11452,11 +11460,19 @@ func (c *Client) sendGetMigrationReport(ctx context.Context) (res GetMigrationRe
 // template content. It holds the source as the flash holds it, the generated Compose (the project's
 // own `compose.yaml` for a project), every warning, including the writable-layer warning every
 // converted template carries and any host path into another `/mnt/<pool>`, and the privileges the
-// Compose content asks for. The source and the Compose hold the template's environment, secrets
-// included, which is why this is an admin operation and the report's rows never quote them. A template
-// the converter could not read has `status` `failed` and an `error`, and no Compose. 404
-// `template_not_found` for a name the report does not list or a Compose Manager project whose
-// `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
+// Compose content asks for. The source holds the template's environment, secrets included, which is
+// why this is an admin operation, and the report's rows never quote it. In the generated Compose a
+// variable the template masks (`Mask="true"`) with a value is a `${NAME}` reference, and its value
+// goes to the `.env` of the stack `createMigrationStacks` creates, not to the Compose; this API never
+// returns that `.env`, but the value is still in `source` and can be quoted by a warning about that
+// variable. The value stays in the Compose, in clear, only when the variable's name cannot be a
+// Compose reference (it is not a plain identifier of letters, digits and `_`) or is one a stack's
+// `.env` may not define because Docker reserves it, which is reported as a `note` warning naming the
+// variable. Every other variable's value, and a masked variable's empty value, is in the Compose as
+// written. A Compose Manager project's `compose.yaml` is shown as the project holds it, whatever it
+// contains. A template the converter could not read has `status` `failed` and an `error`, and no
+// Compose. 404 `template_not_found` for a name the report does not list or a Compose Manager project
+// whose `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
 // `no_template_preview` for a report made before scans converted templates. 409
 // `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from
 // the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept
