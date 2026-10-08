@@ -321,6 +321,10 @@ func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, parent int, name, 
 	if err != nil {
 		return err
 	}
+	if info.IsDir() {
+		trailer.Changed++
+		return nil
+	}
 	if !info.Mode().IsRegular() {
 		trailer.Skipped++
 		archived(info)

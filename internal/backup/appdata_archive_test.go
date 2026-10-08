@@ -826,6 +826,51 @@ func TestAppdataArchive_AFileSwappedForALinkIsNotFollowed(t *testing.T) {
 	}
 }
 
+func TestAppdataArchive_AFileSwappedForADirectoryIsCountedAsChangedAndNotRecorded(t *testing.T) {
+	src, _ := swapOutside(t)
+	swapped := filepath.Join(src, "file")
+	var swappedID devIno
+	beforeOpen = func(got string) {
+		if got != "file" || swappedID != (devIno{}) {
+			return
+		}
+		if err := os.Remove(swapped); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(swapped, 0o755); err != nil {
+			t.Error(err)
+		}
+		var st unix.Stat_t
+		if err := unix.Lstat(swapped, &st); err != nil {
+			t.Error(err)
+		}
+		swappedID = devIno{uint64(st.Dev), uint64(st.Ino)}
+	}
+	t.Cleanup(func() { beforeOpen = nil })
+
+	archived := archivedIDs{}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if swappedID == (devIno{}) {
+		t.Fatal("the file was never swapped")
+	}
+	if trailer.Changed == 0 || trailer.Skipped != 0 {
+		t.Errorf("trailer = %+v, want the swapped-in directory counted as changed, not skipped", trailer)
+	}
+	if _, ok := archived[src][swappedID]; ok {
+		t.Error("the swapped-in directory is recorded as archived")
+	}
+	for _, e := range readArchivedEntries(t, dest) {
+		if strings.TrimSuffix(e.hdr.Name, "/") == "data/0/file" {
+			t.Errorf("the swapped-in directory is archived as %q", e.hdr.Name)
+		}
+	}
+}
+
 func TestAppdataArchive_ADirectoryHoldingALinkBelowTheRootIsNotFollowed(t *testing.T) {
 	src, outside := swapOutside(t)
 	if err := os.MkdirAll(filepath.Join(src, "deep", "er"), 0o755); err != nil {
