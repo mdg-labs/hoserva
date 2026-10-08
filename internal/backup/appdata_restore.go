@@ -201,6 +201,9 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	if err != nil {
 		return err
 	}
+	if err := parents.requireAnchored(a.dirAttrs(), hdr.Dirs, recorded); err != nil {
+		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
+	}
 	archived, err := a.snapshotAppdata(ctx, out, dests, hdr, parents, recorded, passphrase, staging, req.Archive)
 	if err != nil {
 		return err
@@ -550,6 +553,15 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 	if err != nil {
 		discard(true)
 		return fmt.Errorf("unpacking the archive: %w", err)
+	}
+	rep := &anchorReport{out: out}
+	for i := range swaps {
+		note, err := parents.anchorTree(a.dirAttrs(), &swaps[i])
+		if err != nil {
+			discard(true)
+			return fmt.Errorf("anchoring the unpacked archive: %w", err)
+		}
+		rep.note(swaps[i].live, note)
 	}
 	for _, f := range fresh {
 		if err := parents.syncTree(f); err != nil {

@@ -74,12 +74,23 @@ type appdataRig struct {
 	bootDir    string
 	halted     bool
 	out        *bytes.Buffer
+	attrs      *fakeDirAttrs
 }
 
 func newAppdataRig(t *testing.T) *appdataRig {
 	t.Helper()
+	return newAppdataRigIn(t, "")
+}
+
+// newAppdataRigIn is newAppdataRig with the cache disk at cache, which must
+// exist; empty puts it in the rig's temporary directory. The rig's service
+// uses a fake for the extended attribute that anchors a directory.
+func newAppdataRigIn(t *testing.T, cache string) *appdataRig {
+	t.Helper()
 	remote := newRemoteRig(t)
-	cache := filepath.Join(remote.root, "cache")
+	if cache == "" {
+		cache = filepath.Join(remote.root, "cache")
+	}
 	rig := &appdataRig{
 		remoteRig: remote,
 		engine:    container.NewFakeProvider(),
@@ -89,6 +100,7 @@ func newAppdataRig(t *testing.T) *appdataRig {
 		poolDir:   filepath.Join(remote.root, "pool-backups"),
 		bootDir:   filepath.Join(remote.root, "boot-backups"),
 		out:       &bytes.Buffer{},
+		attrs:     newFakeDirAttrs(),
 	}
 	if err := os.MkdirAll(rig.appdata, 0o755); err != nil {
 		t.Fatal(err)
@@ -114,6 +126,7 @@ func newAppdataRig(t *testing.T) *appdataRig {
 		Roots:       func(context.Context) ([]string, error) { return []string{rig.appdata}, nil },
 		Policies:    rig.policies,
 		JournalPath: filepath.Join(remote.root, "state", "appdata-stopped.json"),
+		Attrs:       rig.attrs,
 	}
 	return rig
 }

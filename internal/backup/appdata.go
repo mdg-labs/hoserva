@@ -124,6 +124,9 @@ type AppdataService struct {
 	// StartTimeout bounds each container start after the copy; zero uses
 	// two minutes.
 	StartTimeout time.Duration
+	// Attrs reads and sets the extended attribute that anchors an appdata
+	// directory to its path; nil uses the real one (appdata_anchor.go).
+	Attrs DirAttrs
 
 	// runMu is held for the whole of a backup or restore and by
 	// RecoverStopped: they share the staging directory, which each clears

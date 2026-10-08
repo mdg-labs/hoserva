@@ -32,7 +32,11 @@ type restoreRig struct {
 // something to replace.
 func newRestoreRig(t *testing.T) *restoreRig {
 	t.Helper()
-	rig := newAppdataRig(t)
+	return newRestoreRigOn(t, newAppdataRig(t))
+}
+
+func newRestoreRigOn(t *testing.T, rig *appdataRig) *restoreRig {
+	t.Helper()
 	ctx := context.Background()
 	if err := rig.store.DeleteDestination(ctx, DefaultPoolID); err != nil {
 		t.Fatal(err)
@@ -1344,4 +1348,77 @@ func TestKeptMessage_NamesAtMostFivePathsAndCountsTheRest(t *testing.T) {
 	if strings.Contains(got, `"/w/old/f"`) || !strings.HasSuffix(got, " and 2 more") {
 		t.Fatalf("message = %q", got)
 	}
+}
+
+func resolved(t *testing.T, p string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+// moveOtherAppInPlaceOfLive moves the restored container's directory aside
+// and, before the restore starts, renames the directory of beta, another app
+// whose anchor is its own path, to the name it had. It returns beta's anchor
+// and where the restored container's directory went.
+func (r *restoreRig) moveOtherAppInPlaceOfLive(t *testing.T, other otherAppdata) (anchor, aside string) {
+	t.Helper()
+	beta := filepath.Join(r.appdata, "beta")
+	other.create(t, beta)
+	anchor = resolved(t, beta)
+	r.attrs.mark(t, beta, anchor)
+	aside = r.dir + ".aside"
+	if err := os.Rename(r.dir, aside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(beta, r.dir); err != nil {
+		t.Fatal(err)
+	}
+	return anchor, aside
+}
+
+// requireRefusedAsAnotherAppsDirectory checks that the restore was refused
+// before any write because the directory at the name carries another path,
+// that the error names both paths, and that nothing about the directory
+// changed: its files, its anchor, and what the restore started from.
+func (r *restoreRig) requireRefusedAsAnotherAppsDirectory(t *testing.T, err error, other otherAppdata, anchor, aside string) {
+	t.Helper()
+	r.requireRefusedBeforeAnyWrite(t, err, other, aside)
+	for _, want := range []string{anchor, resolved(t, r.dir)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Restore error %q does not name %s", err, want)
+		}
+	}
+	if got := filesUnder(t, r.dir); strings.Join(got, ",") != "data,sub/state" {
+		t.Fatalf("files in the other app's directory = %v, want data and sub/state only", got)
+	}
+	r.attrs.requireAnchor(t, r.dir, anchor)
+}
+
+func TestAppdataRestore_RefusesADirectoryAnchoredToAnotherPathBeforeSnapshottingIt(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	anchor, aside := rig.moveOtherAppInPlaceOfLive(t, other)
+
+	err := rig.restore(t)
+	if !errors.Is(err, ErrPreRestoreSnapshot) {
+		t.Fatalf("Restore = %v, want ErrPreRestoreSnapshot\n%s", err, rig.out)
+	}
+	rig.requireRefusedAsAnotherAppsDirectory(t, err, other, anchor, aside)
+}
+
+func TestAppdataRestore_TheRevertBeforeAnUpdateRefusesADirectoryAnchoredToAnotherPath(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	anchor, aside := rig.moveOtherAppInPlaceOfLive(t, other)
+
+	snaps := UpdateSnapshots{Appdata: rig.svc}
+	ref := container.SnapshotRef{Archive: rig.archive.Name, DestinationID: rig.archive.DestinationID}
+	rig.out.Reset()
+	err := snaps.Restore(context.Background(), "alpha", ref, nil, rig.out)
+	rig.requireRefusedAsAnotherAppsDirectory(t, err, other, anchor, aside)
 }
