@@ -44,6 +44,27 @@ func startedTemplatesWithSettings(t *testing.T, stateDir string, notifier catalo
 	return startedTemplatesIn(t, stateDir, notifier, true)
 }
 
+// quietCatalogChecks keeps the catalog checks a started daemon runs in the
+// background (listing the catalog checks on open) off the network and inside
+// the test: they go to a closed local port instead of the real catalog host,
+// and a cleanup waits for a check still running before the database and the
+// state directory, registered earlier, are removed.
+func quietCatalogChecks(t *testing.T, h *api.Handler) {
+	t.Helper()
+	refresher, ok := h.CatalogRefresh.(*template.Refresher)
+	if !ok {
+		t.Fatalf("startTemplates left Handler.CatalogRefresh = %T, want *template.Refresher", h.CatalogRefresh)
+	}
+	refresher.URL = "http://127.0.0.1:1"
+	t.Cleanup(func() {
+		// Check joins the check in flight and returns with its result; with
+		// none in flight it runs one against the closed port.
+		if _, err := refresher.Check(context.Background(), template.TriggerManual); err != nil {
+			t.Errorf("waiting for the background catalog check: %v", err)
+		}
+	})
+}
+
 func startedTemplatesIn(t *testing.T, stateDir string, notifier catalogPublisher, withSettings bool) *api.Handler {
 	t.Helper()
 	ctx := context.Background()
@@ -74,6 +95,9 @@ func startedTemplatesIn(t *testing.T, stateDir string, notifier catalogPublisher
 		settings = store.NewCatalogSettingsStore(db)
 	}
 	startTemplates(h, stateDir, apps, shares, notifier, settings, store.NewCatalogSourceStore(db))
+	if withSettings {
+		quietCatalogChecks(t, h)
+	}
 	if h.TemplateInstall == nil {
 		t.Fatal("startTemplates left Handler.TemplateInstall nil, so every /templates operation would 501")
 	}
