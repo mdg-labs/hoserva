@@ -384,8 +384,8 @@ func TestPreview_TheSessionKeepsNoTemplateContent(t *testing.T) {
 			t.Errorf("the on-request preview source lacks %q", want)
 		}
 	}
-	if !strings.Contains(v.Preview.Compose, notesSecret) {
-		t.Error("the on-request preview does not carry the value the user has to review")
+	if strings.Contains(v.Preview.Compose, notesSecret) || !strings.Contains(v.Preview.Env, notesSecret) {
+		t.Error("the on-request preview must keep the masked value out of its Compose and carry it in the .env the stack is created with")
 	}
 }
 

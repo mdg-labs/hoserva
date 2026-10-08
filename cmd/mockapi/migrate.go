@@ -911,6 +911,10 @@ type mockMigrationTemplate struct {
 	conv     *template.Conversion
 }
 
+// mockMigrationTemplateFiles holds the templates the mock converts; a test
+// replaces it to give the mock templates the scenario's two do not cover.
+var mockMigrationTemplateFiles fs.FS = migrationpending.Templates
+
 func mockMigrationTemplates() ([]mockMigrationTemplate, error) {
 	classes := map[string]mockMigrationTemplate{
 		"my-photos.xml":  {class: apiv1.MigrationTemplateClassAutostart, position: 1, wait: 30},
@@ -920,17 +924,17 @@ func mockMigrationTemplates() ([]mockMigrationTemplate, error) {
 		Name: "br0", Driver: "ipvlan", Subnet: "192.168.50.0/24", Gateway: "192.168.50.1", Parent: "ens20",
 		Options: map[string]string{"ipvlan_mode": "l2", "parent": "ens20"},
 	}}
-	entries, err := fs.ReadDir(migrationpending.Templates, ".")
+	entries, err := fs.ReadDir(mockMigrationTemplateFiles, ".")
 	if err != nil {
 		return nil, err
 	}
 	var out []mockMigrationTemplate
 	for _, e := range entries {
-		data, err := fs.ReadFile(migrationpending.Templates, e.Name())
+		data, err := fs.ReadFile(mockMigrationTemplateFiles, e.Name())
 		if err != nil {
 			return nil, err
 		}
-		conv, err := template.ConvertUnraid(data, template.ConvertOptions{Networks: networks})
+		conv, err := template.ConvertUnraid(data, template.ConvertOptions{Networks: networks, SecretsToEnv: true})
 		if err != nil {
 			return nil, fmt.Errorf("converting the fixture template %s: %w", e.Name(), err)
 		}
@@ -1312,9 +1316,9 @@ func (h *handler) ListMigrationContainers(ctx context.Context) (*apiv1.Migration
 }
 
 type mockPlannedStack struct {
-	name, stack, compose string
-	kind                 apiv1.MigrationContainerStackKind
-	position, wait       int
+	name, stack, compose, env string
+	kind                      apiv1.MigrationContainerStackKind
+	position, wait            int
 }
 
 // CreateMigrationStacks mirrors production's CreateStacks: the parity gate,
@@ -1367,7 +1371,7 @@ func (h *handler) CreateMigrationStacks(ctx context.Context, req *apiv1.Migratio
 			if actionWarnings(t.conv) > 0 && !it.Acknowledged.Or(false) {
 				return nil, errMigrationRefusal("warnings_not_acknowledged", 409, fmt.Errorf("%q: %w", it.Name, migrate.ErrWarningsNotAcknowledged))
 			}
-			p.compose, p.stack, p.position, p.wait = t.conv.Compose, migrate.StackNameFor(t.conv.Metadata.Title), t.position, t.wait
+			p.compose, p.env, p.stack, p.position, p.wait = t.conv.Compose, t.conv.EnvFile(), migrate.StackNameFor(t.conv.Metadata.Title), t.position, t.wait
 		}
 		if !found {
 			return nil, errMigrationRefusal("template_not_found", 404, fmt.Errorf("%q: %w", it.Name, migrate.ErrTemplateNotFound))
@@ -1405,7 +1409,7 @@ func (h *handler) CreateMigrationStacks(ctx context.Context, req *apiv1.Migratio
 				continue
 			}
 		}
-		if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: p.stack, Compose: p.compose}); err != nil {
+		if _, err := h.CreateStack(ctx, &apiv1.CreateStackRequest{Name: p.stack, Compose: p.compose, Env: apiv1.NewOptString(p.env)}); err != nil {
 			res.Status = apiv1.MigrationStackResultStatusFailed
 			var me *mockError
 			if errors.As(err, &me) {

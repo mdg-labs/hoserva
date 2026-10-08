@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	ht "github.com/ogen-go/ogen/http"
@@ -1454,6 +1455,47 @@ func TestMockMigration_ContainersOfferCreateStartAndConfirmAsProductionDoes(t *t
 	mockContainersCode(t, "start of a confirmed stack", err, 409, "container_confirmed")
 	if _, err = h.StartMigrationContainer(ctx, apiv1.StartMigrationContainerParams{Name: "gateway"}); err != nil {
 		t.Errorf("start of the next stack once the first is confirmed: %v", err)
+	}
+}
+
+// Production creates a migration stack with a masked template value in its
+// .env and a ${NAME} reference in the Compose text, because getStack, a viewer
+// operation, returns the Compose text. The mock does the same.
+func TestMockMigration_AMaskedTemplateValueGoesToTheStacksEnvAndNotItsCompose(t *testing.T) {
+	ctx := context.Background()
+	h := mockCrossedMigration(t)
+	prev := mockMigrationTemplateFiles
+	t.Cleanup(func() { mockMigrationTemplateFiles = prev })
+	mockMigrationTemplateFiles = fstest.MapFS{"my-vault.xml": {Data: []byte(`<?xml version="1.0"?><Container version="2"><Name>vault</Name><Repository>fixture/vault:1</Repository>
+<Config Target="DB_PASS" Type="Variable" Mask="true">hunter2 $x</Config>
+<Config Target="APOS" Type="Variable" Mask="true">it's</Config>
+<Config Target="DIR" Type="Variable" Mask="true">c:\dir\</Config>
+<Config Target="TZ" Type="Variable" Mask="false">UTC</Config></Container>`)}}
+
+	res, err := h.CreateMigrationStacks(ctx, mockSelect("my-vault.xml"))
+	if err != nil || len(res.Results) != 1 || res.Results[0].Status != apiv1.MigrationStackResultStatusCreated {
+		t.Fatalf("create = %+v, %v, want the stack created", res, err)
+	}
+	st, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "vault"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose := st.Compose.Or("")
+	for _, secret := range []string{"hunter2", "it's", `c:\dir`} {
+		if strings.Contains(compose, secret) {
+			t.Errorf("getStack returns the Compose\n%s\nwith the masked value %q in it", compose, secret)
+		}
+	}
+	if !strings.Contains(compose, "DB_PASS: ${DB_PASS}") || !strings.Contains(compose, "APOS: ${APOS}") || !strings.Contains(compose, "DIR: ${DIR}") || !strings.Contains(compose, "TZ: UTC") {
+		t.Errorf("getStack returns the Compose\n%s\nwant the masked value out of it and referenced as ${DB_PASS}", compose)
+	}
+	if got, want := h.stackEnvs["vault"], "APOS=\"it's\"\nDB_PASS=\"hunter2 \\$x\"\nDIR=\"c:\\\\dir\\\\\"\n"; got != want {
+		t.Errorf("the stack's .env = %q, want %q", got, want)
+	}
+
+	view, err := h.GetMigrationTemplate(ctx, apiv1.GetMigrationTemplateParams{Name: "my-vault.xml"})
+	if err != nil || strings.Contains(view.Compose.Or(""), "hunter2") {
+		t.Errorf("the template preview = %+v, %v, want the Compose without the masked value", view, err)
 	}
 }
 
