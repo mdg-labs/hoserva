@@ -230,8 +230,49 @@ PY
 expect_refused "high-public-consistent-elsewhere" "$bad" "$ID3: a high finding must be withheld"
 mutate "$bad" "$ID3" 'related: []' "related: [$ID1]"
 expect_refused "public-related-to-withheld" "$bad" "$ID3"
-mutate "$bad" "$ID2" 'invariant: none' 'invariant: T99'
-expect_refused "bad-invariant" "$bad" "$ID2"
+mutate "$bad" "$ID2" 'invariant: none' 'invariant: T999'
+expect_refused "bad-invariant" "$bad" "$ID2: invariant: 'T999'"
+for v in T0 T03 t3 T1x T-1 T; do
+  mutate "$bad" "$ID2" 'invariant: none' "invariant: $v"
+  expect_refused "malformed-invariant-$v" "$bad" "$ID2"
+done
+# The accepted set is whatever doc 15 section 4 defines, read at run time.
+THREAT_MODEL_REAL="$script_dir/../docs/internal/15-threat-model.md"
+last=$(grep -oE '^\| \*\*T[0-9]+\*\*' "$THREAT_MODEL_REAL" | tr -dc '0-9\n' | sort -n | tail -1)
+[ "$last" -ge 19 ] || { note "FAIL: doc 15 defines no T19 or later; the T19+ check below proves nothing"; fail=1; }
+mutate "$bad" "$ID2" 'invariant: none' "invariant: T$last"
+"$AUDIT" parse "$bad" >/dev/null 2>"$work/err.latest" || { note "FAIL: T$last, defined in doc 15, was refused"; cat "$work/err.latest" >&2; fail=1; }
+mutate "$bad" "$ID2" 'invariant: none' 'invariant: T19'
+"$AUDIT" parse "$bad" >/dev/null 2>"$work/err.t19" || { note "FAIL: T19 was refused"; cat "$work/err.t19" >&2; fail=1; }
+mutate "$bad" "$ID2" 'invariant: none' "invariant: T$((last + 1))"
+expect_refused "invariant-past-doc15" "$bad" "$ID2: invariant: 'T$((last + 1))'"
+"$AUDIT" parse "$FIXTURE" >/dev/null 2>"$work/err.none" || { note "FAIL: invariant none was refused"; fail=1; }
+(cd "$work" && "$AUDIT" parse "$FIXTURE") >/dev/null 2>"$work/err.cwd" || { note "FAIL: doc 15 was not found from another working directory"; fail=1; }
+
+stub="$work/threat-model.md"
+printf '# Threat model\n\n## 4. Security invariants\n\n| # | Invariant | Anchor |\n|---|---|---|\n| **T3** | a | b |\n| **T50** | c | d |\n\n## 5. Accepted residuals\n\n| **T7** | not in section 4 | x |\n' >"$stub"
+mutate "$bad" "$ID2" 'invariant: none' 'invariant: T50'
+AUDIT_THREAT_MODEL="$stub" "$AUDIT" parse "$bad" >/dev/null 2>"$work/err.stub" || { note "FAIL: T50 from the stub doc 15 was refused"; cat "$work/err.stub" >&2; fail=1; }
+mutate "$bad" "$ID2" 'invariant: none' 'invariant: T19'
+if AUDIT_THREAT_MODEL="$stub" "$AUDIT" parse "$bad" >/dev/null 2>"$work/err.stub"; then
+  note "FAIL: T19 accepted although the stub doc 15 does not define it"; fail=1
+else
+  assert_contains "$work/err.stub" "$ID2: invariant: 'T19'" "an undefined invariant is refused naming the finding and value"
+fi
+mutate "$bad" "$ID2" 'invariant: none' 'invariant: T7'
+AUDIT_THREAT_MODEL="$stub" "$AUDIT" parse "$bad" >/dev/null 2>&1 && { note "FAIL: T7 from outside section 4 was accepted"; fail=1; }
+
+# Fail closed: a doc 15 that cannot be read or holds no invariants accepts nothing, none included.
+printf '# Threat model\n\n## 4. Security invariants\n\nnone yet\n' >"$work/empty-model.md"
+printf '# Threat model\n\n| **T3** | a | b |\n' >"$work/no-section-model.md"
+for tm in "$work/missing.md" "$work/empty-model.md" "$work/no-section-model.md"; do
+  if AUDIT_THREAT_MODEL="$tm" "$AUDIT" parse "$FIXTURE" >/dev/null 2>"$work/err.closed"; then
+    note "FAIL: the report was accepted with doc 15 at '$tm'"; fail=1
+  else
+    assert_contains "$work/err.closed" "audit-report: threat model:" "an unusable doc 15 ('$tm') is refused"
+  fi
+done
+
 mutate "$bad" "$ID2" 'files: [internal/example/pool.go]' 'files: [../etc/passwd]'
 expect_refused "path-escape" "$bad" "$ID2"
 mutate "$bad" "$ID2" "## $ID2 — Fixture public" "## SA-$RID-09 — Fixture public"

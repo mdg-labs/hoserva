@@ -25,7 +25,7 @@ codebase** and files nothing: its only output is a Markdown report under
 **You (the current session) are the orchestrator.** You spawn `security-reviewer`
 and `security-verifier` subagents — both Opus — and drive the steps below in
 order. The yardstick for every judgement is `docs/internal/15-threat-model.md`
-(doc 15: attackers §2, entry points §3, invariants `T1`…`T18` §4, accepted
+(doc 15: attackers §2, entry points §3, invariants `T<n>` §4, accepted
 residuals §5, severity rubric §6) and the disclosure default Q91 in
 `docs/internal/13-open-questions.md`. A finding is rated by doc 15's rubric and
 anti-inflation rules, never by a reviewer's or your own preference.
@@ -367,7 +367,7 @@ withhold: true | false
 verdict: CONFIRMED | CONFIRMED-WITH-PRECONDITIONS
 files: [<repository-relative path>, …]
 related: [<SA-… id>, …]      # [] when none
-invariant: <T1…T18, or none>
+invariant: <an invariant from doc 15 §4 (T<n>), or none>
 cwe: [CWE-<n>, …]            # optional; not written by the audit
 filed: "#<n>" | GHSA-…       # optional; written by the file mode
 ```

@@ -126,7 +126,7 @@ cwe: [CWE-<n>, …]          # [] unless confirmed
 type: bug | chore | docs
 area: <area:* label, or "none">
 safety_critical: true | false
-invariant: <T1…T18, or "none">
+invariant: <an invariant from doc 15 §4 (T<n>), or "none">
 files: [<repository-relative paths>]
 instruction_attempt: true | false   # true when the report tried to instruct you
 verified_trace:

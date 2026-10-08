@@ -62,11 +62,36 @@ PATH = re.compile(r"^[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*$")
 COMMENT = re.compile(r"\s+#.*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 VERDICTS = ["CONFIRMED", "CONFIRMED-WITH-PRECONDITIONS"]
+INVARIANT_ROW = re.compile(r"^\|\s*\*\*(T[1-9][0-9]*)\*\*\s*\|")
+INVARIANTS = set()
 
 
 class Refuse(Exception):
     def __init__(self, where, msg):
         super().__init__(f"{where}: {msg}")
+
+
+def load_invariants(path):
+    if not path:
+        raise Refuse("threat model", "no path to doc 15 was given")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+    except (OSError, UnicodeDecodeError) as e:
+        raise Refuse("threat model", f"cannot read {path}: {e}")
+    start = [i for i, ln in enumerate(lines) if re.match(r"^## 4\. ", ln)]
+    if len(start) != 1:
+        raise Refuse("threat model", f"{path} has no single '## 4.' invariants section")
+    found = set()
+    for ln in lines[start[0] + 1:]:
+        if ln.startswith("## "):
+            break
+        m = INVARIANT_ROW.match(ln)
+        if m:
+            found.add(m.group(1))
+    if not found:
+        raise Refuse("threat model", f"{path} defines no invariant in section 4")
+    return found
 
 
 def fence_flags(lines):
@@ -246,8 +271,8 @@ def parse_finding(lines, flags, head, stop, run_id):
         raise Refuse(fid, "files: a path may not contain ..")
     f["related"] = flow(raw["related"], fid, "related", re.compile(r"^SA-[A-Za-z0-9-]+$"))
     inv = scalar(raw["invariant"], fid, "invariant")
-    if not re.match(r"^(none|T([1-9]|1[0-8]))$", inv):
-        raise Refuse(fid, "invariant: must be T1..T18 or none")
+    if inv != "none" and inv not in INVARIANTS:
+        raise Refuse(fid, f"invariant: {inv[:60]!r} is not none or an invariant doc 15 section 4 defines")
     f["invariant"] = inv
     f["cwe"] = flow(raw["cwe"], fid, "cwe", re.compile(r"^CWE-[0-9]+$")) if "cwe" in raw else []
     f["filed"] = None
@@ -450,8 +475,10 @@ def record(path, fid, value):
 
 
 def main(argv):
+    global INVARIANTS
     mode, path = argv[0], argv[1]
     try:
+        INVARIANTS = load_invariants(os.environ.get("AUDIT_THREAT_MODEL", ""))
         if mode == "record":
             record(path, argv[2], argv[3])
             return 0
@@ -478,7 +505,11 @@ sys.exit(main(sys.argv[1:]))
 PY_EOF
 )
 
-py() { python3 -I -c "$PY_SOURCE" "$@"; }
+# Doc 15 is read from the repository this script sits in, whatever the caller's
+# working directory; the override exists for the tests.
+THREAT_MODEL=${AUDIT_THREAT_MODEL:-$HERE/../docs/internal/15-threat-model.md}
+
+py() { AUDIT_THREAT_MODEL=$THREAT_MODEL python3 -I -c "$PY_SOURCE" "$@"; }
 
 usage() {
   cat <<'USAGE_EOF'
