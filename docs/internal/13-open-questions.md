@@ -28,7 +28,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
 | **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83, Q88, Q89, Q90 (Q33–Q35 settled → D19) |
-| **Before Phase 3.5** | Q51–Q58, Q91 |
+| **Before Phase 3.5** | Q51–Q58, Q91–Q95 |
 | **Before 1.0** | Q47, Q50 |
 
 ---
@@ -796,16 +796,40 @@ Anyone with a root shell already controls the box, so root is the right authorit
 **Decided (maintainer, 2026-09-17), surfaced by #22's login rate limiting:** any LAN client can keep the admin account backed off indefinitely by feeding it wrong passwords (doc 01 §7) — accepted as a trade-off rather than tightened further, on condition that this same root-only path also clears that lockout, not only resets credentials: `hoserva user unlock <name>`, over the Unix socket, checked the same way and audit-logged the same way as the two commands above (#37). All three recovery commands gate on the caller's peer credential being **uid 0 specifically** — the Unix socket also accepts connections at `hoservad`'s own uid (Q44's implementation note), which is enough to use the daemon in development but not enough to authorize recovering another account.
 
 ### Q84 — Revoking sessions on a credential change
-**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 15 T14
 
-**Default: changing an account's TOTP enrollment — and, later, its password — revokes every other session already issued to that account, leaving only the session that made the change.**
-Surfaced by #22's review (doc 01 §7): sessions last 30 days without re-authentication, and today changing TOTP touches no other session, so a stolen cookie from before the change stays valid for the rest of its 30 days even after the credential it was issued under is gone. Revoking every other session closes that window at no cost to the user making the change — their own current session is unaffected. **Built in #137**: `ConfirmTOTP` activates the pending secret and revokes every other session of the account in one transaction, keeping the caller's session hash; a future password-change path will call the same store helper.
+**Default: changing an account's credential revokes what the old credential could have issued. Confirming TOTP enrollment, setting or resetting a password, and root disabling TOTP each revoke every other session already issued to that account, leaving only the session that made the change (none, for a root reset). A password change and a root reset or disable revoke the account's API tokens as well; confirming TOTP leaves them, because enrolling a second factor does not make an earlier credential suspect.**
+Surfaced by #22's review (doc 01 §7): sessions last 30 days without re-authentication, and today changing TOTP touches no other session, so a stolen cookie from before the change stays valid for the rest of its 30 days even after the credential it was issued under is gone. Revoking every other session closes that window at no cost to the user making the change — their own current session is unaffected. An API token is a bearer credential that outlives any session, so a password reset after a suspected compromise that left the tokens valid would not have closed it. **Built in #137 for TOTP confirmation**: `ConfirmTOTP` activates the pending secret and revokes every other session of the account in one transaction, keeping the caller's session hash. The password, root-reset, TOTP-disable and API-token halves are not built yet (#744); they call the same store helper.
 
 ### Q79 — Where the long-running test suites run
 **Status:** Default — **S9 is closed: its lab half (loop devices, FUSE, a SnapRAID sync), its KVM half (a QEMU guest boots with KVM acceleration on a standard `ubuntu-24.04` hosted runner, host-side confirmed via QMP), and its AppArmor-necessity half (`apparmor=unconfined` confirmed required for the lab container's own `mount(2)`, from an A-B-A hosted comparison, after six earlier voided attempts) are all CONFIRMED hosted** (run 35076920766, issue #10, doc 08 §9); **S10 (nested KVM, VM-in-VM) is a different question and remains entirely untouched, out of scope here** · **Gate:** Phase 1 · **Affects:** doc 06 §4, §7, doc 14 §8, Q42, D20
 
 **Default: no self-hosted runners. L3, the migration suite, Playwright and the VM-management suite run nightly on GitHub-hosted runners wherever S9 (and S10, for nested KVM) confirm support. Whatever hosted runners can't run, agents run on the development host — in the lab and user-session VMs (D20) — as a required step before every release, recorded in the release checklist with the commit it ran against.**
 A self-hosted runner is a machine the maintainer owns and exposes to CI, which D20 rules out. A mandatory pre-release agent run keeps every suite required without any new infrastructure. **S9 is now closed and a full pass: a single, non-nested QEMU guest boots with KVM acceleration on a hosted runner, L2 (loop devices, FUSE, a SnapRAID sync) runs hosted, and `apparmor=unconfined` is confirmed required for the lab container there too.** That opens the hosted path for L3 workloads that need exactly a single accelerated guest, but not for anything requiring nested virtualisation (a VM inside the L3 VM) — S10 is a distinct, still-open question, and until it resolves, any suite that needs nested KVM stays on the "agents run it on the dev host before every release" path. Which specific suites this unblocks for the hosted path is a follow-up scoping decision, not settled by this entry alone.
+
+### Q92 — Local logins and shared array data
+**Status:** Default · **Gate:** Phase 3.4 · **Affects:** doc 01 §7, doc 15 §2.5, §5, Q26
+
+**Default: a local login on the host reading shared array data is accepted, not a security boundary.** Share files stay `0664` under `2775` directories (Q26), so any account on the host can read them. What a local login must never do is make the root daemon write, remove, read or list through a path it controls (doc 15 T2).
+The logins on a home server are the admin's own: an SMB-only account is locked and has `nologin` (Q26), so the case is the admin's household using the box as a computer. Tightening the modes would break the shared tree Q26 builds on, where containers, SMB users and the mover all work in one group-writable tree without per-file ACLs.
+
+### Q93 — What a test guest may reach on the host
+**Status:** Default · **Gate:** Phase 3.4 · **Affects:** doc 06 §3, §4, doc 15 T19, `scripts/vm/domain.xml.tmpl`
+
+**Default: an L3 guest reaches the host only through the forwards its domain defines (the SSH port and the daemon's TLS port, bound to host loopback) and nothing else — in particular no other service on the host's loopback — and anything a guest hands back is unpacked as data, never followed through a symlink or executed. A lab container gets loop devices and FUSE and no host `/dev` (Q45).**
+A guest runs code the project does not fully control (the product under test, and in the migration suite fixtures built to be hostile), and the harness runs as the invoking user, so whatever the guest can reach on loopback it reaches as that user, beside the maintainer's real system (D20). The mechanism is the fix's to choose; QEMU's usermode `restrict` option isolates a guest from the host while leaving explicit forwards working, which is the first thing to try.
+
+### Q94 — Viewer role and per-share grants
+**Status:** Default · **Gate:** Phase 3.4 · **Affects:** doc 03 §4.2, §7, doc 15 §2.4, Q27
+
+**Default: a viewer's Browse lists any share's directories — names, sizes and the holding disk — whatever the per-share grants say, and returns no file content. Per-share grants (Q27) govern SMB and NFS access to content only. A household member who must not see a share's file names is a share-only user, not a viewer.**
+*Viewer* is a trusted observer of the box (Q27), and Browse exists to answer "where did that go" (doc 03 §4.2), which is a question about layout. Narrowing the listing per user would make a UI read depend on Samba grants evaluated per path. A viewer who also holds an SMB password and a grant is a share user (doc 15 §2.8) for the shares granted and a viewer for the rest.
+
+### Q95 — What "destructive" means for the confirmation rule
+**Status:** Default · **Gate:** Phase 3.4 · **Affects:** doc 04 §6, doc 15 T18
+
+**Default: an operation is destructive when it discards data or configuration of which no copy remains on the box, or takes a disk or the array out of service.** Formatting, adding, replacing, upgrading or evacuating a disk, stopping the array, deleting a share's data or a file, restoring appdata or an imported configuration over live state, running a fix and syncing past the threshold guard are destructive: each takes a confirmation from the caller's own request (doc 15 T18). Recreating, updating and reverting an app are not, and carry no API confirmation: an update takes a pre-update appdata snapshot and keeps the previous image (doc 04 §6), and a revert writes a `pre-restore` archive of what it replaces. Removing an app while keeping its appdata is not; deleting its appdata is, and takes the explicit `deleteAppdata` flag.
+Confirmation that costs nothing to give is noise: asking for it on an operation the box can undo teaches the user to click through the ones it cannot. A new operation that discards data without keeping a copy needs a confirmation in the spec and in both clients.
 
 ---
 
@@ -827,7 +851,7 @@ Extracting strings later is a rewrite of every component. Doing it from day one 
 ### Q49 — Telemetry *(gap)*
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.6
 
-**Default: none. The only outbound requests Hoserva makes on its own are its update check against its own release index (Q67), the catalog refresh (Q65) and the daily container update check (Q81); none sends anything beyond a plain HTTP request, and each automatic check can be disabled (the catalog host is then contacted only when the user presses *Check for updates*). Any future opt-in usage statistics require a new entry here.**
+**Default: none. The only outbound requests Hoserva makes on its own are its update check against its own release index (Q67), the catalog refresh (Q65) and the daily container update check (Q81), besides renewing a Let's Encrypt certificate once the admin has set one up (Q9); none of the three checks sends anything beyond a plain HTTP request, and each can be disabled (the catalog host is then contacted only when the user presses *Check for updates*). Any future opt-in usage statistics require a new entry here.**
 A home server that phones home by default undermines the trust an open project depends on.
 
 ### Q50 — Name clearance
