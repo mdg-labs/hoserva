@@ -149,6 +149,7 @@ func (c *converter) render() (string, error) {
 		return "", fmt.Errorf("converting template: %w", err)
 	}
 	escapeDollars(&n)
+	c.referenceMoved(&n)
 	if len(c.untranslated) > 0 {
 		if key := serviceKeyNode(&n); key != nil {
 			lines := []string{"# Hoserva: could not translate the following Unraid ExtraParams:"}
@@ -207,6 +208,30 @@ func (c *converter) fragment() (*yaml.Node, error) {
 	}
 	escapeDollars(&n)
 	return &n, nil
+}
+
+// referenceMoved replaces the value of every variable moved to the .env with
+// a ${NAME} reference. It runs after escapeDollars: the reference is the one
+// place a $ is meant for Compose to read.
+func (c *converter) referenceMoved(root *yaml.Node) {
+	if len(c.moved) == 0 {
+		return
+	}
+	services := mappingValue(root, "services")
+	if services == nil {
+		return
+	}
+	for i := 1; i < len(services.Content); i += 2 {
+		env := mappingValue(services.Content[i], "environment")
+		if env == nil {
+			continue
+		}
+		for j := 0; j+1 < len(env.Content); j += 2 {
+			if _, ok := c.moved[env.Content[j].Value]; ok {
+				env.Content[j+1] = stringNode("${" + env.Content[j].Value + "}")
+			}
+		}
+	}
 }
 
 func nonEmpty(m map[string]string) map[string]string {

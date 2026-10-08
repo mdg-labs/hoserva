@@ -14,6 +14,7 @@ var (
 	ErrConfirmRequired  = errors.New("update: this operation requires confirm=true")
 	ErrIndexURL         = errors.New("update: refusing to fetch a URL that is not the configured release index or a named release asset")
 	ErrUnknownChannel   = errors.New("update: unrecognized channel")
+	ErrReleaseMismatch  = errors.New("update: the release index entry does not match the signed release")
 )
 
 // ErrBlocked is an update/rollback refused because a storage-class job

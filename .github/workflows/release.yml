@@ -6,6 +6,11 @@ name: Release
 # them to a GitHub Release, stable as a release and beta as a
 # pre-release, with a signed SHA256SUMS. Runs only on GitHub-hosted
 # runners (Q42), same as ci.yml.
+#
+# Two jobs: "build" runs the project's build tooling and holds no secret
+# and no write token; "publish" holds the release-signing key and the
+# write token and runs none of that tooling — it takes the .deb files
+# only from build's uploaded artifact, from its own checkout of the tag.
 
 on:
   push:
@@ -13,20 +18,17 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   GO_VERSION: "1.27.1"
 
 jobs:
-  publish:
-    name: Build and publish
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    # Signing and publishing needs approval, not just a matching tag
-    # (below): configure required reviewers on this "release" environment
-    # in the repo's Settings → Environments — that's a maintainer-only,
-    # needs-sudo-equivalent step outside any agent's reach.
-    environment: release
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,11 +49,66 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: scripts/release/verify-docs-snapshot.sh "$TAG"
-      # Before any build or signing: the secret's public half must match
-      # both EmbeddedPublicKey and the maintainer-set Actions variable.
-      # The private key never enters ci.yml; this job is the only place
-      # that ties secret, variable and compiled-in key together (issue
-      # #205). Logs only match/mismatch — no PEM, hex, or pkey -text.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+          package-manager-cache: false
+      # dpkg-checkbuilddeps always requires build-essential regardless of
+      # what debian/control declares (Debian policy assumes every build
+      # environment has it), so it must be installed here even though this
+      # package's own Build-Depends never names it.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot build-essential
+      - name: Build amd64 .deb
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/build-deb.sh "$TAG" amd64 dist
+      - name: Build arm64 .deb
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/build-deb.sh "$TAG" arm64 dist
+      - name: Collect the packages
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/collect-build-output.sh "$TAG" dist release-debs
+      - name: Upload the packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-debs
+          path: release-debs
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    # Signing and publishing needs approval, not just a matching tag:
+    # configure required reviewers on this "release" environment in the
+    # repo's Settings → Environments — that's a maintainer-only,
+    # needs-sudo-equivalent step outside any agent's reach.
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      # A fresh checkout of the tag: every script this job runs comes
+      # from the tagged commit, none from the build job's workspace.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify tag ancestry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/verify-tag-ancestry.sh "$TAG"
+      # Before signing: the secret's public half must match both
+      # EmbeddedPublicKey and the maintainer-set Actions variable. The
+      # private key never enters ci.yml; this job is the only place that
+      # ties secret, variable and compiled-in key together (issue #205).
+      # Logs only match/mismatch — no PEM, hex, or pkey -text.
       - name: Verify release signing key integrity
         env:
           HOSERVA_RELEASE_SIGNING_KEY: ${{ secrets.HOSERVA_RELEASE_SIGNING_KEY }}
@@ -71,7 +128,7 @@ jobs:
           trap 'rm -f "$key_file" "$pub_var_file" "$derived_pub_file"' EXIT
           printf '%s' "$HOSERVA_RELEASE_SIGNING_KEY" >"$key_file"
           printf '%s' "$HOSERVA_RELEASE_SIGNING_PUBKEY" >"$pub_var_file"
-          openssl pkey -in "$key_file" -pubout -out "$derived_pub_file" 2>/dev/null || {
+          /usr/bin/openssl pkey -in "$key_file" -pubout -out "$derived_pub_file" 2>/dev/null || {
             echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY is not a readable Ed25519 private key" >&2
             exit 1
           }
@@ -86,31 +143,22 @@ jobs:
             echo "$label: $result"
             [ "$result" = match ] || exit 1
           done
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Download the packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          go-version: ${{ env.GO_VERSION }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: web/.nvmrc
-      # dpkg-checkbuilddeps always requires build-essential regardless of
-      # what debian/control declares (Debian policy assumes every build
-      # environment has it), so it must be installed here even though this
-      # package's own Build-Depends never names it.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot build-essential
-      - name: Build amd64 .deb
+          name: release-debs
+          path: downloaded
+      - name: Stage the packages
         env:
           TAG: ${{ github.ref_name }}
-        run: scripts/release/build-deb.sh "$TAG" amd64 dist
-      - name: Build arm64 .deb
-        env:
-          TAG: ${{ github.ref_name }}
-        run: scripts/release/build-deb.sh "$TAG" arm64 dist
+        run: scripts/release/stage-release-artifacts.sh "$TAG" downloaded staged
       # The release-signing private key never touches disk outside this
       # step's own temp file, removed as soon as signing is done —
       # publish-release.sh only ever reads it, never logs or echoes it.
       # Set as a GitHub Actions secret by the maintainer (never generated
       # or held by any agent); the workflow fails clearly, not silently,
-      # while it is unset.
+      # while it is unset. publish-release.sh hashes the staged packages
+      # itself, so SHA256SUMS covers the files it signs and attaches.
       #
       # TAG comes through env:, not interpolated into the script text, so
       # a tag name containing shell metacharacters (e.g. `v1.0.0$(id)`,
@@ -129,4 +177,4 @@ jobs:
           key_file="$(mktemp)"
           trap 'rm -f "$key_file"' EXIT
           printf '%s' "$HOSERVA_RELEASE_SIGNING_KEY" >"$key_file"
-          scripts/release/publish-release.sh "$TAG" dist "$key_file"
+          scripts/release/publish-release.sh "$TAG" staged "$key_file"

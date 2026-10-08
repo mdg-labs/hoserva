@@ -764,3 +764,30 @@ func TestRunRebalance_InterruptedMidCopy_ResumesWithoutDuplication(t *testing.T)
 		}
 	}
 }
+
+// TestRunRebalance_SourceDirectorySwappedForASymlinkBeforeTheDeleteIsRefused
+// proves a rebalance's delete phase never follows a directory a share user
+// swapped for a symlink after the copy and the sync (#731).
+func TestRunRebalance_SourceDirectorySwappedForASymlinkBeforeTheDeleteIsRefused(t *testing.T) {
+	base := t.TempDir()
+	source := filepath.Join(base, "disk1", "movies")
+	target := filepath.Join(base, "disk2", "movies")
+	mustWrite(t, filepath.Join(source, "sub", "a.bin"), "content")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := RebalancePlan{Moves: []RebalanceMove{{Share: "movies", RelPath: "sub/a.bin", SourceBranch: source, TargetBranch: target, Size: 7}}}
+	outside := outsideWith(t, "a.bin")
+	swap := swapOnce(t, filepath.Join(source, "sub"), outside)
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Sync = func(context.Context, []parity.ManifestEntry) error {
+		swap()
+		return nil
+	}
+	report, err := RunRebalance(context.Background(), plan, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	assertSwapRefused(t, report, "sub/a.bin", outside, filepath.Join(source, "sub.moved"))
+}

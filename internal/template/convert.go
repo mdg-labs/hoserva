@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mdg-labs/hoserva/internal/container"
 )
 
 // ErrInvalidUnraidTemplate is returned when the input is not an Unraid
@@ -61,6 +63,12 @@ type NetworkDef struct {
 // ConvertOptions are the optional inputs of ConvertUnraid.
 type ConvertOptions struct {
 	Networks []NetworkDef
+	// SecretsToEnv keeps the value of every variable the template masks out
+	// of the Compose text: the service gets a ${NAME} reference and the value
+	// is returned in Conversion.Env, for a caller that stores it in the
+	// stack's .env. A masked variable whose name the .env cannot take stays
+	// inline, with a note.
+	SecretsToEnv bool
 }
 
 // UnraidVariable is an environment variable with the description the
@@ -93,10 +101,28 @@ type Conversion struct {
 	// Source is the template as it was given.
 	Source string
 	// Compose is the generated Compose file.
-	Compose    string
+	Compose string
+	// Env holds the variables ConvertOptions.SecretsToEnv moved out of the
+	// Compose text, by name. It is nil otherwise.
+	Env        map[string]string
 	Metadata   UnraidMetadata
 	Warnings   []Warning
 	Privileges []Privilege
+}
+
+// EnvFile writes Env as the text of a stack's .env, one line per variable,
+// each value written by dotenvValue.
+func (c *Conversion) EnvFile() string {
+	names := make([]string, 0, len(c.Env))
+	for n := range c.Env {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	for _, n := range names {
+		sb.WriteString(n + "=" + dotenvValue(c.Env[n]) + "\n")
+	}
+	return sb.String()
 }
 
 // Clean reports whether the generated Compose needs no manual action (Q36):
@@ -199,11 +225,13 @@ func ConvertUnraid(data []byte, opts ConvertOptions) (*Conversion, error) {
 	if err := c.convert(root); err != nil {
 		return nil, err
 	}
+	c.moveSecrets()
 	compose, err := c.render()
 	if err != nil {
 		return nil, err
 	}
 	conv.Compose = compose
+	conv.Env = c.moved
 	conv.Metadata = c.meta
 	conv.Warnings = append(c.warnings, Warning{Class: WarnWritableLayer, Message: writableLayerWarning})
 	var parsed map[string]any
@@ -239,6 +267,8 @@ type converter struct {
 	portIndex map[string]merged
 	env       map[string]string
 	envIndex  map[string]merged
+	masked    map[string]bool
+	moved     map[string]string
 	labels    map[string]string
 	labelIdx  map[string]merged
 	kv        map[string]map[string]merged
@@ -256,6 +286,7 @@ func newConverter(opts ConvertOptions) *converter {
 		portIndex: map[string]merged{},
 		env:       map[string]string{},
 		envIndex:  map[string]merged{},
+		masked:    map[string]bool{},
 		labels:    map[string]string{},
 		labelIdx:  map[string]merged{},
 		kv:        map[string]map[string]merged{},
@@ -620,6 +651,9 @@ func (c *converter) config(e xmlElement) {
 			c.note("The variable %s has an empty value and is passed as empty, as the template says.", target)
 		}
 		c.putEnv(target, value, "the template's Config entry")
+		if strings.EqualFold(e.attr("Mask"), "true") && c.env[target] == value {
+			c.masked[target] = true
+		}
 	case "Label":
 		if target == "" {
 			c.warn(WarnUntranslatedField, "A label entry has no key, so it is not translated.", showWords(value))
@@ -719,6 +753,42 @@ func (c *converter) putEnv(name, value, origin string) {
 	}
 	if c.merge(c.envIndex, "variable", name, merged{norm: value, origin: origin, desc: showWords(name + "=" + value)}) {
 		c.env[name] = value
+	}
+}
+
+var interpolationNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// moveSecrets picks the masked variables that go to the .env when
+// ConvertOptions.SecretsToEnv is set. A variable stays inline when it has no
+// value to hide, when Compose cannot reference its name, or when its name is
+// one the stack layer refuses in a .env because Docker reserves it. Every
+// value can be written to the .env (dotenvValue); the one it cannot hold, a
+// NUL byte, cannot come out of an XML template.
+func (c *converter) moveSecrets() {
+	if !c.opts.SecretsToEnv {
+		return
+	}
+	reserved := map[string]bool{}
+	for _, n := range container.ReservedEnvNames() {
+		reserved[n] = true
+	}
+	names := make([]string, 0, len(c.masked))
+	for n := range c.masked {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		v := c.env[n]
+		switch {
+		case v == "":
+		case !interpolationNameRe.MatchString(n) || reserved[n]:
+			c.note("The value of the masked variable %s stays in the Compose file: its name cannot be used in the stack's environment file. Move the value there by hand if it is a secret.", n)
+		default:
+			if c.moved == nil {
+				c.moved = map[string]string{}
+			}
+			c.moved[n] = v
+		}
 	}
 }
 

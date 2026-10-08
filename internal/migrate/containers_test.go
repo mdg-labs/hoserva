@@ -340,6 +340,103 @@ func TestContainers_WarningsNeedAnAcknowledgementPerTemplateAndNothingIsCreatedF
 	}
 }
 
+// createRecorder stands in for the stack layer and keeps what it was asked to
+// create.
+type createRecorder struct {
+	StackLayer
+	made []container.NewStack
+}
+
+func (l *createRecorder) Create(ctx context.Context, n container.NewStack) (container.Stack, error) {
+	l.made = append(l.made, n)
+	return l.StackLayer.Create(ctx, n)
+}
+
+const secretTemplate = `<?xml version="1.0"?><Container version="2"><Name>vault</Name><Repository>fixture/vault:1</Repository>
+<Config Name="Password" Target="DB_PASS" Type="Variable" Mask="true">pa$$w0rd ${X} "q" #h</Config>
+<Config Name="Token" Target="API_TOKEN" Type="Variable" Mask="true">tok-123</Config>
+<Config Name="Zone" Target="TZ" Type="Variable" Mask="false">Europe/Vienna</Config>
+</Container>`
+
+// The leak scenario: getStack is a viewer operation and returns the stored
+// Compose text, so a masked template value in it reaches every viewer. The
+// value belongs in the .env, which the API never returns.
+func TestContainers_AMaskedTemplateValueGoesToTheStacksEnvAndNotItsCompose(t *testing.T) {
+	r := newFlowRig(t, func(f map[string][]byte) { f[tmplDir+"my-vault.xml"] = []byte(secretTemplate) })
+	layer := &createRecorder{StackLayer: r.stacks}
+	r.s.Stacks = layer
+	r.create(t, "my-vault.xml")
+
+	if len(layer.made) != 1 {
+		t.Fatalf("Create called %d times, want once", len(layer.made))
+	}
+	made := layer.made[0]
+	for _, secret := range []string{"pa$$w0rd", "tok-123"} {
+		if strings.Contains(made.Compose, secret) {
+			t.Errorf("NewStack.Compose holds %q:\n%s", secret, made.Compose)
+		}
+	}
+	for _, want := range []string{"DB_PASS: ${DB_PASS}", "API_TOKEN: ${API_TOKEN}", "TZ: Europe/Vienna"} {
+		if !strings.Contains(made.Compose, want) {
+			t.Errorf("NewStack.Compose lacks %q:\n%s", want, made.Compose)
+		}
+	}
+	wantEnv := "API_TOKEN=tok-123\nDB_PASS=\"pa\\$\\$w0rd \\${X} \\\"q\\\" #h\"\n"
+	if made.Env != wantEnv {
+		t.Errorf("NewStack.Env = %q, want %q", made.Env, wantEnv)
+	}
+
+	st, err := r.stacks.Get(ctx0, "vault")
+	if err != nil || strings.Contains(st.Compose, "tok-123") || strings.Contains(st.Compose, "pa$$w0rd") {
+		t.Errorf("the stack getStack returns = %+v, %v, want no masked value in its Compose", st, err)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(r.stackRoot, "vault", ".env"))
+	if err != nil || string(onDisk) != wantEnv {
+		t.Errorf(".env on disk = %q, %v, want %q", onDisk, err, wantEnv)
+	}
+}
+
+// A password with an apostrophe, a trailing backslash or a line break is as
+// much a secret as any other, and each is written so Compose reads it back:
+// the stack is created with it in the .env and not in the Compose text.
+func TestContainers_AMaskedValueWithQuotesBackslashesOrLineBreaksGoesToTheEnvToo(t *testing.T) {
+	r := newFlowRig(t, func(f map[string][]byte) {
+		f[tmplDir+"my-vault.xml"] = []byte(`<Container version="2"><Name>vault</Name><Repository>fixture/vault:1</Repository>
+<Config Target="DB_PASS" Type="Variable" Mask="true">it's</Config>
+<Config Target="DIR_PASS" Type="Variable" Mask="true">c:\dir\</Config>
+<Config Target="MULTI" Type="Variable" Mask="true">a&#10;b</Config></Container>`)
+	})
+	layer := &createRecorder{StackLayer: r.stacks}
+	r.s.Stacks = layer
+	r.create(t, "my-vault.xml")
+	if len(layer.made) != 1 {
+		t.Fatalf("Create called %d times, want once", len(layer.made))
+	}
+	made := layer.made[0]
+	for _, secret := range []string{"it's", `c:\dir`, "a\nb"} {
+		if strings.Contains(made.Compose, secret) {
+			t.Errorf("NewStack.Compose holds %q:\n%s", secret, made.Compose)
+		}
+	}
+	wantEnv := "DB_PASS=\"it's\"\nDIR_PASS=\"c:\\\\dir\\\\\"\nMULTI=\"a\\nb\"\n"
+	if made.Env != wantEnv {
+		t.Errorf("NewStack.Env = %q, want %q", made.Env, wantEnv)
+	}
+}
+
+func TestContainers_AMaskedValueUnderANameTheEnvFileCannotTakeStaysWhereItWas(t *testing.T) {
+	r := newFlowRig(t, func(f map[string][]byte) {
+		f[tmplDir+"my-vault.xml"] = []byte(`<Container version="2"><Name>vault</Name><Repository>fixture/vault:1</Repository>
+<Config Target="DB.PASS" Type="Variable" Mask="true">xyzzy</Config></Container>`)
+	})
+	layer := &createRecorder{StackLayer: r.stacks}
+	r.s.Stacks = layer
+	r.create(t, "my-vault.xml")
+	if len(layer.made) != 1 || layer.made[0].Env != "" || !strings.Contains(layer.made[0].Compose, "DB.PASS: xyzzy") {
+		t.Errorf("made = %+v, want the value kept in the Compose, not dropped", layer.made)
+	}
+}
+
 func TestContainers_AComposeManagerProjectIsCreatedFromItsOwnComposeYAML(t *testing.T) {
 	r := newFlowRig(t, func(f map[string][]byte) {
 		f[composeFile] = []byte("services:\n  web:\n    image: fixture/web:1.0\n    privileged: true\n    volumes:\n      - /mnt/user/appdata/stack:/data\n")

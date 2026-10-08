@@ -686,7 +686,7 @@ export interface paths {
         };
         /**
          * Hoserva and Debian update status
-         * @description Current Hoserva version, any newer release on the configured channel, update-check on/off, pending Debian updates and whether a reboot is required. The update check reads only the signed release index on the project site — never the GitHub API and never a system-wide `apt update`. When the check is disabled, `availableVersion` is omitted rather than fetched.
+         * @description Current Hoserva version, any newer release on the configured channel, update-check on/off, pending Debian updates and whether a reboot is required. The update check reads only the release index on the project site — never the GitHub API and never a system-wide `apt update`. When the check is disabled, `availableVersion` is omitted rather than fetched.
          */
         get: operations["getUpdateStatus"];
         /**
@@ -711,8 +711,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Check the signed release index for a newer Hoserva
-         * @description Fetches the signed release index for the configured channel. A user-initiated check runs even when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+         * Check the release index for a newer Hoserva
+         * @description Fetches the release index for the configured channel. A user-initiated check runs even when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
          */
         post: operations["checkForUpdate"];
         delete?: never;
@@ -732,7 +732,7 @@ export interface paths {
         put?: never;
         /**
          * Download, verify and install the available Hoserva release
-         * @description Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS, runs a config backup, and installs it in a transient systemd unit. Refused while a Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
+         * @description Downloads the `.deb` the release index points to and installs it only if the signed SHA256SUMS names that package at the index entry's version and the version is newer than the running one. It verifies the download against the signed SHA256SUMS, runs a config backup, and installs it in a transient systemd unit. Refused while a Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
          */
         post: operations["applyUpdate"];
         delete?: never;
@@ -752,7 +752,7 @@ export interface paths {
         put?: never;
         /**
          * Roll back to the previous Hoserva release and its snapshot
-         * @description Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database snapshot, and installs the previous package. There are no down migrations — rollback is previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error names that job.
+         * @description Downloads the recorded previous version's `.deb`, verifies it against the signed SHA256SUMS naming that version, restores that version's pre-migration database snapshot, and installs the previous package. There are no down migrations — rollback is previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error names that job.
          */
         post: operations["rollbackUpdate"];
         delete?: never;
@@ -2007,7 +2007,7 @@ export interface paths {
         };
         /**
          * One template's conversion preview
-         * @description The preview of one template or Compose Manager project from the latest scan, built when it is asked for by converting the template again from the Flash Backup zip the session keeps in the daemon's state directory, with the Docker networks of the Phase A capture; the session itself keeps no template content. It holds the source as the flash holds it, the generated Compose (the project's own `compose.yaml` for a project), every warning, including the writable-layer warning every converted template carries and any host path into another `/mnt/<pool>`, and the privileges the Compose content asks for. The source and the Compose hold the template's environment, secrets included, which is why this is an admin operation and the report's rows never quote them. A template the converter could not read has `status` `failed` and an `error`, and no Compose. 404 `template_not_found` for a name the report does not list or a Compose Manager project whose `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and `no_template_preview` for a report made before scans converted templates. 409 `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept after the zip is gone.
+         * @description The preview of one template or Compose Manager project from the latest scan, built when it is asked for by converting the template again from the Flash Backup zip the session keeps in the daemon's state directory, with the Docker networks of the Phase A capture; the session itself keeps no template content. It holds the source as the flash holds it, the generated Compose (the project's own `compose.yaml` for a project), every warning, including the writable-layer warning every converted template carries and any host path into another `/mnt/<pool>`, and the privileges the Compose content asks for. The source holds the template's environment, secrets included, which is why this is an admin operation, and the report's rows never quote it. In the generated Compose a variable the template masks (`Mask="true"`) with a value is a `${NAME}` reference, and its value goes to the `.env` of the stack `createMigrationStacks` creates, not to the Compose; this API never returns that `.env`, but the value is still in `source` and can be quoted by a warning about that variable. The value stays in the Compose, in clear, only when the variable's name cannot be a Compose reference (it is not a plain identifier of letters, digits and `_`) or is one a stack's `.env` may not define because Docker reserves it, which is reported as a `note` warning naming the variable. Every other variable's value, and a masked variable's empty value, is in the Compose as written. A Compose Manager project's `compose.yaml` is shown as the project holds it, whatever it contains. A template the converter could not read has `status` `failed` and an `error`, and no Compose. 404 `template_not_found` for a name the report does not list or a Compose Manager project whose `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and `no_template_preview` for a report made before scans converted templates. 409 `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept after the zip is gone.
          */
         get: operations["getMigrationTemplate"];
         put?: never;
@@ -3971,7 +3971,7 @@ export interface components {
             listenPort?: number;
         };
         /**
-         * @description Release channel the update check reads from the signed index.
+         * @description Release channel the update check reads from the release index.
          * @enum {string}
          */
         UpdateChannel: "stable" | "beta";
@@ -4439,10 +4439,10 @@ export interface components {
         };
         TemplatePrivilege: {
             /** @enum {string} */
-            kind: "privileged" | "host_network" | "host_pid" | "host_cgroup" | "device_cgroup_rules" | "added_capabilities" | "confinement_disabled" | "group_add" | "docker_socket" | "host_path";
+            kind: "privileged" | "host_network" | "host_pid" | "host_cgroup" | "device_cgroup_rules" | "added_capabilities" | "confinement_disabled" | "group_add" | "docker_socket" | "host_path" | "gpu_reservation" | "container_runtime";
             /** @description The Compose service that asks for it. */
             service: string;
-            /** @description The path, process namespace, rules, capabilities, security options or groups concerned, comma-separated when there are several; absent for `privileged`, `host_network` and `host_cgroup`. */
+            /** @description The path, process namespace, rules, capabilities, security options, groups, device reservations or runtime concerned, comma-separated when there are several (the entries of `gpu_reservation` are separated by a semicolon, each one listing its own driver, count or device ids and capabilities with commas); absent for `privileged`, `host_network` and `host_cgroup`. */
             detail?: string;
             /** @description Plain-language explanation of what it grants. */
             description: string;

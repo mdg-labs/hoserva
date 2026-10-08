@@ -1382,10 +1382,11 @@ func (s *Server) handleApplyNetworkSettingsRequest(args [0]string, argsEscaped b
 
 // handleApplyUpdateRequest handles applyUpdate operation.
 //
-// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
-// runs a config backup, and installs it in a transient systemd unit. Refused while a Parity,
-// Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not
-// match is never installed, and a notification is raised.
+// Downloads the `.deb` the release index points to and installs it only if the signed SHA256SUMS names
+// that package at the index entry's version and the version is newer than the running one. It verifies
+// the download against the signed SHA256SUMS, runs a config backup, and installs it in a transient
+// systemd unit. Refused while a Parity, Array-write or Topology job is running; the error names that
+// job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
 //
 // POST /settings/updates/apply
 func (s *Server) handleApplyUpdateRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -2287,8 +2288,8 @@ func (s *Server) handleCancelJobRequest(args [1]string, argsEscaped bool, w http
 
 // handleCheckForUpdateRequest handles checkForUpdate operation.
 //
-// Fetches the signed release index for the configured channel. A user-initiated check runs even when
-// the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+// Fetches the release index for the configured channel. A user-initiated check runs even when the
+// periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
 //
 // POST /settings/updates/check
 func (s *Server) handleCheckForUpdateRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -2435,7 +2436,7 @@ func (s *Server) handleCheckForUpdateRequest(args [0]string, argsEscaped bool, w
 		mreq := middleware.Request{
 			Context:          ctx,
 			OperationName:    CheckForUpdateOperation,
-			OperationSummary: "Check the signed release index for a newer Hoserva",
+			OperationSummary: "Check the release index for a newer Hoserva",
 			OperationID:      "checkForUpdate",
 			Body:             nil,
 			RawBody:          rawBody,
@@ -14204,11 +14205,19 @@ func (s *Server) handleGetMigrationReportRequest(args [0]string, argsEscaped boo
 // template content. It holds the source as the flash holds it, the generated Compose (the project's
 // own `compose.yaml` for a project), every warning, including the writable-layer warning every
 // converted template carries and any host path into another `/mnt/<pool>`, and the privileges the
-// Compose content asks for. The source and the Compose hold the template's environment, secrets
-// included, which is why this is an admin operation and the report's rows never quote them. A template
-// the converter could not read has `status` `failed` and an `error`, and no Compose. 404
-// `template_not_found` for a name the report does not list or a Compose Manager project whose
-// `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
+// Compose content asks for. The source holds the template's environment, secrets included, which is
+// why this is an admin operation, and the report's rows never quote it. In the generated Compose a
+// variable the template masks (`Mask="true"`) with a value is a `${NAME}` reference, and its value
+// goes to the `.env` of the stack `createMigrationStacks` creates, not to the Compose; this API never
+// returns that `.env`, but the value is still in `source` and can be quoted by a warning about that
+// variable. The value stays in the Compose, in clear, only when the variable's name cannot be a
+// Compose reference (it is not a plain identifier of letters, digits and `_`) or is one a stack's
+// `.env` may not define because Docker reserves it, which is reported as a `note` warning naming the
+// variable. Every other variable's value, and a masked variable's empty value, is in the Compose as
+// written. A Compose Manager project's `compose.yaml` is shown as the project holds it, whatever it
+// contains. A template the converter could not read has `status` `failed` and an `error`, and no
+// Compose. 404 `template_not_found` for a name the report does not list or a Compose Manager project
+// whose `compose.yaml` is not in the source, `no_migration_report` before a scan has finished and
 // `no_template_preview` for a report made before scans converted templates. 409
 // `template_source_unavailable` when the zip is not kept: it was removed, or the report was made from
 // the Unraid USB stick, which nothing is copied from. A preview is never answered from a copy kept
@@ -17992,9 +18001,9 @@ func (s *Server) handleGetUPSSettingsRequest(args [0]string, argsEscaped bool, w
 // handleGetUpdateStatusRequest handles getUpdateStatus operation.
 //
 // Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
-// Debian updates and whether a reboot is required. The update check reads only the signed release
-// index on the project site — never the GitHub API and never a system-wide `apt update`. When the
-// check is disabled, `availableVersion` is omitted rather than fetched.
+// Debian updates and whether a reboot is required. The update check reads only the release index on
+// the project site — never the GitHub API and never a system-wide `apt update`. When the check is
+// disabled, `availableVersion` is omitted rather than fetched.
 //
 // GET /settings/updates
 func (s *Server) handleGetUpdateStatusRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -30972,10 +30981,10 @@ func (s *Server) handleRevokeSessionRequest(args [1]string, argsEscaped bool, w 
 
 // handleRollbackUpdateRequest handles rollbackUpdate operation.
 //
-// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
-// snapshot, and installs the previous package. There are no down migrations — rollback is previous
-// package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error
-// names that job.
+// Downloads the recorded previous version's `.deb`, verifies it against the signed SHA256SUMS naming
+// that version, restores that version's pre-migration database snapshot, and installs the previous
+// package. There are no down migrations — rollback is previous package plus its snapshot. Refused
+// while a Parity, Array-write or Topology job is running; the error names that job.
 //
 // POST /settings/updates/rollback
 func (s *Server) handleRollbackUpdateRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

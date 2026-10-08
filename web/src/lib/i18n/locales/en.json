@@ -2881,7 +2881,7 @@
         "beta": "Beta"
       },
       "updateCheck": "Check for updates",
-      "updateCheckDescription": "Read the signed release index for the selected channel (Q67).",
+      "updateCheckDescription": "Read the release index for the selected channel (Q67).",
       "dependenciesTitle": "Storage engine packages",
       "dependenciesEmpty": "Installed mergerfs and SnapRAID versions are not reported yet.",
       "dependencyInRange": "At or above {{floor}}",
@@ -2962,7 +2962,9 @@
       "confinement_disabled": "Security protections switched off or replaced",
       "group_add": "Joins extra groups",
       "docker_socket": "Can control Docker, which is full control of the server",
-      "host_path": "Reaches folders outside the storage pool"
+      "host_path": "Reaches folders outside the storage pool",
+      "gpu_reservation": "Reserves graphics cards or other accelerators",
+      "container_runtime": "Runs under a different container runtime"
     }
   },
   "pagination": {

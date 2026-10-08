@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -886,15 +887,27 @@ type blockingClearManifestReplacer struct {
 	started chan struct{}
 	release chan struct{}
 	err     error
+
+	mu       sync.Mutex
+	manifest []parity.ManifestEntry
 }
 
 func (m *blockingClearManifestReplacer) Replace(ctx context.Context, manifest []parity.ManifestEntry, removingDisks map[string]bool) error {
 	if manifest != nil || removingDisks != nil {
+		m.mu.Lock()
+		m.manifest = manifest
+		m.mu.Unlock()
 		return nil
 	}
 	close(m.started)
 	<-m.release
 	return m.err
+}
+
+func (m *blockingClearManifestReplacer) Current(context.Context) ([]parity.ManifestEntry, map[string]bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manifest, nil, nil
 }
 
 // TestScheduler_EvacuationCancelRace_BeforeFinished_FailedManifestClearIsNotErased

@@ -10062,7 +10062,7 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 												switch method {
 												case "POST":
 													r.name = CheckForUpdateOperation
-													r.summary = "Check the signed release index for a newer Hoserva"
+													r.summary = "Check the release index for a newer Hoserva"
 													r.operationID = "checkForUpdate"
 													r.operationGroup = ""
 													r.pathPattern = "/settings/updates/check"

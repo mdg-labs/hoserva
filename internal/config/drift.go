@@ -53,10 +53,73 @@ func (s Status) String() string {
 }
 
 func (g *Generator) manifestPath() string {
-	return filepath.Join(g.Root, ".hoserva", "manifest.json")
+	return filepath.Join(g.Root, manifestDir, "manifest.json")
+}
+
+// manifestDirMode and manifestFileMode keep the manifest root-only: it holds
+// a digest of every generated file, including the credential-bearing NUT
+// ones, which a local account could otherwise test guesses against offline.
+const (
+	manifestDirMode  = 0o700
+	manifestFileMode = 0o600
+)
+
+// tightenMode chmods path to want when it exists with any other permission
+// bits, so a manifest or directory an earlier release left 0644/0755 is
+// closed the first time Generator touches it. It reports whether path exists.
+func tightenMode(path string, want os.FileMode) (bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("config: checking %s: %w", path, err)
+	}
+	if info.Mode().Perm() == want {
+		return true, nil
+	}
+	if err := os.Chmod(path, want); err != nil {
+		return false, fmt.Errorf("config: setting permissions on %s: %w", path, err)
+	}
+	return true, nil
+}
+
+// secureManifestDir leaves manifestDir 0700 and any manifest in it 0600. With
+// create it also makes the directory when it is missing, 0700 whatever the
+// process umask; without, a missing directory is left missing.
+func (g *Generator) secureManifestDir(create bool) error {
+	dir := filepath.Join(g.Root, manifestDir)
+	exists, err := tightenMode(dir, manifestDirMode)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if !create {
+			return nil
+		}
+		if err := ensureDirSynced(g.Root); err != nil {
+			return err
+		}
+		if err := os.Mkdir(dir, manifestDirMode); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("config: creating directory %s: %w", dir, err)
+		}
+		if _, err := tightenMode(dir, manifestDirMode); err != nil {
+			return err
+		}
+		if err := fsyncDir(g.Root); err != nil {
+			return err
+		}
+	}
+	if _, err := tightenMode(g.manifestPath(), manifestFileMode); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *Generator) loadManifest() (map[string]record, error) {
+	if err := g.secureManifestDir(false); err != nil {
+		return nil, err
+	}
 	raw, err := os.ReadFile(g.manifestPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]record{}, nil
@@ -76,7 +139,10 @@ func (g *Generator) saveManifest(m map[string]record) error {
 	if err != nil {
 		return fmt.Errorf("config: encoding manifest: %w", err)
 	}
-	return atomicWrite(g.manifestPath(), raw, 0o644, -1, false)
+	if err := g.secureManifestDir(true); err != nil {
+		return err
+	}
+	return atomicWrite(g.manifestPath(), raw, manifestFileMode, -1, false)
 }
 
 // Check reports path's current drift Status against Generator's manifest

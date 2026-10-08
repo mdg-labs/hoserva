@@ -55,7 +55,11 @@ type Preview struct {
 	// Compose is the generated Compose file of a converted template, and the
 	// project's own compose.yaml for a Compose Manager project. It is empty
 	// when the converter failed.
-	Compose    string
+	Compose string
+	// Env is the .env text of the masked variables the Compose file
+	// references as ${NAME} instead of holding their values, and the .env of
+	// the stack created from it. It is never returned by the API.
+	Env        string
 	Warnings   []PreviewWarning
 	Privileges []PreviewPrivilege
 	// Error says why the converter, or the YAML reader of a project, could not
@@ -186,7 +190,7 @@ func networkDefs(nets []Network) []template.NetworkDef {
 // previewTemplate converts one template in memory. It creates nothing and runs
 // nothing.
 func previewTemplate(data []byte, networks []template.NetworkDef) *Preview {
-	conv, err := template.ConvertUnraid(data, template.ConvertOptions{Networks: networks})
+	conv, err := template.ConvertUnraid(data, template.ConvertOptions{Networks: networks, SecretsToEnv: true})
 	if err != nil {
 		failure := FailureInvalid
 		if len(data) > template.MaxUnraidTemplateBytes {
@@ -194,7 +198,7 @@ func previewTemplate(data []byte, networks []template.NetworkDef) *Preview {
 		}
 		return &Preview{Source: string(data), Error: err.Error(), Failure: failure}
 	}
-	p := &Preview{Source: conv.Source, Compose: conv.Compose}
+	p := &Preview{Source: conv.Source, Compose: conv.Compose, Env: conv.EnvFile()}
 	for _, w := range conv.Warnings {
 		p.Warnings = append(p.Warnings, PreviewWarning{Class: w.Class, Message: w.Message, Detail: w.Detail, Command: w.Command})
 	}

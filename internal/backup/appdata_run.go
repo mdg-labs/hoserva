@@ -201,6 +201,7 @@ func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, sele
 		}
 	}
 	var attempted []AppdataContainer
+	rep := &anchorReport{out: out}
 	if len(toStop) > 0 {
 		names := make([]string, len(toStop))
 		for i, c := range toStop {
@@ -241,6 +242,7 @@ func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, sele
 			Stopped: c.Stop || !c.Running, DatabaseImage: c.DatabaseImage, Reason: string(reason), Dirs: c.Dirs,
 		}
 		_, _ = fmt.Fprintf(out, "archiving %s\n", c.Name)
+		a.anchorDirs(rep, c.Dirs)
 		if _, err := packAppdata(ctx, path, hdr); err != nil {
 			if ctx.Err() != nil {
 				return staged, ctx.Err()

@@ -647,3 +647,40 @@ func TestGuardConfig_RaisesButNeverDisables(t *testing.T) {
 		t.Fatal("Evaluate: Blocked = false with GuardConfig{} (zero value) — it must fall back to DefaultRemovedFilesMax, not disable the check")
 	}
 }
+
+// TestGuard_StrandedCacheRelocationManifestExemptsOnlyWhilePresent pins why
+// a share relocation to the cache must clear its manifest on every ending
+// it cannot resume from: while an array→cache manifest is still stored, a
+// later diff whose removals sit at the same disk+path is accounted and does
+// not trip RemovedFilesMax; once the manifest is gone the identical diff
+// counts every removal and blocks.
+func TestGuard_StrandedCacheRelocationManifestExemptsOnlyWhilePresent(t *testing.T) {
+	const removals = 600
+
+	removedFiles := make([]DiffFile, 0, removals)
+	manifest := make([]ManifestEntry, 0, removals)
+	for i := 0; i < removals; i++ {
+		rel := fmt.Sprintf("docs/f%d.txt", i)
+		removedFiles = append(removedFiles, DiffFile{Disk: "/mnt/disk1", RelPath: rel})
+		manifest = append(manifest, ManifestEntry{RelPath: rel, SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"})
+	}
+	diff := DiffReport{
+		Removed:      removals,
+		PerDisk:      map[string]DiskDiff{"/mnt/disk1": {FilesBefore: 100000, FilesAfter: 100000 - removals}},
+		RemovedFiles: removedFiles,
+	}
+	guard := Guard{Config: GuardConfig{RemovedFilesMax: 500}}
+
+	withManifest := guard.Evaluate(diff, manifest, nil)
+	if withManifest.Blocked || withManifest.RemovedCount != 0 {
+		t.Fatalf("Evaluate with the manifest still stored: Blocked = %v, RemovedCount = %d, want the %d removals accounted and not blocked", withManifest.Blocked, withManifest.RemovedCount, removals)
+	}
+
+	cleared := guard.Evaluate(diff, nil, nil)
+	if !cleared.Blocked || !cleared.hasTrigger(TriggerRemovedCount) {
+		t.Fatalf("Evaluate once the manifest is cleared: Blocked = %v, Triggers = %v, want the %d removals counted and blocked", cleared.Blocked, cleared.Triggers, removals)
+	}
+	if cleared.RemovedCount != removals {
+		t.Fatalf("Evaluate once the manifest is cleared: RemovedCount = %d, want %d", cleared.RemovedCount, removals)
+	}
+}

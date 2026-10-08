@@ -5,8 +5,8 @@
 # from release.yml, after scripts/release/build-deb.sh has produced both
 # architectures' .deb into artifacts_dir.
 #
-# Q66 also has this update the signed release index on the project
-# site. This emits release-index-entry.json as a release asset: a
+# Q66 also has this update the release index on the project site.
+# This emits release-index-entry.json as a release asset: a
 # self-contained fragment (tag, channel, version, per-arch asset URL
 # and checksum) that .github/workflows/pages.yml fetches from every
 # past release (scripts/release/fetch-release-index-entries.sh) and

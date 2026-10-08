@@ -44665,6 +44665,10 @@ func (s *TemplatePrivilegeKind) Decode(d *jx.Decoder) error {
 		*s = TemplatePrivilegeKindDockerSocket
 	case TemplatePrivilegeKindHostPath:
 		*s = TemplatePrivilegeKindHostPath
+	case TemplatePrivilegeKindGpuReservation:
+		*s = TemplatePrivilegeKindGpuReservation
+	case TemplatePrivilegeKindContainerRuntime:
+		*s = TemplatePrivilegeKindContainerRuntime
 	default:
 		*s = TemplatePrivilegeKind(v)
 	}

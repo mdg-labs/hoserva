@@ -95,7 +95,7 @@ func TestUpdateConfigChangesOnlyTheChangedLinesOfTheEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := stacks.created[0].Env
-	for _, want := range []string{"SITE_NAME='Team notes'\n", "WEBUI_PORT=3100\n", "APPDATA='/mnt/cache/notes data'\n"} {
+	for _, want := range []string{`SITE_NAME="Team notes"` + "\n", "WEBUI_PORT=3100\n", `APPDATA="/mnt/cache/notes data"` + "\n"} {
 		if !strings.Contains(after, want) {
 			t.Errorf(".env lacks the line %q:\n%s", want, after)
 		}
@@ -147,7 +147,7 @@ func TestASecretKeepsItsSealedValueUnlessReplacedOrGenerated(t *testing.T) {
 	if _, err := in.UpdateConfig(ctx, "aio-notes", ConfigUpdate{Values: map[string]string{"DB_PASSWORD": "my new password"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := envLines(stacks.created[0].Env)["DB_PASSWORD"]; got != "'my new password'" {
+	if got := envLines(stacks.created[0].Env)["DB_PASSWORD"]; got != `"my new password"` {
 		t.Errorf("a replaced secret = %q", got)
 	}
 
@@ -419,6 +419,12 @@ func TestParseEnvLineReadsTheFormsComposeAccepts(t *testing.T) {
 		"A=1":                   {"A", "1", "true"},
 		"  export A = 2":        {"A", "2", "true"},
 		"A='x y'":               {"A", "x y", "true"},
+		`A='c:\dir\'`:           {"A", `c:\dir\`, "true"},
+		`A='a $b \n'`:           {"A", `a $b \n`, "true"},
+		`A="a \$b"`:             {"A", "a $b", "true"},
+		`A="a\nb\rc"`:           {"A", "a\nb\rc", "true"},
+		`A="c:\\dir\\"`:         {"A", `c:\dir\`, "true"},
+		`A="a\qb"`:              {"A", `a\qb`, "true"},
 		`A="x \"y\" \\ z"`:      {"A", `x "y" \ z`, "true"},
 		"A=plain # comment":     {"A", "plain", "true"},
 		"A=":                    {"A", "", "true"},
@@ -454,7 +460,7 @@ func TestMergeEnvRewritesChangedInputsAndKeepsEverythingElse(t *testing.T) {
 		{"missing appended in name order", "X=9\n", map[string]string{"C": "c", "A": "a"}, "X=9\nA=a\nC=c\n"},
 		{"duplicates collapse to one line", "A=1\nB=2\nA=3\n", map[string]string{"A": "4", "B": "2"}, "A=4\nB=2\n"},
 		{"duplicates that did not change stay", "A=1\nA=3\n", map[string]string{"A": "3"}, "A=1\nA=3\n"},
-		{"value that needs quoting", "A=1\n", map[string]string{"A": "a b"}, "A='a b'\n"},
+		{"value that needs quoting", "A=1\n", map[string]string{"A": "a b"}, "A=\"a b\"\n"},
 		{"foreign lines and comments stay", "# c\nX=1\nA=1\n\n", map[string]string{"A": "2"}, "# c\nX=1\nA=2\n\n"},
 		{"no trailing newline", "A=1", map[string]string{"A": "2"}, "A=2\n"},
 		{"empty file", "", map[string]string{"A": "1"}, "A=1\n"},
@@ -464,5 +470,76 @@ func TestMergeEnvRewritesChangedInputsAndKeepsEverythingElse(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: mergeEnv(%q) = %q, want %q", tc.name, tc.env, got, tc.want)
 		}
+	}
+}
+
+func TestUpdateConfigWritesEveryInputAsAnEnvValueComposeReadsBackExactly(t *testing.T) {
+	for name, value := range envValues {
+		t.Run(name, func(t *testing.T) {
+			in, stacks := installed(t, "aio-notes", nil)
+			if _, err := in.UpdateConfig(context.Background(), "aio-notes", ConfigUpdate{Values: map[string]string{"DB_PASSWORD": value, "SITE_NAME": value}}); err != nil {
+				t.Fatal(err)
+			}
+			env := stacks.created[0].Env
+			got, err := composeDotenv(env)
+			if err != nil {
+				t.Fatalf("Compose cannot read the .env: %v\n%s", err, env)
+			}
+			for _, k := range []string{"DB_PASSWORD", "SITE_NAME"} {
+				if got[k] != value {
+					t.Errorf("Compose reads %s as %q, want %q\n%s", k, got[k], value, env)
+				}
+			}
+			if got["WEBUI_PORT"] != "3000" {
+				t.Errorf("the line after the values reads %q, want 3000", got["WEBUI_PORT"])
+			}
+		})
+	}
+}
+
+func TestConfigReadsBackWhatInstallAndUpdateWrote(t *testing.T) {
+	for name, value := range envValues {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			in, stacks := installed(t, "aio-notes", map[string]string{"SITE_NAME": value})
+			cfg, err := in.Config(ctx, "aio-notes")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := configInput(t, cfg, "SITE_NAME").Value; got != value {
+				t.Errorf("Config reads the installed SITE_NAME as %q, want %q", got, value)
+			}
+			if _, err := in.UpdateConfig(ctx, "aio-notes", ConfigUpdate{Values: map[string]string{"SITE_NAME": value, "WEBUI_PORT": "3100"}}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := composeDotenv(stacks.created[0].Env)
+			if err != nil || got["SITE_NAME"] != value || got["WEBUI_PORT"] != "3100" {
+				t.Errorf("an update that sends the value back changed it: %q, %v\n%s", got["SITE_NAME"], err, stacks.created[0].Env)
+			}
+		})
+	}
+}
+
+func TestAnExistingSingleQuotedEnvIsReadBackExactlyAndRewrittenInTheNewForm(t *testing.T) {
+	ctx := context.Background()
+	in, stacks := installed(t, "aio-notes", nil)
+	stacks.created[0].Env = strings.Replace(stacks.created[0].Env, "SITE_NAME=Notes", `SITE_NAME='my $site \n #1'`, 1)
+	cfg, err := in.Config(ctx, "aio-notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := configInput(t, cfg, "SITE_NAME").Value; got != `my $site \n #1` {
+		t.Fatalf("Config reads the single-quoted SITE_NAME as %q", got)
+	}
+	before := stacks.created[0].Env
+	if _, err := in.UpdateConfig(ctx, "aio-notes", ConfigUpdate{Values: map[string]string{"SITE_NAME": `my $site \n #1`}}); err != nil || stacks.created[0].Env != before {
+		t.Errorf("sending the unchanged value back rewrote the .env (%v):\n%s", err, stacks.created[0].Env)
+	}
+	if _, err := in.UpdateConfig(ctx, "aio-notes", ConfigUpdate{Values: map[string]string{"SITE_NAME": `my $site \`}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := composeDotenv(stacks.created[0].Env)
+	if err != nil || got["SITE_NAME"] != `my $site \` {
+		t.Errorf("Compose reads SITE_NAME as %q, %v\n%s", got["SITE_NAME"], err, stacks.created[0].Env)
 	}
 }

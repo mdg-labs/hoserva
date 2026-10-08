@@ -401,8 +401,8 @@ func TestASuppliedSecretIsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env := envLines(stacks.created[0].Env); env["DB_PASSWORD"] != "'my secret'" {
-		t.Errorf(".env DB_PASSWORD = %q, want it single-quoted", env["DB_PASSWORD"])
+	if env := envLines(stacks.created[0].Env); env["DB_PASSWORD"] != `"my secret"` {
+		t.Errorf(".env DB_PASSWORD = %q, want it double-quoted", env["DB_PASSWORD"])
 	}
 	if pw := input(t, plan, "DB_PASSWORD"); pw.Generated || pw.Value != "" {
 		t.Errorf("DB_PASSWORD = %+v", pw)
@@ -584,7 +584,7 @@ func TestPathWithSpacesIsQuotedInTheEnv(t *testing.T) {
 	if _, _, err := in.Install(context.Background(), PlanRequest{ID: "jellyfin", Values: map[string]string{"MEDIA": "/mnt/user/my $media #1"}}); err != nil {
 		t.Fatal(err)
 	}
-	if env := envLines(stacks.created[0].Env); env["MEDIA"] != "'/mnt/user/my $media #1'" {
+	if env := envLines(stacks.created[0].Env); env["MEDIA"] != `"/mnt/user/my \$media #1"` {
 		t.Errorf(".env MEDIA = %q", env["MEDIA"])
 	}
 }
@@ -807,6 +807,23 @@ func TestPrivilegeSummaryIsReadFromTheComposeContent(t *testing.T) {
 		{"extra groups", "group_add: [video, \"44\"]", "", "group_add:video, 44"},
 		{"an extra group as a number", "group_add:\n      - 44", "", "group_add:44"},
 		{"every kind in one service", "cap_add: [SYS_ADMIN]\n    security_opt: [apparmor:unconfined]\n    group_add: [disk]", "", "added_capabilities:SYS_ADMIN|confinement_disabled:apparmor:unconfined|group_add:disk"},
+		{"every GPU reserved", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: nvidia, count: all, capabilities: [gpu] }", "", "gpu_reservation:driver nvidia, count all, capabilities gpu"},
+		{"a count of GPUs reserved", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: nvidia, count: 2, capabilities: [gpu, utility] }", "", "gpu_reservation:driver nvidia, count 2, capabilities gpu, utility"},
+		{"GPUs reserved by device id", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: nvidia, device_ids: [\"0\", GPU-abc], capabilities: [gpu] }", "", "gpu_reservation:driver nvidia, device ids 0, GPU-abc, capabilities gpu"},
+		{"a reservation without a driver", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { capabilities: [gpu] }", "", "gpu_reservation:capabilities gpu"},
+		{"every reservation is listed", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: nvidia, count: 1, capabilities: [gpu] }\n            - { driver: amd, count: all, capabilities: [gpu] }", "", "gpu_reservation:driver nvidia, count 1, capabilities gpu; driver amd, count all, capabilities gpu"},
+		{"a reservation chosen by an input", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: \"${DRV}\", count: all, capabilities: [gpu] }", "  inputs:\n    DRV: { kind: string, default: nvidia }\n", "gpu_reservation:driver nvidia, count all, capabilities gpu"},
+		{"a reservation from empty optional inputs", "deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: \"${DRV}\", capabilities: [\"${CAP}\"] }", "  inputs:\n    DRV: { kind: string, optional: true }\n    CAP: { kind: string, optional: true }\n", ""},
+		{"a reservation that is not a mapping", "deploy:\n      resources:\n        reservations:\n          devices:\n            - nvidia", "", "gpu_reservation:nvidia"},
+		{"reservations of CPU and memory only", "deploy:\n      resources:\n        reservations: { cpus: \"0.5\", memory: 256M }", "", ""},
+		{"no device reservations", "deploy:\n      resources:\n        reservations:\n          devices: []", "", ""},
+		{"limits only", "deploy:\n      resources:\n        limits: { memory: 1g, cpus: \"2\" }", "", ""},
+		{"nvidia runtime", "runtime: nvidia", "", "container_runtime:nvidia"},
+		{"runtime chosen by an input", "runtime: ${RT}", "  inputs:\n    RT: { kind: string, default: kata-runtime }\n", "container_runtime:kata-runtime"},
+		{"Docker's default runtime", "runtime: runc", "", ""},
+		{"runtime from an empty optional input", "runtime: ${RT}", "  inputs:\n    RT: { kind: string, optional: true }\n", ""},
+		{"a runtime that is not a string", "runtime: 5", "", "container_runtime:5"},
+		{"runtime and reservation together", "runtime: nvidia\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - { driver: nvidia, count: all, capabilities: [gpu] }", "", "container_runtime:nvidia|gpu_reservation:driver nvidia, count all, capabilities gpu"},
 		{"raw disk as a device", "devices:\n      - /dev/sda:/dev/sda", "", "host_path:/dev/sda"},
 		{"device in a long entry", "devices:\n      - { source: /dev/sdb, target: /dev/sdb }", "", "host_path:/dev/sdb"},
 		{"device chosen by an input", "devices:\n      - ${DEV}:/dev/x:rwm", "  inputs:\n    DEV: { kind: string, default: /dev/nvme0n1 }\n", "host_path:/dev/nvme0n1"},
@@ -1031,5 +1048,50 @@ func TestInstallRefusesATemplateWhoseInputIsNamedLikeAReservedDockerVariable(t *
 	_, _, err = in.Install(context.Background(), PlanRequest{ID: "jellyfin"})
 	if !errors.Is(err, ErrInvalidTemplate) || !strings.Contains(err.Error(), "PATH") || len(stacks.created) != 0 {
 		t.Fatalf("err = %v, created = %d, want ErrInvalidTemplate naming PATH and no stack", err, len(stacks.created))
+	}
+}
+
+// envValues are inputs a .env value has to carry that the single-quote form
+// could not write (a backslash before the closing quote) or that Compose
+// treats specially. A single quote and a line break are refused by
+// checkEnvValue and so are not here.
+var envValues = map[string]string{
+	"trailing backslash":    `pass\`,
+	"three trailing":        `pass\\\`,
+	"only a backslash":      `\`,
+	"backslash inside":      `a\b\\c`,
+	"backslash then n":      `a\nb`,
+	"backslash then dollar": `a\$b`,
+	"dollar":                "pa$word",
+	"dollar brace":          "${X}$$",
+	"spaces":                "  two words  ",
+	"hash":                  "a #b #",
+	"double quote":          `say "hi"\`,
+	"equals and colon":      "a=b:c",
+	"unicode":               "pässwörd-日本\\",
+}
+
+func TestInstallWritesEveryInputAsAnEnvValueComposeReadsBackExactly(t *testing.T) {
+	for name, value := range envValues {
+		t.Run(name, func(t *testing.T) {
+			in, stacks := newInstaller(t)
+			_, _, err := in.Install(context.Background(), PlanRequest{ID: "aio-notes", Values: map[string]string{"DB_PASSWORD": value, "SITE_NAME": value}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := stacks.created[0].Env
+			got, err := composeDotenv(env)
+			if err != nil {
+				t.Fatalf("Compose cannot read the .env: %v\n%s", err, env)
+			}
+			for _, k := range []string{"DB_PASSWORD", "SITE_NAME"} {
+				if got[k] != value {
+					t.Errorf("Compose reads %s as %q, want %q\n%s", k, got[k], value, env)
+				}
+			}
+			if got["WEBUI_PORT"] != "3000" {
+				t.Errorf("the line after the values reads %q, want 3000", got["WEBUI_PORT"])
+			}
+		})
 	}
 }

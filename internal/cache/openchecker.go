@@ -54,7 +54,23 @@ func (c ProcOpenChecker) IsOpen(ctx context.Context, path string) (bool, error) 
 		}
 		return false, err
 	}
+	return c.isOpen(ctx, proc, uint64(target.Dev), target.Ino)
+}
 
+// IsOpenFile reports whether any process visible under ProcPath currently
+// has the file with this device and inode open — IsOpen for a caller that
+// already holds the file's identity from a descriptor-relative lookup and
+// must not have the question answered for whatever a path names by then
+// (removeSource, #731).
+func (c ProcOpenChecker) IsOpenFile(ctx context.Context, dev, ino uint64) (bool, error) {
+	proc := c.ProcPath
+	if proc == "" {
+		proc = "/proc"
+	}
+	return c.isOpen(ctx, proc, dev, ino)
+}
+
+func (c ProcOpenChecker) isOpen(ctx context.Context, proc string, dev, ino uint64) (bool, error) {
 	pids, err := os.ReadDir(proc)
 	if err != nil {
 		return false, err
@@ -76,7 +92,7 @@ func (c ProcOpenChecker) IsOpen(ctx context.Context, path string) (bool, error) 
 			if err := syscall.Stat(filepath.Join(fdDir, fd.Name()), &st); err != nil {
 				continue
 			}
-			if st.Dev == target.Dev && st.Ino == target.Ino {
+			if uint64(st.Dev) == dev && st.Ino == ino {
 				return true, nil
 			}
 		}
@@ -85,6 +101,7 @@ func (c ProcOpenChecker) IsOpen(ctx context.Context, path string) (bool, error) 
 }
 
 var _ OpenChecker = ProcOpenChecker{}
+var _ fileOpenChecker = ProcOpenChecker{}
 
 // OpenSnapshot answers IsOpen for any number of paths from one /proc walk
 // already taken, rather than repeating that walk per call — resolved from

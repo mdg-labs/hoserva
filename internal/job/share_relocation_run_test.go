@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/cache"
@@ -386,14 +387,17 @@ func TestRunShareRelocation_ToCache_SyncDuringOutstandingRelocation_SeesManifest
 	}
 }
 
-// TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted
-// is #247's own clear-path safety test (its own issue text: "Get the
-// clear-path wrong and this issue itself becomes a guard-masking bug"):
-// when the relocation's own *trailing* sync fails — after the delete phase
-// already removed the array originals — the manifest must NOT be cleared,
-// since a concurrent or later sync still needs it to correctly exempt
-// those already-accounted removals until the relocation itself resolves.
-func TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted(t *testing.T) {
+// TestRunShareRelocation_ToCache_FinalSyncFailure_ClearsManifest_FollowingSyncCountsRemovals
+// replaces #247's TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted,
+// whose expectation is inverted on purpose (#732). A relocation whose
+// trailing sync failed ends failed, and a failed job is never resumed, so
+// nothing is left that still needs its manifest; keeping it would exempt
+// removals at those disk+paths from every later sync's guard for as long as
+// the row survived. With it cleared, the next sync counts the same removals
+// toward RemovedFilesMax and may block until the user confirms: the guard is
+// stricter, not weaker, and nothing is lost because the copies are on the
+// cache.
+func TestRunShareRelocation_ToCache_FinalSyncFailure_ClearsManifest_FollowingSyncCountsRemovals(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	store := parity.NewRelocationManifestStore(db)
@@ -422,6 +426,9 @@ func TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted(t *
 		Sync:     sync,
 		Manifest: store,
 	}))
+	syncEng := &storeBackedEngine{recordingEngine: newRecordingEngine(), store: store}
+	syncEng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	s.registry.Register(TypeSync, false, RunSync(syncEng))
 
 	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
 	if err != nil {
@@ -440,13 +447,28 @@ func TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted(t *
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatalf("array original should already be gone before the trailing sync failed: err=%v", err)
 	}
+	if _, err := os.Stat(filepath.Join(share.CachePath, "report.pdf")); err != nil {
+		t.Fatalf("the cache copy must survive a failed trailing sync: %v", err)
+	}
 
-	manifest, _, err := store.Current(ctx)
+	manifest, removingDisks, err := store.Current(ctx)
 	if err != nil {
 		t.Fatalf("store.Current after a failed trailing sync: %v", err)
 	}
-	if len(manifest) != 1 || manifest[0].RelPath != "docs/report.pdf" {
-		t.Fatalf("manifest after a failed trailing sync = %+v, want it still persisted, not cleared", manifest)
+	if len(manifest) != 0 || len(removingDisks) != 0 {
+		t.Fatalf("manifest after a failed trailing sync = %+v/%+v, want it cleared", manifest, removingDisks)
+	}
+
+	syncJob, err := s.Submit(ctx, TypeSync, nil, mustJSON(t, SyncParams{}))
+	if err != nil {
+		t.Fatalf("Submit following sync: %v", err)
+	}
+	if got := await(t, s, syncJob.ID); got.Status != StatusSucceeded {
+		t.Fatalf("following sync status = %s (%s), want succeeded", got.Status, got.ErrorMessage)
+	}
+	lastSync, _, _, _ := syncEng.snapshot()
+	if len(lastSync.Manifest) != 0 {
+		t.Fatalf("the following sync's SyncOpts.Manifest = %+v, want empty so the guard counts the relocation's removals", lastSync.Manifest)
 	}
 }
 
@@ -617,6 +639,10 @@ type countingManifestReplacer struct {
 func (c *countingManifestReplacer) Replace(ctx context.Context, manifest []parity.ManifestEntry, removingDisks map[string]bool) error {
 	c.calls++
 	return c.store.Replace(ctx, manifest, removingDisks)
+}
+
+func (c *countingManifestReplacer) Current(ctx context.Context) ([]parity.ManifestEntry, map[string]bool, error) {
+	return c.store.Current(ctx)
 }
 
 // TestRunShareRelocation_ToCache_PersistsManifestOnce_NotPerCheckpoint pins
@@ -1031,5 +1057,640 @@ func TestRunShareRelocation_ToCache_ResumedRunStillFailsOnWhatAnEarlierRunLeftBe
 	}
 	if _, err := os.Stat(held); err != nil {
 		t.Fatalf("the held file must stay on the array: %v", err)
+	}
+}
+
+// foreignManifests are persisted manifests that some other job owns while a
+// "docs" relocation to the cache fails or is cancelled: a rebalance of the
+// same share (array target), another share's cache relocation, and an
+// evacuation's (removing disks set). The relocation must leave each alone.
+func foreignManifests(share cache.Share) map[string]struct {
+	manifest      []parity.ManifestEntry
+	removingDisks map[string]bool
+} {
+	type m = struct {
+		manifest      []parity.ManifestEntry
+		removingDisks map[string]bool
+	}
+	return map[string]m{
+		"rebalance of the same share": {manifest: []parity.ManifestEntry{
+			{RelPath: "docs/x.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+		}},
+		"relocation of another share to the cache": {manifest: []parity.ManifestEntry{
+			{RelPath: "photos/x.jpg", SourceDisk: "/mnt/disk1", TargetDisk: filepath.Dir(share.CachePath)},
+		}},
+		"evacuation": {
+			manifest:      []parity.ManifestEntry{{RelPath: "docs/x.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"}},
+			removingDisks: map[string]bool{"/mnt/disk1": true},
+		},
+	}
+}
+
+func requireManifestUntouched(t *testing.T, store *parity.RelocationManifestStore, wantManifest []parity.ManifestEntry, wantRemoving map[string]bool) {
+	t.Helper()
+	gotManifest, gotRemoving, err := store.Current(context.Background())
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(gotManifest) != len(wantManifest) || len(gotRemoving) != len(wantRemoving) {
+		t.Fatalf("store = %+v/%+v, want another job's manifest %+v/%+v left alone", gotManifest, gotRemoving, wantManifest, wantRemoving)
+	}
+	for i := range wantManifest {
+		if gotManifest[i].RelPath != wantManifest[i].RelPath || gotManifest[i].SourceDisk != wantManifest[i].SourceDisk || gotManifest[i].TargetDisk != wantManifest[i].TargetDisk {
+			t.Fatalf("store manifest = %+v, want %+v", gotManifest, wantManifest)
+		}
+	}
+	for k := range wantRemoving {
+		if !gotRemoving[k] {
+			t.Fatalf("store removing disks = %+v, want %+v", gotRemoving, wantRemoving)
+		}
+	}
+}
+
+// TestRunShareRelocation_ToCache_GuardBlockedFirstSync_ClearsManifest is
+// #732's central case: the first guarded sync is blocked, the job fails, and
+// a failed job is never resumed, so the manifest persisted right before that
+// sync must not outlive it. Without the clear the stored array→cache entries
+// would keep exempting later removals at those paths from the guard.
+func TestRunShareRelocation_ToCache_GuardBlockedFirstSync_ClearsManifest(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	store := parity.NewRelocationManifestStore(db)
+
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	var sawPersisted int
+	eng := newRecordingEngine()
+	eng.ScriptGuardBlock(trippedGuard())
+	sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		persisted, _, err := store.Current(ctx)
+		if err != nil {
+			t.Fatalf("store.Current inside the sync call: %v", err)
+		}
+		sawPersisted = len(persisted)
+		return syncFuncFromEngine(eng)(ctx, manifest)
+	}
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     sync,
+		Manifest: store,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed || !strings.Contains(finished.ErrorMessage, "threshold guard blocked the sync") {
+		t.Fatalf("status = %s (%s), want failed on the guard block", finished.Status, finished.ErrorMessage)
+	}
+	if sawPersisted != 1 {
+		t.Fatalf("manifest entries durable during the blocked sync = %d, want 1 (the case this test is about)", sawPersisted)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("array original must survive a blocked sync: %v", err)
+	}
+
+	manifest, removingDisks, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(manifest) != 0 || len(removingDisks) != 0 {
+		t.Fatalf("manifest after a guard-blocked relocation = %+v/%+v, want cleared", manifest, removingDisks)
+	}
+}
+
+// TestRunShareRelocation_ToCache_FailureLeavesAnotherJobsManifestAlone is
+// #732's ownership check on the run path: by the time a failed relocation
+// reaches its clear, the single stored slot may hold a manifest some other
+// job wrote; that one must survive.
+func TestRunShareRelocation_ToCache_FailureLeavesAnotherJobsManifestAlone(t *testing.T) {
+	probe := newShareRelocationShare(t, "docs")
+	for name := range foreignManifests(probe) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := parity.NewRelocationManifestStore(newTestDB(t))
+			s := newTestScheduler(t)
+			share := newShareRelocationShare(t, "docs")
+			mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+			foreign := foreignManifests(share)[name]
+
+			sync := func(ctx context.Context, _ []parity.ManifestEntry) error {
+				if err := store.Replace(ctx, foreign.manifest, foreign.removingDisks); err != nil {
+					t.Fatalf("another job replacing the manifest: %v", err)
+				}
+				return errors.New("sync failed")
+			}
+			s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+				Open:     fakeOpen(),
+				Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+				Sync:     sync,
+				Manifest: store,
+			}))
+
+			j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+			if err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			if finished := await(t, s, j.ID); finished.Status != StatusFailed {
+				t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+			}
+			requireManifestUntouched(t, store, foreign.manifest, foreign.removingDisks)
+		})
+	}
+}
+
+// interruptedRelocationHarness drives a to-cache relocation of "docs"
+// through a real Scheduler to a graceful maintenance interrupt right after
+// its manifest became durable, with the abort registered the way hoservad
+// registers it, and returns the interrupted job and a switch that makes the
+// share lookup fail from then on.
+func interruptedRelocationHarness(t *testing.T, store *parity.RelocationManifestStore) (*Scheduler, cache.Share, *Job, *atomic.Bool) {
+	t.Helper()
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		if err := s.EnterMaintenance(ctx); err != nil {
+			t.Fatalf("EnterMaintenance: %v", err)
+		}
+		return syncFuncFromEngine(eng)(ctx, manifest)
+	}
+	lookupFails := &atomic.Bool{}
+	deps := ShareRelocationDeps{
+		Open: fakeOpen(),
+		Share: func(context.Context, string) (cache.Share, error) {
+			if lookupFails.Load() {
+				return cache.Share{}, errors.New("share not found")
+			}
+			return share, nil
+		},
+		Sync:     sync,
+		Manifest: store,
+	}
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(deps))
+	s.registry.RegisterAbort(TypeShareRelocation, ShareRelocationAbort(deps))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	interrupted := await(t, s, j.ID)
+	if interrupted.Status != StatusInterrupted {
+		t.Fatalf("status = %s (%s), want interrupted", interrupted.Status, interrupted.ErrorMessage)
+	}
+	manifest, _, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(manifest) != 1 {
+		t.Fatalf("manifest after a graceful interrupt = %+v, want it kept for Resume", manifest)
+	}
+	return s, share, interrupted, lookupFails
+}
+
+// TestScheduler_CancelInterruptedShareRelocation_AbortClearsManifest is
+// #732's cancel path: Scheduler.Cancel of an interrupted relocation never
+// re-enters RunShareRelocation, so only the registered abort can clear the
+// manifest the interrupted run kept for Resume. The abort is registered here
+// exactly as cmd/hoservad/main.go registers it
+// (job.ShareRelocationAbort with the relocation's own deps).
+func TestScheduler_CancelInterruptedShareRelocation_AbortClearsManifest(t *testing.T) {
+	ctx := context.Background()
+	store := parity.NewRelocationManifestStore(newTestDB(t))
+	s, _, interrupted, _ := interruptedRelocationHarness(t, store)
+
+	if _, err := s.Cancel(ctx, interrupted.ID); err != nil {
+		t.Fatalf("Cancel(interrupted relocation): %v", err)
+	}
+	if got := await(t, s, interrupted.ID); got.Status != StatusCancelled {
+		t.Fatalf("status after Cancel = %s (%s), want cancelled", got.Status, got.ErrorMessage)
+	}
+	manifest, removingDisks, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(manifest) != 0 || len(removingDisks) != 0 {
+		t.Fatalf("manifest after cancelling the interrupted relocation = %+v/%+v, want cleared by the abort", manifest, removingDisks)
+	}
+}
+
+// TestScheduler_CancelInterruptedShareRelocation_AbortLeavesAnotherJobsManifestAlone
+// is the ownership half of the abort: the slot was taken over by another job
+// after this relocation was interrupted, and cancelling must not wipe it.
+func TestScheduler_CancelInterruptedShareRelocation_AbortLeavesAnotherJobsManifestAlone(t *testing.T) {
+	probe := newShareRelocationShare(t, "docs")
+	for name := range foreignManifests(probe) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := parity.NewRelocationManifestStore(newTestDB(t))
+			s, share, interrupted, _ := interruptedRelocationHarness(t, store)
+			foreign := foreignManifests(share)[name]
+			if err := store.Replace(ctx, foreign.manifest, foreign.removingDisks); err != nil {
+				t.Fatalf("another job replacing the manifest: %v", err)
+			}
+
+			if _, err := s.Cancel(ctx, interrupted.ID); err != nil {
+				t.Fatalf("Cancel(interrupted relocation): %v", err)
+			}
+			if got := await(t, s, interrupted.ID); got.Status != StatusCancelled {
+				t.Fatalf("status after Cancel = %s (%s), want cancelled", got.Status, got.ErrorMessage)
+			}
+			requireManifestUntouched(t, store, foreign.manifest, foreign.removingDisks)
+		})
+	}
+}
+
+// erroringCurrentManifestStore fails the ownership read, never touching the
+// wrapped store's contents.
+type erroringCurrentManifestStore struct {
+	*fakeRelocationManifestStore
+	err error
+}
+
+func (e erroringCurrentManifestStore) Current(context.Context) ([]parity.ManifestEntry, map[string]bool, error) {
+	return nil, nil, e.err
+}
+
+// TestShareRelocationAbort_UnreadableManifest_FailsAndClearsNothing pins the
+// fail direction for an unreadable stored manifest: the abort neither clears
+// blind (it could be another job's) nor reports success while a possibly
+// stale one remains. It errors, so Cancel leaves the job interrupted and the
+// user can retry once the store is readable.
+func TestShareRelocationAbort_UnreadableManifest_FailsAndClearsNothing(t *testing.T) {
+	ctx := context.Background()
+	share := newShareRelocationShare(t, "docs")
+	fake := &fakeRelocationManifestStore{manifest: []parity.ManifestEntry{
+		{RelPath: "docs/report.pdf", SourceDisk: "/mnt/disk1", TargetDisk: filepath.Dir(share.CachePath)},
+	}}
+	store := erroringCurrentManifestStore{fakeRelocationManifestStore: fake, err: errors.New("database is locked")}
+
+	abort := ShareRelocationAbort(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Manifest: store,
+	})
+	err := abort(ctx, "job-1", mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Fatalf("abort error = %v, want the unreadable manifest reported", err)
+	}
+	if calls, _, _ := fake.snapshot(); calls != 0 {
+		t.Fatalf("Replace called %d time(s) despite an unreadable manifest, want none", calls)
+	}
+}
+
+// TestShareRelocationAbort_ToArrayLeavesManifestAlone: only the array→cache
+// direction ever writes a manifest, so cancelling a to-array relocation must
+// not read or clear the shared slot.
+func TestShareRelocationAbort_ToArrayLeavesManifestAlone(t *testing.T) {
+	share := newShareRelocationShare(t, "docs")
+	fake := &fakeRelocationManifestStore{manifest: []parity.ManifestEntry{
+		{RelPath: "docs/report.pdf", SourceDisk: "/mnt/disk1", TargetDisk: filepath.Dir(share.CachePath)},
+	}}
+	abort := ShareRelocationAbort(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Manifest: fake,
+	})
+	if err := abort(context.Background(), "job-1", mustJSON(t, ShareRelocationParams{Share: "docs", To: "array"})); err != nil {
+		t.Fatalf("abort: %v", err)
+	}
+	if calls, manifest, _ := fake.snapshot(); calls != 0 || len(manifest) != 1 {
+		t.Fatalf("store = calls %d, manifest %+v, want untouched", calls, manifest)
+	}
+}
+
+// TestRunShareRelocation_ToCache_RunningCancel_ClearsManifest: a Cancel of a
+// running relocation cancels its context, the delete phase reports the run
+// interrupted with no error, and ctx.Err() != nil makes that ending not
+// resumable (only a graceful stop is), so the manifest must go.
+func TestRunShareRelocation_ToCache_RunningCancel_ClearsManifest(t *testing.T) {
+	ctx := context.Background()
+	store := parity.NewRelocationManifestStore(newTestDB(t))
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	sync := func(context.Context, []parity.ManifestEntry) error {
+		close(started)
+		<-release
+		return nil
+	}
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     sync,
+		Manifest: store,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+	if _, err := s.Cancel(ctx, j.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	close(release)
+
+	if finished := await(t, s, j.ID); finished.Status != StatusCancelled {
+		t.Fatalf("status = %s (%s), want cancelled", finished.Status, finished.ErrorMessage)
+	}
+	manifest, _, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(manifest) != 0 {
+		t.Fatalf("manifest after cancelling a running relocation = %+v, want cleared", manifest)
+	}
+}
+
+// TestRunShareRelocation_ToCache_KeepForResumeRefused_ClearsManifest: a
+// graceful stop is only kept for Resume if rc.KeepForResume() commits; when a
+// Cancel has already been accepted it refuses, and the manifest must be
+// cleared like any other non-resumable ending.
+func TestRunShareRelocation_ToCache_KeepForResumeRefused_ClearsManifest(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		t.Run(fmt.Sprintf("keep=%v", keep), func(t *testing.T) {
+			ctx := context.Background()
+			store := parity.NewRelocationManifestStore(newTestDB(t))
+			share := newShareRelocationShare(t, "docs")
+			mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+
+			var lastCheckpoint []byte
+			stopRequested, saveCheckpoint := interruptOnceManifestDurable(&lastCheckpoint)
+			rc := &RunContext{
+				ctx:            ctx,
+				out:            &bytes.Buffer{},
+				params:         mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}),
+				stopRequested:  stopRequested,
+				saveCheckpoint: saveCheckpoint,
+				setProgress:    func(int) {},
+				keepForResume:  func() bool { return keep },
+			}
+			fn := RunShareRelocation(ShareRelocationDeps{
+				Open:     fakeOpen(),
+				Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+				Sync:     func(context.Context, []parity.ManifestEntry) error { return nil },
+				Manifest: store,
+			})
+			if err := fn(ctx, rc); err != nil {
+				t.Fatalf("interrupted run: %v", err)
+			}
+			manifest, _, err := store.Current(ctx)
+			if err != nil {
+				t.Fatalf("store.Current: %v", err)
+			}
+			if keep && len(manifest) != 1 {
+				t.Fatalf("manifest = %+v, want it kept when KeepForResume commits", manifest)
+			}
+			if !keep && len(manifest) != 0 {
+				t.Fatalf("manifest = %+v, want it cleared when KeepForResume refuses", manifest)
+			}
+		})
+	}
+}
+
+// TestRunShareRelocation_ToCache_FailureAndClearFailure_ReportsBoth: the
+// relocation's own failure stays the primary error and a clear that also
+// fails is added to it, not substituted for it and not dropped.
+func TestRunShareRelocation_ToCache_FailureAndClearFailure_ReportsBoth(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptGuardBlock(trippedGuard())
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  fakeOpen(),
+		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:  syncFuncFromEngine(eng),
+		Manifest: failClearManifestStore{
+			fakeRelocationManifestStore: &fakeRelocationManifestStore{},
+			err:                         errors.New("disk full"),
+		},
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "threshold guard blocked the sync") || !strings.Contains(finished.ErrorMessage, "disk full") {
+		t.Fatalf("ErrorMessage = %q, want the relocation's own failure and the failed clear", finished.ErrorMessage)
+	}
+}
+
+// TestRunShareRelocation_ToCache_FailureWithUnreadableManifest_ReportsBoth:
+// the ownership read failing is neither a blind clear nor a silent keep; it
+// is reported next to the relocation's own failure.
+func TestRunShareRelocation_ToCache_FailureWithUnreadableManifest_ReportsBoth(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	mustWriteFile(t, filepath.Join(share.Branches[0], "report.pdf"), "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptGuardBlock(trippedGuard())
+	fake := &fakeRelocationManifestStore{}
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     syncFuncFromEngine(eng),
+		Manifest: erroringCurrentManifestStore{fakeRelocationManifestStore: fake, err: errors.New("database is locked")},
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "threshold guard blocked the sync") || !strings.Contains(finished.ErrorMessage, "database is locked") {
+		t.Fatalf("ErrorMessage = %q, want the relocation's own failure and the unreadable manifest", finished.ErrorMessage)
+	}
+	if calls, manifest, _ := fake.snapshot(); len(manifest) != 1 || calls != 1 {
+		t.Fatalf("store = calls %d, manifest %+v, want only the persist call and the manifest untouched by a clear", calls, manifest)
+	}
+}
+
+// TestShareRelocationAbort_UnresolvableShare_StillCancelsAndChecksShape: a
+// share that can no longer be resolved must not make the job impossible to
+// cancel (Resume would fail on the same lookup). The abort then judges
+// ownership by the manifest's own shape: it clears one that lies under the
+// share's name and targets a single disk, and still leaves an evacuation's
+// (removing disks) or another share's alone.
+func TestShareRelocationAbort_UnresolvableShare_StillCancelsAndChecksShape(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		manifest      []parity.ManifestEntry
+		removingDisks map[string]bool
+		wantCleared   bool
+	}{
+		{"own shape", []parity.ManifestEntry{{RelPath: "docs/a.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"}}, nil, true},
+		{"another share", []parity.ManifestEntry{{RelPath: "photos/a.jpg", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"}}, nil, false},
+		{"evacuation", []parity.ManifestEntry{{RelPath: "docs/a.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"}}, map[string]bool{"/mnt/disk1": true}, false},
+		{"mixed targets", []parity.ManifestEntry{
+			{RelPath: "docs/a.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"},
+			{RelPath: "docs/b.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+		}, nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeRelocationManifestStore{manifest: c.manifest, removingDisks: c.removingDisks}
+			abort := ShareRelocationAbort(ShareRelocationDeps{
+				Share:    func(context.Context, string) (cache.Share, error) { return cache.Share{}, errors.New("no such share") },
+				Manifest: fake,
+			})
+			if err := abort(context.Background(), "job-1", mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"})); err != nil {
+				t.Fatalf("abort: %v", err)
+			}
+			calls, _, _ := fake.snapshot()
+			if cleared := calls == 1; cleared != c.wantCleared {
+				t.Fatalf("Replace calls = %d, want cleared = %v", calls, c.wantCleared)
+			}
+		})
+	}
+}
+
+// TestRunShareRelocation_ToCache_ResumeWithUnresolvableShare_ClearsManifest:
+// a relocation interrupted after its manifest became durable is resumed
+// after the share can no longer be looked up (deleted, its cache disk
+// unassigned, a store read failing). The job ends failed, and a failed job
+// can be neither resumed nor cancelled, so the abort never runs; the run
+// itself must clear the manifest it kept, or later syncs keep exempting
+// removals at those array paths from the guard.
+func TestRunShareRelocation_ToCache_ResumeWithUnresolvableShare_ClearsManifest(t *testing.T) {
+	ctx := context.Background()
+	store := parity.NewRelocationManifestStore(newTestDB(t))
+	s, _, interrupted, lookupFails := interruptedRelocationHarness(t, store)
+
+	lookupFails.Store(true)
+	s.ExitMaintenance()
+	if _, err := s.Resume(ctx, interrupted.ID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	finished := await(t, s, interrupted.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "share not found") {
+		t.Fatalf("ErrorMessage = %q, want the lookup failure reported", finished.ErrorMessage)
+	}
+	manifest, removingDisks, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current: %v", err)
+	}
+	if len(manifest) != 0 || len(removingDisks) != 0 {
+		t.Fatalf("manifest after the failed resume = %+v/%+v, want cleared", manifest, removingDisks)
+	}
+}
+
+func unresolvableShareRun(t *testing.T, store relocationManifestStore, checkpoint []byte, stopRequested <-chan struct{}) error {
+	t.Helper()
+	ctx := context.Background()
+	rc := &RunContext{
+		ctx:           ctx,
+		out:           &bytes.Buffer{},
+		params:        mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}),
+		checkpoint:    checkpoint,
+		stopRequested: stopRequested,
+		setProgress:   func(int) {},
+	}
+	return RunShareRelocation(ShareRelocationDeps{
+		Share: func(context.Context, string) (cache.Share, error) {
+			return cache.Share{}, errors.New("share not found")
+		},
+		Manifest: store,
+	})(ctx, rc)
+}
+
+var ownShapeManifest = []parity.ManifestEntry{{RelPath: "docs/a.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"}}
+
+// TestRunShareRelocation_ToCache_UnresolvableShare_ReportsFailedClearToo: a
+// clear that fails on the lookup-failure path is reported next to the lookup
+// error, neither replacing it nor dropped.
+func TestRunShareRelocation_ToCache_UnresolvableShare_ReportsFailedClearToo(t *testing.T) {
+	store := failClearManifestStore{
+		fakeRelocationManifestStore: &fakeRelocationManifestStore{manifest: ownShapeManifest},
+		err:                         errors.New("disk full"),
+	}
+	err := unresolvableShareRun(t, store, []byte(`{}`), nil)
+	var cleanup *CancelCleanupError
+	if !errors.As(err, &cleanup) {
+		t.Fatalf("error = %v, want a *CancelCleanupError carrying both failures", err)
+	}
+	if !strings.Contains(err.Error(), "share not found") || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("error = %q, want the lookup failure and the failed clear", err)
+	}
+}
+
+// TestRunShareRelocation_ToCache_UnresolvableShare_FirstRunLeavesManifestAlone:
+// a run with no checkpoint has persisted nothing, so whatever the shared slot
+// holds is another job's, even if its shape matches this share's (a
+// rebalance of the same share does).
+func TestRunShareRelocation_ToCache_UnresolvableShare_FirstRunLeavesManifestAlone(t *testing.T) {
+	fake := &fakeRelocationManifestStore{manifest: ownShapeManifest}
+	err := unresolvableShareRun(t, fake, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "share not found") {
+		t.Fatalf("error = %v, want the lookup failure", err)
+	}
+	if calls, manifest, _ := fake.snapshot(); calls != 0 || len(manifest) != 1 {
+		t.Fatalf("store = calls %d, manifest %+v, want it untouched", calls, manifest)
+	}
+}
+
+// TestRunShareRelocation_ToCache_UnresolvableShare_LeavesAnotherJobsManifestAlone:
+// on a resumed run the shape check still protects an evacuation's manifest
+// and another share's.
+func TestRunShareRelocation_ToCache_UnresolvableShare_LeavesAnotherJobsManifestAlone(t *testing.T) {
+	for name, c := range map[string]struct {
+		manifest      []parity.ManifestEntry
+		removingDisks map[string]bool
+	}{
+		"another share": {manifest: []parity.ManifestEntry{{RelPath: "photos/a.jpg", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"}}},
+		"evacuation": {
+			manifest:      []parity.ManifestEntry{{RelPath: "docs/a.txt", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"}},
+			removingDisks: map[string]bool{"/mnt/disk1": true},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeRelocationManifestStore{manifest: c.manifest, removingDisks: c.removingDisks}
+			if err := unresolvableShareRun(t, fake, []byte(`{}`), nil); err == nil {
+				t.Fatal("want the lookup failure")
+			}
+			if calls, _, _ := fake.snapshot(); calls != 0 {
+				t.Fatalf("Replace called %d time(s), want none", calls)
+			}
+		})
+	}
+}
+
+// TestRunShareRelocation_ToCache_UnresolvableShare_StopRequestedKeepsManifest:
+// a lookup that fails while maintenance mode asked the job to stop ends
+// interrupted, not failed (runJob maps any error under a maintenance stop to
+// interrupted), so Resume can still continue from the manifest.
+func TestRunShareRelocation_ToCache_UnresolvableShare_StopRequestedKeepsManifest(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	fake := &fakeRelocationManifestStore{manifest: ownShapeManifest}
+	if err := unresolvableShareRun(t, fake, []byte(`{}`), stop); err == nil {
+		t.Fatal("want the lookup failure")
+	}
+	if calls, manifest, _ := fake.snapshot(); calls != 0 || len(manifest) != 1 {
+		t.Fatalf("store = calls %d, manifest %+v, want it kept for Resume", calls, manifest)
 	}
 }

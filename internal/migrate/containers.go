@@ -397,6 +397,7 @@ type plannedStack struct {
 	sel     StackSelection
 	stack   string
 	compose string
+	env     string
 	kind    TemplateKind
 	pos     int
 	wait    int
@@ -447,7 +448,7 @@ func (s *Service) CreateStacks(ctx context.Context, selection []StackSelection) 
 		if !project && outcome.ActionWarnings() > 0 && !sel.Acknowledged {
 			return nil, fmt.Errorf("%q: %w", sel.Name, ErrWarningsNotAcknowledged)
 		}
-		p := plannedStack{sel: sel, compose: view.Preview.Compose, kind: view.Kind}
+		p := plannedStack{sel: sel, compose: view.Preview.Compose, env: view.Preview.Env, kind: view.Kind}
 		if project {
 			p.stack = StackNameFor(view.Project.Name)
 		} else {
@@ -505,7 +506,7 @@ func (s *Service) CreateStacks(ctx context.Context, selection []StackSelection) 
 // left behind; a stack found already existing is never removed.
 func (s *Service) createStack(ctx context.Context, p plannedStack) (recovered bool, err error) {
 	marker := migrationSource(p.sel.Name)
-	_, err = s.Stacks.Create(ctx, container.NewStack{Name: p.stack, Compose: p.compose, TemplateSource: marker})
+	_, err = s.Stacks.Create(ctx, container.NewStack{Name: p.stack, Compose: p.compose, Env: p.env, TemplateSource: marker})
 	if errors.Is(err, container.ErrStackExists) {
 		existing, gerr := s.Stacks.Get(ctx, p.stack)
 		if gerr != nil {

@@ -191,7 +191,7 @@ func contractDiskFromInventory(e apiv1.DiskInventoryEntry) disk.Disk {
 	}
 }
 
-// contractUpdateFixture is the signed release index both
+// contractUpdateFixture is the release index both
 // newContractProductionHandler's update.Engine and #272's update cases
 // read — the same shape internal/api/update_handler_test.go's own
 // newUpdateHandler builds (an ed25519-signed SHA256SUMS, one stable
@@ -221,11 +221,11 @@ func newContractUpdateEngine(t *testing.T, dbPath string) contractUpdateFixture 
 
 	// A second release, at Engine.Current itself, so RollbackUpdate's
 	// own case (ApplyUpdate to 0.2.0, then Rollback) has a previous
-	// version the release index actually carries
-	// (Engine.Rollback's own idx.findVersion(row.PreviousVersion)) —
-	// production refuses a rollback target the index doesn't list, and
-	// nothing about #272's own case setup should special-case that
-	// refusal away.
+	// version the release index actually lists, with its own signed
+	// SHA256SUMS naming that version — Engine.Rollback installs only the
+	// recorded previous version, bound to those signed checksums, and
+	// refuses a target the index doesn't list. Nothing about #272's own
+	// case setup should special-case that refusal away.
 	const prevDebURL = "https://github.com/mdg-labs/hoserva/releases/download/v0.1.0/hoserva_0.1.0_amd64.deb"
 	prevDeb := []byte("contract rig previous deb contents")
 	prevSum := sha256.Sum256(prevDeb)

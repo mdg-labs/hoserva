@@ -990,11 +990,17 @@ func (p *parityRegistrar) register(engine *parity.SnapraidEngine) {
 	p.registry.Register(job.TypeSync, false, job.RunSync(engine))
 	p.registry.Register(job.TypeScrub, false, job.RunScrub(engine))
 	p.registry.Register(job.TypeFix, false, job.RunFix(engine))
-	p.registry.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+	shareRelocation := job.ShareRelocationDeps{
 		Share:    shareRelocationShareFromStore(p.shareStore, p.arrayStore),
 		Sync:     shareRelocationSyncFunc(engine),
 		Manifest: engine.Relocation,
-	}))
+	}
+	p.registry.Register(job.TypeShareRelocation, true, job.RunShareRelocation(shareRelocation))
+	// Cancelling a share relocation that is already StatusInterrupted never
+	// re-enters RunShareRelocation, so it needs its own path to clear the
+	// manifest the interrupted run kept for Resume (job.ShareRelocationAbort's
+	// own doc comment).
+	p.registry.RegisterAbort(job.TypeShareRelocation, job.ShareRelocationAbort(shareRelocation))
 	rebalanceShares := rebalanceSharesFromStore(p.shareStore, p.arrayStore)
 	rebalanceTracked := rebalanceTrackedFileCount(engine)
 	p.registry.Register(job.TypeRebalance, true, job.RunRebalance(job.RebalanceDeps{

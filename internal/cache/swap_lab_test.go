@@ -28,6 +28,8 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/parity"
 )
 
 // labWatchedOutside creates a directory outside every disk and the pool,
@@ -179,4 +181,90 @@ func TestLabRelocateToArray_ABranchDirectorySwappedForASymlinkMidCopyWritesNothi
 		t.Fatalf("RelocateToArray: %v", err)
 	}
 	labAssertSwapWroteNothingOutside(t, report, src, target, outside, events)
+}
+
+// The source side. A directory above the file being moved, on the cache or
+// on a data disk, swapped for a symlink to a directory outside every disk
+// after the copy and before the unlink must make the root daemon remove
+// nothing there (#731): the outside file named like the source survives, the
+// entry fails naming the symlink, and the real source, in the directory
+// moved aside, stays.
+
+func labSourceSwapCleanup(t *testing.T, roots ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, r := range roots {
+			_ = os.RemoveAll(r)
+		}
+	})
+}
+
+func TestLabMover_ASourceDirectorySwappedForASymlinkBeforeTheUnlinkRemovesNothingOutside(t *testing.T) {
+	top := bringUpLabMoverTopology(t, "swapsrcmover")
+	share := top.cacheShare()
+	labBuildShareTree(t, share.CachePath)
+	labSourceSwapCleanup(t, filepath.Join(share.CachePath, "documents"), filepath.Join(share.CachePath, "documents.moved"))
+	reports := filepath.Join(share.CachePath, "documents", "Reports")
+	outside := outsideWith(t, "Q3.txt")
+	swap := swapOnce(t, reports, outside)
+
+	deps := Deps{FsyncDir: func(dirfd int) error {
+		swap()
+		return fsyncDir(dirfd)
+	}}
+	report, err := Run(context.Background(), []Share{share}, Config{SkipGracePeriod: true, VerifyChecksum: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertSwapRefused(t, report, "documents/Reports/Q3.txt", outside, reports+".moved")
+}
+
+func TestLabRelocateToCache_ASourceDirectorySwappedForASymlinkBeforeTheDeleteRemovesNothingOutside(t *testing.T) {
+	top := bringUpLabMoverTopology(t, "swapsrcreloc")
+	share := top.cacheShare()
+	reports := filepath.Join(share.Branches[0], "documents", "Reports")
+	labSourceSwapCleanup(t, filepath.Join(share.Branches[0], "documents"), filepath.Join(share.CachePath, "documents"), reports+".moved")
+	mustWrite(t, filepath.Join(reports, "Q3.txt"), "quarterly numbers")
+	outside := outsideWith(t, "Q3.txt")
+	swap := swapOnce(t, reports, outside)
+
+	deps := Deps{Sync: func(context.Context, []parity.ManifestEntry) error {
+		swap()
+		return nil
+	}}
+	report, err := RelocateToCache(context.Background(), share, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RelocateToCache: %v", err)
+	}
+	assertSwapRefused(t, report, "documents/Reports/Q3.txt", outside, reports+".moved")
+}
+
+func TestLabRebalance_ASourceDirectorySwappedForASymlinkBeforeTheDeleteRemovesNothingOutside(t *testing.T) {
+	top := bringUpLabMoverTopology(t, "swapsrcrebal")
+	share := top.cacheShare()
+	reports := filepath.Join(share.Branches[0], "documents", "Reports")
+	labSourceSwapCleanup(t, filepath.Join(share.Branches[0], "documents"), filepath.Join(share.Branches[1], "documents"), reports+".moved")
+	mustWrite(t, filepath.Join(reports, "Q3.txt"), "quarterly numbers")
+	outside := outsideWith(t, "Q3.txt")
+	swap := swapOnce(t, reports, outside)
+
+	plan := RebalancePlan{Moves: []RebalanceMove{{
+		Share:        share.Name,
+		RelPath:      "documents/Reports/Q3.txt",
+		SourceBranch: share.Branches[0],
+		TargetBranch: share.Branches[1],
+		Size:         int64(len("quarterly numbers")),
+	}}}
+	deps := Deps{
+		TrackedFileCount: func(context.Context) (int, error) { return 100000, nil },
+		Sync: func(context.Context, []parity.ManifestEntry) error {
+			swap()
+			return nil
+		},
+	}
+	report, err := RunRebalance(context.Background(), plan, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	assertSwapRefused(t, report, "documents/Reports/Q3.txt", outside, reports+".moved")
 }

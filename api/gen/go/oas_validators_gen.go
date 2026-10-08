@@ -10640,6 +10640,10 @@ func (s TemplatePrivilegeKind) Validate() error {
 		return nil
 	case "host_path":
 		return nil
+	case "gpu_reservation":
+		return nil
+	case "container_runtime":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}

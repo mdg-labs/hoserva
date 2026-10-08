@@ -23335,8 +23335,10 @@ type TemplatePrivilege struct {
 	Kind TemplatePrivilegeKind `json:"kind"`
 	// The Compose service that asks for it.
 	Service string `json:"service"`
-	// The path, process namespace, rules, capabilities, security options or groups concerned,
-	// comma-separated when there are several; absent for `privileged`, `host_network` and `host_cgroup`.
+	// The path, process namespace, rules, capabilities, security options, groups, device reservations or
+	// runtime concerned, comma-separated when there are several (the entries of `gpu_reservation` are
+	// separated by a semicolon, each one listing its own driver, count or device ids and capabilities with
+	// commas); absent for `privileged`, `host_network` and `host_cgroup`.
 	Detail OptString `json:"detail"`
 	// Plain-language explanation of what it grants.
 	Description string `json:"description"`
@@ -23395,6 +23397,8 @@ const (
 	TemplatePrivilegeKindGroupAdd            TemplatePrivilegeKind = "group_add"
 	TemplatePrivilegeKindDockerSocket        TemplatePrivilegeKind = "docker_socket"
 	TemplatePrivilegeKindHostPath            TemplatePrivilegeKind = "host_path"
+	TemplatePrivilegeKindGpuReservation      TemplatePrivilegeKind = "gpu_reservation"
+	TemplatePrivilegeKindContainerRuntime    TemplatePrivilegeKind = "container_runtime"
 )
 
 // AllValues returns all TemplatePrivilegeKind values.
@@ -23410,6 +23414,8 @@ func (TemplatePrivilegeKind) AllValues() []TemplatePrivilegeKind {
 		TemplatePrivilegeKindGroupAdd,
 		TemplatePrivilegeKindDockerSocket,
 		TemplatePrivilegeKindHostPath,
+		TemplatePrivilegeKindGpuReservation,
+		TemplatePrivilegeKindContainerRuntime,
 	}
 }
 
@@ -23435,6 +23441,10 @@ func (s TemplatePrivilegeKind) MarshalText() ([]byte, error) {
 	case TemplatePrivilegeKindDockerSocket:
 		return []byte(s), nil
 	case TemplatePrivilegeKindHostPath:
+		return []byte(s), nil
+	case TemplatePrivilegeKindGpuReservation:
+		return []byte(s), nil
+	case TemplatePrivilegeKindContainerRuntime:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -23473,6 +23483,12 @@ func (s *TemplatePrivilegeKind) UnmarshalText(data []byte) error {
 		return nil
 	case TemplatePrivilegeKindHostPath:
 		*s = TemplatePrivilegeKindHostPath
+		return nil
+	case TemplatePrivilegeKindGpuReservation:
+		*s = TemplatePrivilegeKindGpuReservation
+		return nil
+	case TemplatePrivilegeKindContainerRuntime:
+		*s = TemplatePrivilegeKindContainerRuntime
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -24036,7 +24052,7 @@ func (s *UpdateBackupDestinationRequest) SetRetention(val OptBackupRetention) {
 	s.Retention = val
 }
 
-// Release channel the update check reads from the signed index.
+// Release channel the update check reads from the release index.
 // Ref: #/components/schemas/UpdateChannel
 type UpdateChannel string
 

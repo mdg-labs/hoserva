@@ -3,10 +3,13 @@ package template
 import (
 	"errors"
 	"fmt"
+	"html"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mdg-labs/hoserva/internal/container"
 
 	"gopkg.in/yaml.v3"
 )
@@ -661,6 +664,159 @@ func TestConvertUnraid_ValuesAreLiteralInCompose(t *testing.T) {
 	}
 	if got := interpolate("pa$$word$${X}", nil); got != "pa$word${X}" {
 		t.Errorf("Compose reads the escaped value as %q", got)
+	}
+}
+
+func convertSecretsToEnv(t *testing.T, body string) (*Conversion, map[string]any) {
+	t.Helper()
+	c, err := ConvertUnraid(unraidXML(body), ConvertOptions{SecretsToEnv: true})
+	if err != nil {
+		t.Fatalf("ConvertUnraid: %v", err)
+	}
+	return c, serviceOf(t, c)
+}
+
+func environmentOf(t *testing.T, svc map[string]any) map[string]string {
+	t.Helper()
+	env, _ := svc["environment"].(map[string]any)
+	out := map[string]string{}
+	for k, v := range env {
+		out[k] = fmt.Sprint(v)
+	}
+	return out
+}
+
+func TestConvertUnraid_SecretsToEnvKeepsAMaskedValueOutOfTheCompose(t *testing.T) {
+	body := `<Config Type="Variable" Target="DB_PASS" Mask="true">hunter2</Config>
+<Config Type="Variable" Target="TZ" Mask="false">UTC</Config>`
+	c, svc := convertSecretsToEnv(t, body)
+	if strings.Contains(c.Compose, "hunter2") {
+		t.Errorf("the masked value is in the Compose text:\n%s", c.Compose)
+	}
+	if got := environmentOf(t, svc); got["DB_PASS"] != "${DB_PASS}" || got["TZ"] != "UTC" {
+		t.Errorf("environment = %v, want DB_PASS as a ${DB_PASS} reference and TZ inline", got)
+	}
+	if want := (map[string]string{"DB_PASS": "hunter2"}); !reflect.DeepEqual(c.Env, want) {
+		t.Errorf("Env = %v, want %v", c.Env, want)
+	}
+	if len(warningsOf(c, WarnNote)) != 0 || !c.Clean() {
+		t.Errorf("warnings = %+v, want none beyond the writable layer", c.Warnings)
+	}
+
+	plain, err := ConvertUnraid(unraidXML(body), ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Env != nil || !strings.Contains(plain.Compose, "hunter2") {
+		t.Errorf("without the option the value must stay inline and Env empty: Env=%v\n%s", plain.Env, plain.Compose)
+	}
+}
+
+func TestConvertUnraid_SecretsToEnvChangesNothingButTheSecretValues(t *testing.T) {
+	masked := `<Config Type="Variable" Target="API_KEY" Mask="true">k</Config>`
+	with, err := ConvertUnraid([]byte(fullTemplate), ConvertOptions{SecretsToEnv: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := ConvertUnraid([]byte(fullTemplate), ConvertOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with.Compose != without.Compose || !reflect.DeepEqual(with.Warnings, without.Warnings) || !reflect.DeepEqual(with.Privileges, without.Privileges) || with.Env != nil {
+		t.Errorf("a template with no masked value converts differently under the option")
+	}
+	a, _ := convertSecretsToEnv(t, masked)
+	b, _ := convertOK(t, masked)
+	if !reflect.DeepEqual(a.Warnings, b.Warnings) || !reflect.DeepEqual(a.Privileges, b.Privileges) {
+		t.Errorf("the option changed warnings or privileges: %+v vs %+v", a.Warnings, b.Warnings)
+	}
+}
+
+func TestConvertUnraid_SecretsToEnvRoundTripsHardValues(t *testing.T) {
+	for name, value := range dotenvValues {
+		for _, marked := range []bool{false, true} {
+			v := value
+			if marked {
+				v = "zq9" + value
+			}
+			t.Run(fmt.Sprintf("%s/marked=%v", name, marked), func(t *testing.T) {
+				body := `<Config Type="Variable" Target="DB_PASS" Mask="true">` + strings.ReplaceAll(html.EscapeString(v), "\r", "&#13;") + `</Config>`
+				plain, plainSvc := convertOK(t, body)
+				want := interpolate(environmentOf(t, plainSvc)["DB_PASS"], nil)
+				if want == "" {
+					t.Fatalf("the converter dropped the value %q", v)
+				}
+				c, svc := convertSecretsToEnv(t, body)
+				if marked && strings.Contains(c.Compose, "zq9") {
+					t.Errorf("the value is in the Compose text:\n%s", c.Compose)
+				}
+				if c.Env["DB_PASS"] != want {
+					t.Fatalf("Env = %q, want what the inline conversion gives the container, %q", c.Env, want)
+				}
+				if got := environmentOf(t, svc)["DB_PASS"]; got != "${DB_PASS}" {
+					t.Fatalf("the service's DB_PASS = %q, want the reference", got)
+				}
+				if !reflect.DeepEqual(c.Warnings, plain.Warnings) {
+					t.Errorf("warnings = %+v, want those of the inline conversion, %+v", c.Warnings, plain.Warnings)
+				}
+				env, err := composeDotenv(c.EnvFile())
+				if err != nil {
+					t.Fatalf("Compose cannot read the .env:\n%s\n%v", c.EnvFile(), err)
+				}
+				if got := interpolate(environmentOf(t, svc)["DB_PASS"], env); got != want {
+					t.Errorf("the container would get %q, want %q (.env:\n%s)", got, want, c.EnvFile())
+				}
+				if names := container.ReservedEnvDefined(c.EnvFile()); len(names) > 0 {
+					t.Errorf("the .env defines %v, which the stack layer refuses", names)
+				}
+			})
+		}
+	}
+}
+
+func TestConvertUnraid_SecretsToEnvLeavesAMaskedNameTheEnvFileCannotTakeInline(t *testing.T) {
+	for name, tc := range map[string]struct{ target, value string }{
+		"reserved name": {"DOCKER_HOST", "tcp://x:1"},
+		"odd name":      {"DB.PASS", "xyzzy"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, svc := convertSecretsToEnv(t, `<Config Type="Variable" Target="`+tc.target+`" Mask="true">`+tc.value+`</Config>`)
+			if len(c.Env) != 0 {
+				t.Errorf("Env = %v, want the value kept in the Compose text", c.Env)
+			}
+			if got, ok := environmentOf(t, svc)[tc.target]; !ok || got != tc.value {
+				t.Errorf("environment = %v, want %s inline as before", environmentOf(t, svc), tc.target)
+			}
+			notes := warningsOf(c, WarnNote)
+			if len(notes) == 0 || strings.Contains(notes[len(notes)-1].Message+notes[len(notes)-1].Detail, tc.value) {
+				t.Errorf("notes = %+v, want one naming the variable and not repeating its value", notes)
+			}
+		})
+	}
+}
+
+func TestConvertUnraid_ATemplateCannotCarryANulByte(t *testing.T) {
+	_, err := ConvertUnraid(unraidXML(`<Config Type="Variable" Target="DB_PASS" Mask="true">a`+"\x00"+`b</Config>`), ConvertOptions{SecretsToEnv: true})
+	if err == nil {
+		t.Error("a NUL byte in a template value converted: the .env has no way to write it")
+	}
+}
+
+func TestConvertUnraid_SecretsToEnvLeavesAnEmptyMaskedValueInline(t *testing.T) {
+	c, svc := convertSecretsToEnv(t, `<Config Type="Variable" Target="TOKEN" Mask="true"></Config>`)
+	if len(c.Env) != 0 || c.EnvFile() != "" {
+		t.Errorf("Env = %v, want none for an empty value", c.Env)
+	}
+	if got, ok := environmentOf(t, svc)["TOKEN"]; !ok || got != "" {
+		t.Errorf("TOKEN = %q, %v, want an empty value as before", got, ok)
+	}
+}
+
+func TestConvertUnraid_SecretsToEnvTakesAMaskedValueGivenTwiceOnce(t *testing.T) {
+	c, svc := convertSecretsToEnv(t, `<Config Type="Variable" Target="DB_PASS" Mask="false">s3</Config>
+<Config Type="Variable" Target="DB_PASS" Mask="true">s3</Config>`)
+	if strings.Contains(c.Compose, "s3") || c.Env["DB_PASS"] != "s3" || environmentOf(t, svc)["DB_PASS"] != "${DB_PASS}" {
+		t.Errorf("a value masked by either entry must leave the Compose text:\n%s\nEnv=%v", c.Compose, c.Env)
 	}
 }
 

@@ -662,19 +662,7 @@ func rebalanceDeleteBatch(ctx context.Context, deps Deps, hooks RunHooks, report
 // share a batch.
 func finishRebalanceDelete(ctx context.Context, me parity.ManifestEntry, deps Deps) Entry {
 	share, rel := splitManifestRelPath(me.RelPath)
-	src := filepath.Join(me.SourceDisk, me.RelPath)
-
-	entry := Entry{Share: share, Path: rel, Bytes: me.Size}
-	var note string
-	if info, err := os.Lstat(src); err == nil {
-		entry.Kind = entryKind(info.Mode())
-		note = hardLinkNote(info)
-	}
-	entry = removeSource(ctx, src, deps, entry)
-	if entry.Result == ResultMoved && entry.Reason == "" {
-		entry.Reason = note
-	}
-	return entry
+	return removeSource(ctx, me.SourceDisk, me.RelPath, deps, Entry{Share: share, Path: rel, Bytes: me.Size})
 }
 
 // splitManifestRelPath splits a ManifestEntry.RelPath ("<share>/<rel>",

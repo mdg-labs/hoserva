@@ -549,3 +549,106 @@ func TestReadArchivedFiles_RefusesAFileWhereTheTreesRootIs(t *testing.T) {
 		t.Fatalf("readArchivedFiles = %v, want ErrAppdataArchiveInvalid", err)
 	}
 }
+
+func TestAppdataPreview_ADirectorySwappedForALinkIsNotListed(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "appdata")
+	dir := filepath.Join(root, "alpha")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{filepath.Join(dir, "sub"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, content := range map[string]string{
+		filepath.Join(dir, "sub", "inside"): "inside",
+		filepath.Join(outside, "secret"):    "outside secret content",
+	} {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var swapped bool
+	beforeOpen = func(rel string) {
+		if rel != "sub" || swapped {
+			return
+		}
+		swapped = true
+		if err := os.RemoveAll(filepath.Join(dir, "sub")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(dir, "sub")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforeOpen = nil })
+
+	got, err := previewDirectory(context.Background(), dir, []string{root}, map[string]int64{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !swapped {
+		t.Fatal("the walk never reached the directory")
+	}
+	if fmt.Sprint(got) != fmt.Sprint(AppdataDirPreview{Directory: "alpha"}) {
+		t.Fatalf("preview = %+v, want nothing listed for the swapped directory", got)
+	}
+}
+
+func TestAppdataPreview_AnAppdataDirectoryThatIsALinkIsRefused(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "appdata")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{root, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := previewDirectory(context.Background(), filepath.Join(root, "alpha"), []string{root}, map[string]int64{}); err == nil {
+		t.Fatalf("preview of a link = %+v, want it refused", got)
+	}
+}
+
+func TestAppdataPreview_ADirectoryRemovedBeforeItIsListedDoesNotEndTheComparison(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "appdata")
+	dir := filepath.Join(root, "alpha")
+	for _, d := range []string{filepath.Join(dir, "a"), filepath.Join(dir, "b")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range []string{filepath.Join(dir, "a", "gone"), filepath.Join(dir, "b", "live"), filepath.Join(dir, "z")} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var removed bool
+	beforeList = func(rel string) {
+		if rel != "a" || removed {
+			return
+		}
+		removed = true
+		if err := os.RemoveAll(filepath.Join(dir, "a")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforeList = nil })
+
+	got, err := previewDirectory(context.Background(), dir, []string{root}, map[string]int64{"z": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("the walk never listed the directory")
+	}
+	if got.Replaced.Files != 1 || got.Replaced.Sample[0] != "z" || got.Removed.Files != 1 || got.Removed.Sample[0] != "b/live" || got.Added.Files != 0 {
+		t.Fatalf("preview = %+v, want z replaced and b/live removed: the siblings after the vanished directory are still compared", got)
+	}
+}

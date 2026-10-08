@@ -107,6 +107,15 @@ x-shared: &shared
 	if issues := checkCompose(t, compose); len(issues) > 0 {
 		t.Errorf("issues: %v", issues)
 	}
+	tpl, issues := Parse([]byte(compose + probeBlock))
+	if tpl == nil {
+		t.Fatalf("parse: %v", issues)
+	}
+	got := strings.Join(privilegeKinds(tpl.Privileges(nil)), "|")
+	want := "added_capabilities:NET_ADMIN|group_add:44|container_runtime:nvidia|gpu_reservation:driver nvidia, count 1, capabilities gpu|host_path:/dev/dri"
+	if got != want {
+		t.Errorf("privileges = %q, want %q", got, want)
+	}
 }
 
 func TestCheckAcceptsOnlyComposeKeysTheSummaryClassifies(t *testing.T) {

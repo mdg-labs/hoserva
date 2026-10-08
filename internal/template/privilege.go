@@ -19,6 +19,8 @@ const (
 	PrivilegeGroupAdd         = "group_add"
 	PrivilegeDockerSocket     = "docker_socket"
 	PrivilegeHostPath         = "host_path"
+	PrivilegeGPUReservation   = "gpu_reservation"
+	PrivilegeRuntime          = "container_runtime"
 )
 
 var privilegeDescriptions = map[string]string{
@@ -32,6 +34,8 @@ var privilegeDescriptions = map[string]string{
 	PrivilegeGroupAdd:         "Joins extra groups, so it gets the access those groups have to the files and devices it can reach.",
 	PrivilegeDockerSocket:     "Can control Docker itself, which is the same as full control of the server.",
 	PrivilegeHostPath:         "Mounts a folder outside the storage pool and the cache, so it can read or change system files or disks.",
+	PrivilegeGPUReservation:   "Reserves graphics cards or other accelerators of the server, so it gets direct access to that hardware.",
+	PrivilegeRuntime:          "Runs under a container runtime other than Docker's default, which sets up the container's isolation and the devices it gets.",
 }
 
 // Privilege is one thing a template's Compose content asks for beyond an
@@ -53,8 +57,9 @@ var dockerSockets = []string{"/var/run/docker.sock", "/run/docker.sock"}
 // host PID and cgroup namespaces, device cgroup rules, added capabilities,
 // disabled or replaced confinement, extra groups, the Docker socket and host
 // paths outside the pool and cache, whether mounted by a volume, a named
-// volume's driver options or a devices entry. sysctls are not reported (doc
-// 04 §7). Services are in name order.
+// volume's driver options or a devices entry, device reservations under
+// deploy and a container runtime other than Docker's default. sysctls are
+// not reported (doc 04 §7). Services are in name order.
 func (t *Template) Privileges(values map[string]string) []Privilege {
 	var out []Privilege
 	services := t.services()
@@ -116,6 +121,12 @@ func servicePrivileges(name string, svc, top map[string]any, values map[string]s
 	if groups := entries(svc["group_add"], values); len(groups) > 0 {
 		add(PrivilegeGroupAdd, strings.Join(groups, ", "))
 	}
+	if rt := runtimeName(svc["runtime"], values); rt != "" && rt != defaultRuntime {
+		add(PrivilegeRuntime, rt)
+	}
+	if res := gpuReservations(svc["deploy"], values); len(res) > 0 {
+		add(PrivilegeGPUReservation, strings.Join(res, "; "))
+	}
 	hostSource := func(src string) {
 		exact, holds := exposesDockerSocket(src)
 		if exact || holds {
@@ -140,6 +151,67 @@ func servicePrivileges(name string, svc, top map[string]any, values map[string]s
 	for _, d := range devs {
 		if src := deviceSource(interpolateVolume(d, values)); src != "" {
 			hostSource(src)
+		}
+	}
+	return out
+}
+
+// defaultRuntime is the runtime Docker uses when a service names none.
+const defaultRuntime = "runc"
+
+// runtimeName reads a service's runtime with the install values substituted.
+// A value that is not a string is kept as written, so a runtime the summary
+// cannot read is reported and never read as the default.
+func runtimeName(v any, values map[string]string) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(interpolate(x, values))
+	}
+	return fmt.Sprint(v)
+}
+
+// gpuReservations reads deploy.resources.reservations.devices, one string per
+// entry, naming the driver, the count or the device ids, and the capabilities
+// it asks for. An entry that is not a mapping is kept as written, and an
+// entry with nothing left after substitution is dropped.
+func gpuReservations(deploy any, values map[string]string) []string {
+	d, _ := deploy.(map[string]any)
+	resources, _ := d["resources"].(map[string]any)
+	reservations, _ := resources["reservations"].(map[string]any)
+	var raw []any
+	switch x := reservations["devices"].(type) {
+	case nil:
+	case []any:
+		raw = x
+	default:
+		raw = []any{x}
+	}
+	var out []string
+	for _, e := range raw {
+		m, ok := e.(map[string]any)
+		if !ok {
+			if s := strings.TrimSpace(fmt.Sprint(e)); s != "" {
+				out = append(out, s)
+			}
+			continue
+		}
+		var parts []string
+		if driver := strings.Join(entries(m["driver"], values), ", "); driver != "" {
+			parts = append(parts, "driver "+driver)
+		}
+		if count := strings.Join(entries(m["count"], values), ", "); count != "" {
+			parts = append(parts, "count "+count)
+		}
+		if ids := entries(m["device_ids"], values); len(ids) > 0 {
+			parts = append(parts, "device ids "+strings.Join(ids, ", "))
+		}
+		if caps := entries(m["capabilities"], values); len(caps) > 0 {
+			parts = append(parts, "capabilities "+strings.Join(caps, ", "))
+		}
+		if len(parts) > 0 {
+			out = append(out, strings.Join(parts, ", "))
 		}
 	}
 	return out
