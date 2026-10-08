@@ -112,8 +112,9 @@ func invalidArchivef(format string, args ...any) error {
 
 // Restore replaces one container's appdata with an archive's content
 // (doc 10 §2). Nothing is changed until the archive has been fetched,
-// decrypted and verified end to end and every directory it names has been
-// checked to lie inside the appdata location. Then the container, and
+// decrypted, verified end to end and authenticated, and every directory it
+// names has been checked to be one of the container's own inside the appdata
+// location. Then the container, and
 // every running container sharing those directories, is stopped, the
 // directories it will replace are opened by their parents and each one's
 // identity is recorded, a snapshot of the appdata about to be replaced
@@ -152,6 +153,10 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	if err != nil {
 		return err
 	}
+	key, err := a.archiveKey()
+	if err != nil {
+		return err
+	}
 
 	staging, err := appdataStaging(roots)
 	if err != nil {
@@ -160,7 +165,7 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	_, _ = fmt.Fprintf(out, "fetching %s from %s\n", req.Archive, source.Name)
-	plain, hdr, err := a.fetchVerifiedAppdata(ctx, req, source, roots, staging)
+	plain, hdr, err := a.fetchVerifiedAppdata(ctx, req, source, roots, staging, key)
 	if err != nil {
 		return err
 	}
@@ -204,7 +209,7 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	if err := parents.requireAnchored(a.dirAttrs(), hdr.Dirs, recorded); err != nil {
 		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
 	}
-	archived, err := a.snapshotAppdata(ctx, out, dests, hdr, parents, recorded, passphrase, staging, req.Archive)
+	archived, err := a.snapshotAppdata(ctx, out, dests, hdr, parents, recorded, passphrase, key, staging, req.Archive)
 	if err != nil {
 		return err
 	}
@@ -213,17 +218,21 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 
 // fetchVerifiedAppdata is the read-only part of a restore that the preview
 // shares: it fetches and decrypts the archive into staging, verifies it end
-// to end, and checks that it holds the requested container and that every
-// directory it names is inside the appdata location. It changes nothing but
-// staging.
-func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRestoreRequest, source Destination, roots []string, staging string) (string, appdataHeader, error) {
+// to end, checks that this installation wrote it (authenticateAppdata, under
+// key), that it holds the requested container and that every directory it
+// names is one of that container's own inside the appdata location. It
+// changes nothing but staging.
+func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRestoreRequest, source Destination, roots []string, staging string, key []byte) (string, appdataHeader, error) {
 	plain, err := a.fetchAppdata(ctx, source, req.Archive, staging)
 	if err != nil {
 		return "", appdataHeader{}, err
 	}
-	hdr, _, err := verifyAppdata(plain)
+	hdr, trailer, err := verifyAppdata(plain)
 	if err != nil {
 		return "", appdataHeader{}, invalidArchivef("%v", err)
+	}
+	if err := authenticateAppdata(trailer, key, source, req.Archive); err != nil {
+		return "", appdataHeader{}, err
 	}
 	if hdr.Container != req.Container {
 		return "", appdataHeader{}, invalidArchivef("the archive holds %s, not %s", hdr.Container, req.Container)
@@ -231,7 +240,72 @@ func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRe
 	if err := validateRestoreDirs(hdr.Dirs, roots); err != nil {
 		return "", appdataHeader{}, err
 	}
+	if err := a.requireOwnDirs(ctx, req.Container, hdr.Dirs, roots); err != nil {
+		return "", appdataHeader{}, err
+	}
 	return plain, hdr, nil
+}
+
+// authenticateAppdata refuses an archive this installation did not write. A
+// tag that is there must be the one key gives the trailer. An archive written
+// before archives carried a tag has none; it is accepted only when it came
+// out of a destination that encrypts, since what opens there is an archive
+// encrypted to a recipient that was never published, and refused from one
+// that does not, where anyone able to write the folder can leave a
+// consistent archive of their own.
+func authenticateAppdata(trailer appdataTrailer, key []byte, source Destination, name string) error {
+	if trailer.MAC != "" {
+		if !trailer.authentic(key) {
+			return invalidArchivef("the archive's authentication tag is not the one this installation gives its archives: it was written elsewhere or was altered")
+		}
+		return nil
+	}
+	if _, _, _, encrypted, _ := parseAppdataName(name); encrypted && (source.Encrypt || source.isRemote()) {
+		return nil
+	}
+	return invalidArchivef("the archive predates archive authentication and %q does not encrypt, so nothing shows this installation wrote it: restore it by hand if you trust it", source.Name)
+}
+
+// requireOwnDirs refuses a list of directories unless each is one of the
+// bind-mount sources of the container being restored that lie strictly inside
+// an appdata location, as the container mounts them now, resolved through
+// links where they exist. A directory that is missing on disk is still the
+// container's if its mount names it. A header that names anything else would
+// make a restore of one container replace another's appdata.
+func (a *AppdataService) requireOwnDirs(ctx context.Context, name string, dirs, roots []string) error {
+	listed, err := a.Containers.List(ctx)
+	if err != nil {
+		return fmt.Errorf("listing containers: %w", err)
+	}
+	resolved := resolveRoots(roots)
+	for _, c := range listed {
+		if c.Name != name {
+			continue
+		}
+		own := map[string]bool{}
+		for _, m := range c.Mounts {
+			if m.Source == "" || !filepath.IsAbs(m.Source) {
+				continue
+			}
+			real := resolveExisting(filepath.Clean(m.Source))
+			if info, err := os.Stat(real); err == nil && !info.IsDir() {
+				continue
+			}
+			for _, r := range resolved {
+				if withinDir(real, r) && real != r {
+					own[real] = true
+					break
+				}
+			}
+		}
+		for _, d := range dirs {
+			if !own[d] {
+				return invalidArchivef("%s is not one of %s's appdata directories", d, name)
+			}
+		}
+		return nil
+	}
+	return invalidArchivef("%s is not a container on this server, so there is no appdata directory of its to restore into: create it again first", name)
 }
 
 // snapshotAppdata writes the appdata the restore is about to replace to
@@ -243,7 +317,7 @@ func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRe
 // never prunes the archive being restored, so a restore that fails after its
 // snapshot can be run again from the same archive. It returns the device and
 // inode of every entry the snapshot archived under each directory it packed.
-func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, parents *heldDirs, recorded []liveIdentity, passphrase, staging, archive string) (archivedIDs, error) {
+func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, parents *heldDirs, recorded []liveIdentity, passphrase string, key []byte, staging, archive string) (archivedIDs, error) {
 	if afterAppdataRecord != nil {
 		afterAppdataRecord()
 	}
@@ -268,7 +342,7 @@ func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, des
 	if _, err := packAppdataRecording(ctx, path, appdataHeader{
 		Container: restoring.Container, Image: restoring.Image, CreatedAt: now, Hostname: a.Backup.Hostname,
 		Stopped: true, DatabaseImage: restoring.DatabaseImage, Reason: string(ReasonPreRestore), Dirs: existing,
-	}, archived); err != nil {
+	}, key, archived); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
 	}
 	if afterAppdataPack != nil {
@@ -546,13 +620,19 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 		fresh[i] = s.fresh
 	}
 	trees := make([]liveIdentity, len(swaps))
-	err = parents.extract(ctx, archive, hdr, fresh, trees)
+	var stripped []string
+	err = parents.extract(ctx, archive, hdr, fresh, trees, func(path, bits string) {
+		stripped = append(stripped, fmt.Sprintf("restored %s without its %s bit: the archive gives it to root", path, bits))
+	})
 	for i := range swaps {
 		swaps[i].tree = trees[i]
 	}
 	if err != nil {
 		discard(true)
 		return fmt.Errorf("unpacking the archive: %w", err)
+	}
+	for _, line := range stripped {
+		_, _ = fmt.Fprintln(out, line)
 	}
 	rep := &anchorReport{out: out}
 	for i := range swaps {

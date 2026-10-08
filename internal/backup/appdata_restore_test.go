@@ -1,17 +1,24 @@
 package backup
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sys/unix"
 
 	"github.com/mdg-labs/hoserva/internal/beneath"
@@ -258,12 +265,12 @@ func TestAppdataRestore_RefusesAnArchiveWhoseDirectoriesAreOutsideAppdata(t *tes
 	name := appdataArchiveName(rig.remoteRig.svc.installationID(), "alpha", rig.now, ReasonNone, 0)
 	if _, err := packAppdata(context.Background(), filepath.Join(dest, name), appdataHeader{
 		Container: "alpha", CreatedAt: rig.now, Dirs: []string{outside},
-	}); err != nil {
+	}, rig.key(t)); err != nil {
 		t.Fatal(err)
 	}
 	err := rig.svc.Restore(context.Background(), AppdataRestoreRequest{Container: "alpha", Archive: name, DestinationID: "local"}, rig.out)
-	if !errors.Is(err, ErrAppdataArchiveInvalid) {
-		t.Fatalf("Restore = %v, want ErrAppdataArchiveInvalid", err)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) || !strings.Contains(err.Error(), "not inside the appdata location") {
+		t.Fatalf("Restore = %v, want ErrAppdataArchiveInvalid for a directory outside the appdata location", err)
 	}
 	if got := readFile(t, filepath.Join(outside, "victim")); got != "precious" {
 		t.Fatalf("a directory outside appdata was changed: %q", got)
@@ -1421,4 +1428,529 @@ func TestAppdataRestore_TheRevertBeforeAnUpdateRefusesADirectoryAnchoredToAnothe
 	rig.out.Reset()
 	err := snaps.Restore(context.Background(), "alpha", ref, nil, rig.out)
 	rig.requireRefusedAsAnotherAppsDirectory(t, err, other, anchor, aside)
+}
+
+// forgedEntry is one tar entry of an archive forgeAppdata writes.
+type forgedEntry struct {
+	name     string
+	typeflag byte
+	mode     int64
+	uid, gid int
+	body     string
+}
+
+// forgeAppdata writes a complete, self-consistent appdata archive the way
+// someone who can write a destination would: a valid header, entries, and a
+// trailer whose counts and SHA-256 match what precedes it. With a key it also
+// carries the authentication tag the daemon's own archives carry.
+func forgeAppdata(t *testing.T, dest string, hdr appdataHeader, entries []forgedEntry, key []byte) {
+	t.Helper()
+	out, err := os.Create(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw, err := zstd.NewWriter(out, zstd.WithEncoderCRC(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.New()
+	tw := tar.NewWriter(io.MultiWriter(zw, sum))
+	hdr.Version = appdataFormatVersion
+	if err := writeAppdataMeta(tw, appdataHeaderName, hdr, hdr.CreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	var trailer appdataTrailer
+	for _, e := range entries {
+		h := &tar.Header{Name: e.name, Typeflag: e.typeflag, Mode: e.mode, Uid: e.uid, Gid: e.gid, Size: int64(len(e.body)), ModTime: hdr.CreatedAt}
+		if e.typeflag == tar.TypeDir {
+			h.Size = 0
+		}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if e.typeflag == tar.TypeReg {
+			if _, err := tw.Write([]byte(e.body)); err != nil {
+				t.Fatal(err)
+			}
+			trailer.Files++
+			trailer.Bytes += int64(len(e.body))
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	trailer.SHA256 = hex.EncodeToString(sum.Sum(nil))
+	signForgedTrailer(&trailer, key)
+	if err := writeAppdataMeta(tw, appdataTrailerName, trailer, hdr.CreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// plantLocalDestination adds an unencrypted local destination to the rig and
+// returns its directory.
+func (r *restoreRig) plantLocalDestination(t *testing.T) string {
+	t.Helper()
+	dest := filepath.Join(r.root, "local")
+	if _, err := os.Stat(dest); err == nil {
+		return dest
+	}
+	if err := r.store.CreateDestination(context.Background(), Destination{
+		ID: "local", Name: "Local", Type: TypeLocal, Path: dest, Enabled: true,
+		Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dest
+}
+
+// plantAppdata forges an archive of container alpha into the unencrypted
+// local destination and returns the restore request for it.
+func (r *restoreRig) plantAppdata(t *testing.T, suffix int, hdr appdataHeader, entries []forgedEntry, key []byte) AppdataRestoreRequest {
+	t.Helper()
+	dest := r.plantLocalDestination(t)
+	name := appdataArchiveName(r.remoteRig.svc.installationID(), "alpha", r.now, ReasonNone, suffix)
+	hdr.Container, hdr.CreatedAt = "alpha", r.now
+	forgeAppdata(t, filepath.Join(dest, name), hdr, entries, key)
+	return AppdataRestoreRequest{Container: "alpha", Archive: name, DestinationID: "local"}
+}
+
+// foreignEntries is an archive's content for Dirs [alpha's, beta's]: a file
+// for alpha, and for beta a root-owned setuid binary.
+func foreignEntries() []forgedEntry {
+	return []forgedEntry{
+		{name: "data/0/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "data/0/config", typeflag: tar.TypeReg, mode: 0o644, body: "planted"},
+		{name: "data/1/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "data/1/payload", typeflag: tar.TypeReg, mode: 0o4755, uid: 0, gid: 0, body: "planted"},
+	}
+}
+
+// A self-consistent archive that was not produced by Run, found under a name
+// this installation would use in an unencrypted local destination, names
+// alpha's directory and beta's. A restore of alpha must not replace beta's
+// appdata as root.
+func TestAppdataRestore_RefusesAForgedArchiveNamingAnotherContainersAppdata(t *testing.T) {
+	rig := newRestoreRig(t)
+	betaDir := rig.addApp(t, "beta", "radarr", "exited", map[string]string{"secret": "beta-private"})
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir, betaDir}}, foreignEntries(), nil)
+	before := snapshotTree(t, rig.cache)
+	rig.containers.mu.Lock()
+	rig.containers.events = nil
+	rig.containers.mu.Unlock()
+
+	err := rig.svc.Restore(context.Background(), req, rig.out)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) {
+		t.Fatalf("Restore = %v, want ErrAppdataArchiveInvalid", err)
+	}
+	if after := snapshotTree(t, rig.cache); !reflect.DeepEqual(before, after) {
+		t.Fatalf("a refused restore changed appdata:\nbefore %v\nafter  %v", before, after)
+	}
+	if got := readFile(t, filepath.Join(betaDir, "secret")); got != "beta-private" {
+		t.Fatalf("beta's appdata = %q after the refused restore", got)
+	}
+	if ev := rig.containers.Events(); len(ev) != 0 {
+		t.Fatalf("containers touched by a refused restore: %v", ev)
+	}
+}
+
+// An archive whose directories are alpha's own is still refused when nothing
+// proves the daemon wrote it.
+func TestAppdataRestore_RefusesAnArchiveWithoutAValidTagFromAnUnencryptedDestination(t *testing.T) {
+	rig := newRestoreRig(t)
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir}}, []forgedEntry{
+		{name: "data/0/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "data/0/config", typeflag: tar.TypeReg, mode: 0o644, body: "planted"},
+	}, nil)
+	before := snapshotTree(t, rig.cache)
+	rig.containers.mu.Lock()
+	rig.containers.events = nil
+	rig.containers.mu.Unlock()
+
+	err := rig.svc.Restore(context.Background(), req, rig.out)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) {
+		t.Fatalf("Restore = %v, want ErrAppdataArchiveInvalid", err)
+	}
+	if after := snapshotTree(t, rig.cache); !reflect.DeepEqual(before, after) {
+		t.Fatalf("a refused restore changed appdata:\nbefore %v\nafter  %v", before, after)
+	}
+	if ev := rig.containers.Events(); len(ev) != 0 {
+		t.Fatalf("containers touched by a refused restore: %v", ev)
+	}
+}
+
+func TestAppdataPreview_RefusesTheArchivesARestoreRefusesWithTheSameError(t *testing.T) {
+	rig := newRestoreRig(t)
+	betaDir := rig.addApp(t, "beta", "radarr", "exited", map[string]string{"secret": "beta-private"})
+	own := []forgedEntry{
+		{name: "data/0/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "data/0/config", typeflag: tar.TypeReg, mode: 0o644, body: "planted"},
+	}
+	requests := map[string]AppdataRestoreRequest{
+		"another container's directory": rig.plantAppdata(t, 2, appdataHeader{Dirs: []string{rig.dir, betaDir}}, foreignEntries(), nil),
+		"no tag":                        rig.plantAppdata(t, 3, appdataHeader{Dirs: []string{rig.dir}}, own, nil),
+	}
+	rig.containers.mu.Lock()
+	rig.containers.events = nil
+	rig.containers.mu.Unlock()
+	for name, req := range requests {
+		t.Run(name, func(t *testing.T) {
+			before := snapshotTree(t, rig.cache)
+			_, perr := rig.svc.PreviewRestore(context.Background(), req)
+			if !errors.Is(perr, ErrAppdataArchiveInvalid) {
+				t.Fatalf("PreviewRestore = %v, want ErrAppdataArchiveInvalid", perr)
+			}
+			rig.requireNothingChanged(t, before)
+			rerr := rig.svc.Restore(context.Background(), req, rig.out)
+			if rerr == nil || rerr.Error() != perr.Error() {
+				t.Fatalf("the restore's refusal = %v, the preview's = %v; they must be the same", rerr, perr)
+			}
+		})
+	}
+}
+
+func signForgedTrailer(t *appdataTrailer, key []byte) {
+	if key != nil {
+		t.MAC = t.mac(key)
+	}
+}
+
+// key is the key the rig's service authenticates its archives with.
+func (r *appdataRig) key(t *testing.T) []byte {
+	t.Helper()
+	key, err := r.svc.archiveKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+func ownEntries(body string) []forgedEntry {
+	return []forgedEntry{
+		{name: "data/0/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "data/0/config", typeflag: tar.TypeReg, mode: 0o644, body: body},
+	}
+}
+
+func (r *restoreRig) forgeEncrypted(t *testing.T, key []byte) AppdataRestoreRequest {
+	t.Helper()
+	dest := filepath.Join(r.root, "encrypted")
+	if err := r.store.CreateDestination(context.Background(), Destination{
+		ID: "encrypted", Name: "Encrypted", Type: TypeLocal, Path: dest, Enabled: true, Encrypt: true,
+		Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name := appdataArchiveName(r.remoteRig.svc.installationID(), "alpha", r.now, ReasonNone, 0)
+	plain := filepath.Join(r.root, name)
+	forgeAppdata(t, plain, appdataHeader{Container: "alpha", CreatedAt: r.now, Dirs: []string{r.dir}}, ownEntries("legacy"), key)
+	sealed, err := encryptArchiveForDestination(plain, r.remoteRig.svc.Recipient.Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(sealed, filepath.Join(dest, name+".age")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(plain, filepath.Join(dest, name)); err != nil {
+		t.Fatal(err)
+	}
+	return AppdataRestoreRequest{Container: "alpha", Archive: name + ".age", DestinationID: "encrypted"}
+}
+
+func TestAppdataRestore_RefusesAnUntaggedArchiveFromAnUnencryptedDestinationAndSaysWhy(t *testing.T) {
+	rig := newRestoreRig(t)
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir}}, ownEntries("legacy"), nil)
+	for name, run := range map[string]func() error{
+		"restore": func() error { return rig.svc.Restore(context.Background(), req, rig.out) },
+		"preview": func() error { _, err := rig.svc.PreviewRestore(context.Background(), req); return err },
+	} {
+		err := run()
+		if !errors.Is(err, ErrAppdataArchiveInvalid) || !strings.Contains(err.Error(), "predates archive authentication") || !strings.Contains(err.Error(), "by hand") {
+			t.Fatalf("%s = %v, want the archive refused as one that predates authentication", name, err)
+		}
+	}
+	rig.requireLiveUntouched(t)
+}
+
+func TestAppdataRestore_RefusesAnArchiveWhoseTagIsAnotherKeys(t *testing.T) {
+	rig := newRestoreRig(t)
+	other, err := deriveAppdataKey("AGE-SECRET-KEY-SOMEONE-ELSE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir}}, ownEntries("forged"), other)
+	err = rig.svc.Restore(context.Background(), req, rig.out)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) || !strings.Contains(err.Error(), "authentication tag") {
+		t.Fatalf("Restore = %v, want a refused tag", err)
+	}
+	rig.requireLiveUntouched(t)
+	if ev := rig.containers.Events(); len(ev) != 0 {
+		t.Fatalf("containers touched by a refused restore: %v", ev)
+	}
+}
+
+// Taking the tag off a genuine archive leaves a legacy one, which an
+// unencrypted destination does not accept.
+func TestAppdataRestore_RefusesAGenuineArchiveWithItsTagRemoved(t *testing.T) {
+	rig := newAppdataRig(t)
+	dir := rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"config": "v1"})
+	if err := rig.run(t); err != nil {
+		t.Fatalf("backup: %v\n%s", err, rig.out)
+	}
+	genuine := rig.archiveFor(t, rig.poolDir, "alpha")
+	_, trailer, err := verifyAppdata(genuine)
+	if err != nil || !trailer.authentic(rig.key(t)) {
+		t.Fatalf("the daemon's own archive: %v, authentic %v", err, trailer.authentic(rig.key(t)))
+	}
+	entries := readArchivedEntries(t, genuine)
+	last := &entries[len(entries)-1]
+	trailer.MAC = ""
+	last.body, _ = json.Marshal(trailer)
+	stripped := writeArchivedEntries(t, entries)
+	name := appdataArchiveName(rig.svc.Backup.installationID(), "alpha", rig.now, ReasonNone, 2)
+	raw, err := os.ReadFile(stripped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rig.poolDir, name), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = rig.svc.Restore(context.Background(), AppdataRestoreRequest{Container: "alpha", Archive: name, DestinationID: DefaultPoolID}, rig.out)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) || !strings.Contains(err.Error(), "predates archive authentication") {
+		t.Fatalf("Restore = %v, want an archive without its tag refused as one that predates authentication", err)
+	}
+	if got := readFile(t, filepath.Join(dir, "config")); got != "v1" {
+		t.Fatalf("config = %q", got)
+	}
+}
+
+func TestAppdataRestore_AcceptsAnArchiveWithoutATagFromADestinationThatEncrypts(t *testing.T) {
+	rig := newRestoreRig(t)
+	req := rig.forgeEncrypted(t, nil)
+	if err := rig.svc.Restore(context.Background(), req, rig.out); err != nil {
+		t.Fatalf("Restore of a legacy archive from an encrypting destination: %v\n%s", err, rig.out)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "legacy" {
+		t.Fatalf("config = %q, want the archived content", got)
+	}
+}
+
+func TestAppdataRestore_RefusesAnUntaggedFileSittingInADestinationThatEncrypts(t *testing.T) {
+	rig := newRestoreRig(t)
+	req := rig.forgeEncrypted(t, nil)
+	req.Archive = strings.TrimSuffix(req.Archive, ".age")
+	err := rig.svc.Restore(context.Background(), req, rig.out)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) {
+		t.Fatalf("Restore = %v, want ErrAppdataArchiveInvalid for a plain file in an encrypting destination", err)
+	}
+	rig.requireLiveUntouched(t)
+}
+
+func TestAppdataRestore_RefusesATaggedArchiveNamingADirectoryThatIsNotTheContainers(t *testing.T) {
+	rig := newRestoreRig(t)
+	betaDir := rig.addApp(t, "beta", "radarr", "exited", map[string]string{"secret": "beta-private"})
+	unowned := filepath.Join(rig.appdata, "nobody")
+	if err := os.MkdirAll(unowned, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unowned, "keep"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string][]string{
+		"another container's directory": {rig.dir, betaDir},
+		"a directory no container has":  {rig.dir, unowned},
+		"inside a directory of its own": {filepath.Join(rig.dir, "sub")},
+	}
+	suffix := 1
+	for name, dirs := range cases {
+		t.Run(name, func(t *testing.T) {
+			entries := []forgedEntry{{name: "data/0/", typeflag: tar.TypeDir, mode: 0o755}}
+			for i := 1; i < len(dirs); i++ {
+				entries = append(entries,
+					forgedEntry{name: "data/" + strconv.Itoa(i) + "/", typeflag: tar.TypeDir, mode: 0o755},
+					forgedEntry{name: "data/" + strconv.Itoa(i) + "/payload", typeflag: tar.TypeReg, mode: 0o4755, body: "planted"})
+			}
+			suffix++
+			req := rig.plantAppdata(t, suffix, appdataHeader{Dirs: dirs}, entries, rig.key(t))
+			before := snapshotTree(t, rig.cache)
+			rig.containers.mu.Lock()
+			rig.containers.events = nil
+			rig.containers.mu.Unlock()
+
+			err := rig.svc.Restore(context.Background(), req, rig.out)
+			if !errors.Is(err, ErrAppdataArchiveInvalid) || !strings.Contains(err.Error(), "appdata directories") {
+				t.Fatalf("Restore = %v, want a directory that is not alpha's refused", err)
+			}
+			if after := snapshotTree(t, rig.cache); !reflect.DeepEqual(before, after) {
+				t.Fatalf("a refused restore changed appdata:\nbefore %v\nafter  %v", before, after)
+			}
+			if ev := rig.containers.Events(); len(ev) != 0 {
+				t.Fatalf("containers touched before the restore was refused: %v", ev)
+			}
+			if _, perr := rig.svc.PreviewRestore(context.Background(), req); !errors.Is(perr, ErrAppdataArchiveInvalid) || perr.Error() != err.Error() {
+				t.Fatalf("PreviewRestore = %v, want the restore's refusal %v", perr, err)
+			}
+		})
+	}
+}
+
+func TestAppdataRestore_RefusesAnArchiveOfAContainerThatNoLongerExists(t *testing.T) {
+	rig := newRestoreRig(t)
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir}}, ownEntries("v1"), rig.key(t))
+	rig.engine.RemoveContainer("id-alpha")
+	err := rig.svc.Restore(context.Background(), req, rig.out)
+	if !errors.Is(err, ErrAppdataArchiveInvalid) || !strings.Contains(err.Error(), "not a container on this server") {
+		t.Fatalf("Restore = %v, want a refusal because the container is gone", err)
+	}
+}
+
+// A directory that is the container's by its mount but is not on disk now
+// (a lost directory is what a restore is for) is restored.
+func TestAppdataRestore_RestoresADirectoryThatIsMissingFromDisk(t *testing.T) {
+	rig := newRestoreRig(t)
+	if err := os.RemoveAll(rig.dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want the archived v1", got)
+	}
+}
+
+// The directory a mount names through a link is the one the archive names,
+// since the archive holds the resolved path.
+func TestAppdataRestore_AcceptsADirectoryTheContainerMountsThroughALink(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"config": "v1"})
+	link := filepath.Join(rig.appdata, "alpha-link")
+	if err := os.Symlink(filepath.Join(rig.appdata, "alpha"), link); err != nil {
+		t.Fatal(err)
+	}
+	rig.engine.RemoveContainer("id-alpha")
+	rig.engine.AddContainer(container.Container{
+		ID: "id-alpha", Name: "alpha", Image: "sonarr", State: "running",
+		Mounts: []container.Mount{{Source: link, Destination: "/config", ReadWrite: true}},
+	})
+	if err := rig.run(t); err != nil {
+		t.Fatalf("backup: %v\n%s", err, rig.out)
+	}
+	archives, _, err := rig.svc.ListArchives(context.Background(), "alpha")
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("ListArchives = %v, %v", archives, err)
+	}
+	rig.out.Reset()
+	if err := rig.svc.Restore(context.Background(), AppdataRestoreRequest{Container: "alpha", Archive: archives[0].Name, DestinationID: archives[0].DestinationID}, rig.out); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+}
+
+// A genuine archive written by the daemon restores from an unencrypted
+// destination, and every archive a writer produces carries the tag.
+func TestAppdataRestore_RestoresTheDaemonsOwnArchiveFromAnUnencryptedDestination(t *testing.T) {
+	rig := newAppdataRig(t)
+	dir := rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"config": "v1"})
+	if err := rig.run(t); err != nil {
+		t.Fatalf("backup: %v\n%s", err, rig.out)
+	}
+	if _, trailer, err := verifyAppdata(rig.archiveFor(t, rig.poolDir, "alpha")); err != nil || !trailer.authentic(rig.key(t)) {
+		t.Fatalf("a backup's archive: %v, authentic %v", err, trailer.authentic(rig.key(t)))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archives, _, err := rig.svc.ListArchives(context.Background(), "alpha")
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("ListArchives = %v, %v", archives, err)
+	}
+	rig.out.Reset()
+	req := AppdataRestoreRequest{Container: "alpha", Archive: archives[0].Name, DestinationID: archives[0].DestinationID}
+	if _, err := rig.svc.PreviewRestore(context.Background(), req); err != nil {
+		t.Fatalf("PreviewRestore: %v", err)
+	}
+	if err := rig.svc.Restore(context.Background(), req, rig.out); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if got := readFile(t, filepath.Join(dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want v1", got)
+	}
+	snapshots := 0
+	for _, n := range rig.archives(t, rig.poolDir) {
+		if _, _, reason, _, _ := parseAppdataName(n); reason != ReasonPreRestore {
+			continue
+		}
+		snapshots++
+		if _, trailer, err := verifyAppdata(filepath.Join(rig.poolDir, n)); err != nil || !trailer.authentic(rig.key(t)) {
+			t.Fatalf("the pre-restore snapshot %s: %v, authentic %v", n, err, trailer.authentic(rig.key(t)))
+		}
+	}
+	if snapshots != 1 {
+		t.Fatalf("%d pre-restore snapshots in the pool, want 1", snapshots)
+	}
+}
+
+func TestAppdataRestore_LeavesOffSetuidAndSetgidOnEntriesGivenToRoot(t *testing.T) {
+	rig := newRestoreRig(t)
+	const user = 1234
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir}}, []forgedEntry{
+		{name: "data/0/", typeflag: tar.TypeDir, mode: 0o755},
+		{name: "data/0/rootsuid", typeflag: tar.TypeReg, mode: 0o4755, uid: 0, gid: user, body: "x"},
+		{name: "data/0/rootsgid", typeflag: tar.TypeReg, mode: 0o2755, uid: user, gid: 0, body: "x"},
+		{name: "data/0/rootboth", typeflag: tar.TypeReg, mode: 0o6755, uid: 0, gid: 0, body: "x"},
+		{name: "data/0/usersuid", typeflag: tar.TypeReg, mode: 0o4755, uid: user, gid: user, body: "x"},
+		{name: "data/0/plain", typeflag: tar.TypeReg, mode: 0o755, uid: 0, gid: 0, body: "x"},
+	}, rig.key(t))
+	if os.Geteuid() != 0 {
+		// Without root a restore does not chown, so an archived owner other
+		// than the daemon's own cannot be given back; the rule reads the
+		// archived owner, which is what this checks.
+		t.Log("running unprivileged: owners are not restored, the archived owner is still what decides")
+	}
+
+	if err := rig.svc.Restore(context.Background(), req, rig.out); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	mode := func(name string) os.FileMode {
+		t.Helper()
+		info, err := os.Lstat(filepath.Join(rig.dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Mode()
+	}
+	for name, want := range map[string]os.FileMode{
+		"rootsuid": 0o755, "rootsgid": 0o755, "rootboth": 0o755, "plain": 0o755,
+	} {
+		if got := mode(name); got != want {
+			t.Errorf("%s restored with mode %v, want %v: no setuid or setgid bit on an entry given to root", name, got, want)
+		}
+	}
+	if got := mode("usersuid"); got&os.ModeSetuid == 0 {
+		t.Errorf("usersuid restored with mode %v, want its setuid bit kept: its owner is not root", got)
+	}
+	for _, name := range []string{"rootsuid", "rootsgid", "rootboth"} {
+		if !strings.Contains(rig.out.String(), filepath.Join(rig.dir, name)) {
+			t.Errorf("the job output does not name %s:\n%s", name, rig.out)
+		}
+	}
+	for _, name := range []string{"usersuid", "plain"} {
+		if strings.Contains(rig.out.String(), filepath.Join(rig.dir, name)) {
+			t.Errorf("the job output names %s, which kept its bits:\n%s", name, rig.out)
+		}
+	}
 }

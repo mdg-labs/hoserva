@@ -70,6 +70,8 @@ Select **Back up now** at the top of the **Appdata backup** section to back up e
 
 Restoring replaces an app's appdata with the contents of an archive. Hoserva shows what would change before it changes anything, and takes a snapshot of the current appdata first.
 
+Hoserva restores only an archive it can show this server wrote, and only into the folders the app mounts now. The archives Hoserva writes carry a tag that only this server can produce, and a restore refuses an archive whose tag is wrong. An older archive without a tag is restored only from an encrypted destination (see Troubleshooting below). If the folders an archive names are not the app's folders today, or the app no longer exists, the restore is refused before it stops anything.
+
 1. Open **Settings → Backup & restore**.
 2. In **Appdata archives and restore**, find the archive. They are listed newest first, with their destination, time and size. Select **Refresh archives** if the list is out of date.
 3. Select **Restore** on the archive's row. Hoserva starts a preview and shows the files that would be **Replaced**, **Added** and **Removed**, with counts and sizes. A preview changes nothing and stops no app.
@@ -101,6 +103,20 @@ No app keeps files in the appdata folder yet, or Hoserva cannot reach the Docker
 ### The backup does not start because the array is stopped
 
 Appdata cannot be backed up or restored while the array is stopped. Start the array and run the backup again.
+
+### A restore is refused because the archive "predates archive authentication"
+
+Archives written by an older Hoserva have no tag. Hoserva still restores them from an encrypted destination: every remote destination, and a local folder with encryption turned on. It refuses them from an unencrypted local folder, such as the default pool folder, because anyone who can write to that folder could have left a file there.
+
+1. Run **Back up now** for the app so a new archive carries the tag.
+2. To get data out of the old archive, unpack it by hand into an empty folder with `tar --zstd -xf <archive> -C <folder>`. Do this only if you trust the archive.
+3. The `dirs` list in the `hoserva-appdata.json` file in that folder names the app's folders in order. With the app stopped, copy the contents of each `data/<number>/` folder into the folder at that position in the list.
+
+The snapshot before an app update is an archive too. A snapshot taken by an older Hoserva and kept in an unencrypted folder cannot be used by **Revert**.
+
+### A restore is refused because a folder is not the app's folder
+
+An archive can be restored only into the folders the app has mounted now. This happens when you changed the app's folders after the backup, or when the app was deleted. Install the app again with the same folders, then restore.
 
 ### A destination could not be listed
 

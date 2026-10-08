@@ -43,6 +43,9 @@ func TestAppdataSnapshot_WritesAVerifiedPreUpdateArchiveOfOneContainer(t *testin
 	if hdr.Container != "alpha" || hdr.Reason != string(ReasonPreUpdate) || !hdr.Stopped || trailer.Files != 1 {
 		t.Fatalf("header %+v trailer %+v", hdr, trailer)
 	}
+	if !trailer.authentic(rig.key(t)) {
+		t.Fatalf("the pre-update snapshot's tag is not the installation's: %+v", trailer)
+	}
 	if got, want := strings.Join(rig.containers.Events(), ","), "stop alpha,start alpha"; got != want {
 		t.Fatalf("events = %s, want alpha stopped for the copy and started again", got)
 	}

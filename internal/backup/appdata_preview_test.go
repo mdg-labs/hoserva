@@ -228,7 +228,7 @@ func TestAppdataPreview_RefusesAnArchiveWhoseDirectoriesAreOutsideAppdataLikeThe
 	name := appdataArchiveName(rig.remoteRig.svc.installationID(), "alpha", rig.now, ReasonNone, 0)
 	if _, err := packAppdata(context.Background(), filepath.Join(dest, name), appdataHeader{
 		Container: "alpha", CreatedAt: rig.now, Dirs: []string{outside},
-	}); err != nil {
+	}, rig.key(t)); err != nil {
 		t.Fatal(err)
 	}
 	req := AppdataRestoreRequest{Container: "alpha", Archive: name, DestinationID: "local"}

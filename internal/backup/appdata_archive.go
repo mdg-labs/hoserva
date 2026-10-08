@@ -3,6 +3,8 @@ package backup
 import (
 	"archive/tar"
 	"context"
+	"crypto/hkdf"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -41,6 +43,9 @@ import (
 // to the end of the frame to check it. Both are unkeyed checksums stored in
 // the archive itself: they detect accidental corruption and truncation, and
 // say nothing about an archive someone rewrote and re-checksummed on purpose.
+// What does is the trailer's MAC, an HMAC-SHA256 under a key only this
+// installation holds (deriveAppdataKey), over the stream's SHA-256, and so
+// over the header and every entry, and over the trailer's counts.
 const (
 	appdataFormatVersion = 1
 	appdataHeaderName    = "hoserva-appdata.json"
@@ -66,13 +71,53 @@ type appdataHeader struct {
 // not the size they had when their header was written, because they shrank
 // or grew, or vanished, while they were copied; a stopped container has
 // none. A file rewritten in place at the same size is not detected. SHA256
-// is over the tar stream up to the trailer entry.
+// is over the tar stream up to the trailer entry. MAC is the hex HMAC that
+// authenticates the other fields; an archive written before it existed has
+// none.
 type appdataTrailer struct {
 	Files   int64  `json:"files"`
 	Bytes   int64  `json:"bytes"`
 	Skipped int64  `json:"skipped"`
 	Changed int64  `json:"changed"`
 	SHA256  string `json:"sha256"`
+	MAC     string `json:"mac,omitempty"`
+}
+
+// appdataKeyLabel separates the key appdata archives are authenticated with
+// from every other use of the onboarding identity.
+const appdataKeyLabel = "hoserva appdata archive authentication v1"
+
+// deriveAppdataKey is the HKDF-SHA256 key, under appdataKeyLabel, of the
+// onboarding identity. The identity is kept in memory only and survives a
+// bare-metal restore (Q80), which is why it keys the tag and the machine key,
+// which does not travel in a config backup, does not.
+func deriveAppdataKey(identity string) ([]byte, error) {
+	if identity == "" {
+		return nil, errors.New("no onboarding identity is available to authenticate appdata archives")
+	}
+	key, err := hkdf.Key(sha256.New, []byte(identity), nil, appdataKeyLabel, sha256.Size)
+	if err != nil {
+		return nil, fmt.Errorf("deriving the appdata archive key: %w", err)
+	}
+	return key, nil
+}
+
+// mac is the tag of t under key: its stream checksum and its counts, which
+// the stream checksum does not cover because the trailer follows the stream.
+func (t appdataTrailer) mac(key []byte) string {
+	m := hmac.New(sha256.New, key)
+	_, _ = fmt.Fprintf(m, "hoserva-appdata-mac-v1\n%s\n%d\n%d\n%d\n%d\n", t.SHA256, t.Files, t.Bytes, t.Skipped, t.Changed)
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// authentic reports whether t carries the tag key gives it.
+func (t appdataTrailer) authentic(key []byte) bool {
+	want, err := hex.DecodeString(t.MAC)
+	if err != nil || len(want) == 0 || len(key) == 0 {
+		return false
+	}
+	got, err := hex.DecodeString(t.mac(key))
+	return err == nil && hmac.Equal(got, want)
 }
 
 func appdataPrefix(i int) string {
@@ -102,10 +147,11 @@ func (set archivedIDs) record(dir string, info fs.FileInfo) {
 }
 
 // packAppdata writes hdr and every tree hdr.Dirs names to dest, through a
-// temporary file that is renamed into place only once complete. A socket,
-// device or named pipe has no content to keep and is skipped and counted.
-func packAppdata(ctx context.Context, dest string, hdr appdataHeader) (appdataTrailer, error) {
-	return packAppdataRecording(ctx, dest, hdr, nil)
+// temporary file that is renamed into place only once complete, with the
+// trailer authenticated under key. A socket, device or named pipe has no
+// content to keep and is skipped and counted.
+func packAppdata(ctx context.Context, dest string, hdr appdataHeader, key []byte) (appdataTrailer, error) {
+	return packAppdataRecording(ctx, dest, hdr, key, nil)
 }
 
 // packAppdataRecording is packAppdata that also records into archived, under
@@ -113,8 +159,11 @@ func packAppdata(ctx context.Context, dest string, hdr appdataHeader) (appdataTr
 // link and skipped special file it read there, taken from the same lstat or
 // open descriptor the entry was archived from. A name that vanished before it
 // could be read is not recorded. A nil archived records nothing.
-func packAppdataRecording(ctx context.Context, dest string, hdr appdataHeader, archived archivedIDs) (appdataTrailer, error) {
+func packAppdataRecording(ctx context.Context, dest string, hdr appdataHeader, key []byte, archived archivedIDs) (appdataTrailer, error) {
 	var trailer appdataTrailer
+	if len(key) == 0 {
+		return trailer, errors.New("an appdata archive is not written without a key to authenticate it")
+	}
 	out, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.tmp")
 	if err != nil {
 		return trailer, fmt.Errorf("creating archive temp file: %w", err)
@@ -154,6 +203,7 @@ func packAppdataRecording(ctx context.Context, dest string, hdr appdataHeader, a
 		return fail(fmt.Errorf("padding the last archived file: %w", err))
 	}
 	trailer.SHA256 = hex.EncodeToString(sum.Sum(nil))
+	trailer.MAC = trailer.mac(key)
 	if err := writeAppdataMeta(tw, appdataTrailerName, trailer, hdr.CreatedAt); err != nil {
 		_ = zw.Close()
 		return fail(err)
@@ -636,10 +686,18 @@ var beforeAppdataMeta func()
 // symbolic link, so nothing lands outside its target. Each target's
 // descriptor must pass checkCreatedDir, and its identity is recorded in
 // trees; a target that fails the check keeps what it holds and is not
-// recorded. Ownership is restored when running as root.
-func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string, trees []liveIdentity) error {
+// recorded. Ownership is restored when running as root. A setuid bit on an
+// entry the archive gives to uid 0, and a setgid bit on one it gives to
+// gid 0, is not restored; stripped, if set, is called for each such entry
+// with its place in the archived directory and the bits left off.
+func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string, trees []liveIdentity, stripped func(path, bits string)) error {
 	if len(targets) != len(hdr.Dirs) || len(trees) != len(targets) {
 		return errors.New("extracting appdata: one target per archived directory is required")
+	}
+	note := func(tree int, rel, what string) {
+		if what != "" && stripped != nil {
+			stripped(filepath.Join(hdr.Dirs[tree], filepath.FromSlash(rel)), what)
+		}
 	}
 	walkers := make([]*beneath.Walker, len(targets))
 	defer func() {
@@ -718,11 +776,12 @@ func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataH
 		if err != nil {
 			return fmt.Errorf("archive entry %q: %w", e.Name, err)
 		}
-		err = extractAppdataEntry(tr, e, dfd, base, filepath.Join(targets[i], filepath.FromSlash(rel)), asRoot)
+		what, err := extractAppdataEntry(tr, e, dfd, base, filepath.Join(targets[i], filepath.FromSlash(rel)), asRoot)
 		release()
 		if err != nil {
 			return err
 		}
+		note(i, rel, what)
 		if e.Typeflag == tar.TypeDir {
 			dirs = append(dirs, appdataDirMeta{tree: i, rel: path.Join(resolved, base), hdr: e})
 		}
@@ -732,55 +791,59 @@ func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataH
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
 		m := dirs[i]
-		if err := p.applyDirMeta(walkers[m.tree], targets[m.tree], m, asRoot); err != nil {
+		what, err := p.applyDirMeta(walkers[m.tree], targets[m.tree], m, asRoot)
+		if err != nil {
 			return err
 		}
+		note(m.tree, m.rel, what)
 	}
 	return nil
 }
 
-func (p *heldDirs) applyDirMeta(w *beneath.Walker, target string, m appdataDirMeta, asRoot bool) error {
+func (p *heldDirs) applyDirMeta(w *beneath.Walker, target string, m appdataDirMeta, asRoot bool) (string, error) {
 	if m.rel == "" {
 		parent, name, err := p.parent(target)
 		if err != nil {
-			return err
+			return "", err
 		}
 		return applyAppdataMeta(w.Root(), parent, name, target, m.hdr, asRoot)
 	}
 	dir, base := path.Split(m.rel)
 	pfd, err := w.Dir(strings.TrimSuffix(dir, "/"), nil)
 	if err != nil {
-		return fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
+		return "", fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
 	}
 	fd, err := beneath.Open(pfd, base, unix.O_RDONLY|unix.O_DIRECTORY)
 	if err != nil {
-		return fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
+		return "", fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 	return applyAppdataMeta(fd, pfd, base, filepath.Join(target, filepath.FromSlash(m.rel)), m.hdr, asRoot)
 }
 
-func extractAppdataEntry(r io.Reader, e *tar.Header, dfd int, base, dst string, asRoot bool) error {
+// extractAppdataEntry creates one entry. A non-empty first result names the
+// mode bits that were not restored (see applyAppdataMeta).
+func extractAppdataEntry(r io.Reader, e *tar.Header, dfd int, base, dst string, asRoot bool) (string, error) {
 	switch e.Typeflag {
 	case tar.TypeDir:
 		if err := unix.Mkdirat(dfd, base, 0o700); err != nil {
-			return fmt.Errorf("creating %s: %w", dst, err)
+			return "", fmt.Errorf("creating %s: %w", dst, err)
 		}
 	case tar.TypeReg:
 		return extractAppdataFile(r, e, dfd, base, dst, asRoot)
 	case tar.TypeSymlink:
 		if err := unix.Symlinkat(e.Linkname, dfd, base); err != nil {
-			return fmt.Errorf("creating symlink %s: %w", dst, err)
+			return "", fmt.Errorf("creating symlink %s: %w", dst, err)
 		}
 		if asRoot {
 			if err := unix.Fchownat(dfd, base, e.Uid, e.Gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-				return fmt.Errorf("restoring owner of %s: %w", dst, err)
+				return "", fmt.Errorf("restoring owner of %s: %w", dst, err)
 			}
 		}
 	default:
-		return fmt.Errorf("archive entry %q has an unsupported type", e.Name)
+		return "", fmt.Errorf("archive entry %q has an unsupported type", e.Name)
 	}
-	return nil
+	return "", nil
 }
 
 // maxTreeLinks is how many symbolic links resolving one directory may
@@ -874,42 +937,65 @@ func openTreeDir(w *beneath.Walker, rel string) (int, string, func(), error) {
 	return cur, strings.Join(names, "/"), release, nil
 }
 
-func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display string, asRoot bool) error {
+func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display string, asRoot bool) (string, error) {
 	fd, err := unix.Openat(dirfd, name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return fmt.Errorf("creating %s: %w", display, err)
+		return "", fmt.Errorf("creating %s: %w", display, err)
 	}
 	f := os.NewFile(uintptr(fd), name)
 	if _, err := io.Copy(f, r); err != nil {
 		_ = f.Close()
-		return fmt.Errorf("writing %s: %w", display, err)
+		return "", fmt.Errorf("writing %s: %w", display, err)
 	}
-	if err := applyAppdataMeta(fd, dirfd, name, display, e, asRoot); err != nil {
+	stripped, err := applyAppdataMeta(fd, dirfd, name, display, e, asRoot)
+	if err != nil {
 		_ = f.Close()
-		return err
+		return "", err
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("writing %s: %w", display, err)
+		return "", fmt.Errorf("writing %s: %w", display, err)
 	}
-	return nil
+	return stripped, nil
 }
 
 // applyAppdataMeta sets ownership and mode through fd, and times through
 // the entry's name in the directory dirfd without following a link there.
-func applyAppdataMeta(fd, dirfd int, name, display string, e *tar.Header, asRoot bool) error {
+// The setuid bit of an entry archived as owned by uid 0 and the setgid bit of
+// one archived with gid 0 are left off, and the first result names which
+// ("setuid", "setgid" or both).
+func applyAppdataMeta(fd, dirfd int, name, display string, e *tar.Header, asRoot bool) (string, error) {
 	if asRoot {
 		if err := unix.Fchown(fd, e.Uid, e.Gid); err != nil {
-			return fmt.Errorf("restoring owner of %s: %w", display, err)
+			return "", fmt.Errorf("restoring owner of %s: %w", display, err)
 		}
 	}
-	if err := unix.Fchmod(fd, unixMode(e.FileInfo().Mode())); err != nil {
-		return fmt.Errorf("restoring mode of %s: %w", display, err)
+	mode, stripped := restoredMode(e)
+	if err := unix.Fchmod(fd, mode); err != nil {
+		return "", fmt.Errorf("restoring mode of %s: %w", display, err)
 	}
 	ts := unix.NsecToTimespec(e.ModTime.UnixNano())
 	if err := unix.UtimesNanoAt(dirfd, name, []unix.Timespec{ts, ts}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return fmt.Errorf("restoring times of %s: %w", display, err)
+		return "", fmt.Errorf("restoring times of %s: %w", display, err)
 	}
-	return nil
+	return stripped, nil
+}
+
+// restoredMode is the mode an archived entry is restored with: what the
+// archive holds, less a setuid bit on an entry given to uid 0 and a setgid
+// bit on one given to gid 0, which would hand a root-owned program or group
+// to whatever the archive says. The second result names the bits left off.
+func restoredMode(e *tar.Header) (uint32, string) {
+	mode := unixMode(e.FileInfo().Mode())
+	var left []string
+	if mode&unix.S_ISUID != 0 && e.Uid == 0 {
+		mode &^= unix.S_ISUID
+		left = append(left, "setuid")
+	}
+	if mode&unix.S_ISGID != 0 && e.Gid == 0 {
+		mode &^= unix.S_ISGID
+		left = append(left, "setgid")
+	}
+	return mode, strings.Join(left, " and ")
 }
 
 func unixMode(m fs.FileMode) uint32 {

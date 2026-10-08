@@ -159,6 +159,16 @@ func (a *AppdataService) startTimeout() time.Duration {
 	return defaultAppdataStartTimeout
 }
 
+// archiveKey is the key appdata archives are authenticated with, derived from
+// the onboarding identity (deriveAppdataKey). A run or restore that needs it
+// asks for it before it stops or changes anything.
+func (a *AppdataService) archiveKey() ([]byte, error) {
+	if a.Backup.Recipient == nil {
+		return nil, errors.New("no onboarding identity is available to authenticate appdata archives")
+	}
+	return deriveAppdataKey(a.Backup.Recipient.Identity)
+}
+
 func (a *AppdataService) now() time.Time {
 	return a.Backup.now()
 }

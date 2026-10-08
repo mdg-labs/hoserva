@@ -61,7 +61,7 @@ func appdataBackupService(t *testing.T, apps *appServices, arrays *store.ArraySt
 	}); err != nil {
 		t.Fatal(err)
 	}
-	svc := &backup.Service{Store: dests, Hostname: "test-host"}
+	svc := &backup.Service{Store: dests, Hostname: "test-host", Recipient: &backup.Recipient{Identity: "AGE-SECRET-KEY-WIRING-TEST"}}
 	return newAppdataService(apps, svc, api.NewAppdataPolicyStore(db), arrays, stateDir)
 }
 

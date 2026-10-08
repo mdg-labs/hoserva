@@ -127,6 +127,10 @@ func (a *AppdataService) Run(ctx context.Context, req AppdataRunRequest, out io.
 	if err != nil {
 		return err
 	}
+	key, err := a.archiveKey()
+	if err != nil {
+		return err
+	}
 	staging, err := appdataStaging(roots)
 	if err != nil {
 		return err
@@ -140,7 +144,7 @@ func (a *AppdataService) Run(ctx context.Context, req AppdataRunRequest, out io.
 		}
 	}
 	failures := map[string]error{}
-	staged, err := a.archiveStopped(ctx, out, selected, staging, now, dests, ReasonNone, failures)
+	staged, err := a.archiveStopped(ctx, out, selected, staging, now, dests, ReasonNone, key, failures)
 	if err != nil {
 		return err
 	}
@@ -193,7 +197,7 @@ func (a *AppdataService) verifyAndUpload(ctx context.Context, out io.Writer, des
 // is recorded in failures; only an error that ends the whole run is
 // returned, with whatever was staged before it. reason marks the archives as
 // taken before a change (ReasonNone for an ordinary backup).
-func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, selected []AppdataContainer, staging string, now time.Time, dests []Destination, reason Reason, failures map[string]error) (staged []stagedAppdata, err error) {
+func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, selected []AppdataContainer, staging string, now time.Time, dests []Destination, reason Reason, key []byte, failures map[string]error) (staged []stagedAppdata, err error) {
 	var toStop []AppdataContainer
 	for _, c := range selected {
 		if c.Stop && c.Running {
@@ -243,7 +247,7 @@ func (a *AppdataService) archiveStopped(ctx context.Context, out io.Writer, sele
 		}
 		_, _ = fmt.Fprintf(out, "archiving %s\n", c.Name)
 		a.anchorDirs(rep, c.Dirs)
-		if _, err := packAppdata(ctx, path, hdr); err != nil {
+		if _, err := packAppdata(ctx, path, hdr, key); err != nil {
 			if ctx.Err() != nil {
 				return staged, ctx.Err()
 			}

@@ -914,6 +914,7 @@ func contractBackupService(t *testing.T, db *sql.DB, dbPath string) *backup.Serv
 		Rclone:            &backup.FakeRclone{},
 		Cipher:            backup.FakeSecretCipher{},
 		DestinationCipher: backup.FakeSecretCipher{},
+		Recipient:         &backup.Recipient{Identity: "AGE-SECRET-KEY-CONTRACT-TEST"},
 	}
 	defaults := mockBackupDestinations()
 	root := t.TempDir()
