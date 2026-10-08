@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -80,8 +81,16 @@ func (h *httpsControl) Current() (acme.CertView, error) {
 }
 
 func (h *httpsControl) Install(certPEM, keyPEM []byte) error {
-	if err := installTLSCertificate(h.certPath, h.keyPath, certPEM, keyPEM); err != nil {
-		return err
+	return h.install(certPEM, keyPEM)
+}
+
+// install swaps the live pair and the served certificate together. When
+// only the backup cleanup failed the new pair is on disk, so it is served
+// anyway and the error is still returned.
+func (h *httpsControl) install(certPEM, keyPEM []byte) error {
+	installErr := installTLSCertificate(h.certPath, h.keyPath, certPEM, keyPEM)
+	if installErr != nil && !errors.Is(installErr, errTLSBackupLeft) {
+		return installErr
 	}
 	cert, err := tls.LoadX509KeyPair(h.certPath, h.keyPath)
 	if err != nil {
@@ -90,23 +99,17 @@ func (h *httpsControl) Install(certPEM, keyPEM []byte) error {
 	h.certMu.Lock()
 	h.cert = cert
 	h.certMu.Unlock()
-	return nil
+	return installErr
 }
 
 func (h *httpsControl) Regenerate(context.Context) (api.TLSCertView, error) {
-	if err := os.Remove(h.certPath); err != nil && !os.IsNotExist(err) {
-		return api.TLSCertView{}, err
-	}
-	if err := os.Remove(h.keyPath); err != nil && !os.IsNotExist(err) {
-		return api.TLSCertView{}, err
-	}
-	cert, err := loadOrGenerateTLSCertificate(h.certPath, h.keyPath)
+	certPEM, keyPEM, err := generateSelfSignedCertificate()
 	if err != nil {
+		return api.TLSCertView{}, fmt.Errorf("generating self-signed certificate: %w", err)
+	}
+	if err := h.install(certPEM, keyPEM); err != nil {
 		return api.TLSCertView{}, err
 	}
-	h.certMu.Lock()
-	h.cert = cert
-	h.certMu.Unlock()
 	return h.Certificate()
 }
 
