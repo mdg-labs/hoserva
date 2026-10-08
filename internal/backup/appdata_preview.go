@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sys/unix"
 )
 
 // AppdataPreviewSampleLimit is how many paths one group of a preview lists.
@@ -375,47 +375,29 @@ func previewDirectory(ctx context.Context, dir string, roots []string, archived 
 	}
 	out.Directory = shown
 
-	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// A directory that is not there yet has nothing to lose, and a
-			// file that goes away while walking is not a file the restore
-			// would replace; anything else means the comparison is unknown.
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
+	w := appdataWalk{
+		ctx: ctx,
+		dir: func(string, int) error { return nil },
+		entry: func(_ int, _, rel string, st *unix.Stat_t) error {
+			var size int64
+			if st.Mode&unix.S_IFMT == unix.S_IFREG {
+				size = st.Size
 			}
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if d.IsDir() {
+			if _, ok := archived[rel]; ok {
+				delete(archived, rel)
+				out.Replaced.add(rel, size)
+			} else {
+				out.Removed.add(rel, size)
+			}
 			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		var size int64
-		if info.Mode().IsRegular() {
-			size = info.Size()
-		}
-		if _, ok := archived[rel]; ok {
-			delete(archived, rel)
-			out.Replaced.add(rel, size)
-		} else {
-			out.Removed.add(rel, size)
-		}
-		return nil
-	})
-	if err != nil {
+		},
+		// A file that goes away while walking is not a file the restore
+		// would replace.
+		gone: func() {},
+	}
+	// A directory that is not there yet has nothing to lose; anything else
+	// that stops the walk means the comparison is unknown.
+	if err := w.walk(dir); err != nil && !errors.Is(err, errWalkRootMissing) {
 		return AppdataDirPreview{}, fmt.Errorf("reading %s: %w", dir, err)
 	}
 

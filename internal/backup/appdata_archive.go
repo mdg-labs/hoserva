@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -195,73 +196,53 @@ func writeAppdataMeta(tw *tar.Writer, name string, v any, at time.Time) error {
 	return nil
 }
 
+// packAppdataTree writes the tree below root under prefix. root is opened
+// with every component refused if it is a link, and every entry below it is
+// opened from its parent's descriptor without following a link, so a
+// directory or file a container swaps for a link while the tree is read is
+// not followed: it is counted as changed and what it pointed at is never
+// read.
 func packAppdataTree(ctx context.Context, tw *tar.Writer, trailer *appdataTrailer, root, prefix string, archived archivedIDs) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	tarName := func(rel string) string {
+		if rel == "" {
+			return prefix
 		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		name := prefix
-		if rel != "." {
-			name += filepath.ToSlash(rel)
-		}
-		info, err := d.Info()
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				trailer.Changed++
-				return nil
+		return prefix + rel
+	}
+	w := appdataWalk{
+		ctx: ctx,
+		dir: func(rel string, fd int) error {
+			info, err := fdInfo(fd)
+			if err != nil {
+				return err
 			}
-			return err
-		}
-		switch {
-		case info.IsDir():
 			h, err := tar.FileInfoHeader(info, "")
 			if err != nil {
 				return err
 			}
-			h.Name = strings.TrimSuffix(name, "/") + "/"
+			h.Name = strings.TrimSuffix(tarName(rel), "/") + "/"
 			if err := tw.WriteHeader(h); err != nil {
 				return err
 			}
 			archived.record(root, info)
 			return nil
-		case info.Mode()&fs.ModeSymlink != 0:
-			link, err := os.Readlink(p)
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					trailer.Changed++
-					return nil
-				}
-				return err
+		},
+		entry: func(parent int, name, rel string, st *unix.Stat_t) error {
+			if st.Mode&unix.S_IFMT == unix.S_IFREG {
+				return packAppdataFile(tw, trailer, parent, name, tarName(rel), func(info fs.FileInfo) { archived.record(root, info) })
 			}
-			h, err := tar.FileInfoHeader(info, link)
-			if err != nil {
-				return err
-			}
-			h.Name = name
-			if err := tw.WriteHeader(h); err != nil {
-				return err
-			}
-			archived.record(root, info)
-			return nil
-		case info.Mode().IsRegular():
-			return packAppdataFile(tw, trailer, p, name, func(info fs.FileInfo) { archived.record(root, info) })
-		default:
-			trailer.Skipped++
-			archived.record(root, info)
-			return nil
-		}
-	})
+			return packAppdataLink(tw, trailer, parent, name, tarName(rel), func(info fs.FileInfo) { archived.record(root, info) })
+		},
+		gone: func() { trailer.Changed++ },
+	}
+	return w.walk(root)
 }
 
-func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string, archived func(fs.FileInfo)) error {
-	f, err := os.Open(p)
+// packAppdataLink archives a symbolic link, or counts a special file as
+// skipped. It holds the entry itself, never what a link points at, so the
+// header and the target it records are of one object.
+func packAppdataLink(tw *tar.Writer, trailer *appdataTrailer, parent int, name, tarName string, archived func(fs.FileInfo)) error {
+	fd, err := beneath.Open(parent, name, unix.O_PATH)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			trailer.Changed++
@@ -269,6 +250,72 @@ func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string, ar
 		}
 		return err
 	}
+	f := os.NewFile(uintptr(fd), name)
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	switch {
+	case info.Mode()&fs.ModeSymlink != 0:
+		link, err := readlinkFd(fd)
+		if err != nil {
+			return err
+		}
+		h, err := tar.FileInfoHeader(info, link)
+		if err != nil {
+			return err
+		}
+		h.Name = tarName
+		if err := tw.WriteHeader(h); err != nil {
+			return err
+		}
+		archived(info)
+	case info.Mode().IsRegular() || info.IsDir():
+		trailer.Changed++
+	default:
+		trailer.Skipped++
+		archived(info)
+	}
+	return nil
+}
+
+func readlinkFd(fd int) (string, error) {
+	for size := 256; ; size *= 2 {
+		buf := make([]byte, size)
+		n, err := unix.Readlinkat(fd, "", buf)
+		if err != nil {
+			return "", fmt.Errorf("reading a link: %w", err)
+		}
+		if n < size {
+			return string(buf[:n]), nil
+		}
+	}
+}
+
+// fdInfo is the file information of the open descriptor fd, taken from the
+// descriptor itself.
+func fdInfo(fd int) (fs.FileInfo, error) {
+	dup, err := unix.Dup(fd)
+	if err != nil {
+		return nil, err
+	}
+	unix.CloseOnExec(dup)
+	f := os.NewFile(uintptr(dup), "")
+	defer func() { _ = f.Close() }()
+	return f.Stat()
+}
+
+func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, parent int, name, tarName string, archived func(fs.FileInfo)) error {
+	fd, err := beneath.Open(parent, name, unix.O_RDONLY|unix.O_NONBLOCK)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, beneath.ErrSymlink) {
+			trailer.Changed++
+			return nil
+		}
+		return err
+	}
+	f := os.NewFile(uintptr(fd), name)
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
@@ -283,7 +330,7 @@ func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string, ar
 	if err != nil {
 		return err
 	}
-	h.Name = name
+	h.Name = tarName
 	if err := tw.WriteHeader(h); err != nil {
 		return err
 	}
@@ -297,6 +344,106 @@ func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string, ar
 	}
 	trailer.Files++
 	trailer.Bytes += h.Size
+	return nil
+}
+
+// beforeOpen, when set, runs after the walk has read an entry's type and
+// before it opens the entry, so a test can rearrange the tree at that moment.
+var beforeOpen func(rel string)
+
+// beforeList, when set, runs after the walk has opened a directory and before
+// it lists it, so a test can remove the directory at that moment.
+var beforeList func(rel string)
+
+// errWalkRootMissing marks the error of a walk whose root is not there, as
+// against one that stops partway.
+var errWalkRootMissing = errors.New("the directory to walk is not there")
+
+// appdataWalk reads a tree by descriptors: each directory is opened from its
+// parent's descriptor without following a link, listed, and its entries
+// visited in name order, a directory before what it holds. An entry that is
+// gone, or is a link where a directory was listed, when it is opened is
+// reported to gone and not entered; nothing is ever opened through a link.
+type appdataWalk struct {
+	ctx context.Context
+	// dir is called with each directory as it is entered, the root as "".
+	dir func(rel string, fd int) error
+	// entry is called with each entry that is not a directory, with the
+	// descriptor of its parent and what the listing found it to be.
+	entry func(parent int, name, rel string, st *unix.Stat_t) error
+	gone  func()
+}
+
+func (w *appdataWalk) walk(root string) error {
+	fd, err := beneath.OpenResolvedDir(root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %w", errWalkRootMissing, err)
+		}
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	if err := w.dir("", fd); err != nil {
+		return err
+	}
+	return w.children(fd, "")
+}
+
+func (w *appdataWalk) children(dirfd int, rel string) error {
+	if beforeList != nil {
+		beforeList(rel)
+	}
+	names, err := beneath.ReadNames(dirfd)
+	if err != nil {
+		// The kernel refuses to list a directory removed after it was
+		// opened; its entries are gone, as an entry removed before its
+		// open is.
+		if errors.Is(err, unix.ENOENT) {
+			w.gone()
+			return nil
+		}
+		return fmt.Errorf("listing %q: %w", rel, err)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
+		childRel := path.Join(rel, name)
+		var st unix.Stat_t
+		if err := unix.Fstatat(dirfd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				w.gone()
+				continue
+			}
+			return fmt.Errorf("reading %q: %w", childRel, err)
+		}
+		if beforeOpen != nil {
+			beforeOpen(childRel)
+		}
+		if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+			if err := w.entry(dirfd, name, childRel, &st); err != nil {
+				return err
+			}
+			continue
+		}
+		fd, err := beneath.Open(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY)
+		if err != nil {
+			if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, beneath.ErrSymlink) {
+				w.gone()
+				continue
+			}
+			return err
+		}
+		err = w.dir(childRel, fd)
+		if err == nil {
+			err = w.children(fd, childRel)
+		}
+		_ = unix.Close(fd)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

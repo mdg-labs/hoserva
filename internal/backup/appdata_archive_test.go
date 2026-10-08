@@ -713,3 +713,190 @@ func TestAppdataArchive_RecordsNothingForAnEntryItDoesNotArchive(t *testing.T) {
 		t.Fatal("a file created after packing is recorded")
 	}
 }
+
+// swapOutside builds an appdata tree and a directory outside it that holds a
+// file only root could read, and returns both.
+func swapOutside(t *testing.T) (src, outside string) {
+	t.Helper()
+	base := t.TempDir()
+	src = filepath.Join(base, "src")
+	outside = filepath.Join(base, "outside")
+	for _, d := range []string{filepath.Join(src, "sub"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, content := range map[string]string{
+		filepath.Join(src, "sub", "inside"):    "inside content",
+		filepath.Join(src, "file"):             "file content",
+		filepath.Join(outside, "secret"):       "outside secret content",
+		filepath.Join(outside, "other-secret"): "other outside secret content",
+	} {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return src, outside
+}
+
+// swapOnOpen makes the walk replace rel, once, with a link to target just
+// before the packer opens it, which is the moment a container that can
+// write the tree would do it.
+func swapOnOpen(t *testing.T, src, rel, target string) {
+	t.Helper()
+	var swapped bool
+	beforeOpen = func(got string) {
+		if got != rel || swapped {
+			return
+		}
+		swapped = true
+		p := filepath.Join(src, rel)
+		if err := os.RemoveAll(p); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(target, p); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforeOpen = nil })
+}
+
+func requireNothingFromOutside(t *testing.T, archive string, archived archivedIDs, src, outside string) {
+	t.Helper()
+	for _, e := range readArchivedEntries(t, archive) {
+		if strings.Contains(string(e.body), "secret") {
+			t.Errorf("entry %q carries content from outside the tree: %q", e.hdr.Name, e.body)
+		}
+		if strings.Contains(e.hdr.Name, "secret") {
+			t.Errorf("entry %q names a file from outside the tree", e.hdr.Name)
+		}
+	}
+	for _, rel := range []string{".", "secret", "other-secret"} {
+		var st unix.Stat_t
+		if err := unix.Lstat(filepath.Join(outside, rel), &st); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := archived[src][devIno{uint64(st.Dev), uint64(st.Ino)}]; ok {
+			t.Errorf("the identity of outside/%s is recorded as archived", rel)
+		}
+	}
+}
+
+func TestAppdataArchive_ADirectorySwappedForALinkIsNotFollowed(t *testing.T) {
+	src, outside := swapOutside(t)
+	swapOnOpen(t, src, "sub", outside)
+
+	archived := archivedIDs{}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNothingFromOutside(t, dest, archived, src, outside)
+	if trailer.Changed == 0 {
+		t.Errorf("trailer = %+v, want the swapped directory counted as changed", trailer)
+	}
+	for _, e := range readArchivedEntries(t, dest) {
+		if e.hdr.Name == "data/0/sub/inside" {
+			t.Errorf("the swapped directory's former content is archived under %q", e.hdr.Name)
+		}
+	}
+}
+
+func TestAppdataArchive_AFileSwappedForALinkIsNotFollowed(t *testing.T) {
+	src, outside := swapOutside(t)
+	swapOnOpen(t, src, "file", filepath.Join(outside, "secret"))
+
+	archived := archivedIDs{}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNothingFromOutside(t, dest, archived, src, outside)
+	if trailer.Changed == 0 {
+		t.Errorf("trailer = %+v, want the swapped file counted as changed", trailer)
+	}
+	for _, e := range readArchivedEntries(t, dest) {
+		if e.hdr.Name == "data/0/file" && e.hdr.Typeflag != tar.TypeSymlink {
+			t.Errorf("data/0/file is archived as type %q with %q", e.hdr.Typeflag, e.body)
+		}
+	}
+}
+
+func TestAppdataArchive_ADirectoryHoldingALinkBelowTheRootIsNotFollowed(t *testing.T) {
+	src, outside := swapOutside(t)
+	if err := os.MkdirAll(filepath.Join(src, "deep", "er"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	swapOnOpen(t, src, "deep/er", outside)
+
+	archived := archivedIDs{}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, archived); err != nil {
+		t.Fatal(err)
+	}
+	requireNothingFromOutside(t, dest, archived, src, outside)
+}
+
+func TestAppdataArchive_AnAppdataDirectoryThatIsALinkIsRefused(t *testing.T) {
+	src, outside := swapOutside(t)
+	link := filepath.Join(filepath.Dir(src), "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{link}}
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, nil); !errors.Is(err, beneath.ErrSymlink) {
+		t.Fatalf("packing a link = %v, want an error wrapping ErrSymlink", err)
+	}
+}
+
+func TestAppdataArchive_ADirectoryRemovedBeforeItIsListedDoesNotEndTheArchive(t *testing.T) {
+	src, _ := swapOutside(t)
+	if err := os.MkdirAll(filepath.Join(src, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "a", "gone"), []byte("gone content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "z"), []byte("z content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var removed bool
+	beforeList = func(rel string) {
+		if rel != "a" || removed {
+			return
+		}
+		removed = true
+		if err := os.RemoveAll(filepath.Join(src, "a")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforeList = nil })
+
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archivedIDs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("the walk never listed the directory")
+	}
+	if trailer.Changed == 0 {
+		t.Errorf("trailer = %+v, want the vanished directory counted as changed", trailer)
+	}
+	names := map[string]bool{}
+	for _, e := range readArchivedEntries(t, dest) {
+		names[e.hdr.Name] = true
+	}
+	for _, want := range []string{"data/0/file", "data/0/z"} {
+		if !names[want] {
+			t.Errorf("%s is missing from the archive: the walk stopped at the vanished directory (entries %v)", want, names)
+		}
+	}
+}
