@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -84,10 +85,34 @@ func (zeroReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// archivedIDs holds, for each directory a packer archived, the device and
+// inode of every entry it wrote or skipped under it, as the packer read them.
+type archivedIDs map[string]map[devIno]struct{}
+
+type devIno struct{ dev, ino uint64 }
+
+func (set archivedIDs) record(dir string, info fs.FileInfo) {
+	if set == nil {
+		return
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		set[dir][devIno{uint64(st.Dev), uint64(st.Ino)}] = struct{}{}
+	}
+}
+
 // packAppdata writes hdr and every tree hdr.Dirs names to dest, through a
 // temporary file that is renamed into place only once complete. A socket,
 // device or named pipe has no content to keep and is skipped and counted.
 func packAppdata(ctx context.Context, dest string, hdr appdataHeader) (appdataTrailer, error) {
+	return packAppdataRecording(ctx, dest, hdr, nil)
+}
+
+// packAppdataRecording is packAppdata that also records into archived, under
+// each directory of hdr.Dirs, the device and inode of every directory, file,
+// link and skipped special file it read there, taken from the same lstat or
+// open descriptor the entry was archived from. A name that vanished before it
+// could be read is not recorded. A nil archived records nothing.
+func packAppdataRecording(ctx context.Context, dest string, hdr appdataHeader, archived archivedIDs) (appdataTrailer, error) {
 	var trailer appdataTrailer
 	out, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.tmp")
 	if err != nil {
@@ -115,7 +140,10 @@ func packAppdata(ctx context.Context, dest string, hdr appdataHeader) (appdataTr
 		return fail(err)
 	}
 	for i, dir := range hdr.Dirs {
-		if err := packAppdataTree(ctx, tw, &trailer, dir, appdataPrefix(i)); err != nil {
+		if archived != nil {
+			archived[dir] = map[devIno]struct{}{}
+		}
+		if err := packAppdataTree(ctx, tw, &trailer, dir, appdataPrefix(i), archived); err != nil {
 			_ = zw.Close()
 			return fail(fmt.Errorf("archiving %s: %w", dir, err))
 		}
@@ -167,7 +195,7 @@ func writeAppdataMeta(tw *tar.Writer, name string, v any, at time.Time) error {
 	return nil
 }
 
-func packAppdataTree(ctx context.Context, tw *tar.Writer, trailer *appdataTrailer, root, prefix string) error {
+func packAppdataTree(ctx context.Context, tw *tar.Writer, trailer *appdataTrailer, root, prefix string, archived archivedIDs) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -198,7 +226,11 @@ func packAppdataTree(ctx context.Context, tw *tar.Writer, trailer *appdataTraile
 				return err
 			}
 			h.Name = strings.TrimSuffix(name, "/") + "/"
-			return tw.WriteHeader(h)
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
+			archived.record(root, info)
+			return nil
 		case info.Mode()&fs.ModeSymlink != 0:
 			link, err := os.Readlink(p)
 			if err != nil {
@@ -213,17 +245,22 @@ func packAppdataTree(ctx context.Context, tw *tar.Writer, trailer *appdataTraile
 				return err
 			}
 			h.Name = name
-			return tw.WriteHeader(h)
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
+			archived.record(root, info)
+			return nil
 		case info.Mode().IsRegular():
-			return packAppdataFile(tw, trailer, p, name)
+			return packAppdataFile(tw, trailer, p, name, func(info fs.FileInfo) { archived.record(root, info) })
 		default:
 			trailer.Skipped++
+			archived.record(root, info)
 			return nil
 		}
 	})
 }
 
-func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string) error {
+func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string, archived func(fs.FileInfo)) error {
 	f, err := os.Open(p)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -239,6 +276,7 @@ func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string) er
 	}
 	if !info.Mode().IsRegular() {
 		trailer.Skipped++
+		archived(info)
 		return nil
 	}
 	h, err := tar.FileInfoHeader(info, "")
@@ -249,6 +287,7 @@ func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string) er
 	if err := tw.WriteHeader(h); err != nil {
 		return err
 	}
+	archived(info)
 	changed, err := copyExactly(tw, f, h.Size)
 	if err != nil {
 		return err

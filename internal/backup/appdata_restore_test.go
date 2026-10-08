@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1166,4 +1167,181 @@ func TestAppdataRestore_TheRevertBeforeAnUpdateRefusesADirectoryOtherThanTheReco
 	rig.out.Reset()
 	err := snaps.Restore(context.Background(), "alpha", ref, nil, rig.out)
 	rig.requireRefusedBeforeAnyWrite(t, err, other, aside)
+}
+
+// moveOtherAppdataIntoLive renames another application's directory into the
+// live directory as name.
+func (r *restoreRig) moveOtherAppdataIntoLive(t *testing.T, other otherAppdata, name string) {
+	t.Helper()
+	from := filepath.Join(r.appdata, "beta")
+	other.create(t, from)
+	if err := os.Rename(from, filepath.Join(r.dir, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// workDir returns the one work directory a restore left next to the live
+// directory.
+func (r *restoreRig) workDir(t *testing.T) string {
+	t.Helper()
+	work, err := filepath.Glob(r.dir + ".hoserva-restore-*")
+	if err != nil || len(work) != 1 {
+		t.Fatalf("work directories = %v, %v, want exactly one", work, err)
+	}
+	return work[0]
+}
+
+// filesUnder lists the paths of the files under dir, relative to it.
+func filesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(dir, p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestAppdataRestore_LeavesADirectoryMovedIntoTheLiveDirectoryAfterTheSnapshot(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	other := newOtherAppdata()
+	beforeAppdataUnpack = func() { rig.moveOtherAppdataIntoLive(t, other, "moved") }
+	t.Cleanup(func() { beforeAppdataUnpack = nil })
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want the archived v1", got)
+	}
+	old := filepath.Join(rig.workDir(t), "old")
+	moved := filepath.Join(old, "moved")
+	other.requireIntactAt(t, moved)
+	if got, want := strings.Join(filesUnder(t, old), ","), "moved/data,moved/sub/state"; got != want {
+		t.Fatalf("the replaced directory still holds %s, want only %s: what the snapshot archived is removed", got, want)
+	}
+	if !strings.Contains(rig.out.String(), "warning:") || !strings.Contains(rig.out.String(), strconv.Quote(moved)) {
+		t.Fatalf("the output does not warn about %s:\n%s", moved, rig.out)
+	}
+}
+
+func TestAppdataRestore_LeavesAFileMovedIntoTheLiveDirectoryAndTheDirectoryHoldingIt(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	var stray, nested string
+	beforeAppdataUnpack = func() {
+		stray = filepath.Join(rig.appdata, "stray")
+		if err := os.WriteFile(stray, []byte("another app's file"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(stray, filepath.Join(rig.dir, "stray")); err != nil {
+			t.Fatal(err)
+		}
+		nested = filepath.Join(rig.dir, "sub", "nested")
+		if err := os.WriteFile(nested, []byte("added to a directory the snapshot archived"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeAppdataUnpack = nil })
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	old := filepath.Join(rig.workDir(t), "old")
+	if got, want := strings.Join(filesUnder(t, old), ","), "stray,sub/nested"; got != want {
+		t.Fatalf("the replaced directory still holds %s, want %s", got, want)
+	}
+	if got := readFile(t, filepath.Join(old, "stray")); got != "another app's file" {
+		t.Fatalf("stray = %q", got)
+	}
+	if got := readFile(t, filepath.Join(old, "sub", "nested")); got != "added to a directory the snapshot archived" {
+		t.Fatalf("sub/nested = %q", got)
+	}
+	for _, p := range []string{"stray", "sub/nested"} {
+		if !strings.Contains(rig.out.String(), strconv.Quote(filepath.Join(old, p))) {
+			t.Fatalf("the output does not name %s:\n%s", p, rig.out)
+		}
+	}
+}
+
+func TestAppdataRestore_RemovesTheWholeReplacedTreeWhenNothingWasAddedAfterTheSnapshot(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	if err := unix.Mkfifo(filepath.Join(rig.dir, "sub", "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("config", filepath.Join(rig.dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	rig.requireNothingLeftNextToLive(t, "alpha")
+	if strings.Contains(rig.out.String(), "warning:") {
+		t.Fatalf("a restore with nothing added after the snapshot warned:\n%s", rig.out)
+	}
+}
+
+func TestAppdataRestore_KeepsTheReplacedTreeAndWarnsWhenItsRemovalFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory permissions do not stop root")
+	}
+	rig := newRestoreRig(t)
+	rig.withLocalSnapshotDestination(t)
+	var sub string
+	beforeAppdataCleanup = func() {
+		beforeAppdataCleanup = nil
+		work, _ := filepath.Glob(rig.dir + ".hoserva-restore-*")
+		sub = filepath.Join(work[0], "old", "sub")
+		if err := os.Chmod(sub, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		beforeAppdataCleanup = nil
+		if sub != "" {
+			_ = os.Chmod(sub, 0o755)
+		}
+	})
+
+	if err := rig.restore(t); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if err := os.Chmod(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(sub, "keep")); got != "kept" {
+		t.Fatalf("sub/keep = %q: the removal went on after its error", got)
+	}
+	if !strings.Contains(rig.out.String(), "warning: the appdata that was replaced is still at") {
+		t.Fatalf("no warning about the replaced appdata:\n%s", rig.out)
+	}
+}
+
+func TestKeptMessage_NamesAtMostFivePathsAndCountsTheRest(t *testing.T) {
+	var kept []string
+	for _, n := range []string{"g", "f", "e", "d", "c", "b", "a"} {
+		kept = append(kept, "old/"+n)
+	}
+	got := keptMessage("/w", kept)
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		if !strings.Contains(got, strconv.Quote("/w/old/"+n)) {
+			t.Errorf("%q does not name %s", got, n)
+		}
+	}
+	if strings.Contains(got, `"/w/old/f"`) || !strings.HasSuffix(got, " and 2 more") {
+		t.Fatalf("message = %q", got)
+	}
 }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 
@@ -199,10 +201,11 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	if err != nil {
 		return err
 	}
-	if err := a.snapshotAppdata(ctx, out, dests, hdr, parents, recorded, passphrase, staging, req.Archive); err != nil {
+	archived, err := a.snapshotAppdata(ctx, out, dests, hdr, parents, recorded, passphrase, staging, req.Archive)
+	if err != nil {
 		return err
 	}
-	return a.replaceAppdata(ctx, out, plain, hdr, parents, recorded)
+	return a.replaceAppdata(ctx, out, plain, hdr, parents, recorded, archived)
 }
 
 // fetchVerifiedAppdata is the read-only part of a restore that the preview
@@ -235,13 +238,14 @@ func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRe
 // recorded) and refuses otherwise, before anything is uploaded. The packing
 // itself resolves the paths by name, so the two checks bracket it. Retention
 // never prunes the archive being restored, so a restore that fails after its
-// snapshot can be run again from the same archive.
-func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, parents *heldDirs, recorded []liveIdentity, passphrase, staging, archive string) error {
+// snapshot can be run again from the same archive. It returns the device and
+// inode of every entry the snapshot archived under each directory it packed.
+func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, dests []Destination, restoring appdataHeader, parents *heldDirs, recorded []liveIdentity, passphrase, staging, archive string) (archivedIDs, error) {
 	if afterAppdataRecord != nil {
 		afterAppdataRecord()
 	}
 	if err := parents.requireRecorded(restoring.Dirs, recorded); err != nil {
-		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
+		return nil, fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
 	}
 	var existing []string
 	for i, d := range restoring.Dirs {
@@ -251,37 +255,38 @@ func (a *AppdataService) snapshotAppdata(ctx context.Context, out io.Writer, des
 	}
 	if len(existing) == 0 {
 		_, _ = fmt.Fprintln(out, "there is no current appdata to snapshot")
-		return nil
+		return nil, nil
 	}
 	now := a.now()
 	name := resolveAppdataName(a.Backup.installationID(), restoring.Container, now, ReasonPreRestore, dests)
 	path := filepath.Join(staging, name)
 	_, _ = fmt.Fprintf(out, "snapshotting the current appdata of %s\n", restoring.Container)
-	if _, err := packAppdata(ctx, path, appdataHeader{
+	archived := archivedIDs{}
+	if _, err := packAppdataRecording(ctx, path, appdataHeader{
 		Container: restoring.Container, Image: restoring.Image, CreatedAt: now, Hostname: a.Backup.Hostname,
 		Stopped: true, DatabaseImage: restoring.DatabaseImage, Reason: string(ReasonPreRestore), Dirs: existing,
-	}); err != nil {
-		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
+	}, archived); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, err)
 	}
 	if afterAppdataPack != nil {
 		afterAppdataPack()
 	}
 	if err := parents.requireRecorded(restoring.Dirs, recorded); err != nil {
 		_ = os.Remove(path)
-		return fmt.Errorf("%w: after packing: %w", ErrPreRestoreSnapshot, err)
+		return nil, fmt.Errorf("%w: after packing: %w", ErrPreRestoreSnapshot, err)
 	}
 	if _, _, err := verifyAppdata(path); err != nil {
-		return fmt.Errorf("%w: verifying it: %w", ErrPreRestoreSnapshot, err)
+		return nil, fmt.Errorf("%w: verifying it: %w", ErrPreRestoreSnapshot, err)
 	}
 	written, failures := a.uploadAppdata(ctx, dests, path, name, restoring.Container, passphrase, archive, now)
 	_ = os.Remove(path)
 	if written == 0 {
-		return fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, errors.Join(failures...))
+		return nil, fmt.Errorf("%w: %w", ErrPreRestoreSnapshot, errors.Join(failures...))
 	}
 	for _, f := range failures {
 		_, _ = fmt.Fprintf(out, "warning: the snapshot did not reach every destination: %v\n", f)
 	}
-	return nil
+	return archived, nil
 }
 
 // heldDirs holds a descriptor for each directory that contains one of
@@ -476,8 +481,9 @@ func (p *heldDirs) makeWork(path string) (restoreWork, error) {
 
 // replaceAppdata unpacks the archive next to each live directory and swaps
 // it in, replacing only the entries recorded in recorded, which Restore read
-// through parents before the snapshot.
-func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader, parents *heldDirs, recorded []liveIdentity) error {
+// through parents before the snapshot. Of the directory it replaced it
+// removes only what archived says the snapshot archived.
+func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader, parents *heldDirs, recorded []liveIdentity, archived archivedIDs) error {
 	id, err := randomID()
 	if err != nil {
 		return err
@@ -489,12 +495,14 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 	swaps := make([]appdataSwap, len(hdr.Dirs))
 	for i, d := range hdr.Dirs {
 		path := d + ".hoserva-restore-" + id
-		swaps[i] = appdataSwap{live: d, fresh: path + "/tree", old: path + "/old", recorded: recorded[i]}
+		swaps[i] = appdataSwap{live: d, fresh: path + "/tree", old: path + "/old", recorded: recorded[i], archived: archived[d]}
 	}
 	// discard removes what this restore put in its work directories, each
 	// only if it is still the entry the restore recorded, and then the work
 	// directories, which it removes only while they are empty. Whatever is
-	// not what was recorded is left where it is and reported.
+	// not what was recorded is left where it is and reported. Inside the
+	// replaced directory only the entries the snapshot archived are removed;
+	// the work directory is then left too, since it still holds the rest.
 	discard := func(keepOld bool) {
 		if beforeAppdataCleanup != nil {
 			beforeAppdataCleanup()
@@ -505,9 +513,16 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 				if err := parents.removeFresh(s); err != nil {
 					_, _ = fmt.Fprintf(out, "warning: left %s in place: %v\n", s.fresh, err)
 				}
-			} else if err := parents.removeOld(s); err != nil {
-				_, _ = fmt.Fprintf(out, "warning: the appdata that was replaced is still at %s: %v\n", s.old, err)
-				continue
+			} else {
+				kept, err := parents.removeOld(s)
+				if err != nil {
+					_, _ = fmt.Fprintf(out, "warning: the appdata that was replaced is still at %s: %v\n", s.old, err)
+					continue
+				}
+				if len(kept) > 0 {
+					_, _ = fmt.Fprintf(out, "warning: %s\n", keptMessage(filepath.Dir(s.old), kept))
+					continue
+				}
 			}
 			if err := parents.removeWork(works[i]); err != nil {
 				_, _ = fmt.Fprintf(out, "warning: left %s in place: %v\n", works[i].path, err)
@@ -561,12 +576,45 @@ func (p *heldDirs) removeFresh(s *appdataSwap) error {
 }
 
 // removeOld removes the directory a swap moved aside, only if it is the one
-// the restore recorded before unpacking.
-func (p *heldDirs) removeOld(s *appdataSwap) error {
+// the restore recorded before unpacking, and inside it only the entries whose
+// device and inode the snapshot recorded when it archived them, by whatever
+// name they now have. It returns the paths, relative to the work directory,
+// of the entries it left in place. An error stops the removal where it is and
+// leaves the rest.
+func (p *heldDirs) removeOld(s *appdataSwap) ([]string, error) {
 	if !s.recorded.present {
-		return nil
+		return nil, nil
 	}
-	return p.removeRecorded(s.old, s.recorded)
+	parent, name, err := p.parent(s.old)
+	if err != nil {
+		return nil, err
+	}
+	kept, err := beneath.RemoveDirIfListed(parent, name,
+		func(dev, ino uint64) bool { return dev == s.recorded.dev && ino == s.recorded.ino },
+		func(dev, ino uint64) bool { _, ok := s.archived[devIno{dev, ino}]; return ok })
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return kept, err
+}
+
+// keptMessage names the entries a restore left in the directory dir because
+// the pre-restore snapshot did not archive them, at most five of them.
+func keptMessage(dir string, kept []string) string {
+	sort.Strings(kept)
+	shown := kept
+	if len(shown) > 5 {
+		shown = shown[:5]
+	}
+	paths := make([]string, len(shown))
+	for i, k := range shown {
+		paths[i] = strconv.Quote(filepath.Join(dir, k))
+	}
+	msg := fmt.Sprintf("left in place because the pre-restore snapshot did not archive them: %s", strings.Join(paths, ", "))
+	if len(kept) > len(shown) {
+		msg += fmt.Sprintf(" and %d more", len(kept)-len(shown))
+	}
+	return msg
 }
 
 // removeRecorded removes the directory at path through a descriptor whose
@@ -672,6 +720,9 @@ type appdataSwap struct {
 	// tree is the identity of the fresh tree, recorded by extract from the
 	// descriptor it unpacks into.
 	tree liveIdentity
+	// archived is what the pre-restore snapshot archived from the live
+	// directory; removeOld removes nothing else from old.
+	archived map[devIno]struct{}
 }
 
 // swap puts each fresh tree in place of its live directory, keeping the

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sys/unix"
 
 	"github.com/mdg-labs/hoserva/internal/beneath"
 )
@@ -642,5 +643,73 @@ func TestAppdataExtract_AppliesModesToADirectoryMadeThroughALinkInsideTheTree(t 
 	}
 	if info, err := os.Lstat(target); err != nil || info.Mode().Perm() != 0o750 {
 		t.Fatalf("the tree's own mode = %v, %v, want 0750", info, err)
+	}
+}
+
+func TestAppdataArchive_RecordsTheIdentityOfEveryEntryItArchives(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(filepath.Join(src, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a.txt", "nested/b.txt"} {
+		if err := os.WriteFile(filepath.Join(src, f), []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("a.txt", filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(src, "a.txt"), filepath.Join(src, "hard")); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(filepath.Join(src, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	archived := archivedIDs{}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, archived); err != nil {
+		t.Fatal(err)
+	}
+	var want []devIno
+	for _, rel := range []string{".", "a.txt", "hard", "nested", "nested/b.txt", "link", "pipe"} {
+		var st unix.Stat_t
+		if err := unix.Lstat(filepath.Join(src, rel), &st); err != nil {
+			t.Fatal(err)
+		}
+		id := devIno{uint64(st.Dev), uint64(st.Ino)}
+		if _, ok := archived[src][id]; !ok {
+			t.Errorf("%s (%v) was archived and not recorded", rel, id)
+		}
+		want = append(want, id)
+	}
+	// a.txt and hard are one inode, so six identities cover the seven names.
+	if got := len(archived[src]); got != len(want)-1 {
+		t.Fatalf("recorded %d identities, want %d", got, len(want)-1)
+	}
+}
+
+func TestAppdataArchive_RecordsNothingForAnEntryItDoesNotArchive(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archived := archivedIDs{}
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, archived); err != nil {
+		t.Fatal(err)
+	}
+	late := filepath.Join(src, "late")
+	if err := os.WriteFile(late, []byte("added after packing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var st unix.Stat_t
+	if err := unix.Lstat(late, &st); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := archived[src][devIno{uint64(st.Dev), uint64(st.Ino)}]; ok {
+		t.Fatal("a file created after packing is recorded")
 	}
 }
