@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -79,7 +83,7 @@ type apiHTTPClient interface {
 
 func newAPIClientWith(timeout time.Duration, wrap func(*http.Client) apiHTTPClient) (*apiv1.Client, error) {
 	if remoteHost != "" {
-		return newRemoteAPIClientWith(remoteHost, remotePort, remoteToken, insecureSkipTLSVerify, timeout, wrap)
+		return newRemoteAPIClientWith(remoteHost, remotePort, remoteToken, insecureSkipTLSVerify, tlsFingerprint, timeout, wrap)
 	}
 	return newLocalAPIClientWith(socketPath, timeout, wrap)
 }
@@ -151,22 +155,27 @@ func (b *drainedBody) Close() error { return b.src.Close() }
 // newRemoteAPIClient builds a TLS-only client against host:port (Q9's
 // :8008 by default), authenticating with a personal API token (Q43).
 // token is required — the remote CLI has no other credential to offer.
-// insecureSkipVerify exists only for hoservad's own default, self-signed
-// certificate (Q9): it is never the default, and every use is the
-// caller's own explicit --insecure-skip-tls-verify.
-func newRemoteAPIClient(host string, port int, token string, insecureSkipVerify bool) (*apiv1.Client, error) {
-	return newRemoteAPIClientWith(host, port, token, insecureSkipVerify, requestTimeout, nil)
+//
+// Three ways to trust the server, never combined: with neither of the last
+// two arguments the certificate is verified normally; fingerprint pins the
+// leaf certificate's SHA-256, which is how hoservad's default self-signed
+// certificate is trusted (Q9); insecureSkipVerify trusts whoever answers and
+// is only ever the caller's own explicit --insecure-skip-tls-verify.
+func newRemoteAPIClient(host string, port int, token string, insecureSkipVerify bool, fingerprint string) (*apiv1.Client, error) {
+	return newRemoteAPIClientWith(host, port, token, insecureSkipVerify, fingerprint, requestTimeout, nil)
 }
 
-func newRemoteAPIClientWith(host string, port int, token string, insecureSkipVerify bool, timeout time.Duration, wrap func(*http.Client) apiHTTPClient) (*apiv1.Client, error) {
+func newRemoteAPIClientWith(host string, port int, token string, insecureSkipVerify bool, fingerprint string, timeout time.Duration, wrap func(*http.Client) apiHTTPClient) (*apiv1.Client, error) {
 	if token == "" {
 		return nil, fmt.Errorf("--host requires --token (or the HOSERVA_TOKEN environment variable) — the remote CLI authenticates with a personal API token (Q43)")
 	}
+	tlsConfig, err := remoteTLSConfig(insecureSkipVerify, fingerprint)
+	if err != nil {
+		return nil, err
+	}
 	httpClient := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify}, //nolint:gosec // explicit, opt-in --insecure-skip-tls-verify only
-		},
+		Timeout:   timeout,
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
 	baseURL := fmt.Sprintf("https://%s/api/v1", net.JoinHostPort(host, fmt.Sprint(port)))
 	return apiv1.NewClient(
@@ -174,4 +183,52 @@ func newRemoteAPIClientWith(host string, port int, token string, insecureSkipVer
 		remoteSecurity{token: token},
 		withHTTPClient(httpClient, wrap),
 	)
+}
+
+// remoteTLSConfig turns the trust flags into a tls.Config. A pin replaces
+// Go's chain and host-name verification, so it is checked in
+// VerifyConnection, which also runs on a resumed session: the handshake
+// fails on a mismatch and no request, hence no Authorization header, is sent.
+func remoteTLSConfig(insecureSkipVerify bool, fingerprint string) (*tls.Config, error) {
+	if fingerprint == "" {
+		return &tls.Config{InsecureSkipVerify: insecureSkipVerify}, nil //nolint:gosec // explicit, opt-in --insecure-skip-tls-verify only
+	}
+	if insecureSkipVerify {
+		return nil, errors.New("--tls-fingerprint and --insecure-skip-tls-verify cannot be combined: the pin is the verification")
+	}
+	want, err := parseTLSFingerprint(fingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("--tls-fingerprint: %w", err)
+	}
+	return &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // Go's own verification is replaced by the pin checked in VerifyConnection
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("the server presented no certificate")
+			}
+			got := sha256.Sum256(cs.PeerCertificates[0].Raw)
+			if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+				return fmt.Errorf("the server's certificate fingerprint sha256:%x does not match --tls-fingerprint", got)
+			}
+			return nil
+		},
+	}, nil
+}
+
+// parseTLSFingerprint reads a SHA-256 certificate fingerprint as hex, with
+// or without a leading "sha256:" and with or without the colons or spaces
+// that openssl and browsers print between bytes.
+func parseTLSFingerprint(s string) ([sha256.Size]byte, error) {
+	var out [sha256.Size]byte
+	text := strings.TrimSpace(s)
+	if len(text) >= len("sha256:") && strings.EqualFold(text[:len("sha256:")], "sha256:") {
+		text = text[len("sha256:"):]
+	}
+	text = strings.NewReplacer(":", "", " ", "").Replace(text)
+	raw, err := hex.DecodeString(text)
+	if err != nil || len(raw) != sha256.Size {
+		return out, fmt.Errorf("%q is not a SHA-256 fingerprint: want 32 bytes of hex, as in sha256:AB:CD:… as printed by openssl x509 -fingerprint -sha256", s)
+	}
+	copy(out[:], raw)
+	return out, nil
 }
