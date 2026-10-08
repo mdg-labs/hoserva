@@ -88,9 +88,11 @@ type appdataTrailer struct {
 const appdataKeyLabel = "hoserva appdata archive authentication v1"
 
 // deriveAppdataKey is the HKDF-SHA256 key, under appdataKeyLabel, of the
-// onboarding identity. The identity is kept in memory only and survives a
-// bare-metal restore (Q80), which is why it keys the tag and the machine key,
-// which does not travel in a config backup, does not.
+// onboarding identity. The identity is stored wrapped under the machine key,
+// travels wrapped under the backup passphrase in a config archive's
+// identity.age when a backup passphrase is set, and is in the clear only in
+// memory. It survives a bare-metal restore (Q80), which is why it keys the
+// tag and the machine key, which does not travel in a config backup, does not.
 func deriveAppdataKey(identity string) ([]byte, error) {
 	if identity == "" {
 		return nil, errors.New("no onboarding identity is available to authenticate appdata archives")

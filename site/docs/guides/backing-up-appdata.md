@@ -109,8 +109,25 @@ Appdata cannot be backed up or restored while the array is stopped. Start the ar
 Archives written by an older Hoserva have no tag. Hoserva still restores them from an encrypted destination: every remote destination, and a local folder with encryption turned on. It refuses them from an unencrypted local folder, such as the default pool folder, because anyone who can write to that folder could have left a file there.
 
 1. Run **Back up now** for the app so a new archive carries the tag.
-2. To get data out of the old archive, unpack it by hand into an empty folder with `tar --zstd -xf <archive> -C <folder>`. Do this only if you trust the archive.
-3. The `dirs` list in the `hoserva-appdata.json` file in that folder names the app's folders in order. With the app stopped, copy the contents of each `data/<number>/` folder into the folder at that position in the list.
+2. To get data out of the old archive, unpack it by hand into an empty folder you own. Do this only if you trust the archive. Hoserva writes archives so that only root can read them, so read the file with `sudo` and run `tar` itself as your normal user:
+
+   ```bash
+   sudo cat <archive> | tar --zstd -xf - -C <folder>
+   ```
+
+   :::warning[Unpack as your normal user, not as root]
+   **Do not put `sudo` in front of `tar`.** As root, `tar` gives each file the owner the archive names and keeps its setuid and setgid bits, which let a program run with another user's rights. As a normal user, the files are yours and those bits are dropped. To check an unpacked folder for files that still carry them, run `find <folder> -perm /6000`.
+   :::
+
+3. The `dirs` list in the `hoserva-appdata.json` file in that folder names the app's folders in order. Stop the app. The files of the first folder in the list are in `data/0`, those of the second in `data/1`, and so on. For each folder, keep a copy of the current one, copy the unpacked files in, and give them the owner of the app's folder, because the files you unpacked are owned by you and the app needs its own user to read them:
+
+   ```bash
+   sudo cp -a <app folder> <app folder>.before
+   sudo cp -R --preserve=timestamps <folder>/data/0/. <app folder>/
+   sudo chown -R --reference=<app folder>.before <app folder>
+   ```
+
+   This gives every restored file the owner of the app's folder. If the app keeps some of its files under another owner, compare with `<app folder>.before`, which keeps the original owners, and check the app's own documentation. The `.before` copy is also the way back if the result is wrong.
 
 The snapshot before an app update is an archive too. A snapshot taken by an older Hoserva and kept in an unencrypted folder cannot be used by **Revert**.
 

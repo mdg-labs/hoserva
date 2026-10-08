@@ -250,9 +250,10 @@ func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRe
 // tag that is there must be the one key gives the trailer. An archive written
 // before archives carried a tag has none; it is accepted only when it came
 // out of a destination that encrypts, since what opens there is an archive
-// encrypted to a recipient that was never published, and refused from one
-// that does not, where anyone able to write the folder can leave a
-// consistent archive of their own.
+// encrypted to the onboarding recipient, whose identity is persisted only
+// wrapped under the machine key and travels only wrapped under the backup
+// passphrase, and refused from one that does not, where anyone able to write
+// the folder can leave a consistent archive of their own.
 func authenticateAppdata(trailer appdataTrailer, key []byte, source Destination, name string) error {
 	if trailer.MAC != "" {
 		if !trailer.authentic(key) {
