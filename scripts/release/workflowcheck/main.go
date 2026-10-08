@@ -3,13 +3,17 @@
 // held only by a job that runs none of the build's code: the signing job
 // runs no package-manager, make, Go-build or packaging step, takes its
 // .deb files only from a downloaded artifact, and needs the build job,
-// which holds neither the key nor a write token.
+// which holds neither the key nor a write token. No job restores a package
+// manager cache: the Go and npm caches are written by workflows on the
+// default branch that run third-party code, so a release build must not
+// take its inputs from them.
 package main
 
 import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -157,6 +161,29 @@ func check(data []byte) []string {
 	}
 	if len(signing) > 1 {
 		add("more than one job references %s: %s", signingSecret, strings.Join(signing, ", "))
+	}
+
+	names := make([]string, 0, len(wf.Jobs))
+	for name := range wf.Jobs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for i, s := range wf.Jobs[name].Steps {
+			switch {
+			case strings.HasPrefix(s.Uses, "actions/setup-go@"):
+				if s.With["cache"] != "false" {
+					add("job %s step %d uses actions/setup-go without cache: false", name, i+1)
+				}
+			case strings.HasPrefix(s.Uses, "actions/setup-node@"):
+				if s.With["package-manager-cache"] != "false" {
+					add("job %s step %d uses actions/setup-node without package-manager-cache: false", name, i+1)
+				}
+				if v, ok := s.With["cache"]; ok {
+					add("job %s step %d uses actions/setup-node and sets cache: %s", name, i+1, v)
+				}
+			}
+		}
 	}
 
 	signingSet := map[string]bool{}

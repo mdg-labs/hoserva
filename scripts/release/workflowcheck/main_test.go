@@ -19,7 +19,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@abc
+      - uses: actions/setup-go@abc
+        with:
+          go-version: "1.27"
+          cache: false
       - uses: actions/setup-node@abc
+        with:
+          node-version-file: web/.nvmrc
+          package-manager-cache: false
       - run: npm ci
       - run: scripts/release/build-deb.sh "$TAG" amd64 dist
       - uses: actions/upload-artifact@abc
@@ -76,6 +83,12 @@ func TestCheck(t *testing.T) {
 		{"build job with the token", "      - run: npm ci\n", "      - run: npm ci\n        env:\n          K: ${{ github.token }}\n", "workflow token"},
 		{"build job in an environment", "  build:\n    runs-on: ubuntu-latest\n", "  build:\n    runs-on: ubuntu-latest\n    environment: release\n", "runs in an environment"},
 		{"build job uploads nothing", "      - uses: actions/upload-artifact@abc\n        with:\n          name: debs\n          path: out\n", "", "upload-artifact"},
+		{"setup-go without cache: false", "          go-version: \"1.27\"\n          cache: false\n", "          go-version: \"1.27\"\n", "actions/setup-go without cache: false"},
+		{"setup-go with cache enabled", "          cache: false\n", "          cache: true\n", "actions/setup-go without cache: false"},
+		{"setup-go without any inputs", "        with:\n          go-version: \"1.27\"\n          cache: false\n", "", "actions/setup-go without cache: false"},
+		{"setup-node without package-manager-cache: false", "          package-manager-cache: false\n", "", "actions/setup-node without package-manager-cache: false"},
+		{"setup-node with package-manager-cache enabled", "package-manager-cache: false", "package-manager-cache: true", "actions/setup-node without package-manager-cache: false"},
+		{"setup-node naming a package manager", "          package-manager-cache: false\n", "          package-manager-cache: false\n          cache: npm\n", "actions/setup-node and sets cache: npm"},
 		{"workflow-level write", "permissions:\n  contents: read\njobs:", "permissions:\n  contents: write\njobs:", "workflow-level permissions"},
 	}
 	for _, c := range cases {
@@ -98,6 +111,14 @@ func TestCheck(t *testing.T) {
 				t.Fatalf("want a problem containing %q, got:\n%s", c.want, got)
 			}
 		})
+	}
+}
+
+func TestCheckAppliesTheCacheRuleToEveryJob(t *testing.T) {
+	doc := strings.Replace(good, "  sign:\n", "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-go@abc\n  sign:\n", 1)
+	got := strings.Join(check([]byte(doc)), "\n")
+	if !strings.Contains(got, "job other step 1 uses actions/setup-go without cache: false") {
+		t.Fatalf("want the cache rule to cover a job other than the build job, got:\n%s", got)
 	}
 }
 
