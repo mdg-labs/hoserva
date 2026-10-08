@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -295,4 +296,127 @@ func TestCanWriteMatchesWriteRefusal(t *testing.T) {
 			t.Fatal("CanWrite must not create the file")
 		}
 	})
+}
+
+func assertManifestOwnerOnly(t *testing.T, root string) {
+	t.Helper()
+	dirInfo, err := os.Stat(filepath.Join(root, ".hoserva"))
+	if err != nil {
+		t.Fatalf("stat .hoserva: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf(".hoserva mode = %o, want 700", got)
+	}
+	fileInfo, err := os.Stat(filepath.Join(root, ".hoserva", "manifest.json"))
+	if err != nil {
+		t.Fatalf("stat manifest.json: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("manifest.json mode = %o, want 600", got)
+	}
+}
+
+// seedWorldReadableManifest leaves the manifest and its directory the way an
+// earlier release wrote them (0644 in 0755), empty.
+func seedWorldReadableManifest(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, ".hoserva")
+	manifest := filepath.Join(dir, "manifest.json")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Mkdir and WriteFile are subject to the umask; chmod is not.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withUmask runs the test under umask 0, so a mode that holds only because
+// the process umask masked it fails.
+func withUmask(t *testing.T, mask int) {
+	t.Helper()
+	old := syscall.Umask(mask)
+	t.Cleanup(func() { syscall.Umask(old) })
+}
+
+// TestWriteUPSKeepsTheManifestOwnerOnly proves the manifest, which holds a
+// digest of each root:nut 0640 NUT file, is readable by root alone however
+// permissive the process umask is.
+func TestWriteUPSKeepsTheManifestOwnerOnly(t *testing.T) {
+	withUmask(t, 0)
+	g := newUPSGenerator(t, t.TempDir())
+
+	writeUPS(t, g, loadUPSState(t, "usb"), 1, time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC))
+
+	assertManifestOwnerOnly(t, g.Root)
+}
+
+func TestWriteTightensAWorldReadableManifest(t *testing.T) {
+	withUmask(t, 0)
+	g := NewGenerator(t.TempDir())
+	seedWorldReadableManifest(t, g.Root)
+
+	if err := g.Write(context.Background(), testFile(), 1, time.Now()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	assertManifestOwnerOnly(t, g.Root)
+}
+
+func TestDriftChecksTightenAWorldReadableManifest(t *testing.T) {
+	ctx := context.Background()
+	checks := map[string]func(g *Generator) error{
+		"Check": func(g *Generator) error {
+			_, err := g.Check(ctx, "snapraid.conf")
+			return err
+		},
+		"CheckAll": func(g *Generator) error {
+			_, err := g.CheckAll(ctx)
+			return err
+		},
+		"CanWrite": func(g *Generator) error {
+			return g.CanWrite(ctx, "snapraid.conf")
+		},
+	}
+	for name, check := range checks {
+		t.Run(name, func(t *testing.T) {
+			g := NewGenerator(t.TempDir())
+			seedWorldReadableManifest(t, g.Root)
+
+			if err := check(g); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+
+			assertManifestOwnerOnly(t, g.Root)
+		})
+	}
+}
+
+func TestLoadingAMissingManifestCreatesNothing(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+
+	if _, err := g.Check(context.Background(), "snapraid.conf"); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, ".hoserva")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a drift check created .hoserva: %v", err)
+	}
+}
+
+func TestWriteRefusesAManifestDirectoryThatIsAFile(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	if err := os.WriteFile(filepath.Join(g.Root, ".hoserva"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.Write(context.Background(), testFile(), 1, time.Now()); err == nil {
+		t.Fatal("Write succeeded with a file where the manifest directory belongs")
+	}
 }
