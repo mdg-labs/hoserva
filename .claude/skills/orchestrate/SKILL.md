@@ -792,19 +792,6 @@ git cherry-pick -n FETCH_HEAD
   appears nowhere else in the message, and the message stays neutral
   (step 0a). The push is the same `git push origin dev`.
 
-  Once that push has succeeded, record the fix on the advisory itself: write
-  a short comment to a file in your scratchpad naming the **full** commit SHA
-  and its subject line, and saying that the commit is on `dev` and not yet on
-  `main` or in a release, then
-  ```
-  scripts/gh-rest.sh advisory-comment <GHSA-id> --body-file <file>
-  ```
-  Only the advisory's viewers see it. One comment per landed commit; a push
-  that was held back or rejected posts nothing. A failed comment is reported
-  with the id in step 12 and never retried blindly — read the advisory's
-  comments with `advisory-comments <GHSA-id>` first, since a failure after the
-  request was sent can leave the comment posted.
-
   For a `mdg-labs/hoserva-catalog` landing the trailers are
   `Fixes mdg-labs/hoserva#<issue-number>` and, only if it is really the
   epic's last, `Fixes mdg-labs/hoserva#<epic-number>` — never the bare
@@ -846,6 +833,20 @@ git cherry-pick -n FETCH_HEAD
   of one batched push at the end. If the push is rejected (someone else
   moved `dev` meanwhile), don't force it — report it and stop touching
   that remote for the rest of this run.
+
+  For an advisory unit, once the `git push origin dev` above has succeeded,
+  record the fix on the advisory itself: write a short comment to a file in
+  your scratchpad naming the **full** commit SHA and its subject line, and
+  saying that the commit is on `dev` and not yet on `main` or in a release,
+  then
+  ```
+  scripts/gh-rest.sh advisory-comment <GHSA-id> --body-file <file>
+  ```
+  Only the advisory's viewers see it. One comment per landed commit; a push
+  that was held back or rejected posts nothing. A failed comment is reported
+  with the id in step 12 and never retried blindly — read the advisory's
+  comments with `advisory-comments <GHSA-id>` first, since a failure after the
+  request was sent can leave the comment posted.
 
   Once **every** issue in the unit is resolved: confirm its lab is gone
   (`docker ps --filter name=hoserva-lab-<lab-id>` empty and no `<clone>/.lab/`
