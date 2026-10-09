@@ -324,14 +324,30 @@ func (t localTarget) files(_ context.Context) ([]targetFile, error) {
 }
 
 // openFile opens the regular file name in dirfd for reading without
-// following a link.
+// following a link. It opens non-blocking and checks the descriptor, so a
+// FIFO or device swapped in for an archive is refused instead of stalling
+// the open.
 func openFile(dirfd int, dir, name string) (*os.File, error) {
 	if err := singleName(name); err != nil {
 		return nil, err
 	}
-	fd, err := beneath.Open(dirfd, name, unix.O_RDONLY)
+	path := filepath.Join(dir, name)
+	fd, err := beneath.Open(dirfd, name, unix.O_RDONLY|unix.O_NONBLOCK)
 	if err != nil {
-		return nil, fmt.Errorf("opening %q: %w", filepath.Join(dir, name), err)
+		return nil, fmt.Errorf("opening %q: %w", path, err)
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("opening %q: %w", path, err)
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("opening %q: not a regular file", path)
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("opening %q: %w", path, err)
 	}
 	return os.NewFile(uintptr(fd), name), nil
 }

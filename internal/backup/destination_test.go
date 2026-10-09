@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
@@ -376,5 +378,54 @@ func TestLocalTarget_DestinationOutsideThePoolFollowsASymlinkedAncestor(t *testi
 	}
 	if _, err := os.Stat(filepath.Join(real, filepath.Base(src))); err != nil {
 		t.Errorf("newest archive pruned: %v", err)
+	}
+}
+
+func TestLocalTarget_RefusesNonRegularArchive(t *testing.T) {
+	dir := t.TempDir()
+	target := localTarget{dest: Destination{Path: dir}}
+	ctx := context.Background()
+	src := destinationSource(t)
+	name := filepath.Base(src)
+	fifo := filepath.Join(dir, name)
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		// Releases a reader a regression would leave blocked in open.
+		if fd, err := unix.Open(fifo, unix.O_RDWR|unix.O_NONBLOCK, 0); err == nil {
+			_ = unix.Close(fd)
+		}
+	})
+
+	within := func(what string, fn func() error) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- fn() }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("%s of a FIFO succeeded, want an error", what)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s of a FIFO blocked", what)
+		}
+	}
+	within("fetch", func() error { return target.fetch(ctx, name, filepath.Join(t.TempDir(), "out")) })
+	within("readBack", func() error { _, err := target.readBack(ctx, name); return err })
+
+	other := filepath.Join(t.TempDir(), archiveName(testInstallation, destinationNow.Add(time.Hour), ReasonNone, 0))
+	if err := os.WriteFile(other, []byte("archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- target.write(ctx, other) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("write beside a FIFO = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("write beside a FIFO blocked")
 	}
 }
