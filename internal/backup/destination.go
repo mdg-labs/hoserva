@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +12,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
 // archiveNamePattern matches doc 10 §1's archive filenames. The first group
@@ -111,16 +118,104 @@ func (o archiveOwner) owns(e archiveEntry) bool {
 	return e.installation == o.installation
 }
 
+// openDestinationDir opens the local destination directory path. A path at or
+// under poolRoot is reached by opening poolRoot the ordinary way and walking
+// every component below it with O_NOFOLLOW, so a symbolic link in any of them,
+// the directory itself included, is an error wrapping beneath.ErrSymlink and
+// nothing is resolved by name a second time. The pooled view is where a
+// container with the pool mapped can replace the default destination with a
+// link, and root must not then write or prune wherever that link points (doc
+// 15 T2). A poolRoot that does not exist yet is created along with the destination. Any other path, including an empty poolRoot, is opened the ordinary
+// way, so a link on it is followed. With create, missing directories are made
+// private (0700); one that already exists keeps its mode and owner, since it
+// may be a share other users rely on. The caller closes the descriptor.
+func openDestinationDir(poolRoot, path string, create bool) (int, error) {
+	if !filepath.IsAbs(path) {
+		return -1, fmt.Errorf("destination %q is not an absolute path", path)
+	}
+	path = filepath.Clean(path)
+	if poolRoot == "" || !underPoolRoot(path, poolRoot) {
+		if create {
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				return -1, err
+			}
+		}
+		fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return -1, fmt.Errorf("opening destination %q: %w", path, err)
+		}
+		return fd, nil
+	}
+	root := filepath.Clean(poolRoot)
+	if create {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return -1, err
+		}
+	}
+	fd, err := beneath.OpenRoot(root)
+	if err != nil {
+		return -1, fmt.Errorf("opening destination %q: %w", path, err)
+	}
+	for _, c := range strings.Split(strings.Trim(strings.TrimPrefix(path, root), "/"), "/") {
+		if c == "" {
+			continue
+		}
+		next, err := beneath.Open(fd, c, unix.O_RDONLY|unix.O_DIRECTORY)
+		if create && errors.Is(err, unix.ENOENT) {
+			if mkErr := unix.Mkdirat(fd, c, 0o700); mkErr != nil && !errors.Is(mkErr, unix.EEXIST) {
+				_ = unix.Close(fd)
+				return -1, fmt.Errorf("creating %q in %q: %w", c, path, mkErr)
+			}
+			next, err = beneath.Open(fd, c, unix.O_RDONLY|unix.O_DIRECTORY)
+		}
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, fmt.Errorf("opening destination %q: %w", path, err)
+		}
+		fd = next
+	}
+	return fd, nil
+}
+
+// singleName refuses a file name that is not one path component.
+func singleName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
+		return fmt.Errorf("%q is not a file name", name)
+	}
+	return nil
+}
+
+func tempSuffix() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
 // writeArchive copies archivePath into dest.Path under its basename. A
 // destination directory it has to create is private (0700); one that
 // already exists keeps its mode and owner, since it may be a share other
-// users rely on. The archive itself is always written 0600.
+// users rely on. The archive itself is always written 0600. The directory is
+// opened by openDestinationDir and the temporary file, rename and sync all
+// go through its descriptor.
 func writeArchive(dest Destination, archivePath string) error {
-	if err := os.MkdirAll(dest.Path, 0o700); err != nil {
+	return writeArchiveUnder("", dest, archivePath)
+}
+
+// writeArchiveUnder is writeArchive for a destination that may lie under
+// poolRoot (see openDestinationDir).
+func writeArchiveUnder(poolRoot string, dest Destination, archivePath string) error {
+	dirfd, err := openDestinationDir(poolRoot, dest.Path, true)
+	if err != nil {
 		return fmt.Errorf("creating destination %q: %w", dest.Path, err)
 	}
+	defer func() { _ = unix.Close(dirfd) }()
 
 	name := filepath.Base(archivePath)
+	if err := singleName(name); err != nil {
+		return fmt.Errorf("writing archive: %w", err)
+	}
 	final := filepath.Join(dest.Path, name)
 
 	in, err := os.Open(archivePath)
@@ -129,36 +224,51 @@ func writeArchive(dest Destination, archivePath string) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.CreateTemp(dest.Path, name+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp archive in %q: %w", dest.Path, err)
+	var out *os.File
+	var tmpName string
+	for {
+		suffix, err := tempSuffix()
+		if err != nil {
+			return fmt.Errorf("naming temp archive in %q: %w", dest.Path, err)
+		}
+		tmpName = name + "." + suffix + ".tmp"
+		fd, err := unix.Openat(dirfd, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+		if errors.Is(err, unix.EEXIST) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("creating temp archive in %q: %w", dest.Path, err)
+		}
+		out = os.NewFile(uintptr(fd), tmpName)
+		break
 	}
-	tmp := out.Name()
+	tmp := filepath.Join(dest.Path, tmpName)
+	removeTmp := func() { _ = unix.Unlinkat(dirfd, tmpName, 0) }
 	if err := out.Chmod(0o600); err != nil {
 		_ = out.Close()
-		_ = os.Remove(tmp)
+		removeTmp()
 		return fmt.Errorf("restricting temp archive %q: %w", tmp, err)
 	}
 	if _, err := copyFile(out, in); err != nil {
 		_ = out.Close()
-		_ = os.Remove(tmp)
+		removeTmp()
 		return fmt.Errorf("copying archive to %q: %w", tmp, err)
 	}
 	if err := out.Sync(); err != nil {
 		_ = out.Close()
-		_ = os.Remove(tmp)
+		removeTmp()
 		return fmt.Errorf("syncing temp archive %q: %w", tmp, err)
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
+		removeTmp()
 		return fmt.Errorf("closing temp archive %q: %w", tmp, err)
 	}
-	if err := os.Rename(tmp, final); err != nil {
-		_ = os.Remove(tmp)
+	if err := unix.Renameat(dirfd, tmpName, dirfd, name); err != nil {
+		removeTmp()
 		return fmt.Errorf("finalizing archive at %q: %w", final, err)
 	}
-	if err := fsyncDir(dest.Path); err != nil {
-		return err
+	if err := unix.Fsync(dirfd); err != nil {
+		return fmt.Errorf("syncing directory %s: %w", dest.Path, err)
 	}
 	return nil
 }
@@ -185,38 +295,56 @@ type targetFile struct {
 }
 
 type localTarget struct {
-	dest Destination
+	dest     Destination
+	poolRoot string
 }
 
 func (t localTarget) files(_ context.Context) ([]targetFile, error) {
-	entries, err := os.ReadDir(t.dest.Path)
+	dirfd, err := openDestinationDir(t.poolRoot, t.dest.Path, false)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("listing destination %q: %w", t.dest.Path, err)
 	}
+	defer func() { _ = unix.Close(dirfd) }()
+	names, err := beneath.ReadNames(dirfd)
+	if err != nil {
+		return nil, fmt.Errorf("listing destination %q: %w", t.dest.Path, err)
+	}
 	var out []targetFile
-	for _, e := range entries {
-		if !e.Type().IsRegular() {
+	for _, n := range names {
+		var st unix.Stat_t
+		if unix.Fstatat(dirfd, n, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		out = append(out, targetFile{name: e.Name(), size: info.Size(), modTime: info.ModTime()})
+		out = append(out, targetFile{name: n, size: st.Size, modTime: time.Unix(st.Mtim.Unix())})
 	}
 	return out, nil
 }
 
-func (t localTarget) fetch(ctx context.Context, name, dstPath string) error {
-	if name != filepath.Base(name) || name == "." || name == ".." {
-		return fmt.Errorf("fetching %q: not a file name", name)
+// openFile opens the regular file name in dirfd for reading without
+// following a link.
+func openFile(dirfd int, dir, name string) (*os.File, error) {
+	if err := singleName(name); err != nil {
+		return nil, err
 	}
-	in, err := os.Open(filepath.Join(t.dest.Path, name))
+	fd, err := beneath.Open(dirfd, name, unix.O_RDONLY)
 	if err != nil {
-		return fmt.Errorf("opening %q: %w", filepath.Join(t.dest.Path, name), err)
+		return nil, fmt.Errorf("opening %q: %w", filepath.Join(dir, name), err)
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
+func (t localTarget) fetch(ctx context.Context, name, dstPath string) error {
+	dirfd, err := openDestinationDir(t.poolRoot, t.dest.Path, false)
+	if err != nil {
+		return fmt.Errorf("opening destination %q: %w", t.dest.Path, err)
+	}
+	defer func() { _ = unix.Close(dirfd) }()
+	in, err := openFile(dirfd, t.dest.Path, name)
+	if err != nil {
+		return fmt.Errorf("fetching %q: %w", name, err)
 	}
 	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -249,15 +377,25 @@ func (c ctxReader) Read(p []byte) (int, error) {
 }
 
 func (t localTarget) write(_ context.Context, srcPath string) error {
-	return writeArchive(t.dest, srcPath)
+	return writeArchiveUnder(t.poolRoot, t.dest, srcPath)
 }
 
 func (t localTarget) list(_ context.Context) ([]archiveEntry, error) {
-	return listArchives(t.dest.Path)
+	return listArchivesUnder(t.poolRoot, t.dest.Path)
 }
 
 func (t localTarget) readBack(_ context.Context, name string) ([]byte, error) {
-	b, err := os.ReadFile(filepath.Join(t.dest.Path, name))
+	dirfd, err := openDestinationDir(t.poolRoot, t.dest.Path, false)
+	if err != nil {
+		return nil, fmt.Errorf("reading %q back: %w", filepath.Join(t.dest.Path, name), err)
+	}
+	defer func() { _ = unix.Close(dirfd) }()
+	f, err := openFile(dirfd, t.dest.Path, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading %q back: %w", filepath.Join(t.dest.Path, name), err)
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("reading %q back: %w", filepath.Join(t.dest.Path, name), err)
 	}
@@ -265,7 +403,18 @@ func (t localTarget) readBack(_ context.Context, name string) ([]byte, error) {
 }
 
 func (t localTarget) remove(_ context.Context, name string) error {
-	if err := os.Remove(filepath.Join(t.dest.Path, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := singleName(name); err != nil {
+		return fmt.Errorf("removing %q: %w", name, err)
+	}
+	dirfd, err := openDestinationDir(t.poolRoot, t.dest.Path, false)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("removing %q: %w", filepath.Join(t.dest.Path, name), err)
+	}
+	defer func() { _ = unix.Close(dirfd) }()
+	if err := unix.Unlinkat(dirfd, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("removing %q: %w", filepath.Join(t.dest.Path, name), err)
 	}
 	return nil
@@ -312,30 +461,36 @@ func pruneTarget(ctx context.Context, t archiveTarget, owner archiveOwner, ret R
 }
 
 func listArchives(dir string) ([]archiveEntry, error) {
-	entries, err := os.ReadDir(dir)
+	return listArchivesUnder("", dir)
+}
+
+func listArchivesUnder(poolRoot, dir string) ([]archiveEntry, error) {
+	dirfd, err := openDestinationDir(poolRoot, dir, false)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("listing destination %q: %w", dir, err)
 	}
+	defer func() { _ = unix.Close(dirfd) }()
+	names, err := beneath.ReadNames(dirfd)
+	if err != nil {
+		return nil, fmt.Errorf("listing destination %q: %w", dir, err)
+	}
 	var out []archiveEntry
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		m := archiveNamePattern.FindStringSubmatch(e.Name())
+	for _, n := range names {
+		m := archiveNamePattern.FindStringSubmatch(n)
 		if m == nil {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
+		var st unix.Stat_t
+		if unix.Fstatat(dirfd, n, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
 			continue
 		}
 		out = append(out, archiveEntry{
-			name:         e.Name(),
-			path:         filepath.Join(dir, e.Name()),
-			modTime:      info.ModTime(),
+			name:         n,
+			path:         filepath.Join(dir, n),
+			modTime:      time.Unix(st.Mtim.Unix()),
 			reason:       Reason(m[3]),
 			installation: m[1],
 		})
