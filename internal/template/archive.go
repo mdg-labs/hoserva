@@ -50,7 +50,37 @@ const (
 	// duplicate check records a prefix of it for every path component.
 	maxEntryNameBytes = 256
 	maxEntryDepth     = 8
+	// tarTrailerSlack is added to the byte budget to bound the decoded
+	// stream: an entry's tar framing (a 512-byte header, up to 511 bytes of
+	// padding and, for a name of at most maxEntryNameBytes, one PAX header
+	// and record block) stays under entryCostBytes, which the budget already
+	// charges, so only the end-of-archive blocks and a writer's record
+	// padding are left over.
+	tarTrailerSlack = 16 << 10
 )
+
+// decodedLimit fails once more than left bytes have been read through it, so
+// metadata tar.Reader consumes internally (PAX and GNU long-name headers)
+// spends the same bounded budget as file data.
+type decodedLimit struct {
+	r    io.Reader
+	left int64
+}
+
+func (d *decodedLimit) Read(p []byte) (int, error) {
+	if d.left < 0 {
+		return 0, fmt.Errorf("%w: the decoded archive is larger than %d bytes", ErrBadArchive, maxCatalogBytes)
+	}
+	if int64(len(p)) > d.left+1 {
+		p = p[:d.left+1]
+	}
+	n, err := d.r.Read(p)
+	d.left -= int64(n)
+	if d.left < 0 {
+		return 0, fmt.Errorf("%w: the decoded archive is larger than %d bytes", ErrBadArchive, maxCatalogBytes)
+	}
+	return n, err
+}
 
 const (
 	maxIndexBytes = 1 << 20
@@ -422,7 +452,7 @@ func readArchive(ctx context.Context, archive []byte, visit func(name string, di
 		return 0, nil, fmt.Errorf("%w: %v", ErrBadArchive, err)
 	}
 	defer zr.Close()
-	tr := tar.NewReader(zr)
+	tr := tar.NewReader(&decodedLimit{r: zr, left: int64(maxCatalogBytes) + tarTrailerSlack})
 
 	remaining := int64(maxCatalogBytes)
 	seen := map[string]bool{}

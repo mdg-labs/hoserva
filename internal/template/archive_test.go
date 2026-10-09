@@ -412,6 +412,55 @@ func TestCatalogStore_ChargesEveryEntryAgainstTheByteBudget(t *testing.T) {
 	}
 }
 
+func TestReadArchive_BoundsTheDecodedStreamIncludingPaxHeaders(t *testing.T) {
+	var meta bytes.Buffer
+	mw := tar.NewWriter(&meta)
+	if err := mw.WriteHeader(&tar.Header{Name: "jellyfin/x", Typeflag: tar.TypeReg, Mode: 0o644, PAXRecords: map[string]string{"comment": "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	// A PAX header block and its record block, with the entry header after them dropped.
+	paxBlocks := meta.Bytes()[:1024]
+
+	var tarball bytes.Buffer
+	for i := 0; i < 400; i++ {
+		tarball.Write(paxBlocks)
+	}
+	valid, err := zstd.NewReader(bytes.NewReader(buildArchive(t, fixtureEntries(200))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer valid.Close()
+	rest := new(bytes.Buffer)
+	if _, err := rest.ReadFrom(valid); err != nil {
+		t.Fatal(err)
+	}
+	tarball.Write(rest.Bytes())
+
+	var out bytes.Buffer
+	zw, err := zstd.NewWriter(&out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := zw.Write(tarball.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	lowerEntryCaps(t, 1000, 64<<10)
+	if tarball.Len() <= maxCatalogBytes+tarTrailerSlack {
+		t.Fatalf("test archive decodes to %d bytes, not over the bound", tarball.Len())
+	}
+	if _, _, err := checkArchive(context.Background(), out.Bytes()); !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("checkArchive err = %v, want ErrBadArchive", err)
+	}
+	lowerEntryCaps(t, 1000, 256<<20)
+	if _, _, err := checkArchive(context.Background(), out.Bytes()); err != nil {
+		t.Fatalf("the same archive under the real caps: %v", err)
+	}
+}
+
 func TestCatalogStore_InstallFetchedStopsWhenItsContextEnds(t *testing.T) {
 	store, priv, parent := installedStore(t, 100)
 	before := tree(t, store.Dir)
