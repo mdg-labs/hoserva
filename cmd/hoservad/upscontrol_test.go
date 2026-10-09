@@ -434,8 +434,10 @@ func TestServeUPSControl_ConnectionsBeyondTheCapAreClosedUnread(t *testing.T) {
 		}
 	}
 
-	if err := dialUPSControl(context.Background(), path, string(job.UPSNotifyOnBattery)); err != nil {
-		t.Fatalf("dialUPSControl after the idle connections ended: %v", err)
-	}
+	// A handler frees its slot only after it returns, which can trail its reply,
+	// so a notification sent too early is closed unread; retry until one is taken.
+	waitForCondition(t, 5*time.Second, func() bool {
+		return dialUPSControl(context.Background(), path, string(job.UPSNotifyOnBattery)) == nil
+	})
 	waitForCondition(t, time.Second, func() bool { return notifier.onBattery() == 1 })
 }
