@@ -1847,6 +1847,38 @@ func decodeCreateFirstAdminResponse(resp *http.Response) (res *UserHeaders, _ er
 					return res, errors.Wrap(err, "parse Set-Cookie header")
 				}
 			}
+			// Parse "X-Hoserva-Session-Secret" header.
+			{
+				cfg := uri.HeaderParameterDecodingConfig{
+					Name:    "X-Hoserva-Session-Secret",
+					Explode: false,
+				}
+				if err := func() error {
+					if err := h.HasParam(cfg); err == nil {
+						if err := h.DecodeParam(cfg, func(d uri.Decoder) error {
+							val, err := d.DecodeValue()
+							if err != nil {
+								return err
+							}
+
+							c, err := conv.ToString(val)
+							if err != nil {
+								return err
+							}
+
+							wrapper.XHoservaSessionSecret = c
+							return nil
+						}); err != nil {
+							return err
+						}
+					} else {
+						return err
+					}
+					return nil
+				}(); err != nil {
+					return res, errors.Wrap(err, "parse X-Hoserva-Session-Secret header")
+				}
+			}
 			return &wrapper, nil
 		default:
 			return res, validate.InvalidContentType(ct)
@@ -10171,6 +10203,38 @@ func decodeLoginResponse(resp *http.Response) (res *UserHeaders, _ error) {
 					return nil
 				}(); err != nil {
 					return res, errors.Wrap(err, "parse Set-Cookie header")
+				}
+			}
+			// Parse "X-Hoserva-Session-Secret" header.
+			{
+				cfg := uri.HeaderParameterDecodingConfig{
+					Name:    "X-Hoserva-Session-Secret",
+					Explode: false,
+				}
+				if err := func() error {
+					if err := h.HasParam(cfg); err == nil {
+						if err := h.DecodeParam(cfg, func(d uri.Decoder) error {
+							val, err := d.DecodeValue()
+							if err != nil {
+								return err
+							}
+
+							c, err := conv.ToString(val)
+							if err != nil {
+								return err
+							}
+
+							wrapper.XHoservaSessionSecret = c
+							return nil
+						}); err != nil {
+							return err
+						}
+					} else {
+						return err
+					}
+					return nil
+				}(); err != nil {
+					return res, errors.Wrap(err, "parse X-Hoserva-Session-Secret header")
 				}
 			}
 			return &wrapper, nil

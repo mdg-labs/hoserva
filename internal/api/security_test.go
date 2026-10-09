@@ -2,7 +2,10 @@ package api_test
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -42,13 +45,13 @@ func TestSessionSecurityHandlerRefusesViewerOnAdminOperation(t *testing.T) {
 	}
 
 	sec := &api.SessionSecurityHandler{Auth: authSvc}
-	_, err = sec.HandleSessionCookie(ctx, apiv1.CancelJobOperation, apiv1.SessionCookie{APIKey: token})
+	_, err = sec.HandleSessionCookie(withSessionSecret(t, authSvc, ctx, token), apiv1.CancelJobOperation, apiv1.SessionCookie{APIKey: token})
 	if err == nil {
 		t.Fatal("a viewer must be refused an admin-only operation (cancelJob)")
 	}
 
 	// The same session is accepted for a viewer-role operation.
-	if _, err := sec.HandleSessionCookie(ctx, apiv1.ListJobsOperation, apiv1.SessionCookie{APIKey: token}); err != nil {
+	if _, err := sec.HandleSessionCookie(withSessionSecret(t, authSvc, ctx, token), apiv1.ListJobsOperation, apiv1.SessionCookie{APIKey: token}); err != nil {
 		t.Errorf("a viewer should be allowed a viewer operation (listJobs): %v", err)
 	}
 }
@@ -62,10 +65,10 @@ func TestSessionSecurityHandlerAdminSatisfiesViewerOperation(t *testing.T) {
 	}
 
 	sec := &api.SessionSecurityHandler{Auth: authSvc}
-	if _, err := sec.HandleSessionCookie(ctx, apiv1.ListJobsOperation, apiv1.SessionCookie{APIKey: token}); err != nil {
+	if _, err := sec.HandleSessionCookie(withSessionSecret(t, authSvc, ctx, token), apiv1.ListJobsOperation, apiv1.SessionCookie{APIKey: token}); err != nil {
 		t.Errorf("admin should satisfy a viewer-role operation: %v", err)
 	}
-	if _, err := sec.HandleSessionCookie(ctx, apiv1.CancelJobOperation, apiv1.SessionCookie{APIKey: token}); err != nil {
+	if _, err := sec.HandleSessionCookie(withSessionSecret(t, authSvc, ctx, token), apiv1.CancelJobOperation, apiv1.SessionCookie{APIKey: token}); err != nil {
 		t.Errorf("admin should satisfy an admin-role operation: %v", err)
 	}
 }
@@ -179,5 +182,97 @@ func TestTrustedSecurityHandlerAlwaysGrantsAdmin(t *testing.T) {
 	p, ok = api.PrincipalFromContext(ctx)
 	if !ok || p.Role != api.RoleAdmin || !p.Local {
 		t.Errorf("principal = %+v, want a local admin principal", p)
+	}
+}
+
+// withSessionSecret returns ctx carrying the second secret of token's own
+// session, as the guard in front of the generated server puts it there for
+// a request that sent the header.
+func withSessionSecret(t *testing.T, authSvc *api.AuthService, ctx context.Context, token string) context.Context {
+	t.Helper()
+	secret, err := authSvc.SessionSecret(token)
+	if err != nil {
+		t.Fatalf("SessionSecret: %v", err)
+	}
+	return api.WithSessionSecret(ctx, secret)
+}
+
+func TestSessionSecurityHandlerRefusesACookieWithoutItsSessionSecret(t *testing.T) {
+	_, authSvc := newAuthTestHandler(t)
+	ctx := context.Background()
+	_, token, err := authSvc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherToken, err := authSvc.Login(ctx, "admin", "correct horse battery staple", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSecret, err := authSvc.SessionSecret(otherToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated, err := authSvc.MachineKey.Encrypt([]byte("a TOTP secret sealed under the same key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sec := &api.SessionSecurityHandler{Auth: authSvc}
+	cookie := apiv1.SessionCookie{APIKey: token}
+	for name, sctx := range map[string]context.Context{
+		"no secret":                       ctx,
+		"an empty secret":                 api.WithSessionSecret(ctx, ""),
+		"a secret that is not hex":        api.WithSessionSecret(ctx, "not-hex"),
+		"another session's secret":        api.WithSessionSecret(ctx, otherSecret),
+		"a secret sealed for another use": api.WithSessionSecret(ctx, hex.EncodeToString(unrelated)),
+	} {
+		if _, err := sec.HandleSessionCookie(sctx, apiv1.CancelJobOperation, cookie); !errors.Is(err, api.ErrSessionInvalid) {
+			t.Errorf("admin operation with %s = %v, want ErrSessionInvalid", name, err)
+		}
+	}
+
+	if _, err := sec.HandleSessionCookie(withSessionSecret(t, authSvc, ctx, token), apiv1.CancelJobOperation, cookie); err != nil {
+		t.Errorf("admin operation with the session's own secret: %v", err)
+	}
+	if _, err := sec.HandleSessionCookie(ctx, apiv1.GetCatalogTemplateIconOperation, cookie); err != nil {
+		t.Errorf("a catalog icon, which an <img> loads, with the cookie alone: %v", err)
+	}
+}
+
+func TestGuardBrowserRequestsRefusesAStateChangeFromAnotherOrigin(t *testing.T) {
+	reached := false
+	guarded := api.GuardBrowserRequests(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+
+	for _, tc := range []struct {
+		name    string
+		method  string
+		headers map[string]string
+		want    int
+	}{
+		{"another port of the same host", http.MethodPost, map[string]string{"Origin": "https://hoserva.lan:8443"}, http.StatusForbidden},
+		{"another host", http.MethodPut, map[string]string{"Origin": "https://evil.example"}, http.StatusForbidden},
+		{"the null origin", http.MethodDelete, map[string]string{"Origin": "null"}, http.StatusForbidden},
+		{"an origin with a path", http.MethodPost, map[string]string{"Origin": "https://hoserva.lan:8008/x"}, http.StatusForbidden},
+		{"same-site", http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-site"}, http.StatusForbidden},
+		{"cross-site", http.MethodPatch, map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		{"this origin", http.MethodPost, map[string]string{"Origin": "https://hoserva.lan:8008", "Sec-Fetch-Site": "same-origin"}, http.StatusOK},
+		{"this origin in another letter case", http.MethodPost, map[string]string{"Origin": "https://HOSERVA.lan:8008"}, http.StatusOK},
+		{"a user-initiated request", http.MethodPost, map[string]string{"Sec-Fetch-Site": "none"}, http.StatusOK},
+		{"no browser headers", http.MethodPost, nil, http.StatusOK},
+		{"a read from another origin", http.MethodGet, map[string]string{"Origin": "https://hoserva.lan:8443", "Sec-Fetch-Site": "same-site"}, http.StatusOK},
+	} {
+		reached = false
+		req := httptest.NewRequest(tc.method, "https://hoserva.lan:8008/api/v1/jobs", nil)
+		for k, v := range tc.headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		guarded.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status = %d, want %d", tc.name, rec.Code, tc.want)
+		}
+		if reached != (tc.want == http.StatusOK) {
+			t.Errorf("%s: reached the handler = %v, want %v", tc.name, reached, tc.want == http.StatusOK)
+		}
 	}
 }

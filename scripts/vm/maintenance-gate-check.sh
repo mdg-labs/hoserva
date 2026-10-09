@@ -58,7 +58,7 @@ COOKIE_JAR="/tmp/hoserva-maintenance-gate-check-cookies.txt"
 
 array_login() {
   local result
-  result="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
+  result="$(vm_ssh "umask 077; curl -sk -c $COOKIE_JAR -D $COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'; tr -d '\r' <$COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$COOKIE_JAR.secret" 2>/dev/null)"
   [[ "$result" == *"\"username\":\"$ADMIN_USERNAME\""* ]]
 }
 
@@ -73,20 +73,20 @@ array_login() {
 ensure_smb_account() {
   array_login || die "login as $ADMIN_USERNAME failed ahead of the SMB account setup"
   local users_result user_id
-  users_result="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
+  users_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
   if [[ "$users_result" =~ \"id\":\"([^\"]+)\",\"username\":\"$SMB_USERNAME\" ]]; then
     user_id="${BASH_REMATCH[1]}"
   else
     local create_result
-    create_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$SMB_USERNAME\"}'" 2>/dev/null)"
+    create_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$SMB_USERNAME\"}'" 2>/dev/null)"
     [[ "$create_result" =~ \"id\":\"([^\"]+)\" ]] || die "createUser($SMB_USERNAME) did not return an id: $create_result"
     user_id="${BASH_REMATCH[1]}"
   fi
   local status
-  status="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$user_id/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
+  status="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$user_id/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
   [[ "$status" == "204" ]] || die "setUserPassword($SMB_USERNAME) returned HTTP $status"
   local grant_status
-  grant_status="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$user_id/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
+  grant_status="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$user_id/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
   [[ "$grant_status" == "200" ]] || die "updateUserSharePermissions($SMB_USERNAME on $SMB_SHARE) returned HTTP $grant_status"
 }
 
@@ -179,7 +179,7 @@ restore_array_on_exit() {
   if [[ "$STARTED_AGAIN" -eq 0 ]]; then
     echo "maintenance-gate-check[$HOSERVA_LAB_ID]: restarting the array before exiting (exit status $exit_status) — this script's own header promises every later step still finds it running"
     array_login || true
-    vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
+    vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
   fi
   exit "$exit_status"
 }
@@ -197,7 +197,7 @@ array_login || die "login as $ADMIN_USERNAME failed ahead of array/stop"
 STATUS=0
 
 echo "maintenance-gate-check[$HOSERVA_LAB_ID]: running \`hoserva array stop\`"
-STOP_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
+STOP_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
 if [[ "$STOP_RESULT" != *'"maintenanceMode":true'* ]]; then
   die "array/stop did not report maintenanceMode:true: $STOP_RESULT"
 fi
@@ -232,7 +232,7 @@ assert_no_pool_mount_active "after the refused dependent starts" || STATUS=1
 
 echo "maintenance-gate-check[$HOSERVA_LAB_ID]: running \`hoserva array start\` to restore the array for every later step"
 array_login || die "login as $ADMIN_USERNAME failed ahead of array/start"
-START_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
+START_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
 if [[ "$START_RESULT" != *'"maintenanceMode":false'* ]]; then
   die "array/start did not report maintenanceMode:false: $START_RESULT"
 fi

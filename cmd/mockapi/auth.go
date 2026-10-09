@@ -36,11 +36,12 @@ func mockUserSummary() apiv1.UserSummary {
 	}
 }
 
-// mockSessionCookie and mockClearedSessionCookie are fixed Set-Cookie
-// values — the mock never validates a session (doc 06 §8's "any
-// credential accepted"), so there is nothing scenario-specific about
-// them, and no real token to generate.
+// mockSessionCookie, mockSessionSecret and mockClearedSessionCookie are
+// fixed values — the mock never validates a session or its second secret
+// (doc 06 §8's "any credential accepted"), so there is nothing
+// scenario-specific about them, and no real token to generate.
 const (
+	mockSessionSecret        = "mock-session-secret"
 	mockSessionCookie        = "hoserva_session=mock-session-token; Path=/; HttpOnly; Secure; SameSite=Strict"
 	mockClearedSessionCookie = "hoserva_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
 )
@@ -56,13 +57,13 @@ func (h *handler) CreateFirstAdmin(ctx context.Context, req *apiv1.CreateFirstAd
 	if h.scenario != "fresh-install" {
 		return nil, &mockError{code: "setup_complete", statusCode: 409, message: "an admin account already exists"}
 	}
-	out := &apiv1.UserHeaders{Response: mockUser()}
+	out := &apiv1.UserHeaders{Response: mockUser(), XHoservaSessionSecret: mockSessionSecret}
 	out.SetCookie.SetTo(mockSessionCookie)
 	return out, nil
 }
 
 func (h *handler) Login(ctx context.Context, req *apiv1.LoginRequest) (*apiv1.UserHeaders, error) {
-	out := &apiv1.UserHeaders{Response: mockUser()}
+	out := &apiv1.UserHeaders{Response: mockUser(), XHoservaSessionSecret: mockSessionSecret}
 	out.SetCookie.SetTo(mockSessionCookie)
 	return out, nil
 }

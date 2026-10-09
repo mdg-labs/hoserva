@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
+	"strings"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/auth"
@@ -80,8 +83,21 @@ func (h *SessionSecurityHandler) HandleApiToken(ctx context.Context, operationNa
 	return withPrincipal(ctx, principal), nil
 }
 
+// HandleSessionCookie authenticates a session cookie together with the
+// session's second secret (SessionSecretHeader), which the guard in front of
+// the generated server (GuardBrowserRequests) put in ctx: a browser sends the
+// cookie to every service on the same host name whatever the port, so the
+// cookie alone must not be enough to act as the session (doc 15 T15). The
+// secret is checked before the role, so a cookie without it learns nothing
+// about the account behind it.
 func (h *SessionSecurityHandler) HandleSessionCookie(ctx context.Context, operationName apiv1.OperationName, t apiv1.SessionCookie) (context.Context, error) {
-	u, err := h.Auth.ValidateSession(ctx, t.APIKey)
+	var u *User
+	var err error
+	if sessionSecretExempt[operationName] {
+		u, err = h.Auth.ValidateSession(ctx, t.APIKey)
+	} else {
+		u, err = h.Auth.ValidateSessionWithSecret(ctx, t.APIKey, sessionSecretFromContext(ctx))
+	}
 	if err != nil {
 		return ctx, err
 	}
@@ -96,6 +112,84 @@ func (h *SessionSecurityHandler) HandleSessionCookie(ctx context.Context, operat
 		SessionTokenHash: hashSessionCookie(t.APIKey),
 	}
 	return withPrincipal(ctx, principal), nil
+}
+
+// SessionSecretHeader carries a session's second secret (SessionSecret) on
+// every request that authenticates with the session cookie.
+const SessionSecretHeader = "X-Hoserva-Session-Secret"
+
+const sessionCookieName = "hoserva_session"
+
+// sessionSecretExempt lists the operations a session cookie alone may
+// authenticate: an <img> element loads them and cannot send a header, and
+// what they serve is catalog content (images of a template).
+var sessionSecretExempt = map[apiv1.OperationName]bool{
+	apiv1.GetCatalogTemplateIconOperation:       true,
+	apiv1.GetCatalogTemplateScreenshotOperation: true,
+}
+
+type sessionSecretKey struct{}
+
+// WithSessionSecret returns ctx carrying the session secret a request sent,
+// for HandleSessionCookie: ogen hands a security handler the cookie value
+// and never the request's other headers.
+func WithSessionSecret(ctx context.Context, secret string) context.Context {
+	return context.WithValue(ctx, sessionSecretKey{}, secret)
+}
+
+func sessionSecretFromContext(ctx context.Context) string {
+	secret, _ := ctx.Value(sessionSecretKey{}).(string)
+	return secret
+}
+
+// GuardBrowserRequests wraps the generated server on the TCP listener. It
+// refuses a request that changes state when the browser says it came from
+// another origin (Origin not this server's own, or Sec-Fetch-Site other than
+// same-origin or none), whatever credential it carries, and passes the
+// request's session secret to HandleSessionCookie. A request with neither
+// header, such as a script's, is not a browser's cross-origin request and
+// passes. SameSite does not separate this server from another port of the
+// same host name, so the browser's own origin headers are what do (doc 15
+// T15).
+func GuardBrowserRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if refusesCrossOrigin(r) {
+			writeForbiddenCrossOrigin(w)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(WithSessionSecret(r.Context(), r.Header.Get(SessionSecretHeader))))
+	})
+}
+
+func refusesCrossOrigin(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		return true
+	}
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	for _, origin := range origins {
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme != scheme || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || !strings.EqualFold(u.Host, r.Host) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeForbiddenCrossOrigin(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = fmt.Fprintf(w, `{"code":"forbidden","message":%q}`, "this request did not come from this server's own origin")
 }
 
 // TrustedSecurityHandler implements apiv1.SecurityHandler for the Unix

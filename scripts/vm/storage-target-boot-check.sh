@@ -78,7 +78,7 @@ COOKIE_JAR="/tmp/hoserva-storage-target-boot-check-cookies.txt"
 
 array_login() {
   local result
-  result="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
+  result="$(vm_ssh "umask 077; curl -sk -c $COOKIE_JAR -D $COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'; tr -d '\r' <$COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$COOKIE_JAR.secret" 2>/dev/null)"
   [[ "$result" == *"\"username\":\"$ADMIN_USERNAME\""* ]]
 }
 
@@ -95,20 +95,20 @@ array_login() {
 ensure_smb_account() {
   array_login || die "login as $ADMIN_USERNAME failed ahead of the SMB account setup"
   local users_result user_id
-  users_result="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
+  users_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
   if [[ "$users_result" =~ \"id\":\"([^\"]+)\",\"username\":\"$SMB_USERNAME\" ]]; then
     user_id="${BASH_REMATCH[1]}"
   else
     local create_result
-    create_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$SMB_USERNAME\"}'" 2>/dev/null)"
+    create_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$SMB_USERNAME\"}'" 2>/dev/null)"
     [[ "$create_result" =~ \"id\":\"([^\"]+)\" ]] || die "createUser($SMB_USERNAME) did not return an id: $create_result"
     user_id="${BASH_REMATCH[1]}"
   fi
   local status
-  status="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$user_id/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
+  status="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$user_id/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
   [[ "$status" == "204" ]] || die "setUserPassword($SMB_USERNAME) returned HTTP $status"
   local grant_status
-  grant_status="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$user_id/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
+  grant_status="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$user_id/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
   [[ "$grant_status" == "200" ]] || die "updateUserSharePermissions($SMB_USERNAME on $SMB_SHARE) returned HTTP $grant_status"
 }
 
@@ -409,11 +409,11 @@ else
   # hoserval3midsync share both pass "array-only" explicitly. The body is
   # captured (never discarded to /dev/null) so a future failure here
   # prints the real reason instead of a bare HTTP status.
-  CREATE_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$PROBE_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+  CREATE_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$PROBE_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
   [[ "$CREATE_RESULT" == *"\"name\":\"$PROBE_SHARE\""* ]] || die "createShare($PROBE_SHARE) did not return the expected share: $CREATE_RESULT"
   sleep 3
   AFTER_PID="$(smbd_main_pid)"
-  vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -X DELETE https://127.0.0.1:8008/api/v1/shares/$PROBE_SHARE -H 'Content-Type: application/json' -d '{\"confirm\":true}'" >/dev/null 2>&1 || true
+  vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -X DELETE https://127.0.0.1:8008/api/v1/shares/$PROBE_SHARE -H 'Content-Type: application/json' -d '{\"confirm\":true}'" >/dev/null 2>&1 || true
   if [[ "$AFTER_PID" != "$BEFORE_PID" ]]; then
     echo "storage-target-boot-check[$HOSERVA_LAB_ID]: smbd's MainPID changed across a share create ($BEFORE_PID -> $AFTER_PID) — it was restarted with the gate unchanged" >&2
     STATUS=1

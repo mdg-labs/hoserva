@@ -17,7 +17,13 @@ type SecurityHandler interface {
 	// Personal API token, scoped to a role (admin/viewer). For scripts and the remote CLI over TCP.
 	HandleApiToken(ctx context.Context, operationName OperationName, t ApiToken) (context.Context, error)
 	// HandleSessionCookie handles sessionCookie security.
-	// Web UI session, issued at login over TCP.
+	// Web UI session, issued at login over TCP. The cookie alone is not enough, because a browser sends it
+	// to every service on the same host name whatever the port: a request authenticated with it must also
+	// carry the session's second secret in the `X-Hoserva-Session-Secret` header (returned by `login` and
+	// `createFirstAdmin`), or it is refused with 401 `unauthorized`. `getCatalogTemplateIcon` and
+	// `getCatalogTemplateScreenshot` do not need the header, since an `<img>` element cannot send one. A
+	// request that changes state is also refused with 403 `forbidden` when its `Origin` header is not the
+	// server's own origin or its `Sec-Fetch-Site` header says it came from elsewhere.
 	HandleSessionCookie(ctx context.Context, operationName OperationName, t SessionCookie) (context.Context, error)
 }
 
@@ -508,7 +514,13 @@ type SecuritySource interface {
 	// Personal API token, scoped to a role (admin/viewer). For scripts and the remote CLI over TCP.
 	ApiToken(ctx context.Context, operationName OperationName) (ApiToken, error)
 	// SessionCookie provides sessionCookie security value.
-	// Web UI session, issued at login over TCP.
+	// Web UI session, issued at login over TCP. The cookie alone is not enough, because a browser sends it
+	// to every service on the same host name whatever the port: a request authenticated with it must also
+	// carry the session's second secret in the `X-Hoserva-Session-Secret` header (returned by `login` and
+	// `createFirstAdmin`), or it is refused with 401 `unauthorized`. `getCatalogTemplateIcon` and
+	// `getCatalogTemplateScreenshot` do not need the header, since an `<img>` element cannot send one. A
+	// request that changes state is also refused with 403 `forbidden` when its `Origin` header is not the
+	// server's own origin or its `Sec-Fetch-Site` header says it came from elsewhere.
 	SessionCookie(ctx context.Context, operationName OperationName) (SessionCookie, error)
 }
 

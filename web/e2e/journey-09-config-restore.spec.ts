@@ -6,11 +6,12 @@ import { promisify } from "node:util";
 
 import {
   expect,
-  type APIRequestContext,
   type Locator,
   type Page,
   test,
 } from "@playwright/test";
+
+import { sessionHeaders } from "./session";
 
 // Journey 9 (doc 06 §4): "Export config -> wipe VM -> fresh install ->
 // import config -> system matches", driven through the pages (doc 03 §1,
@@ -76,8 +77,11 @@ const execFileAsync = promisify(execFile);
 
 type Json = Record<string, unknown>;
 
-async function api(request: APIRequestContext, method: "get" | "post" | "put", apiPath: string, data?: Json): Promise<Json> {
-  const response = await request[method](`/api/v1${apiPath}`, data === undefined ? undefined : { data });
+async function api(page: Page, method: "get" | "post" | "put", apiPath: string, data?: Json): Promise<Json> {
+  const response = await page.request[method](`/api/v1${apiPath}`, {
+    headers: await sessionHeaders(page),
+    ...(data === undefined ? {} : { data }),
+  });
   expect(response.ok(), `${method.toUpperCase()} ${apiPath} returned ${response.status()}: ${await response.text()}`).toBeTruthy();
   return (await response.json()) as Json;
 }
@@ -100,12 +104,12 @@ function sortBy(rows: Json[], ...keys: string[]): Json[] {
 // What a correct restore must reproduce. Next-run times, last-login times
 // and usage figures change with time or with the restore itself and are left
 // out, as in scripts/vm/baremetal-state.py.
-async function captureState(request: APIRequestContext): Promise<Json> {
-  const shares = (await api(request, "get", "/shares")).shares as Json[];
-  const users = (await api(request, "get", "/users")).users as Json[];
-  const schedules = (await api(request, "get", "/settings/schedules")) as { chain: Json; otherJobs: Json[]; conflicts: Json[] };
-  const pool = (await api(request, "get", "/pool")).disks as Json[];
-  const general = await api(request, "get", "/settings/general");
+async function captureState(page: Page): Promise<Json> {
+  const shares = (await api(page, "get", "/shares")).shares as Json[];
+  const users = (await api(page, "get", "/users")).users as Json[];
+  const schedules = (await api(page, "get", "/settings/schedules")) as { chain: Json; otherJobs: Json[]; conflicts: Json[] };
+  const pool = (await api(page, "get", "/pool")).disks as Json[];
+  const general = await api(page, "get", "/settings/general");
   return {
     shares: sortBy(shares.map((row) => pick(row, ["name", "path", "cacheMode", "createPolicy", "smb", "nfs"])), "name"),
     users: sortBy(users.map((row) => pick(row, ["id", "username", "role", "hasCredential"])), "username"),
@@ -250,29 +254,29 @@ test("config export, fresh install and restore through the UI", async ({ browser
 
   // Phase 1: the L3 admin's box.
   await signInThroughUi(page, adminUsername, adminPassword);
-  const poolBefore = await api(page.request, "get", "/pool");
+  const poolBefore = await api(page, "get", "/pool");
   expect(
     poolBefore.mounted,
     "expected the L3 harness's array setup to have left the pool mounted before the export",
   ).toBe(true);
 
-  const existingShares = ((await api(page.request, "get", "/shares")).shares as Json[]).map((share) => share.name);
+  const existingShares = ((await api(page, "get", "/shares")).shares as Json[]).map((share) => share.name);
   if (!existingShares.includes(JOURNEY_SHARE)) {
-    await api(page.request, "post", "/shares", { name: JOURNEY_SHARE, cacheMode: "array-only" });
+    await api(page, "post", "/shares", { name: JOURNEY_SHARE, cacheMode: "array-only" });
   }
-  const existingUsers = ((await api(page.request, "get", "/users")).users as Json[]).map((user) => user.username);
+  const existingUsers = ((await api(page, "get", "/users")).users as Json[]).map((user) => user.username);
   if (!existingUsers.includes(JOURNEY_USER)) {
-    await api(page.request, "post", "/users", { username: JOURNEY_USER, role: "viewer" });
+    await api(page, "post", "/users", { username: JOURNEY_USER, role: "viewer" });
   }
-  await api(page.request, "put", "/settings/schedules/chain", JOURNEY_CHAIN);
-  await api(page.request, "put", `/settings/schedules/jobs/${JOURNEY_JOB.id}`, {
+  await api(page, "put", "/settings/schedules/chain", JOURNEY_CHAIN);
+  await api(page, "put", `/settings/schedules/jobs/${JOURNEY_JOB.id}`, {
     enabled: JOURNEY_JOB.enabled,
     frequency: JOURNEY_JOB.frequency,
     time: JOURNEY_JOB.time,
   });
-  await api(page.request, "put", "/settings/general", { timezone: journeyTimezone });
+  await api(page, "put", "/settings/general", { timezone: journeyTimezone });
 
-  const before = await captureState(page.request);
+  const before = await captureState(page);
   expect(
     JSON.stringify(before),
     "the recorded state must hold what this journey created, or comparing against it proves nothing",
@@ -426,7 +430,7 @@ test("config export, fresh install and restore through the UI", async ({ browser
     await restoredCounts(card, "system");
 
     // The archive's sessions replaced the temporary admin's.
-    const signedOut = await fresh.request.get("/api/v1/users");
+    const signedOut = await fresh.request.get("/api/v1/users", { headers: await sessionHeaders(fresh) });
     expect(signedOut.status(), "the temporary admin's session must be gone after the restore").toBe(401);
 
     await card.getByRole("link", { name: catalogString("settings.backup.restore.report.signIn"), exact: true }).click();
@@ -445,14 +449,14 @@ test("config export, fresh install and restore through the UI", async ({ browser
 
     // The array comes up.
     await expect
-      .poll(async () => (await api(fresh.request, "get", "/pool")).mounted, {
+      .poll(async () => (await api(fresh, "get", "/pool")).mounted, {
         message: `the pool is not mounted within ${POOL_TIMEOUT_MS / 1000}s of the restore`,
         timeout: POOL_TIMEOUT_MS,
         intervals: [2_000],
       })
       .toBe(true);
 
-    const after = await captureState(fresh.request);
+    const after = await captureState(fresh);
     expect(after, "shares, users, schedules, settings and pool disk roles must equal the state before the export").toEqual(before);
 
     // A refusal from the preview (blockers[]) is an error banner with the

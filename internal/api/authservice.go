@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -416,6 +418,62 @@ func (s *AuthService) ValidateSession(ctx context.Context, rawToken string) (*Us
 			return nil, ErrSessionInvalid
 		}
 		return nil, fmt.Errorf("looking up session user: %w", err)
+	}
+	return u, nil
+}
+
+// sessionSecretPurpose is the plaintext prefix of a session secret, so a
+// ciphertext sealed under the machine key for any other purpose (a TOTP
+// secret, a backup passphrase) can never decrypt to a value this check
+// accepts.
+const sessionSecretPurpose = "hoserva-session-secret-v1:"
+
+// SessionSecret returns the second secret of the session rawToken names: the
+// session's token hash sealed under the machine key (Q28). A browser keeps
+// it out of its cookie jar and sends it as a header, so a service on another
+// port of the same host name, which the browser sends the cookie to, cannot
+// act as the session (doc 15 T15). Only a holder of the machine key can
+// mint one, which keeps it needing no column of its own and valid across
+// restarts for as long as the session is.
+func (s *AuthService) SessionSecret(rawToken string) (string, error) {
+	if rawToken == "" {
+		return "", ErrSessionInvalid
+	}
+	sealed, err := s.MachineKey.Encrypt([]byte(sessionSecretPurpose + auth.HashSessionToken(rawToken)))
+	if err != nil {
+		return "", fmt.Errorf("sealing session secret: %w", err)
+	}
+	return hex.EncodeToString(sealed), nil
+}
+
+// verifySessionSecret reports ErrSessionInvalid unless secret is a secret
+// SessionSecret minted for rawToken's own session.
+func (s *AuthService) verifySessionSecret(rawToken, secret string) error {
+	sealed, err := hex.DecodeString(secret)
+	if err != nil || len(sealed) == 0 {
+		return ErrSessionInvalid
+	}
+	plain, err := s.MachineKey.Decrypt(sealed)
+	if err != nil {
+		return ErrSessionInvalid
+	}
+	want := []byte(sessionSecretPurpose + auth.HashSessionToken(rawToken))
+	if subtle.ConstantTimeCompare(plain, want) != 1 {
+		return ErrSessionInvalid
+	}
+	return nil
+}
+
+// ValidateSessionWithSecret is ValidateSession for a request that can send
+// the session's second secret: the cookie's session must exist and the
+// secret must belong to it.
+func (s *AuthService) ValidateSessionWithSecret(ctx context.Context, rawToken, secret string) (*User, error) {
+	u, err := s.ValidateSession(ctx, rawToken)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.verifySessionSecret(rawToken, secret); err != nil {
+		return nil, err
 	}
 	return u, nil
 }
