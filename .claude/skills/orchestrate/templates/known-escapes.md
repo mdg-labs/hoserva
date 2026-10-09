@@ -61,6 +61,7 @@ existing line by adding its PR number.
 - **fail-open** — a teardown discards each step's error and returns the run's own status, so a mount or device it could not remove stays behind while the run exits 0 — PR 579
 - **fail-open** — a config edit that matches only the exact expected line (`sed s/^Components: main$/…/`) silently changes nothing when the line carries more values, so the step it enables fails later with an unrelated error — PR 581
 - **fail-open** — a mount or bind made from a disk's mountpoint path checks only that the path exists, not that the disk is mounted there, so an unmounted disk's bare directory on the root filesystem is served in its place — PR 688
+- **fail-open** — a helper that writes beneath a mount root creates the root itself when it is missing (`MkdirAll` on the pool root), so with the pool unmounted it writes onto the root filesystem and leaves a directory under the mount point — PR 791
 - **fail-open** — a completeness gate checks only some of the files the documented procedure produces and says to commit (a docs snapshot without its versioned sidebar), so an incomplete result passes — PR 688
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks, and not put back by a rollback that did complete the stop) — PR 199, 246, 338, 395
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
@@ -114,6 +115,7 @@ existing line by adding its PR number.
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **validation** — a helper carrying a single-value side effect (a "given more than once, the last is used" note) reused for a field that accumulates a list, so the operator is told kept values were dropped — PR 542
 - **contract** — a failure summary names one cause (an unaccepted key) where the check behind it refuses several (values, control characters), so a report gives the wrong reason — PR 772
+- **contract** — a path moved to a new default (a cache-side Docker data-root) is re-applied on an install still configured with the old one, breaking the documented promise that existing installs keep it — PR 791
 - **contract** — a size limit set on a decoded value (48 KiB of template text) under a transport limit (64 KiB request body) that the encoding can inflate past, so a valid maximum input is refused before the handler sees it — PR 542
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
@@ -161,6 +163,8 @@ existing line by adding its PR number.
 - **tests** — an end-to-end suite drives the API directly where its issue names a CLI command (`hoserva scrub --all-blocks`), so the CLI flag added for it is never exercised and a flag that stops reaching the request leaves the suite green — PR 644
 - **tests** — an end-to-end failure detector defined as "any banner but this list of informational ones", not extended when the change adds a new informational note, so the expected note fails the journey — PR 474
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
+- **tests** — a fake injected for one filesystem operation (directory creation) while a read in the same flow still goes to the real path, so fake-backed unit tests depend on the host's own directories (`/mnt/cache`) — PR 791
+- **tests** — a recovery check fires right after the server's reply, before the server's deferred release of the slot runs, so a correct server closes the probe; retry it with a bounded wait — PR 791
 - **tests** — exact equality between two separately sampled system values — PR 236
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344
 - **tests** — a restart check treats systemd active as API-ready, so the single login races the listener — PR 344
@@ -199,6 +203,7 @@ existing line by adding its PR number.
 - **platform** — systemd `systemctl stop` of a busy mount reports a failed job without EBUSY text, so a retry that matches only strerror never runs — PR 344
 - **platform** — a filesystem path concatenated into a URI or DSN (SQLite `file:`) unescaped, so a `?`, `#` or `%` in it opens a different file and drops the query options — PR 403
 - **platform** — Docker `--entrypoint` is one executable, never an argument list; splitting it on spaces runs a different program — PR 491
+- **platform** — Go `archive/tar` `Reader.Next` consumes PAX and GNU long-name headers internally, so a cap counted on returned entries never sees them; bound the decoded stream itself — PR 791
 - **platform** — `git merge --ff-only origin/<b>` as a sync check also succeeds when the local branch is ahead; compare `HEAD` to the remote ref — PR 491
 - **platform** — `git check-ignore` skips tracked paths unless given `--no-index`, so a "this source file is not ignored" check always passes even when a rule hides the directory — PR 527
 - **platform** — GitHub Actions: a job `timeout-minutes` at or below a step timeout it contains, so the job backstop cancels a step still inside its own bound — PR 403
