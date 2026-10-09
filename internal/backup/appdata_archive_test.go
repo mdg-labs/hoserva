@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -37,7 +38,7 @@ var testAppdataKey = func() []byte {
 func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
 	dirs := &heldDirs{}
 	defer dirs.close()
-	return dirs.extract(ctx, archivePath, hdr, targets, make([]liveIdentity, len(targets)), nil)
+	return dirs.extract(ctx, archivePath, hdr, targets, make([]liveIdentity, len(targets)), nil, nil)
 }
 
 func packTestTree(t *testing.T, dir string) (string, appdataHeader, appdataTrailer) {
@@ -1009,7 +1010,8 @@ func TestAppdataArchive_PackRefusesToWriteWithoutAKey(t *testing.T) {
 	}
 }
 
-func TestAppdataArchive_RestoredModeLeavesOffSetuidAndSetgidOfRootOnly(t *testing.T) {
+func TestAppdataArchive_RestoredModeLeavesOffSetuidOfRootAndSetgidOfPrivilegedGroups(t *testing.T) {
+	privileged := privilegedGIDs{998: true, 999: true}
 	tests := []struct {
 		name     string
 		mode     int64
@@ -1025,13 +1027,58 @@ func TestAppdataArchive_RestoredModeLeavesOffSetuidAndSetgidOfRootOnly(t *testin
 		{"root-owned but group not root keeps setgid", 0o6755, 0, 5, 0o2755, "setuid"},
 		{"sticky kept", 0o1777, 0, 0, 0o1777, ""},
 		{"root plain", 0o644, 0, 0, 0o644, ""},
+		{"privileged group setgid", 0o2755, 5, 999, 0o755, "setgid"},
+		{"privileged group setgid on a directory", 0o2775, 5, 998, 0o775, "setgid"},
+		{"privileged group without setgid", 0o755, 5, 999, 0o755, ""},
+		{"privileged group keeps setuid of another owner", 0o6755, 5, 999, 0o4755, "setgid"},
+		{"users group keeps setgid", 0o2775, 99, 100, 0o2775, ""},
+		{"share directory of an ordinary group keeps setgid", 0o2775, 100, 99, 0o2775, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, stripped := restoredMode(&tar.Header{Typeflag: tar.TypeReg, Mode: tc.mode, Uid: tc.uid, Gid: tc.gid})
+			got, stripped := restoredMode(&tar.Header{Typeflag: tar.TypeReg, Mode: tc.mode, Uid: tc.uid, Gid: tc.gid}, privileged)
 			if got != tc.want || stripped != tc.stripped {
 				t.Fatalf("restoredMode = %#o, %q; want %#o, %q", got, stripped, tc.want, tc.stripped)
 			}
 		})
+	}
+}
+
+func TestAppdataArchive_ResolvePrivilegedGroupsReadsTheHostsGroupsAndFailsClosed(t *testing.T) {
+	gids := map[string]string{"hoserva": "990", "docker": "991", "disk": "6"}
+	lookup := func(name string) (*user.Group, error) {
+		if gid, ok := gids[name]; ok {
+			return &user.Group{Name: name, Gid: gid}, nil
+		}
+		return nil, user.UnknownGroupError(name)
+	}
+	got, err := resolvePrivilegedGroups(lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gid := range []int{0, 990, 991, 6} {
+		if !got.has(gid) {
+			t.Errorf("gid %d is not privileged in %v", gid, got)
+		}
+	}
+	for _, gid := range []int{99, 100, 1000} {
+		if got.has(gid) {
+			t.Errorf("gid %d is privileged in %v", gid, got)
+		}
+	}
+
+	boom := errors.New("name service unavailable")
+	if _, err := resolvePrivilegedGroups(func(name string) (*user.Group, error) {
+		if name == "docker" {
+			return nil, boom
+		}
+		return lookup(name)
+	}); !errors.Is(err, boom) {
+		t.Fatalf("resolvePrivilegedGroups with a failing lookup = %v, want it to fail with the lookup's error", err)
+	}
+	if _, err := resolvePrivilegedGroups(func(name string) (*user.Group, error) {
+		return &user.Group{Name: name, Gid: "not-a-number"}, nil
+	}); err == nil {
+		t.Fatal("resolvePrivilegedGroups accepted a group id that is not a number")
 	}
 }

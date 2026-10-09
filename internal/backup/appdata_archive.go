@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"slices"
@@ -690,9 +691,10 @@ var beforeAppdataMeta func()
 // trees; a target that fails the check keeps what it holds and is not
 // recorded. Ownership is restored when running as root. A setuid bit on an
 // entry the archive gives to uid 0, and a setgid bit on one it gives to
-// gid 0, is not restored; stripped, if set, is called for each such entry
-// with its place in the archived directory and the bits left off.
-func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string, trees []liveIdentity, stripped func(path, bits string)) error {
+// gid 0 or to a group in privileged, is not restored; stripped, if set, is
+// called for each such entry with its place in the archived directory and
+// the bits left off.
+func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataHeader, targets []string, trees []liveIdentity, privileged privilegedGIDs, stripped func(path, bits string)) error {
 	if len(targets) != len(hdr.Dirs) || len(trees) != len(targets) {
 		return errors.New("extracting appdata: one target per archived directory is required")
 	}
@@ -778,7 +780,7 @@ func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataH
 		if err != nil {
 			return fmt.Errorf("archive entry %q: %w", e.Name, err)
 		}
-		what, err := extractAppdataEntry(tr, e, dfd, base, filepath.Join(targets[i], filepath.FromSlash(rel)), asRoot)
+		what, err := extractAppdataEntry(tr, e, dfd, base, filepath.Join(targets[i], filepath.FromSlash(rel)), asRoot, privileged)
 		release()
 		if err != nil {
 			return err
@@ -793,7 +795,7 @@ func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataH
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
 		m := dirs[i]
-		what, err := p.applyDirMeta(walkers[m.tree], targets[m.tree], m, asRoot)
+		what, err := p.applyDirMeta(walkers[m.tree], targets[m.tree], m, asRoot, privileged)
 		if err != nil {
 			return err
 		}
@@ -802,13 +804,13 @@ func (p *heldDirs) extract(ctx context.Context, archivePath string, hdr appdataH
 	return nil
 }
 
-func (p *heldDirs) applyDirMeta(w *beneath.Walker, target string, m appdataDirMeta, asRoot bool) (string, error) {
+func (p *heldDirs) applyDirMeta(w *beneath.Walker, target string, m appdataDirMeta, asRoot bool, privileged privilegedGIDs) (string, error) {
 	if m.rel == "" {
 		parent, name, err := p.parent(target)
 		if err != nil {
 			return "", err
 		}
-		return applyAppdataMeta(w.Root(), parent, name, target, m.hdr, asRoot)
+		return applyAppdataMeta(w.Root(), parent, name, target, m.hdr, asRoot, privileged)
 	}
 	dir, base := path.Split(m.rel)
 	pfd, err := w.Dir(strings.TrimSuffix(dir, "/"), nil)
@@ -820,19 +822,19 @@ func (p *heldDirs) applyDirMeta(w *beneath.Walker, target string, m appdataDirMe
 		return "", fmt.Errorf("restoring %s: %w", filepath.Join(target, filepath.FromSlash(m.rel)), err)
 	}
 	defer func() { _ = unix.Close(fd) }()
-	return applyAppdataMeta(fd, pfd, base, filepath.Join(target, filepath.FromSlash(m.rel)), m.hdr, asRoot)
+	return applyAppdataMeta(fd, pfd, base, filepath.Join(target, filepath.FromSlash(m.rel)), m.hdr, asRoot, privileged)
 }
 
 // extractAppdataEntry creates one entry. A non-empty first result names the
 // mode bits that were not restored (see applyAppdataMeta).
-func extractAppdataEntry(r io.Reader, e *tar.Header, dfd int, base, dst string, asRoot bool) (string, error) {
+func extractAppdataEntry(r io.Reader, e *tar.Header, dfd int, base, dst string, asRoot bool, privileged privilegedGIDs) (string, error) {
 	switch e.Typeflag {
 	case tar.TypeDir:
 		if err := unix.Mkdirat(dfd, base, 0o700); err != nil {
 			return "", fmt.Errorf("creating %s: %w", dst, err)
 		}
 	case tar.TypeReg:
-		return extractAppdataFile(r, e, dfd, base, dst, asRoot)
+		return extractAppdataFile(r, e, dfd, base, dst, asRoot, privileged)
 	case tar.TypeSymlink:
 		if err := unix.Symlinkat(e.Linkname, dfd, base); err != nil {
 			return "", fmt.Errorf("creating symlink %s: %w", dst, err)
@@ -939,7 +941,7 @@ func openTreeDir(w *beneath.Walker, rel string) (int, string, func(), error) {
 	return cur, strings.Join(names, "/"), release, nil
 }
 
-func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display string, asRoot bool) (string, error) {
+func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display string, asRoot bool, privileged privilegedGIDs) (string, error) {
 	fd, err := unix.Openat(dirfd, name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("creating %s: %w", display, err)
@@ -949,7 +951,7 @@ func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display str
 		_ = f.Close()
 		return "", fmt.Errorf("writing %s: %w", display, err)
 	}
-	stripped, err := applyAppdataMeta(fd, dirfd, name, display, e, asRoot)
+	stripped, err := applyAppdataMeta(fd, dirfd, name, display, e, asRoot, privileged)
 	if err != nil {
 		_ = f.Close()
 		return "", err
@@ -963,15 +965,15 @@ func extractAppdataFile(r io.Reader, e *tar.Header, dirfd int, name, display str
 // applyAppdataMeta sets ownership and mode through fd, and times through
 // the entry's name in the directory dirfd without following a link there.
 // The setuid bit of an entry archived as owned by uid 0 and the setgid bit of
-// one archived with gid 0 are left off, and the first result names which
-// ("setuid", "setgid" or both).
-func applyAppdataMeta(fd, dirfd int, name, display string, e *tar.Header, asRoot bool) (string, error) {
+// one archived with gid 0 or a gid in privileged are left off, and the first
+// result names which ("setuid", "setgid" or both).
+func applyAppdataMeta(fd, dirfd int, name, display string, e *tar.Header, asRoot bool, privileged privilegedGIDs) (string, error) {
 	if asRoot {
 		if err := unix.Fchown(fd, e.Uid, e.Gid); err != nil {
 			return "", fmt.Errorf("restoring owner of %s: %w", display, err)
 		}
 	}
-	mode, stripped := restoredMode(e)
+	mode, stripped := restoredMode(e, privileged)
 	if err := unix.Fchmod(fd, mode); err != nil {
 		return "", fmt.Errorf("restoring mode of %s: %w", display, err)
 	}
@@ -982,18 +984,57 @@ func applyAppdataMeta(fd, dirfd int, name, display string, e *tar.Header, asRoot
 	return stripped, nil
 }
 
+// privilegedGroupNames are the groups on a host whose members, or whose
+// setgid programs, reach root: hoserva (the API socket, Q44), sudo, disk and
+// kmem (raw devices and memory), docker and libvirt (the engines), shadow
+// (root's secrets).
+var privilegedGroupNames = []string{"hoserva", "sudo", "disk", "docker", "kmem", "shadow", "libvirt"}
+
+// privilegedGIDs is the set of group ids a restore never gives a setgid bit
+// to, besides gid 0.
+type privilegedGIDs map[int]bool
+
+func (g privilegedGIDs) has(gid int) bool {
+	return gid == 0 || g[gid]
+}
+
+// resolvePrivilegedGroups reads the host's gid for each privilegedGroupNames
+// entry through lookup. A group the host does not have is left out; any
+// other failure is returned, so a restore does not go on with a set that may
+// be missing a group.
+func resolvePrivilegedGroups(lookup func(name string) (*user.Group, error)) (privilegedGIDs, error) {
+	out := privilegedGIDs{}
+	for _, name := range privilegedGroupNames {
+		g, err := lookup(name)
+		if err != nil {
+			var unknown user.UnknownGroupError
+			if errors.As(err, &unknown) {
+				continue
+			}
+			return nil, fmt.Errorf("reading the privileged group %s: %w", name, err)
+		}
+		gid, err := strconv.Atoi(g.Gid)
+		if err != nil {
+			return nil, fmt.Errorf("reading the privileged group %s: gid %q: %w", name, g.Gid, err)
+		}
+		out[gid] = true
+	}
+	return out, nil
+}
+
 // restoredMode is the mode an archived entry is restored with: what the
 // archive holds, less a setuid bit on an entry given to uid 0 and a setgid
-// bit on one given to gid 0, which would hand a root-owned program or group
-// to whatever the archive says. The second result names the bits left off.
-func restoredMode(e *tar.Header) (uint32, string) {
+// bit on one given to gid 0 or to a group in privileged, which would hand a
+// root-owned program or a root-equivalent group to whatever the archive
+// says. The second result names the bits left off.
+func restoredMode(e *tar.Header, privileged privilegedGIDs) (uint32, string) {
 	mode := unixMode(e.FileInfo().Mode())
 	var left []string
 	if mode&unix.S_ISUID != 0 && e.Uid == 0 {
 		mode &^= unix.S_ISUID
 		left = append(left, "setuid")
 	}
-	if mode&unix.S_ISGID != 0 && e.Gid == 0 {
+	if mode&unix.S_ISGID != 0 && privileged.has(e.Gid) {
 		mode &^= unix.S_ISGID
 		left = append(left, "setgid")
 	}

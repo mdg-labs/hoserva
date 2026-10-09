@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -1952,5 +1953,73 @@ func TestAppdataRestore_LeavesOffSetuidAndSetgidOnEntriesGivenToRoot(t *testing.
 		if strings.Contains(rig.out.String(), filepath.Join(rig.dir, name)) {
 			t.Errorf("the job output names %s, which kept its bits:\n%s", name, rig.out)
 		}
+	}
+}
+
+func TestAppdataRestore_LeavesOffSetgidOnEntriesGivenToAPrivilegedGroup(t *testing.T) {
+	rig := newRestoreRig(t)
+	const privileged, ordinary = 4321, 100
+	rig.svc.LookupGroup = func(name string) (*user.Group, error) {
+		if name == "docker" {
+			return &user.Group{Name: name, Gid: strconv.Itoa(privileged)}, nil
+		}
+		return nil, user.UnknownGroupError(name)
+	}
+	req := rig.plantAppdata(t, 0, appdataHeader{Dirs: []string{rig.dir}}, []forgedEntry{
+		{name: "data/0/", typeflag: tar.TypeDir, mode: 0o2775, uid: 5, gid: privileged},
+		{name: "data/0/dockersgid", typeflag: tar.TypeReg, mode: 0o2755, uid: 5, gid: privileged, body: "x"},
+		{name: "data/0/dockerdir", typeflag: tar.TypeDir, mode: 0o2775, uid: 5, gid: privileged},
+		{name: "data/0/userssgid", typeflag: tar.TypeReg, mode: 0o2755, uid: 5, gid: ordinary, body: "x"},
+		{name: "data/0/usersdir", typeflag: tar.TypeDir, mode: 0o2775, uid: 5, gid: ordinary},
+	}, rig.key(t))
+
+	if err := rig.svc.Restore(context.Background(), req, rig.out); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	mode := func(name string) os.FileMode {
+		t.Helper()
+		info, err := os.Lstat(filepath.Join(rig.dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Mode()
+	}
+	for _, name := range []string{"dockersgid", "dockerdir"} {
+		if got := mode(name); got&os.ModeSetgid != 0 {
+			t.Errorf("%s restored with mode %v, want no setgid bit on an entry given to a privileged group", name, got)
+		}
+		if !strings.Contains(rig.out.String(), filepath.Join(rig.dir, name)) {
+			t.Errorf("the job output does not name %s:\n%s", name, rig.out)
+		}
+	}
+	if got := mode("."); got&os.ModeSetgid != 0 {
+		t.Errorf("the restored directory has mode %v, want no setgid bit", got)
+	}
+	for _, name := range []string{"userssgid", "usersdir"} {
+		if got := mode(name); got&os.ModeSetgid == 0 {
+			t.Errorf("%s restored with mode %v, want its setgid bit kept: its group is not privileged", name, got)
+		}
+		if strings.Contains(rig.out.String(), filepath.Join(rig.dir, name)) {
+			t.Errorf("the job output names %s, which kept its bits:\n%s", name, rig.out)
+		}
+	}
+}
+
+func TestAppdataRestore_RefusesBeforeAnythingChangesWhenThePrivilegedGroupsCannotBeRead(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.svc.LookupGroup = func(string) (*user.Group, error) {
+		return nil, errors.New("name service unavailable")
+	}
+
+	err := rig.restore(t)
+	if err == nil || !strings.Contains(err.Error(), "privileged groups could not be read") {
+		t.Fatalf("Restore = %v, want a refusal that says the privileged groups could not be read", err)
+	}
+	rig.requireLiveUntouched(t)
+	if ev := rig.containers.Events(); len(ev) != 0 {
+		t.Fatalf("a container was stopped before the privileged groups were read: %v", ev)
+	}
+	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal left behind: %v", err)
 	}
 }

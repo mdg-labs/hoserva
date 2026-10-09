@@ -157,6 +157,10 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	if err != nil {
 		return err
 	}
+	privileged, err := resolvePrivilegedGroups(a.groupLookup())
+	if err != nil {
+		return fmt.Errorf("the privileged groups could not be read, so the restore cannot tell which setgid bits to leave off: %w", err)
+	}
 
 	staging, err := appdataStaging(roots)
 	if err != nil {
@@ -213,7 +217,7 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	if err != nil {
 		return err
 	}
-	return a.replaceAppdata(ctx, out, plain, hdr, parents, recorded, archived)
+	return a.replaceAppdata(ctx, out, plain, hdr, parents, recorded, archived, privileged)
 }
 
 // fetchVerifiedAppdata is the read-only part of a restore that the preview
@@ -561,7 +565,7 @@ func (p *heldDirs) makeWork(path string) (restoreWork, error) {
 // it in, replacing only the entries recorded in recorded, which Restore read
 // through parents before the snapshot. Of the directory it replaced it
 // removes only what archived says the snapshot archived.
-func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader, parents *heldDirs, recorded []liveIdentity, archived archivedIDs) error {
+func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, archive string, hdr appdataHeader, parents *heldDirs, recorded []liveIdentity, archived archivedIDs, privileged privilegedGIDs) error {
 	id, err := randomID()
 	if err != nil {
 		return err
@@ -622,8 +626,8 @@ func (a *AppdataService) replaceAppdata(ctx context.Context, out io.Writer, arch
 	}
 	trees := make([]liveIdentity, len(swaps))
 	var stripped []string
-	err = parents.extract(ctx, archive, hdr, fresh, trees, func(path, bits string) {
-		stripped = append(stripped, fmt.Sprintf("restored %s without its %s bit: the archive gives it to root", path, bits))
+	err = parents.extract(ctx, archive, hdr, fresh, trees, privileged, func(path, bits string) {
+		stripped = append(stripped, fmt.Sprintf("restored %s without its %s bit: the archive gives it to root or to a root-equivalent group", path, bits))
 	})
 	for i := range swaps {
 		swaps[i].tree = trees[i]

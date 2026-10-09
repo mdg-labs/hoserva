@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -127,6 +128,9 @@ type AppdataService struct {
 	// Attrs reads and sets the extended attribute that anchors an appdata
 	// directory to its path; nil uses the real one (appdata_anchor.go).
 	Attrs DirAttrs
+	// LookupGroup reads a group of the host by name for a restore's
+	// privileged-group set; nil uses os/user.
+	LookupGroup func(name string) (*user.Group, error)
 
 	// runMu is held for the whole of a backup or restore and by
 	// RecoverStopped: they share the staging directory, which each clears
@@ -138,6 +142,13 @@ type AppdataService struct {
 	// previews holds what the restore previews need: their staging
 	// directories and their finished results.
 	previews appdataPreviews
+}
+
+func (a *AppdataService) groupLookup() func(string) (*user.Group, error) {
+	if a.LookupGroup != nil {
+		return a.LookupGroup
+	}
+	return user.LookupGroup
 }
 
 // lockRun waits for every other backup, restore and recovery to finish and
