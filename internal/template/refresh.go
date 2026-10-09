@@ -367,7 +367,7 @@ func (r *Refresher) fetchAndInstall(ctx context.Context, trigger Trigger) (Check
 			got.sig, got.sigValidators = hex.EncodeToString(sigSum[:]), sigValidators
 		}
 
-		fetched, err := r.Store.InstallFetched(archive, sig, archiveValidators)
+		fetched, err := r.Store.InstallFetched(ctx, archive, sig, archiveValidators)
 		switch {
 		case errors.Is(err, ErrBadSignature) && !retried:
 			retried = true

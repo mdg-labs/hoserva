@@ -682,7 +682,7 @@ func TestCatalogStore_AStoreThatIsNotMarkedUnsignedStillRefusesAnUnsignedArchive
 		if err := s.Install(archive, nil); !errors.Is(err, ErrBadSignature) {
 			t.Errorf("%s: Install of an unsigned archive = %v, want ErrBadSignature", name, err)
 		}
-		if _, err := s.InstallFetched(archive, []byte("junk"), Validators{}); !errors.Is(err, ErrBadSignature) {
+		if _, err := s.InstallFetched(context.Background(), archive, []byte("junk"), Validators{}); !errors.Is(err, ErrBadSignature) {
 			t.Errorf("%s: InstallFetched of an unsigned archive = %v, want ErrBadSignature", name, err)
 		}
 		if _, ok, _ := s.Serial(); ok {

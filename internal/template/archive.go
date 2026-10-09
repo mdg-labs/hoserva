@@ -3,6 +3,7 @@ package template
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
@@ -27,14 +28,29 @@ var (
 	ErrNotNewer = errors.New("template: the catalog archive is not newer than the installed catalog")
 	// ErrBadArchive is returned when a signed archive is not a catalog:
 	// not zstd or tar, an entry outside index.json and <id>/, an entry type
-	// other than a plain file or directory, or a missing or unreadable
-	// index.json.
+	// other than a plain file or directory, more entries or bytes than the
+	// caps allow, a name that is too long or too deep, or a missing or
+	// unreadable index.json.
 	ErrBadArchive = errors.New("template: the catalog archive is malformed")
 )
 
 // maxCatalogBytes caps the uncompressed size of a catalog archive's files; the
 // real archive is tens of kilobytes. A variable so a test can lower it.
 var maxCatalogBytes = 256 << 20
+
+// maxCatalogEntries caps the number of entries, directories included, in a
+// catalog archive. A variable so a test can lower it.
+var maxCatalogEntries = 20000
+
+const (
+	// entryCostBytes is charged against the byte budget for every entry, so
+	// a flood of empty files and directories spends the budget too.
+	entryCostBytes = 4096
+	// maxEntryNameBytes and maxEntryDepth bound one entry's name; the
+	// duplicate check records a prefix of it for every path component.
+	maxEntryNameBytes = 256
+	maxEntryDepth     = 8
+)
 
 const (
 	maxIndexBytes = 1 << 20
@@ -83,11 +99,11 @@ func (s CatalogStore) key() ed25519.PublicKey {
 
 // verify checks archive and its signature the way this store trusts them:
 // unsigned stores check only that the archive is a well-formed catalog.
-func (s CatalogStore) verify(archive, sig []byte) (int64, []byte, error) {
+func (s CatalogStore) verify(ctx context.Context, archive, sig []byte) (int64, []byte, error) {
 	if s.Unsigned {
-		return checkArchive(archive)
+		return checkArchive(ctx, archive)
 	}
-	return verifyArchive(s.key(), archive, sig)
+	return verifyArchive(ctx, s.key(), archive, sig)
 }
 
 func (s CatalogStore) mv(oldpath, newpath string) error {
@@ -101,24 +117,24 @@ func (s CatalogStore) mv(oldpath, newpath string) error {
 // that the archive is a well-formed catalog, and returns its serial. It
 // touches no file.
 func VerifyArchive(key ed25519.PublicKey, archive, sig []byte) (int64, error) {
-	serial, _, err := verifyArchive(key, archive, sig)
+	serial, _, err := verifyArchive(context.Background(), key, archive, sig)
 	return serial, err
 }
 
 // verifyArchive is VerifyArchive that also returns the archive's index.json,
 // which must parse as a catalog index so a signed archive DirCatalog could
 // not list is never installed.
-func verifyArchive(key ed25519.PublicKey, archive, sig []byte) (int64, []byte, error) {
+func verifyArchive(ctx context.Context, key ed25519.PublicKey, archive, sig []byte) (int64, []byte, error) {
 	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, archive, sig) {
 		return 0, nil, ErrBadSignature
 	}
-	return checkArchive(archive)
+	return checkArchive(ctx, archive)
 }
 
 // checkArchive is the well-formedness half of verifyArchive: it reads the
 // archive and returns its serial and index.json.
-func checkArchive(archive []byte) (int64, []byte, error) {
-	serial, index, err := readArchive(archive, nil)
+func checkArchive(ctx context.Context, archive []byte) (int64, []byte, error) {
+	serial, index, err := readArchive(ctx, archive, nil)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -161,7 +177,7 @@ func (s CatalogStore) readIndex() ([]byte, error) {
 // leaves the installed catalog untouched.
 func (s CatalogStore) Install(archive, sig []byte) error {
 	defer s.lock()()
-	_, err := s.install(archive, sig, installOptions{strict: true})
+	_, err := s.install(context.Background(), archive, sig, installOptions{strict: true})
 	return err
 }
 
@@ -170,7 +186,7 @@ func (s CatalogStore) Install(archive, sig []byte) error {
 // either way.
 func (s CatalogStore) Seed(archive, sig []byte) (bool, error) {
 	defer s.lock()()
-	r, err := s.install(archive, sig, installOptions{})
+	r, err := s.install(context.Background(), archive, sig, installOptions{})
 	return r.installed, err
 }
 
@@ -215,9 +231,9 @@ type Fetched struct {
 // refreshes the stored validators, and reports Installed false. An archive
 // with the installed serial and a different index.json is refused
 // (ErrNotNewer).
-func (s CatalogStore) InstallFetched(archive, sig []byte, v Validators) (Fetched, error) {
+func (s CatalogStore) InstallFetched(ctx context.Context, archive, sig []byte, v Validators) (Fetched, error) {
 	defer s.lock()()
-	r, err := s.install(archive, sig, installOptions{strict: true, fetched: &v})
+	r, err := s.install(ctx, archive, sig, installOptions{strict: true, fetched: &v})
 	return Fetched{Installed: r.installed, Previous: r.previous, Current: r.current}, err
 }
 
@@ -232,8 +248,8 @@ type installResult struct {
 	current   []byte
 }
 
-func (s CatalogStore) install(archive, sig []byte, opts installOptions) (res installResult, err error) {
-	serial, index, err := s.verify(archive, sig)
+func (s CatalogStore) install(ctx context.Context, archive, sig []byte, opts installOptions) (res installResult, err error) {
+	serial, index, err := s.verify(ctx, archive, sig)
 	if err != nil {
 		return res, err
 	}
@@ -275,7 +291,7 @@ func (s CatalogStore) install(archive, sig []byte, opts installOptions) (res ins
 			_ = os.RemoveAll(staging)
 		}
 	}()
-	if err := extractArchive(archive, staging); err != nil {
+	if err := extractArchive(ctx, archive, staging); err != nil {
 		return res, err
 	}
 	if opts.fetched != nil && !opts.fetched.empty() {
@@ -400,7 +416,7 @@ func (s CatalogStore) recoverLocked() error {
 // readArchive walks the archive, refusing anything that is not a plain file
 // or directory directly under index.json or an <id>/ directory, calls visit
 // with every entry, and returns the serial index.json carries and its bytes.
-func readArchive(archive []byte, visit func(name string, dir bool, size int64, r io.Reader) error) (int64, []byte, error) {
+func readArchive(ctx context.Context, archive []byte, visit func(name string, dir bool, size int64, r io.Reader) error) (int64, []byte, error) {
 	zr, err := zstd.NewReader(bytes.NewReader(archive), zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return 0, nil, fmt.Errorf("%w: %v", ErrBadArchive, err)
@@ -411,7 +427,11 @@ func readArchive(archive []byte, visit func(name string, dir bool, size int64, r
 	remaining := int64(maxCatalogBytes)
 	seen := map[string]bool{}
 	var index []byte
+	entries := 0
 	for {
+		if err := ctx.Err(); err != nil {
+			return 0, nil, err
+		}
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -419,13 +439,19 @@ func readArchive(archive []byte, visit func(name string, dir bool, size int64, r
 		if err != nil {
 			return 0, nil, fmt.Errorf("%w: %v", ErrBadArchive, err)
 		}
+		if entries++; entries > maxCatalogEntries {
+			return 0, nil, fmt.Errorf("%w: more than %d entries", ErrBadArchive, maxCatalogEntries)
+		}
 		name, dir, err := entryName(hdr, seen)
 		if err != nil {
 			return 0, nil, err
 		}
+		if remaining -= entryCostBytes; remaining < 0 {
+			return 0, nil, fmt.Errorf("%w: more than %d bytes of files and entries", ErrBadArchive, maxCatalogBytes)
+		}
 		if !dir {
 			if hdr.Size > remaining {
-				return 0, nil, fmt.Errorf("%w: more than %d bytes of files", ErrBadArchive, maxCatalogBytes)
+				return 0, nil, fmt.Errorf("%w: more than %d bytes of files and entries", ErrBadArchive, maxCatalogBytes)
 			}
 			remaining -= hdr.Size
 		}
@@ -467,6 +493,9 @@ func entryName(hdr *tar.Header, seen map[string]bool) (string, bool, error) {
 	default:
 		return "", false, fmt.Errorf("%w: %q is neither a file nor a directory", ErrBadArchive, hdr.Name)
 	}
+	if len(hdr.Name) > maxEntryNameBytes {
+		return "", false, fmt.Errorf("%w: an entry name is longer than %d bytes", ErrBadArchive, maxEntryNameBytes)
+	}
 	name := hdr.Name
 	if dir {
 		name = strings.TrimSuffix(name, "/")
@@ -480,6 +509,9 @@ func entryName(hdr *tar.Header, seen map[string]bool) (string, bool, error) {
 		}
 	}
 	parts := strings.Split(name, "/")
+	if len(parts) > maxEntryDepth {
+		return "", false, fmt.Errorf("%w: %q is nested deeper than %d levels", ErrBadArchive, hdr.Name, maxEntryDepth)
+	}
 	for _, p := range parts {
 		if p == "" || p == "." || p == ".." {
 			return "", false, fmt.Errorf("%w: entry name %q", ErrBadArchive, hdr.Name)
@@ -525,8 +557,8 @@ func parseSerial(index []byte) (int64, error) {
 // empty directory. Names were validated by readArchive, and nothing but
 // plain files and directories is ever created, so no entry can resolve
 // outside root.
-func extractArchive(archive []byte, root string) error {
-	_, _, err := readArchive(archive, func(name string, dir bool, size int64, r io.Reader) error {
+func extractArchive(ctx context.Context, archive []byte, root string) error {
+	_, _, err := readArchive(ctx, archive, func(name string, dir bool, size int64, r io.Reader) error {
 		target := filepath.Join(root, filepath.FromSlash(name))
 		if dir {
 			return os.MkdirAll(target, 0o755)

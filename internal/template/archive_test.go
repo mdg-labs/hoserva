@@ -335,6 +335,98 @@ func TestCatalogStore_RefusesAnArchiveBeyondTheSizeCap(t *testing.T) {
 	}
 }
 
+func lowerEntryCaps(t *testing.T, entries, bytes int) {
+	t.Helper()
+	oldEntries, oldBytes := maxCatalogEntries, maxCatalogBytes
+	maxCatalogEntries, maxCatalogBytes = entries, bytes
+	t.Cleanup(func() { maxCatalogEntries, maxCatalogBytes = oldEntries, oldBytes })
+}
+
+func manyFiles(n int) []tarEntry {
+	var out []tarEntry
+	for i := 0; i < n; i++ {
+		out = append(out, reg(fmt.Sprintf("jellyfin/f%04d", i), ""))
+	}
+	return out
+}
+
+func manyDirs(n int) []tarEntry {
+	var out []tarEntry
+	for i := 0; i < n; i++ {
+		out = append(out, tarEntry{Name: fmt.Sprintf("jellyfin/d%04d/", i), Type: tar.TypeDir})
+	}
+	return out
+}
+
+func TestCatalogStore_RefusesAnArchiveWithTooManyEntriesOrAnOverlongOrDeepName(t *testing.T) {
+	store, priv, parent := installedStore(t, 100)
+	before := tree(t, store.Dir)
+	lowerEntryCaps(t, 20, 256<<20)
+
+	cases := map[string][]tarEntry{
+		"too many files":       fixtureEntries(200, manyFiles(maxCatalogEntries)...),
+		"too many directories": fixtureEntries(200, manyDirs(maxCatalogEntries)...),
+		"one over-long name":   fixtureEntries(200, reg("jellyfin/"+strings.Repeat("a", maxEntryNameBytes), "x")),
+		"one over-long directory name": fixtureEntries(200,
+			tarEntry{Name: "jellyfin/" + strings.Repeat("a", maxEntryNameBytes) + "/", Type: tar.TypeDir}),
+		"too deep": fixtureEntries(200, reg("jellyfin/"+strings.Repeat("d/", maxEntryDepth)+"f", "x")),
+	}
+	for name, entries := range cases {
+		archive, sig := signed(t, priv, entries)
+		if _, _, err := checkArchive(context.Background(), archive); !errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: checkArchive err = %v, want ErrBadArchive", name, err)
+		}
+		if err := store.Install(archive, sig); !errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: Install err = %v, want ErrBadArchive", name, err)
+			continue
+		}
+		equalTrees(t, tree(t, store.Dir), before)
+		if got := listing(t, parent); len(got) != 1 {
+			t.Errorf("%s: left %v beside the catalog", name, got)
+		}
+	}
+}
+
+func TestCatalogStore_AcceptsAnArchiveAtTheEntryAndNameCaps(t *testing.T) {
+	store, priv, _ := installedStore(t, 100)
+	lowerEntryCaps(t, 20, 256<<20)
+	entries := fixtureEntries(200, manyFiles(maxCatalogEntries-4)...)
+	entries = append(entries, reg("jellyfin/"+strings.Repeat("d/", maxEntryDepth-2)+strings.Repeat("a", 100), "x"))
+	archive, sig := signed(t, priv, entries)
+	if err := store.Install(archive, sig); err != nil {
+		t.Fatalf("Install at the caps: %v", err)
+	}
+}
+
+func TestCatalogStore_ChargesEveryEntryAgainstTheByteBudget(t *testing.T) {
+	store, priv, parent := installedStore(t, 100)
+	before := tree(t, store.Dir)
+	lowerEntryCaps(t, 1000, 10*entryCostBytes)
+	archive, sig := signed(t, priv, fixtureEntries(200, manyFiles(20)...))
+	if err := store.Install(archive, sig); !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("err = %v, want ErrBadArchive", err)
+	}
+	equalTrees(t, tree(t, store.Dir), before)
+	if got := listing(t, parent); len(got) != 1 {
+		t.Fatalf("left %v beside the catalog", got)
+	}
+}
+
+func TestCatalogStore_InstallFetchedStopsWhenItsContextEnds(t *testing.T) {
+	store, priv, parent := installedStore(t, 100)
+	before := tree(t, store.Dir)
+	archive, sig := signed(t, priv, fixtureEntries(200))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.InstallFetched(ctx, archive, sig, Validators{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	equalTrees(t, tree(t, store.Dir), before)
+	if got := listing(t, parent); len(got) != 1 {
+		t.Fatalf("left %v beside the catalog", got)
+	}
+}
+
 func TestCatalogStore_AFailedSwapKeepsThePreviousCatalog(t *testing.T) {
 	store, priv, parent := installedStore(t, 100)
 	before := tree(t, store.Dir)

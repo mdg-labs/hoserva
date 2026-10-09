@@ -340,6 +340,26 @@ func TestRefresh_NeverReplacesTheCatalogWithAReplayedOlderOrForgedArchive(t *tes
 	}
 }
 
+func TestRefresh_AnArchiveWithTooManyEntriesIsReportedAsBadAndKeepsTheCatalog(t *testing.T) {
+	g := newRefreshRig(t)
+	g.publish(t, `"v100"`, catalogEntries(100, "installed", map[string]int{"jellyfin": 1}))
+	if res := g.refresh(t); res.Outcome != OutcomeUpdated {
+		t.Fatalf("installing the starting catalog: %+v", res)
+	}
+	before := tree(t, g.store.Dir)
+	lowerEntryCaps(t, 20, 256<<20)
+
+	g.publish(t, `"v200"`, append(catalogEntries(200, "flood", map[string]int{"jellyfin": 1}), manyFiles(maxCatalogEntries)...))
+	res := g.refresh(t)
+	if res.Outcome != OutcomeFailed || res.Reason != ReasonBadArchive {
+		t.Fatalf("result = %+v, want failed with %s", res, ReasonBadArchive)
+	}
+	equalTrees(t, tree(t, g.store.Dir), before)
+	if names := listing(t, filepath.Dir(g.store.Dir)); len(names) != 1 || names[0] != "catalog" {
+		t.Fatalf("the state directory holds %v, want only catalog", names)
+	}
+}
+
 func TestRefresh_ANetworkFailureIsReportedAndNeverNotified(t *testing.T) {
 	g := newRefreshRig(t)
 	g.publish(t, `"v1"`, catalogEntries(3, "x", map[string]int{"jellyfin": 1}))
@@ -604,7 +624,7 @@ func TestCatalogStore_ConcurrentInstallsOverOneCatalogAreSerialised(t *testing.T
 		for _, install := range []func() error{
 			func() error { return CatalogStore{Dir: dir, Key: pub}.Install(archive, sig) },
 			func() error {
-				_, err := CatalogStore{Dir: dir, Key: pub}.InstallFetched(archive, sig, Validators{ETag: fmt.Sprintf(`"%d"`, serial)})
+				_, err := CatalogStore{Dir: dir, Key: pub}.InstallFetched(context.Background(), archive, sig, Validators{ETag: fmt.Sprintf(`"%d"`, serial)})
 				return err
 			},
 		} {
@@ -688,7 +708,7 @@ func TestCatalogStore_FetchedValidatorsAreReplacedWithTheCatalogTheyDescribe(t *
 	pub, priv := newKey(t)
 	store := CatalogStore{Dir: filepath.Join(t.TempDir(), "catalog"), Key: pub}
 	a, aSig := signed(t, priv, catalogEntries(1, "a", map[string]int{"x": 1}))
-	if _, err := store.InstallFetched(a, aSig, Validators{ETag: `"a"`, LastModified: "Mon, 01 Jan 2026 00:00:00 GMT"}); err != nil {
+	if _, err := store.InstallFetched(context.Background(), a, aSig, Validators{ETag: `"a"`, LastModified: "Mon, 01 Jan 2026 00:00:00 GMT"}); err != nil {
 		t.Fatal(err)
 	}
 	if v := store.Validators(); v.ETag != `"a"` || v.LastModified == "" {
