@@ -847,3 +847,51 @@ func TestApplyHostConfig_NotConfigured(t *testing.T) {
 		t.Fatalf("status = %d, want 501", status.StatusCode)
 	}
 }
+
+func TestApplyHostConfig_KeepsALegacyCacheDockerDataRoot(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	daemonPath := filepath.Join(g.Root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(daemonPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"data-root": "` + config.DockerDataRootCacheLegacy + `", "storage-driver": "overlay2"}`)
+	if err := os.WriteFile(daemonPath, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restart := &config.FakeServiceRestarter{}
+	restart.SetActive(true)
+	h.DockerRestart = restart
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootCacheLegacy {
+		t.Fatalf("dockerDataRoot = %q, want %s", got.DockerDataRoot, config.DockerDataRootCacheLegacy)
+	}
+	raw, err := os.ReadFile(daemonPath)
+	if err != nil || string(raw) != string(legacy) {
+		t.Fatalf("daemon.json = %q (%v), want it unchanged", raw, err)
+	}
+	if created := h.DockerDirs.(*config.FakeDirMaker).Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none", created)
+	}
+	if restart.Stopped() || restart.Started() {
+		t.Fatal("Docker was stopped or started for an install that keeps its data-root")
+	}
+}

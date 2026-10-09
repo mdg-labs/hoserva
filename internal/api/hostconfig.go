@@ -204,7 +204,11 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	if err := h.Generator.ApplyDockerDataRoot(ctx, dataRoot, h.DockerDirs, h.DockerRestart, 1, time.Now()); err != nil {
 		return nil, mapDockerDataRootErr(fmt.Errorf("applying docker data-root: %w", err))
 	}
-	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: dataRoot}, nil
+	effectiveRoot, err := h.Generator.EffectiveDockerDataRoot(dataRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolving docker data-root: %w", err)
+	}
+	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: effectiveRoot}, nil
 }
 
 func (h *Handler) rollbackImportedShares(ctx context.Context, names []string) error {

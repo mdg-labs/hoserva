@@ -289,3 +289,52 @@ func TestApplyDockerDataRoot_UnreadableDirectoryRefuses(t *testing.T) {
 		t.Fatal("daemon.json was written")
 	}
 }
+
+func writeLegacyDaemonJSON(t *testing.T, g *Generator) (path string, body []byte) {
+	t.Helper()
+	path = filepath.Join(g.Root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(`{"data-root": "` + DockerDataRootCacheLegacy + `", "storage-driver": "overlay2"}`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path, body
+}
+
+func TestApplyDockerDataRoot_KeepsALegacyCacheDataRoot(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	path, body := writeLegacyDaemonJSON(t, g)
+	dirs := &FakeDirMaker{}
+	restart := &FakeServiceRestarter{}
+	restart.SetActive(true)
+
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache); err != nil {
+		t.Fatalf("CanApplyDockerDataRoot() = %v, want the legacy install accepted", err)
+	}
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now()); err != nil {
+		t.Fatalf("ApplyDockerDataRoot() = %v, want a no-op", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(body) {
+		t.Fatalf("daemon.json = %q (%v), want it untouched", got, err)
+	}
+	if len(dirs.Created()) != 0 || restart.Stopped() || restart.Started() {
+		t.Fatalf("Created() = %v, Stopped() = %v, Started() = %v, want nothing touched", dirs.Created(), restart.Stopped(), restart.Started())
+	}
+	root, err := g.EffectiveDockerDataRoot(DockerDataRootCache)
+	if err != nil || root != DockerDataRootCacheLegacy {
+		t.Fatalf("EffectiveDockerDataRoot() = %q, %v, want %s", root, err, DockerDataRootCacheLegacy)
+	}
+}
+
+func TestEffectiveDockerDataRoot_OtherwiseUnchanged(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	for _, in := range []string{DockerDataRootDefault, DockerDataRootCache} {
+		got, err := g.EffectiveDockerDataRoot(in)
+		if err != nil || got != in {
+			t.Fatalf("EffectiveDockerDataRoot(%q) = %q, %v, want it unchanged", in, got, err)
+		}
+	}
+}

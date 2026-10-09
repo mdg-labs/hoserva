@@ -175,6 +175,9 @@ func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string)
 	if dataRoot == DockerDataRootDefault {
 		return nil
 	}
+	if keep, err := g.keepsLegacyDockerDataRoot(dataRoot); err != nil || keep {
+		return err
+	}
 	if err := g.checkDockerDataRootUnused(dataRoot); err != nil {
 		return err
 	}
@@ -205,6 +208,35 @@ func (g *Generator) checkDockerDataRootUnused(dataRoot string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrDockerDataRootInUse, dataRoot)
+}
+
+// keepsLegacyDockerDataRoot reports whether dataRoot is the current cache
+// data-root while the managed daemon.json already names the legacy one: an
+// install moved there by an earlier version keeps it, so the move is not
+// repeated.
+func (g *Generator) keepsLegacyDockerDataRoot(dataRoot string) (bool, error) {
+	if dataRoot != DockerDataRootCache {
+		return false, nil
+	}
+	configured, err := g.configuredDockerDataRoot()
+	if err != nil {
+		return false, err
+	}
+	return configured == DockerDataRootCacheLegacy, nil
+}
+
+// EffectiveDockerDataRoot is the data-root ApplyDockerDataRoot leaves
+// configured for dataRoot: the legacy cache path when an install already
+// moved there, dataRoot otherwise.
+func (g *Generator) EffectiveDockerDataRoot(dataRoot string) (string, error) {
+	keep, err := g.keepsLegacyDockerDataRoot(dataRoot)
+	if err != nil {
+		return "", err
+	}
+	if keep {
+		return DockerDataRootCacheLegacy, nil
+	}
+	return dataRoot, nil
 }
 
 // configuredDockerDataRoot is the data-root the managed daemon.json names,
@@ -273,6 +305,9 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 
 	if dataRoot == DockerDataRootDefault {
 		return nil
+	}
+	if keep, err := g.keepsLegacyDockerDataRoot(dataRoot); err != nil || keep {
+		return err
 	}
 	if err := g.checkDockerDataRootUnused(dataRoot); err != nil {
 		return err
