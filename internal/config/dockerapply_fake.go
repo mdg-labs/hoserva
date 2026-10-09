@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"sync"
 )
@@ -16,6 +17,42 @@ type FakeDirMaker struct {
 	mu      sync.Mutex
 	created []string
 	err     error
+	entries map[string][]string
+	readErr map[string]error
+}
+
+// SetEntries scripts ReadDirNames(path) to report the directory as existing
+// with these entries. An unscripted path does not exist.
+func (f *FakeDirMaker) SetEntries(path string, names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.entries == nil {
+		f.entries = map[string][]string{}
+	}
+	f.entries[path] = names
+}
+
+// SetReadErr scripts ReadDirNames(path) to fail with err.
+func (f *FakeDirMaker) SetReadErr(path string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.readErr == nil {
+		f.readErr = map[string]error{}
+	}
+	f.readErr[path] = err
+}
+
+func (f *FakeDirMaker) ReadDirNames(path string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.readErr[path]; err != nil {
+		return nil, err
+	}
+	names, ok := f.entries[path]
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+	}
+	return append([]string(nil), names...), nil
 }
 
 // SetErr scripts every future MkdirAll call to fail with err.

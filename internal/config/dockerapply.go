@@ -43,12 +43,16 @@ const dockerDataRootDirMode = 0o711
 // directory's owner and mode would be set by whoever created it.
 var ErrDockerDataRootInUse = errors.New("config: docker data-root directory already holds files")
 
-// DirMaker creates a directory tree. ApplyDockerDataRoot's data-root move
-// is the one filesystem write it makes outside Generator.Root (the cache
-// mount, not /etc), so it sits behind this small interface with a
-// scriptable fake (doc 06 §2) instead of calling os.MkdirAll directly.
+// DirMaker creates a directory tree and lists what one holds.
+// ApplyDockerDataRoot's data-root move is the one filesystem access it makes
+// outside Generator.Root (the cache mount, not /etc), so both the write and
+// the occupancy read sit behind this small interface with a scriptable fake
+// (doc 06 §2) instead of calling os.MkdirAll and os.ReadDir directly.
+// ReadDirNames returns an error satisfying errors.Is(err, fs.ErrNotExist)
+// for a path that does not exist.
 type DirMaker interface {
 	MkdirAll(path string, perm os.FileMode) error
+	ReadDirNames(path string) ([]string, error)
 }
 
 // OSDirMaker is the real DirMaker.
@@ -56,6 +60,18 @@ type OSDirMaker struct{}
 
 func (OSDirMaker) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+func (OSDirMaker) ReadDirNames(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names, nil
 }
 
 // ServiceRestarter restarts Docker after its data-root moves (Q62, Q76):
@@ -170,15 +186,18 @@ func (g *Generator) clearDockerRestartPending() error {
 // this first and refuse the whole request before committing any of them,
 // rather than discovering the refusal only after the others are already
 // persisted. A no-op, like ApplyDockerDataRoot itself, whenever dataRoot is
-// DockerDataRootDefault.
-func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string) error {
+// DockerDataRootDefault. A nil dirs defaults to OSDirMaker.
+func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string, dirs DirMaker) error {
 	if dataRoot == DockerDataRootDefault {
 		return nil
 	}
 	if keep, err := g.keepsLegacyDockerDataRoot(dataRoot); err != nil || keep {
 		return err
 	}
-	if err := g.checkDockerDataRootUnused(dataRoot); err != nil {
+	if dirs == nil {
+		dirs = OSDirMaker{}
+	}
+	if err := g.checkDockerDataRootUnused(dataRoot, dirs); err != nil {
 		return err
 	}
 	return g.CanWrite(ctx, dockerDaemonConfigPath)
@@ -189,8 +208,8 @@ func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string)
 // move of this same data-root leaves Docker's own entries there, and
 // re-applying it must stay a no-op. A directory that cannot be read is
 // refused too, never taken as empty.
-func (g *Generator) checkDockerDataRootUnused(dataRoot string) error {
-	entries, err := os.ReadDir(dataRoot)
+func (g *Generator) checkDockerDataRootUnused(dataRoot string, dirs DirMaker) error {
+	entries, err := dirs.ReadDirNames(dataRoot)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -309,11 +328,11 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 	if keep, err := g.keepsLegacyDockerDataRoot(dataRoot); err != nil || keep {
 		return err
 	}
-	if err := g.checkDockerDataRootUnused(dataRoot); err != nil {
-		return err
-	}
 	if dirs == nil {
 		dirs = OSDirMaker{}
+	}
+	if err := g.checkDockerDataRootUnused(dataRoot, dirs); err != nil {
+		return err
 	}
 	if err := dirs.MkdirAll(dataRoot, dockerDataRootDirMode); err != nil {
 		return fmt.Errorf("config: creating docker data-root %s: %w", dataRoot, err)

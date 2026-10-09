@@ -137,7 +137,7 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	if restartPending {
 		dataRoot = config.DockerDataRootCache
 	}
-	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot); err != nil {
+	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot, h.DockerDirs); err != nil {
 		return nil, mapDockerDataRootErr(fmt.Errorf("checking docker data-root move: %w", err))
 	}
 

@@ -895,3 +895,35 @@ func TestApplyHostConfig_KeepsALegacyCacheDockerDataRoot(t *testing.T) {
 		t.Fatal("Docker was stopped or started for an install that keeps its data-root")
 	}
 }
+
+func TestApplyHostConfig_RefusesAnOccupiedCacheDataRootReportedByDockerDirs(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	dirs := h.DockerDirs.(*config.FakeDirMaker)
+	dirs.SetEntries(config.DockerDataRootCache, "stray")
+
+	_, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err == nil {
+		t.Fatal("ApplyHostConfig() = nil, want a refusal for an occupied data-root")
+	}
+	if _, statErr := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !os.IsNotExist(statErr) {
+		t.Fatal("daemon.json was written")
+	}
+	if len(dirs.Created()) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none", dirs.Created())
+	}
+}
