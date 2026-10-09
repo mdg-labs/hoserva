@@ -133,7 +133,7 @@ func userToAPI(u *User) apiv1.User {
 // (Q9) means "Secure" never blocks the cookie being stored in practice.
 func sessionCookie(token string, expiresAt time.Time) string {
 	c := &http.Cookie{
-		Name:     "hoserva_session",
+		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
@@ -147,7 +147,7 @@ func sessionCookie(token string, expiresAt time.Time) string {
 // clearedSessionCookie immediately expires the session cookie (logout).
 func clearedSessionCookie() string {
 	c := &http.Cookie{
-		Name:     "hoserva_session",
+		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
@@ -171,7 +171,22 @@ func (h *Handler) CreateFirstAdmin(ctx context.Context, req *apiv1.CreateFirstAd
 	if err != nil {
 		return nil, mapAuthError(err)
 	}
-	out := &apiv1.UserHeaders{Response: userToAPI(u)}
+	return h.signedIn(ctx, u, token)
+}
+
+// signedIn is the response of a request that opened a session: the cookie
+// and the session's second secret, which the client sends back as a header
+// (SessionSecretHeader). When the secret cannot be sealed the session is
+// revoked again, so no session exists that no client holds the secret of.
+func (h *Handler) signedIn(ctx context.Context, u *User, token string) (*apiv1.UserHeaders, error) {
+	secret, err := h.Auth.SessionSecret(token)
+	if err != nil {
+		if revokeErr := h.Auth.Logout(context.WithoutCancel(ctx), token); revokeErr != nil {
+			err = errors.Join(err, revokeErr)
+		}
+		return nil, err
+	}
+	out := &apiv1.UserHeaders{Response: userToAPI(u), XHoservaSessionSecret: secret}
 	out.SetCookie.SetTo(sessionCookie(token, h.Auth.Now().Add(sessionTTL)))
 	return out, nil
 }
@@ -182,9 +197,7 @@ func (h *Handler) Login(ctx context.Context, req *apiv1.LoginRequest) (*apiv1.Us
 	if err != nil {
 		return nil, mapAuthError(err)
 	}
-	out := &apiv1.UserHeaders{Response: userToAPI(u)}
-	out.SetCookie.SetTo(sessionCookie(token, h.Auth.Now().Add(sessionTTL)))
-	return out, nil
+	return h.signedIn(ctx, u, token)
 }
 
 func (h *Handler) Logout(ctx context.Context) (*apiv1.LogoutNoContent, error) {

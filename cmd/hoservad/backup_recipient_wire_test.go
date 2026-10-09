@@ -211,6 +211,9 @@ func TestNewBackupService_SkipsThePoolWhileTheArrayRecordHasAMigrationPending(t 
 	}
 
 	poolRoot := filepath.Join(dir, "mnt", "user")
+	if err := os.MkdirAll(poolRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	svc.PoolRoot = poolRoot
 	svc.PoolMounted = func(string) (bool, error) { return true, nil }
 	svc.Log = func(string, ...any) {}
@@ -232,7 +235,7 @@ func TestNewBackupService_SkipsThePoolWhileTheArrayRecordHasAMigrationPending(t 
 	if err := svc.Run(ctx); err == nil || !strings.Contains(err.Error(), "migration is finished") {
 		t.Fatalf("Run = %v, want a failure naming the pending migration", err)
 	}
-	if _, err := os.Stat(poolRoot); !os.IsNotExist(err) {
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
 		t.Fatalf("the pool was written to while the migration was pending: %v", err)
 	}
 

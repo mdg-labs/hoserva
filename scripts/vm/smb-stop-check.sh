@@ -68,15 +68,15 @@ echo "smb-stop-check[$HOSERVA_LAB_ID]: ensuring smbclient is present on the gues
 vm_ssh 'command -v smbclient >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq smbclient)'
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: logging in as $ADMIN_USERNAME"
-LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
+LOGIN_RESULT="$(vm_ssh "umask 077; curl -sk -c $COOKIE_JAR -D $COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'; tr -d '\r' <$COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$COOKIE_JAR.secret" 2>/dev/null)"
 [[ "$LOGIN_RESULT" == *'"role":"admin"'* ]] || die "login as $ADMIN_USERNAME did not return an admin session: $LOGIN_RESULT"
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: creating a dedicated share-only account ($SMB_USERNAME) for the SMB client — setUserPassword refuses to touch the sole admin account"
-USERS_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
+USERS_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
 if [[ "$USERS_RESULT" =~ \"id\":\"([^\"]+)\",\"username\":\"$SMB_USERNAME\" ]]; then
   SMB_USER_ID="${BASH_REMATCH[1]}"
 else
-  CREATE_USER_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$SMB_USERNAME\"}'" 2>/dev/null)"
+  CREATE_USER_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$SMB_USERNAME\"}'" 2>/dev/null)"
   if [[ "$CREATE_USER_RESULT" =~ \"id\":\"([^\"]+)\" ]]; then
     SMB_USER_ID="${BASH_REMATCH[1]}"
   else
@@ -85,17 +85,17 @@ else
 fi
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: setting a Samba password for $SMB_USERNAME through setUserPassword"
-SET_PW_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
+SET_PW_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/password -H 'Content-Type: application/json' -d '{\"password\":\"$SMB_PASSWORD\"}'" 2>/dev/null)"
 [[ "$SET_PW_STATUS" == "204" ]] || die "setUserPassword($SMB_USERNAME) returned HTTP $SET_PW_STATUS"
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: granting $SMB_USERNAME read-write access to '$SMB_SHARE' through updateUserSharePermissions"
-GRANT_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
+GRANT_STATUS="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X PUT https://127.0.0.1:8008/api/v1/users/$SMB_USER_ID/permissions -H 'Content-Type: application/json' -d '{\"permissions\":[{\"shareName\":\"$SMB_SHARE\",\"access\":\"read-write\"}]}'" 2>/dev/null)"
 [[ "$GRANT_STATUS" == "200" ]] || die "updateUserSharePermissions($SMB_USERNAME on $SMB_SHARE) returned HTTP $GRANT_STATUS"
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: confirming the pool is mounted and '$SMB_SHARE' is listed before connecting"
-POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 [[ "$POOL_RESULT" == *'"mounted":true'* ]] || die "pool is not mounted ahead of the SMB connection — array setup (step 3) did not leave it mounted: $POOL_RESULT"
-SHARES_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
+SHARES_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
 [[ "$SHARES_RESULT" == *"\"name\":\"$SMB_SHARE\""* ]] || die "share '$SMB_SHARE' is not listed ahead of the SMB connection: $SHARES_RESULT"
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: writing once over SMB to confirm access works before any stop"
@@ -139,7 +139,7 @@ sleep 2
 STATUS=0
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: calling POST /array/stop with a client still writing"
-STOP_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
+STOP_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
 if [[ "$STOP_RESULT" != *'"maintenanceMode":true'* ]]; then
   echo "smb-stop-check[$HOSERVA_LAB_ID]: array/stop did not report maintenanceMode:true: $STOP_RESULT" >&2
   STATUS=1
@@ -177,12 +177,12 @@ if [[ "$STATUS" -eq 0 ]]; then
 fi
 
 echo "smb-stop-check[$HOSERVA_LAB_ID]: calling POST /array/start"
-START_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
+START_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
 if [[ "$START_RESULT" != *'"maintenanceMode":false'* ]]; then
   echo "smb-stop-check[$HOSERVA_LAB_ID]: array/start did not report maintenanceMode:false: $START_RESULT" >&2
   STATUS=1
 fi
-POOL_AFTER="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+POOL_AFTER="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 if [[ "$POOL_AFTER" != *'"mounted":true'* ]]; then
   echo "smb-stop-check[$HOSERVA_LAB_ID]: pool is not mounted after array/start: $POOL_AFTER" >&2
   STATUS=1

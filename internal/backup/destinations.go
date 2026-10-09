@@ -703,7 +703,7 @@ func failedTest(err error) (TestResult, error) {
 // destination's credentials for the duration of one operation.
 func (s *Service) targetFor(ctx context.Context, dest Destination) (archiveTarget, error) {
 	if !dest.isRemote() {
-		return localTarget{dest: dest}, nil
+		return localTarget{dest: dest, poolRoot: s.poolRoot()}, nil
 	}
 	if dest.Type == TypeRclone {
 		return &rcloneTarget{runner: s.rcloneRunner(), dir: dest.Options["remote"] + ":" + dest.Path}, nil

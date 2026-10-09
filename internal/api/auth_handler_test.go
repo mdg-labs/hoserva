@@ -265,7 +265,7 @@ func TestRoleDenialMapsTo403(t *testing.T) {
 	}
 
 	sec := &api.SessionSecurityHandler{Auth: authSvc}
-	_, err = sec.HandleSessionCookie(ctx, apiv1.CancelJobOperation, apiv1.SessionCookie{APIKey: token})
+	_, err = sec.HandleSessionCookie(withSessionSecret(t, authSvc, ctx, token), apiv1.CancelJobOperation, apiv1.SessionCookie{APIKey: token})
 	status := apiError(t, h, err)
 	if status.StatusCode != 403 || status.Response.Code != "forbidden" {
 		t.Errorf("a viewer denied an admin-only operation = %+v, want 403 forbidden", status)
@@ -294,7 +294,11 @@ func sessionTokenFromCookie(t *testing.T, setCookie string) string {
 // going through the generated Server's own security dispatch.
 func principalContextForToken(ctx context.Context, authSvc *api.AuthService, token string) context.Context {
 	sec := &api.SessionSecurityHandler{Auth: authSvc}
-	sctx, err := sec.HandleSessionCookie(ctx, apiv1.GetCurrentSessionOperation, apiv1.SessionCookie{APIKey: token})
+	secret, err := authSvc.SessionSecret(token)
+	if err != nil {
+		panic(err)
+	}
+	sctx, err := sec.HandleSessionCookie(api.WithSessionSecret(ctx, secret), apiv1.GetCurrentSessionOperation, apiv1.SessionCookie{APIKey: token})
 	if err != nil {
 		panic(err)
 	}

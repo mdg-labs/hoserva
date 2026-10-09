@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
+import { type APIRequestContext, type Locator, type Page } from "@playwright/test";
+
+import { expect, SESSION_SECRET_HEADER, test } from "./session";
 
 // Journey 5 (doc 06 §4): "Delete many files → diff shows removals → sync
 // is blocked → warning is visible." Doc 02 §2 calls the threshold guard
@@ -61,13 +63,14 @@ const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled", "inte
 
 async function waitForJobTerminal(
   request: APIRequestContext,
+  headers: Record<string, string>,
   jobId: string,
   timeoutMs: number,
 ): Promise<Job> {
   const deadline = Date.now() + timeoutMs;
   let job: Job = { id: jobId, status: "unknown" };
   while (Date.now() < deadline) {
-    const response = await request.get(`/api/v1/jobs/${jobId}`);
+    const response = await request.get(`/api/v1/jobs/${jobId}`, { headers });
     if (response.ok()) {
       job = (await response.json()) as Job;
       if (TERMINAL_JOB_STATUSES.has(job.status)) {
@@ -107,8 +110,9 @@ async function reloadUntilVisible(page: Page, locator: Locator, timeoutMs = 30_0
   }
 }
 
-test("mass deletion blocks the sync", async ({ page }) => {
-  const baselineResponse = await page.request.get("/api/v1/parity");
+test("mass deletion blocks the sync", async ({ page, sessionSecret }) => {
+  const headers = { [SESSION_SECRET_HEADER]: sessionSecret };
+  const baselineResponse = await page.request.get("/api/v1/parity", { headers });
   expect(baselineResponse.ok(), "expected GET /parity to succeed").toBeTruthy();
   const baseline = (await baselineResponse.json()) as ParitySnapshot;
   expect(
@@ -146,7 +150,7 @@ test("mass deletion blocks the sync", async ({ page }) => {
   await expect(page.getByText(catalogString("parity.guard.blocked"), { exact: true })).toBeVisible();
   await expect(page.getByText(catalogString("parity.guard.bannerTitle"))).toBeVisible();
 
-  const trippedResponse = await page.request.get("/api/v1/parity");
+  const trippedResponse = await page.request.get("/api/v1/parity", { headers });
   expect(trippedResponse.ok()).toBeTruthy();
   const tripped = (await trippedResponse.json()) as ParitySnapshot;
   expect(
@@ -177,11 +181,12 @@ test("mass deletion blocks the sync", async ({ page }) => {
   // the journey never performs the override, which only the page's own
   // Sync anyway action, behind a typed confirmation, can send.
   const refusedSync = await page.request.post("/api/v1/parity/sync", {
+    headers,
     data: { confirm: false, dryRun: false },
   });
   expect(refusedSync.ok(), "expected startSync to queue a job even though the guard will fail it").toBeTruthy();
   const refusedJob = (await refusedSync.json()) as Job;
-  const finishedJob = await waitForJobTerminal(page.request, refusedJob.id, 60_000);
+  const finishedJob = await waitForJobTerminal(page.request, headers, refusedJob.id, 60_000);
   expect(
     finishedJob.status,
     "expected the unconfirmed sync job to fail against the tripped threshold guard, never succeed",
@@ -199,7 +204,7 @@ test("mass deletion blocks the sync", async ({ page }) => {
       .getByText(catalogString("jobs.status.failed"), { exact: true }),
   ).toBeVisible();
 
-  const afterResponse = await page.request.get("/api/v1/parity");
+  const afterResponse = await page.request.get("/api/v1/parity", { headers });
   expect(afterResponse.ok()).toBeTruthy();
   const after = (await afterResponse.json()) as ParitySnapshot;
   expect(

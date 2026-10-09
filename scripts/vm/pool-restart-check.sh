@@ -45,7 +45,7 @@ wait_for_admin_login() {
   local result=""
   while (( SECONDS < deadline )); do
     if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
-      result="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
+      result="$(vm_ssh "umask 077; curl -sk -c $COOKIE_JAR -D $COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'; tr -d '\r' <$COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$COOKIE_JAR.secret" 2>/dev/null || true)"
       if [[ "$result" == *'"role":"admin"'* ]]; then
         LOGIN_RESULT="$result"
         return 0
@@ -71,10 +71,10 @@ echo "pool-restart-check[$HOSERVA_LAB_ID]: logging in as $ADMIN_USERNAME"
 wait_for_admin_login "after the from-source refresh"
 
 echo "pool-restart-check[$HOSERVA_LAB_ID]: confirming the pool and share '$SHARE_NAME' are mounted"
-POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 if [[ "$POOL_RESULT" != *'"mounted":true'* ]]; then
-  vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
-  POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
+  POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 fi
 [[ "$POOL_RESULT" == *'"mounted":true'* ]] || die "pool is not mounted ahead of the restart check: $POOL_RESULT"
 
@@ -110,7 +110,7 @@ assert_mounts_and_marker() {
   [[ "${share:-0}" == "1" ]] || die "$label: expected exactly one share mount at $SHARE_PATH, found ${share:-unknown}"
   got="$(vm_ssh "sudo cat $MARKER" 2>/dev/null || true)"
   [[ "$got" == "$MARKER_BODY" ]] || die "$label: marker at $MARKER read back as '$got', want '$MARKER_BODY'"
-  pool="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null || true)"
+  pool="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null || true)"
   [[ "$pool" == *'"mounted":true'* ]] || die "$label: GET /pool did not report mounted:true after hoservad came back: $pool"
 }
 

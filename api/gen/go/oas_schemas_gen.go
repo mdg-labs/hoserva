@@ -25239,13 +25239,19 @@ func (s *UserGroup) SetMemberUserIds(val []uuid.UUID) {
 
 // UserHeaders wraps User with response headers.
 type UserHeaders struct {
-	SetCookie OptString
-	Response  User
+	SetCookie             OptString
+	XHoservaSessionSecret string
+	Response              User
 }
 
 // GetSetCookie returns the value of SetCookie.
 func (s *UserHeaders) GetSetCookie() OptString {
 	return s.SetCookie
+}
+
+// GetXHoservaSessionSecret returns the value of XHoservaSessionSecret.
+func (s *UserHeaders) GetXHoservaSessionSecret() string {
+	return s.XHoservaSessionSecret
 }
 
 // GetResponse returns the value of Response.
@@ -25256,6 +25262,11 @@ func (s *UserHeaders) GetResponse() User {
 // SetSetCookie sets the value of SetCookie.
 func (s *UserHeaders) SetSetCookie(val OptString) {
 	s.SetCookie = val
+}
+
+// SetXHoservaSessionSecret sets the value of XHoservaSessionSecret.
+func (s *UserHeaders) SetXHoservaSessionSecret(val string) {
+	s.XHoservaSessionSecret = val
 }
 
 // SetResponse sets the value of Response.

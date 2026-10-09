@@ -28,6 +28,9 @@ func mapDockerDataRootErr(err error) error {
 	if errors.Is(err, config.ErrUnmanaged) || errors.Is(err, config.ErrExistingHostFile) {
 		return &apiError{code: "unmanaged_config", statusCode: 409, message: err.Error()}
 	}
+	if errors.Is(err, config.ErrDockerDataRootInUse) {
+		return &apiError{code: "docker_data_root_in_use", statusCode: 409, message: err.Error()}
+	}
 	return err
 }
 
@@ -134,7 +137,7 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	if restartPending {
 		dataRoot = config.DockerDataRootCache
 	}
-	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot); err != nil {
+	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot, h.DockerDirs); err != nil {
 		return nil, mapDockerDataRootErr(fmt.Errorf("checking docker data-root move: %w", err))
 	}
 
@@ -201,7 +204,11 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	if err := h.Generator.ApplyDockerDataRoot(ctx, dataRoot, h.DockerDirs, h.DockerRestart, 1, time.Now()); err != nil {
 		return nil, mapDockerDataRootErr(fmt.Errorf("applying docker data-root: %w", err))
 	}
-	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: dataRoot}, nil
+	effectiveRoot, err := h.Generator.EffectiveDockerDataRoot(dataRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolving docker data-root: %w", err)
+	}
+	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: effectiveRoot}, nil
 }
 
 func (h *Handler) rollbackImportedShares(ctx context.Context, names []string) error {

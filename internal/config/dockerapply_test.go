@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
 func TestApplyDockerDataRoot_NoopAtDefault(t *testing.T) {
@@ -35,13 +37,13 @@ func TestApplyDockerDataRoot_WritesConfigAndDirectory(t *testing.T) {
 	restart := &FakeServiceRestarter{}
 	restart.SetActive(false)
 
-	if err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, restart, 1, time.Now()); err != nil {
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now()); err != nil {
 		t.Fatalf("ApplyDockerDataRoot: %v", err)
 	}
 
 	created := dirs.Created()
-	if len(created) != 1 || created[0] != "/mnt/cache/docker" {
-		t.Fatalf("Created() = %v, want exactly [/mnt/cache/docker]", created)
+	if len(created) != 1 || created[0] != DockerDataRootCache {
+		t.Fatalf("Created() = %v, want exactly [/mnt/cache/.docker]", created)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(g.Root, "docker", "daemon.json"))
@@ -56,7 +58,7 @@ func TestApplyDockerDataRoot_WritesConfigAndDirectory(t *testing.T) {
 		t.Fatalf("daemon.json = %s, want no #-comment header (must be valid JSON)", raw)
 	}
 	want := `{
-  "data-root": "/mnt/cache/docker",
+  "data-root": "/mnt/cache/.docker",
   "storage-driver": "overlay2"
 }`
 	if string(raw) != want {
@@ -76,7 +78,7 @@ func TestApplyDockerDataRoot_RestartsAnAlreadyRunningDocker(t *testing.T) {
 	restart := &FakeServiceRestarter{}
 	restart.SetActive(true)
 
-	if err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, restart, 1, time.Now()); err != nil {
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now()); err != nil {
 		t.Fatalf("ApplyDockerDataRoot: %v", err)
 	}
 	if !restart.Stopped() || !restart.Started() {
@@ -100,7 +102,7 @@ func TestApplyDockerDataRoot_NeverStartsDockerAcrossRepeatedInactiveCalls(t *tes
 	for i := 0; i < 2; i++ {
 		restart := &FakeServiceRestarter{}
 		restart.SetActive(false)
-		if err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, restart, 1, time.Now()); err != nil {
+		if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now()); err != nil {
 			t.Fatalf("ApplyDockerDataRoot() call %d: %v", i, err)
 		}
 		if restart.Stopped() || restart.Started() {
@@ -119,7 +121,7 @@ func TestApplyDockerDataRoot_RecoversRestartAfterPriorStopWithoutStart(t *testin
 	firstAttempt := &FakeServiceRestarter{}
 	firstAttempt.SetActive(true)
 	firstAttempt.SetStartErr(errors.New("simulated start failure"))
-	err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, firstAttempt, 1, time.Now())
+	err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, firstAttempt, 1, time.Now())
 	if err == nil {
 		t.Fatal("ApplyDockerDataRoot() = nil, want the simulated start failure surfaced")
 	}
@@ -134,7 +136,7 @@ func TestApplyDockerDataRoot_RecoversRestartAfterPriorStopWithoutStart(t *testin
 	// do."
 	retry := &FakeServiceRestarter{}
 	retry.SetActive(false)
-	if err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, retry, 1, time.Now()); err != nil {
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, retry, 1, time.Now()); err != nil {
 		t.Fatalf("ApplyDockerDataRoot() retry: %v", err)
 	}
 	if retry.Stopped() {
@@ -157,7 +159,7 @@ func TestApplyDockerDataRoot_ExistingUnmanagedDaemonJSONRefuses(t *testing.T) {
 	dirs := &FakeDirMaker{}
 	restart := &FakeServiceRestarter{}
 
-	err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, restart, 1, time.Now())
+	err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now())
 	if !errors.Is(err, ErrExistingHostFile) {
 		t.Fatalf("ApplyDockerDataRoot() error = %v, want ErrExistingHostFile — an existing, unmanaged daemon.json must never be overwritten", err)
 	}
@@ -176,7 +178,7 @@ func TestApplyDockerDataRoot_MkdirFailurePropagates(t *testing.T) {
 	dirs.SetErr(errors.New("simulated mkdir failure"))
 	restart := &FakeServiceRestarter{}
 
-	err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, restart, 1, time.Now())
+	err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now())
 	if err == nil {
 		t.Fatal("ApplyDockerDataRoot() = nil, want the mkdir failure surfaced")
 	}
@@ -201,5 +203,148 @@ func TestApplyDockerDataRoot_NilDirsAndRestartAreSafe(t *testing.T) {
 	}
 	if info, err := os.Stat(dataRoot); err != nil || !info.IsDir() {
 		t.Fatalf("data-root directory was not created: %v", err)
+	}
+}
+
+func TestDockerDataRootCacheIsNeverAShareBranch(t *testing.T) {
+	names := []string{"docker", "Docker", "docker-data", "appdata", "media", ".docker", "..", "."}
+	for _, name := range names {
+		if pool.ValidateShareName(name) != nil {
+			continue
+		}
+		if filepath.Join(filepath.Dir(DockerDataRootCache), name) == DockerDataRootCache {
+			t.Fatalf("share name %q is accepted and its cache branch is Docker's data-root %s", name, DockerDataRootCache)
+		}
+	}
+	if err := pool.ValidateShareName(filepath.Base(DockerDataRootCache)); err == nil {
+		t.Fatalf("share name %q is accepted", filepath.Base(DockerDataRootCache))
+	}
+}
+
+func TestApplyDockerDataRoot_RefusesADirectoryThatHoldsFiles(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	dirs := &FakeDirMaker{}
+	dirs.SetEntries(DockerDataRootCache, "overlay2")
+	restart := &FakeServiceRestarter{}
+	restart.SetActive(true)
+
+	err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now())
+	if !errors.Is(err, ErrDockerDataRootInUse) {
+		t.Fatalf("ApplyDockerDataRoot() error = %v, want ErrDockerDataRootInUse", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !os.IsNotExist(statErr) {
+		t.Fatal("daemon.json was written for a directory that already holds files")
+	}
+	if len(dirs.Created()) != 0 || restart.Stopped() {
+		t.Fatalf("Created() = %v, Stopped() = %v, want nothing touched", dirs.Created(), restart.Stopped())
+	}
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs); !errors.Is(err, ErrDockerDataRootInUse) {
+		t.Fatalf("CanApplyDockerDataRoot() error = %v, want ErrDockerDataRootInUse", err)
+	}
+}
+
+func TestApplyDockerDataRoot_AcceptsAnEmptyExistingDirectory(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	dirs := &FakeDirMaker{}
+	dirs.SetEntries(DockerDataRootCache)
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs); err != nil {
+		t.Fatalf("CanApplyDockerDataRoot() = %v, want an empty directory accepted", err)
+	}
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, nil, 1, time.Now()); err != nil {
+		t.Fatalf("ApplyDockerDataRoot() = %v, want an empty directory accepted", err)
+	}
+}
+
+func TestApplyDockerDataRoot_OccupancyComesFromTheInjectedDirMaker(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache, &FakeDirMaker{}); err != nil {
+		t.Fatalf("CanApplyDockerDataRoot() = %v, want a path the fake reports as absent accepted", err)
+	}
+	occupied := &FakeDirMaker{}
+	occupied.SetEntries(DockerDataRootCache, "x")
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache, occupied); !errors.Is(err, ErrDockerDataRootInUse) {
+		t.Fatalf("CanApplyDockerDataRoot() = %v, want ErrDockerDataRootInUse from the scripted entries", err)
+	}
+}
+
+func TestApplyDockerDataRoot_ReapplyAfterCompletedMoveStaysANoop(t *testing.T) {
+	root := t.TempDir()
+	dataRoot := filepath.Join(root, "cache", ".docker")
+	g := NewGenerator(root)
+	if err := g.ApplyDockerDataRoot(context.Background(), dataRoot, nil, nil, 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataRoot, "containers"), 0o711); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.ApplyDockerDataRoot(context.Background(), dataRoot, nil, nil, 1, time.Now()); err != nil {
+		t.Fatalf("re-applying a completed move = %v, want a no-op", err)
+	}
+}
+
+func TestApplyDockerDataRoot_UnreadableDirectoryRefuses(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	dirs := &FakeDirMaker{}
+	dirs.SetReadErr(DockerDataRootCache, errors.New("permission denied"))
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, nil, 1, time.Now()); err == nil {
+		t.Fatal("ApplyDockerDataRoot() = nil, want a refusal when the path cannot be read")
+	}
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs); err == nil {
+		t.Fatal("CanApplyDockerDataRoot() = nil, want a refusal when the path cannot be read")
+	}
+	if len(dirs.Created()) != 0 {
+		t.Fatalf("Created() = %v, want none", dirs.Created())
+	}
+	if _, statErr := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !os.IsNotExist(statErr) {
+		t.Fatal("daemon.json was written")
+	}
+}
+
+func writeLegacyDaemonJSON(t *testing.T, g *Generator) (path string, body []byte) {
+	t.Helper()
+	path = filepath.Join(g.Root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(`{"data-root": "` + DockerDataRootCacheLegacy + `", "storage-driver": "overlay2"}`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path, body
+}
+
+func TestApplyDockerDataRoot_KeepsALegacyCacheDataRoot(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	path, body := writeLegacyDaemonJSON(t, g)
+	dirs := &FakeDirMaker{}
+	restart := &FakeServiceRestarter{}
+	restart.SetActive(true)
+
+	if err := g.CanApplyDockerDataRoot(context.Background(), DockerDataRootCache, &FakeDirMaker{}); err != nil {
+		t.Fatalf("CanApplyDockerDataRoot() = %v, want the legacy install accepted", err)
+	}
+	if err := g.ApplyDockerDataRoot(context.Background(), DockerDataRootCache, dirs, restart, 1, time.Now()); err != nil {
+		t.Fatalf("ApplyDockerDataRoot() = %v, want a no-op", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(body) {
+		t.Fatalf("daemon.json = %q (%v), want it untouched", got, err)
+	}
+	if len(dirs.Created()) != 0 || restart.Stopped() || restart.Started() {
+		t.Fatalf("Created() = %v, Stopped() = %v, Started() = %v, want nothing touched", dirs.Created(), restart.Stopped(), restart.Started())
+	}
+	root, err := g.EffectiveDockerDataRoot(DockerDataRootCache)
+	if err != nil || root != DockerDataRootCacheLegacy {
+		t.Fatalf("EffectiveDockerDataRoot() = %q, %v, want %s", root, err, DockerDataRootCacheLegacy)
+	}
+}
+
+func TestEffectiveDockerDataRoot_OtherwiseUnchanged(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	for _, in := range []string{DockerDataRootDefault, DockerDataRootCache} {
+		got, err := g.EffectiveDockerDataRoot(in)
+		if err != nil || got != in {
+			t.Fatalf("EffectiveDockerDataRoot(%q) = %q, %v, want it unchanged", in, got, err)
+		}
 	}
 }

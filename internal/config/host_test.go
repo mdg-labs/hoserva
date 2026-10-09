@@ -270,8 +270,8 @@ func TestDockerDataRootStaysWithoutCache(t *testing.T) {
 
 func TestDockerDataRootCacheWhenEmptyAndAccepted(t *testing.T) {
 	inv := HostInventory{}
-	if got := DockerDataRoot(inv, true, true); got != "/mnt/cache/docker" {
-		t.Fatalf("data-root = %q, want /mnt/cache/docker", got)
+	if got := DockerDataRoot(inv, true, true); got != "/mnt/cache/.docker" {
+		t.Fatalf("data-root = %q, want /mnt/cache/.docker", got)
 	}
 }
 

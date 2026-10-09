@@ -3,7 +3,9 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -34,12 +36,23 @@ const dockerRestartPendingPath = "docker/.restart-pending"
 // default ownership of /var/lib/docker.
 const dockerDataRootDirMode = 0o711
 
-// DirMaker creates a directory tree. ApplyDockerDataRoot's data-root move
-// is the one filesystem write it makes outside Generator.Root (the cache
-// mount, not /etc), so it sits behind this small interface with a
-// scriptable fake (doc 06 §2) instead of calling os.MkdirAll directly.
+// ErrDockerDataRootInUse is ApplyDockerDataRoot's refusal when the
+// directory it would make Docker's data-root already holds entries that
+// Docker's own daemon.json does not name as its data-root — a share's cache
+// branch, say. Docker would run as root on whatever is in there, and the
+// directory's owner and mode would be set by whoever created it.
+var ErrDockerDataRootInUse = errors.New("config: docker data-root directory already holds files")
+
+// DirMaker creates a directory tree and lists what one holds.
+// ApplyDockerDataRoot's data-root move is the one filesystem access it makes
+// outside Generator.Root (the cache mount, not /etc), so both the write and
+// the occupancy read sit behind this small interface with a scriptable fake
+// (doc 06 §2) instead of calling os.MkdirAll and os.ReadDir directly.
+// ReadDirNames returns an error satisfying errors.Is(err, fs.ErrNotExist)
+// for a path that does not exist.
 type DirMaker interface {
 	MkdirAll(path string, perm os.FileMode) error
+	ReadDirNames(path string) ([]string, error)
 }
 
 // OSDirMaker is the real DirMaker.
@@ -47,6 +60,18 @@ type OSDirMaker struct{}
 
 func (OSDirMaker) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+func (OSDirMaker) ReadDirNames(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names, nil
 }
 
 // ServiceRestarter restarts Docker after its data-root moves (Q62, Q76):
@@ -161,12 +186,97 @@ func (g *Generator) clearDockerRestartPending() error {
 // this first and refuse the whole request before committing any of them,
 // rather than discovering the refusal only after the others are already
 // persisted. A no-op, like ApplyDockerDataRoot itself, whenever dataRoot is
-// DockerDataRootDefault.
-func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string) error {
+// DockerDataRootDefault. A nil dirs defaults to OSDirMaker.
+func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string, dirs DirMaker) error {
 	if dataRoot == DockerDataRootDefault {
 		return nil
 	}
+	if keep, err := g.keepsLegacyDockerDataRoot(dataRoot); err != nil || keep {
+		return err
+	}
+	if dirs == nil {
+		dirs = OSDirMaker{}
+	}
+	if err := g.checkDockerDataRootUnused(dataRoot, dirs); err != nil {
+		return err
+	}
 	return g.CanWrite(ctx, dockerDaemonConfigPath)
+}
+
+// checkDockerDataRootUnused refuses dataRoot when it exists with entries and
+// the managed daemon.json does not already name it: an earlier, completed
+// move of this same data-root leaves Docker's own entries there, and
+// re-applying it must stay a no-op. A directory that cannot be read is
+// refused too, never taken as empty.
+func (g *Generator) checkDockerDataRootUnused(dataRoot string, dirs DirMaker) error {
+	entries, err := dirs.ReadDirNames(dataRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("config: reading docker data-root %s: %w", dataRoot, err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	configured, err := g.configuredDockerDataRoot()
+	if err != nil {
+		return err
+	}
+	if configured == dataRoot {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrDockerDataRootInUse, dataRoot)
+}
+
+// keepsLegacyDockerDataRoot reports whether dataRoot is the current cache
+// data-root while the managed daemon.json already names the legacy one: an
+// install moved there by an earlier version keeps it, so the move is not
+// repeated.
+func (g *Generator) keepsLegacyDockerDataRoot(dataRoot string) (bool, error) {
+	if dataRoot != DockerDataRootCache {
+		return false, nil
+	}
+	configured, err := g.configuredDockerDataRoot()
+	if err != nil {
+		return false, err
+	}
+	return configured == DockerDataRootCacheLegacy, nil
+}
+
+// EffectiveDockerDataRoot is the data-root ApplyDockerDataRoot leaves
+// configured for dataRoot: the legacy cache path when an install already
+// moved there, dataRoot otherwise.
+func (g *Generator) EffectiveDockerDataRoot(dataRoot string) (string, error) {
+	keep, err := g.keepsLegacyDockerDataRoot(dataRoot)
+	if err != nil {
+		return "", err
+	}
+	if keep {
+		return DockerDataRootCacheLegacy, nil
+	}
+	return dataRoot, nil
+}
+
+// configuredDockerDataRoot is the data-root the managed daemon.json names,
+// or "" when there is none or it names none.
+func (g *Generator) configuredDockerDataRoot() (string, error) {
+	full, _, err := g.resolvePath(dockerDaemonConfigPath)
+	if err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("config: reading docker daemon.json: %w", err)
+	}
+	var cfg dockerDaemonConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", nil
+	}
+	return cfg.DataRoot, nil
 }
 
 // ApplyDockerDataRoot performs the move DockerDataRoot only decides:
@@ -215,8 +325,14 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 	if dataRoot == DockerDataRootDefault {
 		return nil
 	}
+	if keep, err := g.keepsLegacyDockerDataRoot(dataRoot); err != nil || keep {
+		return err
+	}
 	if dirs == nil {
 		dirs = OSDirMaker{}
+	}
+	if err := g.checkDockerDataRootUnused(dataRoot, dirs); err != nil {
+		return err
 	}
 	if err := dirs.MkdirAll(dataRoot, dockerDataRootDirMode); err != nil {
 		return fmt.Errorf("config: creating docker data-root %s: %w", dataRoot, err)

@@ -283,7 +283,7 @@ type Invoker interface {
 	//
 	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
 	// race between two concurrent requests can never create two admins. Signs the new admin in on success,
-	// exactly like login.
+	// exactly like login, including the `X-Hoserva-Session-Secret` response header.
 	//
 	// POST /setup/admin
 	CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error)
@@ -618,7 +618,9 @@ type Invoker interface {
 	// plain file inside the template's own directory (a symlink, however it points), has another
 	// extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template
 	// is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and
-	// subresources beyond the image itself, so an SVG cannot run code when it is opened directly.
+	// subresources beyond the image itself, so an SVG cannot run code when it is opened directly. An
+	// `<img>` element loads it, which cannot send the `X-Hoserva-Session-Secret` header, so the session
+	// cookie alone is accepted here.
 	//
 	// GET /catalog/{id}/icon
 	GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (GetCatalogTemplateIconRes, error)
@@ -630,7 +632,9 @@ type Invoker interface {
 	// template's own directory (a symlink in the path or as the file, however it points), has another
 	// extension, or is larger than 4 MiB is not served, and neither is a position past the end of the
 	// list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The
-	// response forbids content sniffing and anything but the image itself.
+	// response forbids content sniffing and anything but the image itself. An `<img>` element loads it,
+	// which cannot send the `X-Hoserva-Session-Secret` header, so the session cookie alone is accepted
+	// here.
 	//
 	// GET /catalog/{id}/screenshots/{index}
 	GetCatalogTemplateScreenshot(ctx context.Context, params GetCatalogTemplateScreenshotParams) (GetCatalogTemplateScreenshotRes, error)
@@ -1310,6 +1314,8 @@ type Invoker interface {
 	// lift early, where a real account's own (never capped or evicted) would not. Once the password is
 	// correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an
 	// account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
+	// The response also carries the session's second secret in the `X-Hoserva-Session-Secret` header (see
+	// the `sessionCookie` security scheme). A client sends it as a header and never stores it in a cookie.
 	//
 	// POST /auth/login
 	Login(ctx context.Context, request *LoginRequest) (*UserHeaders, error)
@@ -5222,7 +5228,7 @@ func (c *Client) sendCreateBackupDestination(ctx context.Context, request *Creat
 //
 // Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
 // race between two concurrent requests can never create two admins. Signs the new admin in on success,
-// exactly like login.
+// exactly like login, including the `X-Hoserva-Session-Secret` response header.
 //
 // POST /setup/admin
 func (c *Client) CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error) {
@@ -9847,7 +9853,9 @@ func (c *Client) sendGetCatalogTemplate(ctx context.Context, params GetCatalogTe
 // plain file inside the template's own directory (a symlink, however it points), has another
 // extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template
 // is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and
-// subresources beyond the image itself, so an SVG cannot run code when it is opened directly.
+// subresources beyond the image itself, so an SVG cannot run code when it is opened directly. An
+// `<img>` element loads it, which cannot send the `X-Hoserva-Session-Secret` header, so the session
+// cookie alone is accepted here.
 //
 // GET /catalog/{id}/icon
 func (c *Client) GetCatalogTemplateIcon(ctx context.Context, params GetCatalogTemplateIconParams) (GetCatalogTemplateIconRes, error) {
@@ -9997,7 +10005,9 @@ func (c *Client) sendGetCatalogTemplateIcon(ctx context.Context, params GetCatal
 // template's own directory (a symlink in the path or as the file, however it points), has another
 // extension, or is larger than 4 MiB is not served, and neither is a position past the end of the
 // list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The
-// response forbids content sniffing and anything but the image itself.
+// response forbids content sniffing and anything but the image itself. An `<img>` element loads it,
+// which cannot send the `X-Hoserva-Session-Secret` header, so the session cookie alone is accepted
+// here.
 //
 // GET /catalog/{id}/screenshots/{index}
 func (c *Client) GetCatalogTemplateScreenshot(ctx context.Context, params GetCatalogTemplateScreenshotParams) (GetCatalogTemplateScreenshotRes, error) {
@@ -17853,6 +17863,8 @@ func (c *Client) sendListWakeEvents(ctx context.Context) (res *WakeEventsRespons
 // lift early, where a real account's own (never capped or evicted) would not. Once the password is
 // correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an
 // account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
+// The response also carries the session's second secret in the `X-Hoserva-Session-Secret` header (see
+// the `sessionCookie` security scheme). A client sends it as a header and never stores it in a cookie.
 //
 // POST /auth/login
 func (c *Client) Login(ctx context.Context, request *LoginRequest) (*UserHeaders, error) {

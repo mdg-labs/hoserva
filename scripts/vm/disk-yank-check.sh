@@ -85,7 +85,7 @@ FILE_SIZE_BYTES=131072
 
 array_login() {
   local result
-  result="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
+  result="$(vm_ssh "umask 077; curl -sk -c $COOKIE_JAR -D $COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'; tr -d '\r' <$COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$COOKIE_JAR.secret" 2>/dev/null)"
   [[ "$result" == *"\"username\":\"$ADMIN_USERNAME\""* ]]
 }
 
@@ -121,7 +121,7 @@ wait_pool_entry_state() {
   POOL_JSON=""
   while (( SECONDS < deadline )); do
     if array_login; then
-      POOL_JSON="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+      POOL_JSON="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
       if [[ "$POOL_JSON" =~ \"mountPoint\":\"$mp\",\"role\":\"([^\"]+)\",\"state\":\"([^\"]+)\" ]]; then
         [[ "${BASH_REMATCH[2]}" == "$want" ]] && return 0
       fi
@@ -172,7 +172,7 @@ wait_job_terminal() {
   job_status=""
   job_result=""
   while (( SECONDS < deadline )); do
-    job_result="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/jobs/$job_id" 2>/dev/null)"
+    job_result="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/jobs/$job_id" 2>/dev/null)"
     if [[ "$job_result" =~ \"status\":\"([^\"]+)\" ]]; then
       job_status="${BASH_REMATCH[1]}"
     fi
@@ -309,7 +309,7 @@ printf '%s' "$DISK1_ORIGINAL_XML" >"$DISK1_ORIGINAL_XML_FILE"
 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: logging in and confirming disk1's own array mountpoint from a live getPool call"
 array_login || die "login as $ADMIN_USERNAME failed ahead of this check's own disk1 discovery"
-POOL_BEFORE="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+POOL_BEFORE="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 [[ "$POOL_BEFORE" == *'"mounted":true'* ]] || die "getPool does not report mounted:true ahead of this check — array setup (step 3) or an earlier step should already have the pool mounted"
 
 MOUNTPOINT=""
@@ -323,7 +323,7 @@ fi
 echo "disk-yank-check[$HOSERVA_LAB_ID]: disk1 (/dev/$DISK1_TARGET) is mounted at $MOUNTPOINT"
 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: creating this check's own dedicated share '$DISKYANK_SHARE' (array-only — this array has no cache disk)"
-SHARE_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$DISKYANK_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+SHARE_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$DISKYANK_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
 [[ "$SHARE_RESULT" == *"\"name\":\"$DISKYANK_SHARE\""* ]] || die "createShare($DISKYANK_SHARE) did not return the expected share: $SHARE_RESULT"
 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: seeding $FILE_COUNT files directly onto disk1's own mountpoint ($MOUNTPOINT/$DISKYANK_SHARE) so they are guaranteed to be on the disk this check yanks"
@@ -352,7 +352,7 @@ fi
 [[ -n "$ORIGINAL_MANIFEST" ]] || die "sha256sum of the seeded files at $MOUNTPOINT/$DISKYANK_SHARE returned nothing"
 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: running a baseline sync so parity covers the seeded files"
-SYNC_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+SYNC_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
 [[ "$SYNC_RESULT" =~ \"id\":\"([^\"]+)\" ]] || die "startSync did not return a job id: $SYNC_RESULT"
 SYNC_JOB_ID="${BASH_REMATCH[1]}"
 wait_job_terminal "$SYNC_JOB_ID" 180
@@ -367,7 +367,7 @@ wait_hoserva_active 120 || echo "disk-yank-check[$HOSERVA_LAB_ID]: hoservad did 
 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: confirming the array reports disk1 missing"
 array_login || die "login as $ADMIN_USERNAME failed after the missing-disk boot"
-POOL_MISSING="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+POOL_MISSING="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 if [[ "$POOL_MISSING" =~ \"mountPoint\":\"$MOUNTPOINT\",\"role\":\"([^\"]+)\",\"state\":\"([^\"]+)\" ]]; then
   [[ "${BASH_REMATCH[2]}" == "missing" ]] || die "getPool reports $MOUNTPOINT as state '${BASH_REMATCH[2]}' after yanking its disk, want 'missing': $POOL_MISSING"
 else
@@ -420,7 +420,7 @@ echo "disk-yank-check[$HOSERVA_LAB_ID]: confirmed — $MOUNTPOINT reports state 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: driving the real replace flow — planDiskReplace, then replaceDisk"
 
 PLAN_BODY="{\"mountpoint\":\"$MOUNTPOINT\",\"device\":\"/dev/$DISK1_TARGET\",\"filesystem\":\"ext4\"}"
-PLAN_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/disks/array/replace/plan -H 'Content-Type: application/json' -d '$PLAN_BODY'" 2>/dev/null)"
+PLAN_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/disks/array/replace/plan -H 'Content-Type: application/json' -d '$PLAN_BODY'" 2>/dev/null)"
 [[ "$PLAN_RESULT" == *"\"mountpoint\":\"$MOUNTPOINT\""* ]] || die "planDiskReplace did not return the expected plan for $MOUNTPOINT: $PLAN_RESULT"
 [[ "$PLAN_RESULT" =~ \"confirmation\":\"([^\"]*)\" ]] || die "planDiskReplace's response has no confirmation phrase: $PLAN_RESULT"
 CONFIRMATION="${BASH_REMATCH[1]}"
@@ -428,7 +428,7 @@ CONFIRMATION="${BASH_REMATCH[1]}"
 echo "disk-yank-check[$HOSERVA_LAB_ID]: plan confirmation: $CONFIRMATION"
 
 REPLACE_BODY="{\"mountpoint\":\"$MOUNTPOINT\",\"device\":\"/dev/$DISK1_TARGET\",\"filesystem\":\"ext4\",\"confirmation\":\"$CONFIRMATION\"}"
-REPLACE_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/disks/array/replace -H 'Content-Type: application/json' -d '$REPLACE_BODY'" 2>/dev/null)"
+REPLACE_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/disks/array/replace -H 'Content-Type: application/json' -d '$REPLACE_BODY'" 2>/dev/null)"
 [[ "$REPLACE_RESULT" =~ \"id\":\"([^\"]+)\" ]] || die "replaceDisk did not return a job id: $REPLACE_RESULT"
 REPLACE_JOB_ID="${BASH_REMATCH[1]}"
 
@@ -441,7 +441,7 @@ fi
 
 if [[ "$STATUS" -eq 0 ]]; then
   echo "disk-yank-check[$HOSERVA_LAB_ID]: confirming the array reports $MOUNTPOINT active again"
-  POOL_AFTER="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  POOL_AFTER="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   if [[ "$POOL_AFTER" =~ \"mountPoint\":\"$MOUNTPOINT\",\"role\":\"([^\"]+)\",\"state\":\"([^\"]+)\" ]]; then
     if [[ "${BASH_REMATCH[2]}" != "active" ]]; then
       echo "disk-yank-check[$HOSERVA_LAB_ID]: getPool reports $MOUNTPOINT as state '${BASH_REMATCH[2]}' after replaceDisk succeeded, want 'active': $POOL_AFTER" >&2
@@ -483,7 +483,7 @@ fi
 
 if [[ "$STATUS" -eq 0 ]]; then
   echo "disk-yank-check[$HOSERVA_LAB_ID]: running a following snapraid diff through the real API and confirming it is clean"
-  DIFF_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/diff" 2>/dev/null)"
+  DIFF_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/parity/diff" 2>/dev/null)"
   # diffToAPIGroups (internal/api/parity_handler.go) always returns one
   # entry per diff category (removed, updated, added, moved, copied,
   # moved_by_hoserva) — "groups" is never itself empty, clean or not, so a

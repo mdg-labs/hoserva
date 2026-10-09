@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./session";
 
 // Not one of doc 06 §4's numbered journeys — a harness smoke test proving
 // Playwright itself drives a real browser against a real running Hoserva

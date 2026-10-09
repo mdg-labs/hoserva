@@ -99,7 +99,7 @@ else
   die "setup/status returned an \"adminExists\" body neither true nor false: $SETUP_STATUS"
 fi
 COOKIE_JAR="/tmp/hoserva-ups-cookiejar"
-LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$UPS_ADMIN_USER\",\"password\":\"$UPS_ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
+LOGIN_RESULT="$(vm_ssh "umask 077; curl -sk -c $COOKIE_JAR -D $COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$UPS_ADMIN_USER\",\"password\":\"$UPS_ADMIN_PASSWORD\"}'; tr -d '\r' <$COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$COOKIE_JAR.secret" 2>/dev/null || true)"
 if [[ "$LOGIN_RESULT" != *'"role":"admin"'* ]]; then
   echo "ups-check[$HOSERVA_LAB_ID]: logging in as $UPS_ADMIN_USER did not return an admin session ($LOGIN_RESULT) — the notifications assertion below will be skipped, everything else (the CLI, run as root) does not need it"
   HAVE_SESSION=false
@@ -295,7 +295,7 @@ fi
 
 echo "ups-check[$HOSERVA_LAB_ID]: === doc 03 §8.3 event catalog: ups_on_battery / ups_battery_low reached the notify inbox ==="
 if $HAVE_SESSION; then
-  NOTIF_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/notifications" 2>/dev/null || true)"
+  NOTIF_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -H @$COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/notifications" 2>/dev/null || true)"
   if [[ "$NOTIF_RESULT" == *'"ups_on_battery"'* ]]; then
     echo "ups-check[$HOSERVA_LAB_ID]: the ups_on_battery event reached the notify inbox — PASS"
     record "ups_on_battery event delivered" "PASS"

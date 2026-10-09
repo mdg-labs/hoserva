@@ -269,7 +269,7 @@ JOURNEY5_DELETE_COUNT=250
 # call array_setup and seed_journey5_fixture make.
 array_login() {
   local result
-  result="$(vm_ssh "curl -sk -c $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ARRAY_ADMIN_USERNAME\",\"password\":\"$ARRAY_ADMIN_PASSWORD\"}'" 2>/dev/null)"
+  result="$(vm_ssh "umask 077; curl -sk -c $ARRAY_COOKIE_JAR -D $ARRAY_COOKIE_JAR.hdr -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ARRAY_ADMIN_USERNAME\",\"password\":\"$ARRAY_ADMIN_PASSWORD\"}'; tr -d '\r' <$ARRAY_COOKIE_JAR.hdr | grep -i '^x-hoserva-session-secret:' >$ARRAY_COOKIE_JAR.secret" 2>/dev/null)"
   [[ "$result" == *"\"username\":\"$ARRAY_ADMIN_USERNAME\""* ]]
 }
 
@@ -280,11 +280,11 @@ array_login() {
 # itself (out of scope for this issue).
 ensure_pool_mounted() {
   local pool_result
-  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   [[ "$pool_result" == *'"mounted":true'* ]] && return 0
 
-  vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
-  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
+  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   [[ "$pool_result" == *'"mounted":true'* ]] && return 0
 
   echo "vm-suite[$HOSERVA_LAB_ID]: array/start did not mount the pool — restarting hoservad and retrying (issue #262's array-not-mounted-until-restart gap)"
@@ -294,8 +294,8 @@ ensure_pool_mounted() {
     sleep 2
   done
   array_login || return 1
-  vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
-  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
+  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   [[ "$pool_result" == *'"mounted":true'* ]]
 }
 
@@ -308,7 +308,7 @@ wait_job_terminal() {
   job_status=""
   job_result=""
   while (( SECONDS < deadline )); do
-    job_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/jobs/$job_id" 2>/dev/null)"
+    job_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/jobs/$job_id" 2>/dev/null)"
     if [[ "$job_result" =~ \"status\":\"([^\"]+)\" ]]; then
       job_status="${BASH_REMATCH[1]}"
     fi
@@ -387,7 +387,7 @@ array_setup() {
 
   local create_array_body create_array_result job_id
   create_array_body="{\"disks\":[{\"device\":\"/dev/${parity_dev}\",\"role\":\"parity\",\"filesystem\":\"xfs\"},{\"device\":\"/dev/${data1_dev}\",\"role\":\"data\",\"filesystem\":\"ext4\"},{\"device\":\"/dev/${data2_dev}\",\"role\":\"data\",\"filesystem\":\"ext4\"}],\"confirmation\":\"${confirmation}\"}"
-  create_array_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/disks/array -H 'Content-Type: application/json' -d '$create_array_body'" 2>/dev/null)"
+  create_array_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/disks/array -H 'Content-Type: application/json' -d '$create_array_body'" 2>/dev/null)"
   if [[ "$create_array_result" =~ \"id\":\"([^\"]+)\" ]]; then
     job_id="${BASH_REMATCH[1]}"
   else
@@ -445,7 +445,7 @@ array_setup() {
   fi
 
   local share_result
-  share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$JOURNEY5_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+  share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$JOURNEY5_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
   if [[ "$share_result" != *"\"name\":\"$JOURNEY5_SHARE\""* ]]; then
     ARRAY_SETUP_REASON="createShare did not return the expected share: $share_result"
     return 1
@@ -494,7 +494,7 @@ array_stop_start_share_check() {
   fi
 
   local stop_result
-  stop_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
+  stop_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
   if [[ "$stop_result" != *'"maintenanceMode":true'* ]]; then
     ARRAY_STOP_START_REASON="array/stop did not report maintenanceMode:true with the share still live — the catch-all unmount fails EBUSY while the share's own mount is still nested under it (#268's own symptom): $stop_result"
     return 1
@@ -512,7 +512,7 @@ array_stop_start_share_check() {
   fi
 
   local start_result
-  start_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
+  start_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
   if [[ "$start_result" != *'"maintenanceMode":false'* ]]; then
     ARRAY_STOP_START_REASON="array/start did not report maintenanceMode:false: $start_result"
     return 1
@@ -601,7 +601,7 @@ FIXTURE
   fi
 
   local sync_result job_id
-  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     job_id="${BASH_REMATCH[1]}"
   else
@@ -774,7 +774,7 @@ midsync_wait_mid_flight() {
   local deadline=$((SECONDS + timeout_s))
   local result job_json proc_alive status
   while (( SECONDS < deadline )); do
-    result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/jobs/$job_id; printf '\\n---MIDSYNC---\\n'; (sudo pgrep -x snapraid >/dev/null 2>&1 && echo yes || echo no)" 2>/dev/null)"
+    result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/jobs/$job_id; printf '\\n---MIDSYNC---\\n'; (sudo pgrep -x snapraid >/dev/null 2>&1 && echo yes || echo no)" 2>/dev/null)"
     job_json="${result%%---MIDSYNC---*}"
     proc_alive="${result##*---MIDSYNC---}"
     proc_alive="${proc_alive#$'\n'}"
@@ -897,7 +897,7 @@ midsync_destroy() {
 
   if [[ "$iteration" == "1" ]]; then
     local share_result
-    share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$MIDSYNC_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+    share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$MIDSYNC_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
     if [[ "$share_result" != *"\"name\":\"$MIDSYNC_SHARE\""* ]]; then
       MIDSYNC_REASON="createShare did not return the expected share: $share_result"
       return 1
@@ -913,7 +913,7 @@ midsync_destroy() {
   # completed its guarded re-sync, so a missing lastSyncAt there is a
   # real precondition failure, not a legitimately-never-synced array.
   local pre_parity pre_lastsyncat=""
-  pre_parity="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+  pre_parity="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
   if [[ "$pre_parity" =~ \"lastSyncAt\":\"([^\"]+)\" ]]; then
     pre_lastsyncat="${BASH_REMATCH[1]}"
   elif [[ "$iteration" != "1" ]]; then
@@ -941,7 +941,7 @@ midsync_destroy() {
 
   echo "vm-suite[$HOSERVA_LAB_ID]: starting this sync and destroying '$VM_DOMAIN' once it is confirmed genuinely mid-flight, ${delay_s}s after that confirmation (iteration $iteration)"
   local sync_result job_id
-  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     job_id="${BASH_REMATCH[1]}"
     MIDSYNC_LAST_JOB_ID="$job_id"
@@ -968,7 +968,7 @@ midsync_destroy() {
   fi
 
   local parity_result
-  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
   if [[ "$parity_result" != *'"dataDisks":'* ]]; then
     MIDSYNC_REASON="getParity returned an unexpected response after the post-destroy boot (iteration $iteration): $parity_result"
     return 1
@@ -1004,7 +1004,7 @@ midsync_destroy() {
 
   echo "vm-suite[$HOSERVA_LAB_ID]: interrupted sync confirmed (job $job_id interrupted, iteration $iteration, delay ${delay_s}s) — re-running the sync through the normal guarded path"
   local resync_result resync_job_id
-  resync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  resync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$resync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     resync_job_id="${BASH_REMATCH[1]}"
     MIDSYNC_LAST_JOB_ID="$resync_job_id"
@@ -1023,7 +1023,7 @@ midsync_destroy() {
     return 1
   fi
 
-  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
   if [[ "$parity_result" != *'"lastSyncAt"'* || "$parity_result" != *'"freshness":"green"'* ]]; then
     MIDSYNC_REASON="getParity does not report a completed sync (freshness=green, lastSyncAt set) after the guarded re-sync succeeded (iteration $iteration): $parity_result"
     return 1
@@ -1094,7 +1094,7 @@ midsync_ensure_synced() {
   fi
 
   local sync_result job_id
-  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     job_id="${BASH_REMATCH[1]}"
   else
@@ -1108,7 +1108,7 @@ midsync_ensure_synced() {
     return 1
   fi
 
-  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
   if [[ "$parity_result" != *'"lastSyncAt"'* || "$parity_result" != *'"freshness":"green"'* ]]; then
     MIDSYNC_REASON="step 6 cleanup sync succeeded but getParity still does not report freshness=green with lastSyncAt set: $parity_result"
     return 1
@@ -1200,20 +1200,20 @@ config_backup_restore() {
   # share fresh keeps this test on its own subject (in-place config
   # restore) without depending on a fix for that gap.
   local share_result
-  share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$CONFIG_TEST_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+  share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$CONFIG_TEST_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
   if [[ "$share_result" != *"\"name\":\"$CONFIG_TEST_SHARE\""* ]]; then
     CONFIG_REASON="createShare($CONFIG_TEST_SHARE) did not return the expected share: $share_result"
     return 1
   fi
 
   local shares_before
-  shares_before="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
+  shares_before="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
   if [[ "$shares_before" != *"\"name\":\"$CONFIG_TEST_SHARE\""* ]]; then
     CONFIG_REASON="listShares before export did not include the freshly created '$CONFIG_TEST_SHARE' share: $shares_before"
     return 1
   fi
   local pool_before
-  pool_before="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  pool_before="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   if [[ "$pool_before" != *'"role":"parity"'* || "$pool_before" != *'"role":"data"'* ]]; then
     CONFIG_REASON="getPool before export does not show the parity/data role assignment step 3 created: $pool_before"
     return 1
@@ -1226,7 +1226,7 @@ config_backup_restore() {
 
   echo "vm-suite[$HOSERVA_LAB_ID]: exporting the config archive"
   local export_remote="/tmp/hoserva-l3-config-export.tar.zst" export_status
-  export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o $export_remote -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)"
+  export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -o $export_remote -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)"
   if [[ "$export_status" != "200" ]]; then
     CONFIG_REASON="exportConfig returned HTTP $export_status"
     return 1
@@ -1240,13 +1240,13 @@ config_backup_restore() {
 
   echo "vm-suite[$HOSERVA_LAB_ID]: making two changes after the export — deleting '$CONFIG_TEST_SHARE' and adding a throwaway user — for the import below to genuinely undo"
   local delete_status
-  delete_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o /dev/null -w '%{http_code}' -X DELETE https://127.0.0.1:8008/api/v1/shares/$CONFIG_TEST_SHARE -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
+  delete_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -o /dev/null -w '%{http_code}' -X DELETE https://127.0.0.1:8008/api/v1/shares/$CONFIG_TEST_SHARE -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
   if [[ "$delete_status" != "204" ]]; then
     CONFIG_REASON="deleteShare($CONFIG_TEST_SHARE) returned HTTP $delete_status ahead of the import round-trip"
     return 1
   fi
   local create_user_result
-  create_user_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$CONFIG_THROWAWAY_USER\"}'" 2>/dev/null)"
+  create_user_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X POST https://127.0.0.1:8008/api/v1/users -H 'Content-Type: application/json' -d '{\"username\":\"$CONFIG_THROWAWAY_USER\"}'" 2>/dev/null)"
   if [[ "$create_user_result" != *"\"username\":\"$CONFIG_THROWAWAY_USER\""* ]]; then
     CONFIG_REASON="createUser($CONFIG_THROWAWAY_USER) did not return the expected account ahead of the import round-trip: $create_user_result"
     return 1
@@ -1266,8 +1266,8 @@ config_backup_restore() {
   fi
 
   local shares_mid users_mid
-  shares_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
-  users_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
+  shares_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
+  users_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
   if [[ "$shares_mid" == *"\"name\":\"$CONFIG_TEST_SHARE\""* ]]; then
     CONFIG_REASON="'$CONFIG_TEST_SHARE' is still listed after deleteShare — the import below would not prove it restores anything"
     return 1
@@ -1279,7 +1279,7 @@ config_backup_restore() {
 
   echo "vm-suite[$HOSERVA_LAB_ID]: importing the exported archive back — in-place restore (doc 10 §1)"
   local import_response import_status import_report
-  import_response="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -w '\n%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/import -F 'archive=@$export_remote;type=application/zstd' -F 'confirm=true'" 2>/dev/null)"
+  import_response="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -w '\n%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/import -F 'archive=@$export_remote;type=application/zstd' -F 'confirm=true'" 2>/dev/null)"
   import_status="${import_response##*$'\n'}"
   import_report="${import_response%$'\n'*}"
   if [[ "$import_status" != "200" ]]; then
@@ -1299,9 +1299,9 @@ config_backup_restore() {
   fi
 
   local shares_after users_after pool_after
-  shares_after="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
-  users_after="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
-  pool_after="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  shares_after="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
+  users_after="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
+  pool_after="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
 
   if [[ "$shares_after" != *"\"name\":\"$CONFIG_TEST_SHARE\""* ]]; then
     CONFIG_REASON="'$CONFIG_TEST_SHARE' did not come back after importConfig — shares did not restore: $shares_after"
@@ -1389,9 +1389,9 @@ BM_MAPPING_REMOTE="/tmp/hoserva-l3-bare-metal-disk-mapping.json"
 bm_api() {
   local method=$1 api_path=$2 body=${3:-}
   if [[ -n "$body" ]]; then
-    vm_ssh "curl -sfk -b $ARRAY_COOKIE_JAR -X $method https://127.0.0.1:8008/api/v1$api_path -H 'Content-Type: application/json' -d '$body'"
+    vm_ssh "curl -sfk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X $method https://127.0.0.1:8008/api/v1$api_path -H 'Content-Type: application/json' -d '$body'"
   else
-    vm_ssh "curl -sfk -b $ARRAY_COOKIE_JAR -X $method https://127.0.0.1:8008/api/v1$api_path"
+    vm_ssh "curl -sfk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -X $method https://127.0.0.1:8008/api/v1$api_path"
   fi
 }
 
@@ -1511,7 +1511,7 @@ GUEST
 
   echo "vm-suite[$HOSERVA_LAB_ID]: exporting the config archive and copying it off the guest"
   local export_status
-  export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o $BM_ARCHIVE_REMOTE -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)" || export_status=""
+  export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -H @$ARRAY_COOKIE_JAR.secret -o $BM_ARCHIVE_REMOTE -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)" || export_status=""
   if [[ "$export_status" != "200" ]]; then
     BM_REASON="exportConfig returned HTTP ${export_status:-nothing}"
     return 1

@@ -263,7 +263,7 @@ func encodeCreateBackupDestinationResponse(response *BackupDestination, w http.R
 
 func encodeCreateFirstAdminResponse(response *UserHeaders, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Access-Control-Expose-Headers", "Set-Cookie")
+	w.Header().Set("Access-Control-Expose-Headers", "Set-Cookie,X-Hoserva-Session-Secret")
 	// Encoding response headers.
 	{
 		h := uri.NewHeaderEncoder(w.Header())
@@ -280,6 +280,18 @@ func encodeCreateFirstAdminResponse(response *UserHeaders, w http.ResponseWriter
 				return nil
 			}); err != nil {
 				return errors.Wrap(err, "encode Set-Cookie header")
+			}
+		}
+		// Encode "X-Hoserva-Session-Secret" header.
+		{
+			cfg := uri.HeaderParameterEncodingConfig{
+				Name:    "X-Hoserva-Session-Secret",
+				Explode: false,
+			}
+			if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+				return e.EncodeValue(conv.StringToString(response.XHoservaSessionSecret))
+			}); err != nil {
+				return errors.Wrap(err, "encode X-Hoserva-Session-Secret header")
 			}
 		}
 	}
@@ -1693,7 +1705,7 @@ func encodeListWakeEventsResponse(response *WakeEventsResponse, w http.ResponseW
 
 func encodeLoginResponse(response *UserHeaders, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Access-Control-Expose-Headers", "Set-Cookie")
+	w.Header().Set("Access-Control-Expose-Headers", "Set-Cookie,X-Hoserva-Session-Secret")
 	// Encoding response headers.
 	{
 		h := uri.NewHeaderEncoder(w.Header())
@@ -1710,6 +1722,18 @@ func encodeLoginResponse(response *UserHeaders, w http.ResponseWriter, span trac
 				return nil
 			}); err != nil {
 				return errors.Wrap(err, "encode Set-Cookie header")
+			}
+		}
+		// Encode "X-Hoserva-Session-Secret" header.
+		{
+			cfg := uri.HeaderParameterEncodingConfig{
+				Name:    "X-Hoserva-Session-Secret",
+				Explode: false,
+			}
+			if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+				return e.EncodeValue(conv.StringToString(response.XHoservaSessionSecret))
+			}); err != nil {
+				return errors.Wrap(err, "encode X-Hoserva-Session-Secret header")
 			}
 		}
 	}

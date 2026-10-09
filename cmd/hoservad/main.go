@@ -1177,7 +1177,7 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 	// below (a GET with no body has nothing for it to bound) — see
 	// maxRequestBodyBytes's own doc comment.
 	mux.Handle(apiPathPrefix+"/events", http.MaxBytesHandler(api.SetupGate(withSourceAddrMiddleware(events), authStore, apiPathPrefix), maxRequestBodyBytes))
-	mux.Handle(apiPathPrefix+"/", limitRequestBody(api.SetupGate(withSourceAddrMiddleware(api.FlushLogStream(apiPathPrefix, apiServer)), authStore, apiPathPrefix)))
+	mux.Handle(apiPathPrefix+"/", limitRequestBody(api.SetupGate(withSourceAddrMiddleware(api.GuardBrowserRequests(api.FlushLogStream(apiPathPrefix, apiServer))), authStore, apiPathPrefix)))
 	mountAPINotFoundRoutes(mux)
 	mux.Handle("/", spaHandler(webRoot))
 
@@ -1200,18 +1200,22 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 }
 
 // tcpEventsAuthenticate builds EventsHandler's Authenticate seam for the
-// TCP transport: a real session cookie, checked the same way
-// SessionSecurityHandler validates one for every other operation — viewer
-// is /api/v1/events's own x-hoserva-role, satisfied by any signed-in
-// user.
+// TCP transport: the session cookie and the session's second secret,
+// checked the same way SessionSecurityHandler checks them for every other
+// operation, and the account's current role against the role the spec
+// declares for the stream. EventsHandler calls it again on every keep-alive
+// tick, so a revoked session or a lowered role ends an open stream.
 func tcpEventsAuthenticate(authService *api.AuthService) func(r *http.Request) error {
 	return func(r *http.Request) error {
 		cookie, err := r.Cookie("hoserva_session")
 		if err != nil {
 			return err
 		}
-		_, err = authService.ValidateSession(r.Context(), cookie.Value)
-		return err
+		u, err := authService.ValidateSessionWithSecret(r.Context(), cookie.Value, r.Header.Get(api.SessionSecretHeader))
+		if err != nil {
+			return err
+		}
+		return api.EnforceEventsRole(api.Role(u.Role))
 	}
 }
 

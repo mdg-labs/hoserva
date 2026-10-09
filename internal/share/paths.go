@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
@@ -14,7 +15,8 @@ const maxShareNameLen = 64
 
 var (
 	// ErrInvalidName is a share name pool.ValidateShareName refuses, or
-	// one longer than the API's 64-character cap.
+	// one longer than the API's 64-character cap, or the directory name
+	// Docker's data-root uses on the cache.
 	ErrInvalidName = errors.New("share: invalid name")
 	// ErrPathEscapes is a browse or delete path that leaves the share.
 	ErrPathEscapes = errors.New("share: path escapes the share")
@@ -208,6 +210,9 @@ func validateName(name string) error {
 	}
 	if len(name) > maxShareNameLen {
 		return fmt.Errorf("%w: %q is longer than %d characters", ErrInvalidName, name, maxShareNameLen)
+	}
+	if name == filepath.Base(config.DockerDataRootCache) {
+		return fmt.Errorf("%w: %q is the directory Docker's data-root uses on the cache", ErrInvalidName, name)
 	}
 	return nil
 }

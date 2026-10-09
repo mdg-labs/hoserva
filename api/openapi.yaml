@@ -367,6 +367,11 @@ paths:
         changes and new notifications. Every event type is a schema in this
         reference, as a member type of `Event`.
 
+        A session authenticates the stream like any other request: the
+        `X-Hoserva-Session-Secret` header goes with the cookie, so a web client
+        reads the stream with `fetch`, not an `EventSource`, which cannot send a
+        header. A request without it is refused with 401 `unauthorized`.
+
         The job system publishes `job_progress` events on every state and
         progress change.
       tags: [events]
@@ -413,7 +418,7 @@ paths:
         Reachable only before an admin exists; refused once one does. Creating
         the admin is atomic — a race between two concurrent requests can never
         create two admins. Signs the new admin in on success, exactly like
-        login.
+        login, including the `X-Hoserva-Session-Secret` response header.
       tags: [auth]
       x-hoserva-role: public
       security: []
@@ -428,6 +433,15 @@ paths:
           description: The admin account, now signed in.
           headers:
             Set-Cookie:
+              schema:
+                type: string
+            X-Hoserva-Session-Secret:
+              required: true
+              description: >-
+                The session's second secret. A client keeps it in memory or
+                session storage, never in a cookie, and sends it back as the
+                `X-Hoserva-Session-Secret` request header on every request that
+                authenticates with the session cookie.
               schema:
                 type: string
           content:
@@ -458,6 +472,10 @@ paths:
         `totp_invalid` (a wrong one) does reveal that an account has TOTP
         enrolled — an unavoidable, rate-limited signal, not one this API tries
         to hide.
+
+        The response also carries the session's second secret in the
+        `X-Hoserva-Session-Secret` header (see the `sessionCookie` security
+        scheme). A client sends it as a header and never stores it in a cookie.
       tags: [auth]
       x-hoserva-role: public
       security: []
@@ -472,6 +490,15 @@ paths:
           description: Signed in.
           headers:
             Set-Cookie:
+              schema:
+                type: string
+            X-Hoserva-Session-Secret:
+              required: true
+              description: >-
+                The session's second secret. A client keeps it in memory or
+                session storage, never in a cookie, and sends it back as the
+                `X-Hoserva-Session-Secret` request header on every request that
+                authenticates with the session cookie.
               schema:
                 type: string
           content:
@@ -5845,7 +5872,9 @@ paths:
         `template_icon_not_found`. An unknown template is 404
         `template_not_found`. The response forbids content sniffing and
         scripts, styles and subresources beyond the image itself, so an SVG
-        cannot run code when it is opened directly.
+        cannot run code when it is opened directly. An `<img>` element loads
+        it, which cannot send the `X-Hoserva-Session-Secret` header, so the
+        session cookie alone is accepted here.
       tags: [templates]
       x-hoserva-role: viewer
       responses:
@@ -5911,7 +5940,9 @@ paths:
         or is larger than 4 MiB is not served, and neither is a position past
         the end of the list: 404 `template_screenshot_not_found`. An unknown
         template is 404 `template_not_found`. The response forbids content
-        sniffing and anything but the image itself.
+        sniffing and anything but the image itself. An `<img>` element loads
+        it, which cannot send the `X-Hoserva-Session-Secret` header, so the
+        session cookie alone is accepted here.
       tags: [templates]
       x-hoserva-role: viewer
       responses:
@@ -6637,7 +6668,18 @@ components:
       type: apiKey
       in: cookie
       name: hoserva_session
-      description: Web UI session, issued at login over TCP.
+      # Design refs: doc 15 T15
+      description: >-
+        Web UI session, issued at login over TCP. The cookie alone is not
+        enough, because a browser sends it to every service on the same host
+        name whatever the port: a request authenticated with it must also carry
+        the session's second secret in the `X-Hoserva-Session-Secret` header
+        (returned by `login` and `createFirstAdmin`), or it is refused with 401
+        `unauthorized`. `getCatalogTemplateIcon` and
+        `getCatalogTemplateScreenshot` do not need the header, since an `<img>`
+        element cannot send one. A request that changes state is also refused
+        with 403 `forbidden` when its `Origin` header is not the server's own
+        origin or its `Sec-Fetch-Site` header says it came from elsewhere.
     apiToken:
       type: http
       scheme: bearer

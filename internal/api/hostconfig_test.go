@@ -540,8 +540,8 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DockerDataRoot != "/mnt/cache/docker" {
-		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/docker", got.DockerDataRoot)
+	if got.DockerDataRoot != "/mnt/cache/.docker" {
+		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/.docker", got.DockerDataRoot)
 	}
 
 	// ApplyDockerDataRoot must have actually run, not just DockerDataRoot's
@@ -549,15 +549,15 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	// through Generator (never overwriting anything, since none existed).
 	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
 	created := fakeDirs.Created()
-	if len(created) != 1 || created[0] != "/mnt/cache/docker" {
-		t.Fatalf("DockerDirs.Created() = %v, want exactly [/mnt/cache/docker]", created)
+	if len(created) != 1 || created[0] != "/mnt/cache/.docker" {
+		t.Fatalf("DockerDirs.Created() = %v, want exactly [/mnt/cache/.docker]", created)
 	}
 	daemonJSON, err := os.ReadFile(filepath.Join(g.Root, "docker", "daemon.json"))
 	if err != nil {
 		t.Fatalf("reading generated daemon.json: %v", err)
 	}
-	if !strings.Contains(string(daemonJSON), `"data-root": "/mnt/cache/docker"`) {
-		t.Fatalf("daemon.json = %s, want a data-root of /mnt/cache/docker", daemonJSON)
+	if !strings.Contains(string(daemonJSON), `"data-root": "/mnt/cache/.docker"`) {
+		t.Fatalf("daemon.json = %s, want a data-root of /mnt/cache/.docker", daemonJSON)
 	}
 	if strings.Contains(string(daemonJSON), "Hoserva") {
 		t.Fatalf("daemon.json = %s, want no #-comment header — Docker's own daemon.json must be valid JSON", daemonJSON)
@@ -845,5 +845,85 @@ func TestApplyHostConfig_NotConfigured(t *testing.T) {
 	status := apiError(t, h, err)
 	if status.StatusCode != 501 {
 		t.Fatalf("status = %d, want 501", status.StatusCode)
+	}
+}
+
+func TestApplyHostConfig_KeepsALegacyCacheDockerDataRoot(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	daemonPath := filepath.Join(g.Root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(daemonPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"data-root": "` + config.DockerDataRootCacheLegacy + `", "storage-driver": "overlay2"}`)
+	if err := os.WriteFile(daemonPath, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restart := &config.FakeServiceRestarter{}
+	restart.SetActive(true)
+	h.DockerRestart = restart
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootCacheLegacy {
+		t.Fatalf("dockerDataRoot = %q, want %s", got.DockerDataRoot, config.DockerDataRootCacheLegacy)
+	}
+	raw, err := os.ReadFile(daemonPath)
+	if err != nil || string(raw) != string(legacy) {
+		t.Fatalf("daemon.json = %q (%v), want it unchanged", raw, err)
+	}
+	if created := h.DockerDirs.(*config.FakeDirMaker).Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none", created)
+	}
+	if restart.Stopped() || restart.Started() {
+		t.Fatal("Docker was stopped or started for an install that keeps its data-root")
+	}
+}
+
+func TestApplyHostConfig_RefusesAnOccupiedCacheDataRootReportedByDockerDirs(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	dirs := h.DockerDirs.(*config.FakeDirMaker)
+	dirs.SetEntries(config.DockerDataRootCache, "stray")
+
+	_, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err == nil {
+		t.Fatal("ApplyHostConfig() = nil, want a refusal for an occupied data-root")
+	}
+	if _, statErr := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !os.IsNotExist(statErr) {
+		t.Fatal("daemon.json was written")
+	}
+	if len(dirs.Created()) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none", dirs.Created())
 	}
 }

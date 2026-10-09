@@ -122,6 +122,7 @@ export interface paths {
         /**
          * Stream live events
          * @description Server-Sent Events for job progress, disk state changes, container state changes and new notifications. Every event type is a schema in this reference, as a member type of `Event`.
+         *     A session authenticates the stream like any other request: the `X-Hoserva-Session-Secret` header goes with the cookie, so a web client reads the stream with `fetch`, not an `EventSource`, which cannot send a header. A request without it is refused with 401 `unauthorized`.
          *     The job system publishes `job_progress` events on every state and progress change.
          */
         get: operations["streamEvents"];
@@ -164,7 +165,7 @@ export interface paths {
         put?: never;
         /**
          * Create the first admin account
-         * @description Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a race between two concurrent requests can never create two admins. Signs the new admin in on success, exactly like login.
+         * @description Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a race between two concurrent requests can never create two admins. Signs the new admin in on success, exactly like login, including the `X-Hoserva-Session-Secret` response header.
          */
         post: operations["createFirstAdmin"];
         delete?: never;
@@ -185,6 +186,7 @@ export interface paths {
         /**
          * Log in
          * @description Username is matched case-insensitively, using simple lowercasing rather than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled. Rate-limited and lockout-protected per account and per source address: an unknown username and a wrong password against a real one get the same status and error code (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry cap, an unknown username's lockout can lift early, where a real account's own (never capped or evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
+         *     The response also carries the session's second secret in the `X-Hoserva-Session-Secret` header (see the `sessionCookie` security scheme). A client sends it as a header and never stores it in a cookie.
          */
         post: operations["login"];
         delete?: never;
@@ -3030,7 +3032,7 @@ export interface paths {
         };
         /**
          * Get a catalog template's icon
-         * @description The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG) chosen by the file's extension, never by its content. A template that names no icon has none to serve: 404 `template_icon_not_found`, and the web UI shows its placeholder. A file that is not a plain file inside the template's own directory (a symlink, however it points), has another extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and subresources beyond the image itself, so an SVG cannot run code when it is opened directly.
+         * @description The icon file the template names, with a content type from an allow-list (SVG, PNG, WebP or JPEG) chosen by the file's extension, never by its content. A template that names no icon has none to serve: 404 `template_icon_not_found`, and the web UI shows its placeholder. A file that is not a plain file inside the template's own directory (a symlink, however it points), has another extension, or is larger than 1 MiB is not served: 404 `template_icon_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and scripts, styles and subresources beyond the image itself, so an SVG cannot run code when it is opened directly. An `<img>` element loads it, which cannot send the `X-Hoserva-Session-Secret` header, so the session cookie alone is accepted here.
          */
         get: operations["getCatalogTemplateIcon"];
         put?: never;
@@ -3055,7 +3057,7 @@ export interface paths {
         };
         /**
          * Get one of a catalog template's screenshots
-         * @description The screenshot at that position of the template's `screenshots` list, with a content type from an allow-list (PNG, WebP or JPEG) chosen by the file's extension, never by its content. It is addressed by position, so no file path ever appears in a request. A file that is not a plain file inside the template's own directory (a symlink in the path or as the file, however it points), has another extension, or is larger than 4 MiB is not served, and neither is a position past the end of the list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and anything but the image itself.
+         * @description The screenshot at that position of the template's `screenshots` list, with a content type from an allow-list (PNG, WebP or JPEG) chosen by the file's extension, never by its content. It is addressed by position, so no file path ever appears in a request. A file that is not a plain file inside the template's own directory (a symlink in the path or as the file, however it points), has another extension, or is larger than 4 MiB is not served, and neither is a position past the end of the list: 404 `template_screenshot_not_found`. An unknown template is 404 `template_not_found`. The response forbids content sniffing and anything but the image itself. An `<img>` element loads it, which cannot send the `X-Hoserva-Session-Secret` header, so the session cookie alone is accepted here.
          */
         get: operations["getCatalogTemplateScreenshot"];
         put?: never;
@@ -6635,6 +6637,8 @@ export interface operations {
             200: {
                 headers: {
                     "Set-Cookie"?: string;
+                    /** @description The session's second secret. A client keeps it in memory or session storage, never in a cookie, and sends it back as the `X-Hoserva-Session-Secret` request header on every request that authenticates with the session cookie. */
+                    "X-Hoserva-Session-Secret": string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6661,6 +6665,8 @@ export interface operations {
             200: {
                 headers: {
                     "Set-Cookie"?: string;
+                    /** @description The session's second secret. A client keeps it in memory or session storage, never in a cookie, and sends it back as the `X-Hoserva-Session-Secret` request header on every request that authenticates with the session cookie. */
+                    "X-Hoserva-Session-Secret": string;
                     [name: string]: unknown;
                 };
                 content: {

@@ -123,6 +123,9 @@ func TestNewBackupService_WritesBothDefaultsWhenThePoolIsMounted(t *testing.T) {
 	// never write: the same destination is re-pointed at a directory this
 	// test owns, under a PoolRoot it reports mounted.
 	poolRoot := filepath.Join(t.TempDir(), "mnt", "user")
+	if err := os.MkdirAll(poolRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	rig.svc.PoolRoot = poolRoot
 	rig.svc.PoolMounted = func(string) (bool, error) { return true, nil }
 	if err := rig.svc.RemoveDestination(ctx, "pool"); err != nil {
