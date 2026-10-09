@@ -262,6 +262,40 @@ fi
 mutate "$bad" "$ID2" 'invariant: none' 'invariant: T7'
 AUDIT_THREAT_MODEL="$stub" "$AUDIT" parse "$bad" >/dev/null 2>&1 && { note "FAIL: T7 from outside section 4 was accepted"; fail=1; }
 
+# Fenced content in section 4 is an example, not a definition, and a heading inside a fence does not end the section.
+cat >"$work/fenced-model.md" <<'MODEL'
+# Threat model
+
+## 4. Security invariants
+
+| **T3** | a | b |
+
+```markdown
+| **T999** | example | anchor |
+## 5. Not a heading
+```
+
+~~~
+| **T998** | example | anchor |
+~~~
+
+| **T50** | c | d |
+
+## 5. Accepted residuals
+MODEL
+for v in T3 T50; do
+  mutate "$bad" "$ID2" 'invariant: none' "invariant: $v"
+  AUDIT_THREAT_MODEL="$work/fenced-model.md" "$AUDIT" parse "$bad" >/dev/null 2>"$work/err.fenced" || { note "FAIL: $v from the stub doc 15 with a fenced example was refused"; cat "$work/err.fenced" >&2; fail=1; }
+done
+for v in T999 T998; do
+  mutate "$bad" "$ID2" 'invariant: none' "invariant: $v"
+  if AUDIT_THREAT_MODEL="$work/fenced-model.md" "$AUDIT" parse "$bad" >/dev/null 2>"$work/err.fenced"; then
+    note "FAIL: $v accepted from a fenced example in doc 15 section 4"; fail=1
+  else
+    assert_contains "$work/err.fenced" "$ID2: invariant: '$v'" "a fenced example row ($v) is not an invariant"
+  fi
+done
+
 # Fail closed: a doc 15 that cannot be read or holds no invariants accepts nothing, none included.
 printf '# Threat model\n\n## 4. Security invariants\n\nnone yet\n' >"$work/empty-model.md"
 printf '# Threat model\n\n| **T3** | a | b |\n' >"$work/no-section-model.md"

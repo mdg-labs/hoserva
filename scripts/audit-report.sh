@@ -79,11 +79,15 @@ def load_invariants(path):
             lines = fh.read().split("\n")
     except (OSError, UnicodeDecodeError) as e:
         raise Refuse("threat model", f"cannot read {path}: {e}")
-    start = [i for i, ln in enumerate(lines) if re.match(r"^## 4\. ", ln)]
+    flags, _ = fence_flags(lines)
+    start = [i for i, ln in enumerate(lines) if not flags[i] and re.match(r"^## 4\. ", ln)]
     if len(start) != 1:
         raise Refuse("threat model", f"{path} has no single '## 4.' invariants section")
     found = set()
-    for ln in lines[start[0] + 1:]:
+    for i in range(start[0] + 1, len(lines)):
+        if flags[i]:
+            continue
+        ln = lines[i]
         if ln.startswith("## "):
             break
         m = INVARIANT_ROW.match(ln)
