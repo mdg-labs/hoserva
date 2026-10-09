@@ -1202,15 +1202,20 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 // tcpEventsAuthenticate builds EventsHandler's Authenticate seam for the
 // TCP transport: the session cookie and the session's second secret,
 // checked the same way SessionSecurityHandler checks them for every other
-// operation.
+// operation, and the account's current role against the role the spec
+// declares for the stream. EventsHandler calls it again on every keep-alive
+// tick, so a revoked session or a lowered role ends an open stream.
 func tcpEventsAuthenticate(authService *api.AuthService) func(r *http.Request) error {
 	return func(r *http.Request) error {
 		cookie, err := r.Cookie("hoserva_session")
 		if err != nil {
 			return err
 		}
-		_, err = authService.ValidateSessionWithSecret(r.Context(), cookie.Value, r.Header.Get(api.SessionSecretHeader))
-		return err
+		u, err := authService.ValidateSessionWithSecret(r.Context(), cookie.Value, r.Header.Get(api.SessionSecretHeader))
+		if err != nil {
+			return err
+		}
+		return api.EnforceEventsRole(api.Role(u.Role))
 	}
 }
 

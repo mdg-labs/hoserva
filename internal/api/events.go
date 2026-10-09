@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -114,9 +115,12 @@ const defaultKeepAlive = 15 * time.Second
 //
 // Authenticate is the seam #22 wires: nil, or an error, refuses the
 // request with the same shared Error shape every other operation uses
-// (doc 01 §5); #19 leaves every request refused, matching
-// SecurityHandler's own default until real session/token validation
-// exists.
+// (doc 01 §5) — 403 for an error that wraps ErrRoleDenied, 401 for any
+// other; #19 leaves every request refused, matching SecurityHandler's own
+// default until real session/token validation exists. It runs again on every
+// keep-alive tick, and the stream ends when it fails, so a session revoked or
+// a role lowered while the stream is open takes effect within one keep-alive
+// interval. It must therefore read only what r still holds on a later call.
 type EventsHandler struct {
 	Hub          *job.Hub
 	NotifyHub    *notify.Hub
@@ -132,6 +136,10 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Authenticate(r); err != nil {
+		if errors.Is(err, ErrRoleDenied) {
+			writeForbidden(w)
+			return
+		}
 		writeUnauthorized(w)
 		return
 	}
@@ -213,6 +221,9 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-ticker.C:
+			if err := h.Authenticate(r); err != nil {
+				return
+			}
 			// A ":"-prefixed line is an SSE comment: it reaches no
 			// "message"/EventSource listener, only keeps the connection
 			// from looking idle to a client or an intermediate proxy.
@@ -240,9 +251,25 @@ func writeEvent(w http.ResponseWriter, flusher http.Flusher, build func() (event
 	return nil
 }
 
+// eventsRole is the x-hoserva-role api/openapi.yaml declares for streamEvents.
+// ogen generates no operation name for that route (Q63), so operationRoles has
+// no entry for it, and events_role_test.go checks this value against the spec.
+const eventsRole = RoleViewer
+
+// EnforceEventsRole refuses a principal whose role does not satisfy the
+// events stream's declared role, with an error that wraps ErrRoleDenied.
+func EnforceEventsRole(role Role) error {
+	if !role.Satisfies(eventsRole) {
+		return fmt.Errorf("%w: the events stream requires role %q, principal has %q", ErrRoleDenied, eventsRole, role)
+	}
+	return nil
+}
+
 const (
 	unauthorizedCode    = "unauthorized"
 	unauthorizedMessage = "this request requires a credential"
+	forbiddenCode       = "forbidden"
+	forbiddenMessage    = "the current account does not have permission for this operation"
 )
 
 // writeUnauthorized reports the same Error shape handler.go's NewError
@@ -252,4 +279,12 @@ func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = fmt.Fprintf(w, `{"code":%q,"message":%q}`, unauthorizedCode, unauthorizedMessage)
+}
+
+// writeForbidden reports the same Error shape for a valid credential whose
+// role does not satisfy the stream's.
+func writeForbidden(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = fmt.Fprintf(w, `{"code":%q,"message":%q}`, forbiddenCode, forbiddenMessage)
 }
