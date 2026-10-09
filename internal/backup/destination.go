@@ -125,7 +125,8 @@ func (o archiveOwner) owns(e archiveEntry) bool {
 // nothing is resolved by name a second time. The pooled view is where a
 // container with the pool mapped can replace the default destination with a
 // link, and root must not then write or prune wherever that link points (doc
-// 15 T2). A poolRoot that does not exist yet is created along with the destination. Any other path, including an empty poolRoot, is opened the ordinary
+// 15 T2). A poolRoot that does not exist is an error and is never created, since a
+// missing pool root means the pool is not mounted. Any other path, including an empty poolRoot, is opened the ordinary
 // way, so a link on it is followed. With create, missing directories are made
 // private (0700); one that already exists keeps its mode and owner, since it
 // may be a share other users rely on. The caller closes the descriptor.
@@ -147,11 +148,6 @@ func openDestinationDir(poolRoot, path string, create bool) (int, error) {
 		return fd, nil
 	}
 	root := filepath.Clean(poolRoot)
-	if create {
-		if err := os.MkdirAll(root, 0o700); err != nil {
-			return -1, err
-		}
-	}
 	fd, err := beneath.OpenRoot(root)
 	if err != nil {
 		return -1, fmt.Errorf("opening destination %q: %w", path, err)

@@ -219,6 +219,9 @@ func TestService_RunWritesPoolDestinationWhenMounted(t *testing.T) {
 	paths, root := testLayout(t)
 
 	poolRoot := filepath.Join(root, "mnt", "user")
+	if err := os.MkdirAll(poolRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	poolDest := filepath.Join(poolRoot, "hoserva-backups")
 
 	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
@@ -423,6 +426,9 @@ func TestService_RunWritesPoolDestinationAfterGateReopens(t *testing.T) {
 	paths, root := testLayout(t)
 
 	poolRoot := filepath.Join(root, "mnt", "user")
+	if err := os.MkdirAll(poolRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	poolDest := filepath.Join(poolRoot, "hoserva-backups")
 
 	gate := &PoolWriteGate{}
@@ -473,6 +479,9 @@ func TestService_PoolWriteGateBlocksCloseUntilAnInFlightWriteFinishes(t *testing
 	paths, root := testLayout(t)
 
 	poolRoot := filepath.Join(root, "mnt", "user")
+	if err := os.MkdirAll(poolRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	poolDest := filepath.Join(poolRoot, "hoserva-backups")
 
 	gate := &PoolWriteGate{}
@@ -1404,6 +1413,9 @@ func pendingMigrationService(t *testing.T, dests func(poolDest, bootDest string)
 	db := openTestDB(t)
 	paths, root := testLayout(t)
 	poolRoot := filepath.Join(root, "mnt", "user")
+	if err := os.MkdirAll(poolRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	poolDest = filepath.Join(poolRoot, "hoserva-backups")
 	bootDest = filepath.Join(root, "boot-backups")
 	now = time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)

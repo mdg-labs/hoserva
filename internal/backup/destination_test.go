@@ -429,3 +429,15 @@ func TestLocalTarget_RefusesNonRegularArchive(t *testing.T) {
 		t.Fatal("write beside a FIFO blocked")
 	}
 }
+
+func TestWriteArchive_NeverCreatesAMissingPoolRoot(t *testing.T) {
+	poolRoot := filepath.Join(t.TempDir(), "mnt", "user")
+	dest := Destination{ID: "pool", Path: filepath.Join(poolRoot, "hoserva-backups"), Enabled: true}
+
+	if err := writeArchiveUnder(poolRoot, dest, destinationSource(t)); err == nil {
+		t.Fatal("writeArchive succeeded although the pool root does not exist")
+	}
+	if _, err := os.Lstat(poolRoot); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the missing pool root was created: %v", err)
+	}
+}
