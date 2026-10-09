@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/auth"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
@@ -27,6 +28,16 @@ import (
 // means it inherits the same production (/run/hoserva) or dev
 // (workspace-local) placement without a flag of its own.
 const upsControlSocketName = "ups-control.sock"
+
+// upsControlMaxRequestBytes bounds a request line, newline included: the
+// longest job.UPSNotifyType (LOWBATT) is 7 bytes, so this leaves room for
+// whitespace and nothing more.
+const upsControlMaxRequestBytes = 64
+
+// upsControlReadTimeout bounds how long a connected peer may take to send
+// its request line; the real clients are helpers NUT has just forked and
+// send it immediately.
+var upsControlReadTimeout = 5 * time.Second
 
 // upsControlSocketPath returns the sibling path upsControlSocketName
 // resolves to next to apiSocketPath.
@@ -198,14 +209,22 @@ func handleUPSControlConn(ctx context.Context, conn net.Conn, controller *job.UP
 		return
 	}
 
-	line, readErr := bufio.NewReader(conn).ReadString('\n')
-	notifyType := strings.TrimSpace(line)
-	if notifyType == "" {
-		replyLine(conn, "ERROR: empty request")
+	if err := conn.SetReadDeadline(time.Now().Add(upsControlReadTimeout)); err != nil {
+		replyLine(conn, "ERROR: setting the read deadline: %v", err)
+		return
+	}
+	line, readErr := bufio.NewReader(io.LimitReader(conn, upsControlMaxRequestBytes+1)).ReadString('\n')
+	if len(line) > upsControlMaxRequestBytes {
+		replyLine(conn, "ERROR: request longer than %d bytes", upsControlMaxRequestBytes)
 		return
 	}
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		replyLine(conn, "ERROR: reading request: %v", readErr)
+		return
+	}
+	notifyType := strings.TrimSpace(line)
+	if notifyType == "" {
+		replyLine(conn, "ERROR: empty request")
 		return
 	}
 

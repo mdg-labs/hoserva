@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -268,5 +271,111 @@ func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
 	}
 	if !fn() {
 		t.Fatal("condition never became true")
+	}
+}
+
+// upsControlConnPair returns the two ends of a connected unix socket: the
+// peer a test drives, and the server-side *net.UnixConn
+// handleUPSControlConn requires.
+func upsControlConnPair(t *testing.T) (peer, server net.Conn) {
+	t.Helper()
+	ln, err := net.Listen("unix", filepath.Join(t.TempDir(), "pair.sock"))
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	peer, err = net.Dial("unix", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+	if err := peer.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set peer read deadline: %v", err)
+	}
+	server, err = ln.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	return peer, server
+}
+
+func runUPSControlHandler(ctx context.Context, server net.Conn, controller *job.UPSController) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var once sync.Once
+		handleUPSControlConn(ctx, server, controller, &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true}, uint32(os.Getuid()), cfggen.NUTGroup, &once)
+	}()
+	return done
+}
+
+// TestHandleUPSControlConn_OversizedRequestIsRefusedWithoutBuffering proves
+// a peer that streams bytes with no newline is cut off after a bounded
+// read: the handler replies with an error and closes the connection while
+// the peer still has most of the stream unsent.
+func TestHandleUPSControlConn_OversizedRequestIsRefusedWithoutBuffering(t *testing.T) {
+	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry())}
+	peer, server := upsControlConnPair(t)
+	done := runUPSControlHandler(context.Background(), server, controller)
+
+	const total = 8 << 20
+	written := make(chan int, 1)
+	go func() {
+		chunk := []byte(strings.Repeat("A", 4096))
+		n := 0
+		for n < total {
+			w, err := peer.Write(chunk)
+			n += w
+			if err != nil {
+				break
+			}
+		}
+		written <- n
+	}()
+
+	reply, err := bufio.NewReader(peer).ReadString('\n')
+	if err != nil {
+		t.Fatalf("reading the reply: %v", err)
+	}
+	if !strings.HasPrefix(reply, "ERROR:") {
+		t.Fatalf("reply = %q, want an ERROR line", reply)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not return after an oversized request")
+	}
+	select {
+	case n := <-written:
+		if n >= total {
+			t.Fatalf("peer wrote all %d bytes; the handler drained the stream instead of refusing it", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("peer's writer never stopped after the handler closed the connection")
+	}
+}
+
+// TestHandleUPSControlConn_SilentPeerTimesOut proves a peer that connects
+// and sends nothing does not hold the handler open past the read deadline.
+func TestHandleUPSControlConn_SilentPeerTimesOut(t *testing.T) {
+	old := upsControlReadTimeout
+	upsControlReadTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { upsControlReadTimeout = old })
+
+	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry())}
+	peer, server := upsControlConnPair(t)
+	done := runUPSControlHandler(context.Background(), server, controller)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler still open long after the read deadline for a peer that sent nothing")
+	}
+	reply, err := bufio.NewReader(peer).ReadString('\n')
+	if err != nil {
+		t.Fatalf("reading the reply: %v", err)
+	}
+	if !strings.HasPrefix(reply, "ERROR:") {
+		t.Fatalf("reply = %q, want an ERROR line", reply)
 	}
 }
