@@ -34,6 +34,12 @@ const upsControlSocketName = "ups-control.sock"
 // whitespace and nothing more.
 const upsControlMaxRequestBytes = 64
 
+// upsControlMaxConns bounds how many connections are handled at once: the
+// socket carries one NUT notification at a time, so a handful is plenty, and
+// a peer holding idle connections open cannot use up the daemon's file
+// descriptors.
+const upsControlMaxConns = 8
+
 // upsControlReadTimeout bounds how long a connected peer may take to send
 // its request line; the real clients are helpers NUT has just forked and
 // send it immediately.
@@ -148,7 +154,9 @@ func newUPSController(scheduler *job.Scheduler, currentArray func() *job.ArraySe
 }
 
 // serveUPSControl accepts connections on ln until ctx is cancelled,
-// handling each with handleUPSControlConn. This is the wiring doc 02 §6
+// handling each with handleUPSControlConn, at most upsControlMaxConns at
+// once: a connection that finds every slot taken is closed unread, so a flood
+// of idle peers cannot back up the accept queue. This is the wiring doc 02 §6
 // and Q77 describe: NUT's own upsmon reaches the running daemon's
 // *job.UPSController — the one instance holding the live Scheduler state
 // Array.Stop needs to checkpoint a running job — only through this
@@ -159,6 +167,7 @@ func newUPSController(scheduler *job.Scheduler, currentArray func() *job.ArraySe
 // process, never a standalone one.
 func serveUPSControl(ctx context.Context, ln net.Listener, controller *job.UPSController, lookup auth.GroupLookup, daemonUID uint32, group string) {
 	var warnMissingGroupOnce sync.Once
+	slots := make(chan struct{}, upsControlMaxConns)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -168,7 +177,16 @@ func serveUPSControl(ctx context.Context, ln net.Listener, controller *job.UPSCo
 			log.Printf("hoservad: ups control socket accept: %v", err)
 			continue
 		}
-		go handleUPSControlConn(ctx, conn, controller, lookup, daemonUID, group, &warnMissingGroupOnce)
+		select {
+		case slots <- struct{}{}:
+		default:
+			_ = conn.Close()
+			continue
+		}
+		go func() {
+			defer func() { <-slots }()
+			handleUPSControlConn(ctx, conn, controller, lookup, daemonUID, group, &warnMissingGroupOnce)
+		}()
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -378,4 +379,63 @@ func TestHandleUPSControlConn_SilentPeerTimesOut(t *testing.T) {
 	if !strings.HasPrefix(reply, "ERROR:") {
 		t.Fatalf("reply = %q, want an ERROR line", reply)
 	}
+}
+
+// TestServeUPSControl_ConnectionsBeyondTheCapAreClosedUnread proves the
+// accept loop runs at most upsControlMaxConns handlers at once: with that many
+// silent peers holding every slot, a further connection is closed with no
+// reply long before the read deadline would end a handler, and once the
+// silent peers time out a real notification is handled again.
+func TestServeUPSControl_ConnectionsBeyondTheCapAreClosedUnread(t *testing.T) {
+	old := upsControlReadTimeout
+	upsControlReadTimeout = 2 * time.Second
+	t.Cleanup(func() { upsControlReadTimeout = old })
+
+	notifier := &recordingUPSNotifier{}
+	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry()), Notifier: notifier}
+	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true}, uint32(os.Getuid()))
+
+	dial := func() net.Conn {
+		t.Helper()
+		c, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		return c
+	}
+
+	idle := make([]net.Conn, upsControlMaxConns)
+	for i := range idle {
+		idle[i] = dial()
+	}
+	// The accept loop takes connections in the order they were dialed and
+	// claims a slot before it accepts the next, so the extras below meet a
+	// full set of slots.
+
+	for i := 0; i < 4; i++ {
+		extra := dial()
+		if err := extra.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("set read deadline: %v", err)
+		}
+		n, err := extra.Read(make([]byte, 64))
+		if n != 0 || err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("extra connection %d: Read = (%d, %v), want it closed with no reply before the handlers' read timeout", i, n, err)
+		}
+	}
+
+	for i, c := range idle {
+		if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatalf("set read deadline: %v", err)
+		}
+		reply, err := bufio.NewReader(c).ReadString('\n')
+		if err != nil || !strings.HasPrefix(reply, "ERROR:") {
+			t.Fatalf("idle connection %d: reply = %q, err = %v, want the read-timeout ERROR line", i, reply, err)
+		}
+	}
+
+	if err := dialUPSControl(context.Background(), path, string(job.UPSNotifyOnBattery)); err != nil {
+		t.Fatalf("dialUPSControl after the idle connections ended: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool { return notifier.onBattery() == 1 })
 }
