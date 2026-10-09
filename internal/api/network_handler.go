@@ -12,7 +12,10 @@ import (
 	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/notify"
 )
+
+const regenerateBackupLeftTitle = "Certificate regenerated, backup file left behind"
 
 // TLSCertView is the daemon's current TLS certificate expiry (Q9).
 type TLSCertView struct {
@@ -121,14 +124,28 @@ func (h *Handler) RegenerateTLSCertificate(ctx context.Context) (*apiv1.NetworkS
 			return nil, fmt.Errorf("disarming Let's Encrypt renewal: %w", err)
 		}
 	}
-	if _, err := h.HTTPS.Regenerate(ctx); err != nil && !errors.Is(err, acme.ErrBackupLeft) {
-		return nil, fmt.Errorf("regenerating TLS certificate: %w", err)
+	if _, err := h.HTTPS.Regenerate(ctx); err != nil {
+		if !errors.Is(err, acme.ErrBackupLeft) {
+			return nil, fmt.Errorf("regenerating TLS certificate: %w", err)
+		}
+		h.warnRegenerateBackupLeft(ctx, err)
 	}
 	st, err := h.Network.Status(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting network settings: %w", err)
 	}
 	return h.networkSettingsToAPI(ctx, st)
+}
+
+// warnRegenerateBackupLeft tells the admin the new certificate is in use
+// although a backup file of the previous one could not be removed. The
+// regeneration still counts as successful, so a failed publish is dropped.
+func (h *Handler) warnRegenerateBackupLeft(ctx context.Context, err error) {
+	if h.Notify == nil {
+		return
+	}
+	msg := fmt.Sprintf("The new self-signed certificate is in use, but a backup file of the previous certificate could not be removed. Remove it from the TLS directory to avoid the previous certificate being restored if the current one goes missing. %s", err.Error())
+	_ = h.Notify.Publish(ctx, notify.EventCertificateRenewalFailed, regenerateBackupLeftTitle, msg)
 }
 
 func (h *Handler) ConfigureLetsEncrypt(ctx context.Context, req *apiv1.ConfigureLetsEncryptRequest) (*apiv1.Job, error) {
