@@ -25,7 +25,7 @@ codebase** and files nothing: its only output is a Markdown report under
 **You (the current session) are the orchestrator.** You spawn `security-reviewer`
 and `security-verifier` subagents — both Opus — and drive the steps below in
 order. The yardstick for every judgement is `docs/internal/15-threat-model.md`
-(doc 15: attackers §2, entry points §3, invariants `T1`…`T18` §4, accepted
+(doc 15: attackers §2, entry points §3, invariants `T<n>` §4, accepted
 residuals §5, severity rubric §6) and the disclosure default Q91 in
 `docs/internal/13-open-questions.md`. A finding is rated by doc 15's rubric and
 anti-inflation rules, never by a reviewer's or your own preference.
@@ -128,35 +128,35 @@ is reviewed twice by a primary unit.
 
 | Unit | Paths | Attackers | Invariants |
 |---|---|---|---|
-| `listener` — listener, TLS and ACME | `cmd/hoservad/https.go` `cmd/hoservad/tlslistener.go` `cmd/hoservad/sourcefilter_listener.go` `cmd/hoservad/cert.go` `cmd/hoservad/acme.go` `cmd/hoservad/main.go` `cmd/hoservad/spa.go` `cmd/hoservad/notfound.go` `cmd/hoservad/sdnotify.go` `cmd/hoservad/reload.go` `internal/acme/` `internal/auth/sourcefilter.go` `internal/job/acme_run.go` `web/embed.go` `web/dist` | 2.1 2.2 | T13 T15 |
-| `sockets` — Unix sockets, peer credentials, recovery | `cmd/hoservad/unixsocket.go` `cmd/hoservad/upscontrol.go` `cmd/hoservad/nut.go` `internal/auth/peercred*` `internal/api/recovery*` `internal/api/authservice_recovery.go` `packaging/nut-notify` `packaging/nut-shutdown` | 2.5 2.6 2.7 | T4 T5 |
+| `listener` — listener, TLS and ACME | `cmd/hoservad/https.go` `cmd/hoservad/tlslistener.go` `cmd/hoservad/sourcefilter_listener.go` `cmd/hoservad/cert.go` `cmd/hoservad/acme.go` `cmd/hoservad/main.go` `cmd/hoservad/spa.go` `cmd/hoservad/notfound.go` `cmd/hoservad/sdnotify.go` `cmd/hoservad/reload.go` `internal/acme/` `internal/auth/sourcefilter.go` `internal/job/acme_run.go` `web/embed.go` `web/dist` | 2.1 2.2 2.11 | T3 T13 T15 T17 |
+| `sockets` — Unix sockets, peer credentials, recovery | `cmd/hoservad/unixsocket.go` `cmd/hoservad/upscontrol.go` `cmd/hoservad/nut.go` `internal/auth/peercred*` `internal/api/recovery*` `internal/api/authservice_recovery.go` `packaging/nut-notify` `packaging/nut-shutdown` | 2.5 2.6 2.7 2.11 | T4 T5 T28 |
 | `secrets` — secrets at rest | `internal/auth/machinekey.go` `internal/notify/secretcipher.go` `internal/backup/encrypt.go` `internal/backup/secrets*` `internal/backup/secretsource.go` `internal/backup/baremetal_secrets.go` `internal/backup/recipient.go` `cmd/hoservad/backup_secrets.go` | 2.3 2.5 | T10 T11 |
 | `catalog-signing` — catalog archive, signature and sources | `internal/template/archive.go` `internal/template/refresh.go` `internal/template/sources.go` `internal/template/pubkey.go` `internal/template/catalog.go` `internal/template/snapshot*` `internal/store/catalog_*` `cmd/hoservad/templates.go` `internal/api/catalog_*` | 2.9 2.12 | T8 |
 | `migrate` — the Unraid import | `internal/migrate/` `tools/unraid/` `internal/job/migration_*` `internal/store/migration*` `cmd/hoservad/migrate*` `internal/api/migrate_*` | 2.10 | T9 |
-| `backup-restore` — backup, restore, config import | `internal/backup/` `internal/job/config_backup_run.go` `internal/job/appdata_run.go` `internal/job/restore_drill.go` `cmd/hoservad/config_backup.go` `cmd/hoservad/appdata.go` `cmd/hoservad/drill.go` `cmd/hoservad/backup_stale.go` `internal/api/config_backup_handler.go` `internal/api/config_import*` `internal/api/appdata_*` `internal/api/backup_destination*` `internal/api/drill_*` | 2.3 2.10 | T6 T11 T18 |
+| `backup-restore` — backup, restore, config import | `internal/backup/` `internal/job/config_backup_run.go` `internal/job/appdata_run.go` `internal/job/restore_drill.go` `cmd/hoservad/config_backup.go` `cmd/hoservad/appdata.go` `cmd/hoservad/drill.go` `cmd/hoservad/backup_stale.go` `internal/api/config_backup_handler.go` `internal/api/config_import*` `internal/api/appdata_*` `internal/api/backup_destination*` `internal/api/drill_*` | 2.3 2.8 2.10 2.11 | T2 T6 T11 T18 T23 |
 | `outbound` — update check, notifications, registries, outbound requests | `internal/update/` `internal/notify/` `internal/container/registry*` `cmd/hoservad/update.go` `cmd/hoservad/space_alert.go` `internal/api/update_*` `internal/api/notify*` | 2.3 2.9 2.12 | T6 T8 T17 |
 | `auth` — auth, sessions, TOTP, lockout, roles | `internal/auth/` `api/openapi.yaml` `internal/api/auth_handler.go` `internal/api/authservice.go` `internal/api/authstore.go` `internal/api/apitoken*` `internal/api/sessions_admin.go` `internal/api/users_*` `internal/api/security.go` `internal/api/roles.go` `internal/api/setupgate.go` `internal/api/principal.go` `internal/api/requestctx.go` | 2.1 2.2 2.4 | T3 T14 T15 |
 | `mover-relocation` — root writes through share paths | `internal/cache/` `internal/beneath/` `internal/job/mover_run.go` `internal/job/share_relocation_run.go` `internal/job/rebalance_run.go` `internal/job/evacuation_run.go` `cmd/hoservad/mover.go` `cmd/hoservad/rebalance.go` `cmd/hoservad/share_relocation.go` | 2.8 2.11 | T2 T16 |
 | `parity-guard` — parity and the threshold guard | `internal/parity/` `internal/job/diffguard.go` `internal/job/parity_run.go` `internal/job/scheduler.go` `internal/job/schedule*` `cmd/hoservad/parity.go` `cmd/hoservad/current_parity.go` `cmd/hoservad/mover_threshold.go` `cmd/hoservad/schedule.go` `internal/config/snapraid.go` | 2.8 | T1 T16 |
-| `disk-lifecycle` — destructive disk operations | `internal/disk/` `internal/job/disk_*` `internal/job/array*` `cmd/hoservad/array.go` `cmd/hoservad/mountpoint_guard.go` `cmd/hoservad/storagetarget.go` `internal/config/disks.go` `internal/config/storagetarget.go` | 2.3 2.4 | T6 T18 |
-| `pool-shares` — pool mounts, share paths, exports | `internal/pool/` `internal/share/` `internal/config/pool.go` `internal/config/samba.go` `internal/config/nfs.go` `cmd/hoservad/share_service.go` | 2.8 | T2 T12 |
+| `disk-lifecycle` — destructive disk operations | `internal/disk/` `internal/job/disk_*` `internal/job/array*` `cmd/hoservad/array.go` `cmd/hoservad/mountpoint_guard.go` `cmd/hoservad/storagetarget.go` `internal/config/disks.go` `internal/config/storagetarget.go` | 2.3 2.4 2.14 | T6 T18 T29 |
+| `pool-shares` — pool mounts, share paths, exports | `internal/pool/` `internal/share/` `internal/config/pool.go` `internal/config/samba.go` `internal/config/nfs.go` `cmd/hoservad/share_service.go` | 2.8 2.11 | T2 T12 T24 |
 | `templates` — template parsing, allow list, privilege summary, `ExtraParams` | `internal/template/` `internal/container/compose.go` `testdata/unraid-templates/` | 2.9 | T6 T7 |
 | `containers` — container privilege flags, stacks, lifecycle | `internal/container/` `internal/job/container_run.go` `internal/job/container_update_run.go` `internal/job/stack_run.go` `internal/config/dockerapply*` `cmd/hoservad/containers.go` `cmd/hoservad/stacks.go` `cmd/hoservad/updates.go` `cmd/hoservad/registry_credentials.go` | 2.9 2.11 | T6 T7 |
-| `config-gen` — generated config files and their modes | `internal/config/` | 2.5 | T12 |
-| `api-storage` — API handlers: pool, disks, array, parity, mover | `internal/api/array_handler.go` `internal/api/pool_handler.go` `internal/api/parity_handler.go` `internal/api/mover_handler.go` `internal/api/rebalance_handler.go` `internal/api/share_relocation_handler.go` `internal/api/disk_upgrade_handler.go` `internal/api/external_*` | 2.1 2.4 | T3 T18 |
-| `api-shares` — API handlers: shares, groups, permissions | `internal/api/share_*` `internal/api/groups*` | 2.1 2.4 2.8 | T3 |
-| `api-apps` — API handlers: apps, stacks, templates | `internal/api/apps_*` `internal/api/stacks_handler.go` `internal/api/templates_handler.go` `internal/api/registry_credentials_handler.go` | 2.1 2.4 2.9 | T3 T7 |
-| `api-system` — API handlers: settings, status, jobs, events, metrics, network, UPS | `internal/api/settings*` `internal/api/schedule*` `internal/api/network_handler.go` `internal/api/ups*` `internal/api/metrics_handler.go` `internal/api/events.go` `internal/api/logstream.go` `internal/api/wake_events_handler.go` `internal/api/doctor.go` `internal/api/hostconfig.go` | 2.1 2.4 | T3 |
+| `config-gen` — generated config files and their modes | `internal/config/` | 2.3 2.5 2.7 | T12 T25 |
+| `api-storage` — API handlers: pool, disks, array, parity, mover | `internal/api/array_handler.go` `internal/api/pool_handler.go` `internal/api/parity_handler.go` `internal/api/mover_handler.go` `internal/api/rebalance_handler.go` `internal/api/share_relocation_handler.go` `internal/api/disk_upgrade_handler.go` `internal/api/external_*` | 2.1 2.4 2.14 | T3 T18 T29 |
+| `api-shares` — API handlers: shares, groups, permissions | `internal/api/share_*` `internal/api/groups*` | 2.1 2.4 2.8 | T2 T3 |
+| `api-apps` — API handlers: apps, stacks, templates | `internal/api/apps_*` `internal/api/stacks_handler.go` `internal/api/templates_handler.go` `internal/api/registry_credentials_handler.go` | 2.1 2.4 2.9 | T3 T7 T18 T27 |
+| `api-system` — API handlers: settings, status, jobs, events, metrics, network, UPS | `internal/api/settings*` `internal/api/schedule*` `internal/api/network_handler.go` `internal/api/ups*` `internal/api/metrics_handler.go` `internal/api/events.go` `internal/api/logstream.go` `internal/api/wake_events_handler.go` `internal/api/doctor.go` `internal/api/hostconfig.go` | 2.1 2.3 2.4 | T3 T25 T28 |
 | `api-core` — the rest of the API package | `internal/api/` | 2.1 2.2 2.4 | T3 |
-| `store` — database, schema, queries, data transforms | `internal/store/` `internal/model/` | 2.5 | T10 |
-| `jobs` — job engine, exclusive classes, the rest of the daemon wiring | `internal/job/` `cmd/hoservad/` | 2.3 | T1 T16 |
+| `store` — database, schema, queries, data transforms | `internal/store/` `internal/model/` | 2.5 | T10 T26 |
+| `jobs` — job engine, exclusive classes, the rest of the daemon wiring | `internal/job/` `cmd/hoservad/` | 2.3 | T1 T16 T28 |
 | `cli` — the CLI | `cmd/hoserva/` | 2.3 2.6 | T18 |
 | `web-core` — the web UI's client, session handling and build config | `web/src/lib/` `web/src/hooks/` `web/src/App.tsx` `web/src/main.tsx` `web/src/index.css` `web/src/vite-env.d.ts` `web/index.html` `web/components.json` `web/eslint.config.js` `web/playwright.config.ts` `web/tsconfig*.json` `web/vite.config.ts` `web/.nvmrc` | 2.1 2.3 | T15 T18 |
 | `web-components` — the web UI's components | `web/src/components/` | 2.3 | T18 |
 | `web-routes` — the web UI's pages | `web/src/routes/` | 2.3 2.9 | T18 |
-| `packaging` — systemd unit, file modes, maintainer scripts, release signing | `packaging/` `release-key.pub.pem` `scripts/release/` | 2.5 2.12 | T8 T12 |
-| `supply-chain` — dependencies, workflows, build | `go.mod` `go.sum` `api/package.json` `api/package-lock.json` `web/package.json` `web/package-lock.json` `site/package.json` `site/package-lock.json` `.github/` `Makefile` `.golangci.yml` `.coderabbit.yaml` `.gitignore` `docker-compose.dev.yml` `scripts/` | 2.12 | T8 |
-| `devtools` — mock API, lab and VM tooling, docs site build, other dev-only code | `cmd/mockapi/` `site/` `api/` | 2.12 | — |
+| `packaging` — systemd unit, file modes, maintainer scripts, release signing | `packaging/` `release-key.pub.pem` `scripts/release/` | 2.5 2.12 | T8 T12 T20 |
+| `supply-chain` — dependencies, workflows, build | `go.mod` `go.sum` `api/package.json` `api/package-lock.json` `web/package.json` `web/package-lock.json` `site/package.json` `site/package-lock.json` `.github/` `Makefile` `.golangci.yml` `.coderabbit.yaml` `.gitignore` `docker-compose.dev.yml` `scripts/` | 2.12 2.13 | T8 T19 T20 T21 |
+| `devtools` — mock API, lab and VM tooling, docs site build, other dev-only code | `cmd/mockapi/` `site/` `api/` | 2.9 2.12 | T22 |
 
 Three **cross-cutting sweeps** are units too. They have no fixed paths: their
 file list is found with `git grep` in the clone at run time, and they review
@@ -168,7 +168,7 @@ coverage.
 |---|---|---|
 | `sweep-exec` | every non-test Go file importing `os/exec`, or calling `exec.Command`, `exec.CommandContext` or `syscall.Exec` (`git grep -l -e 'os/exec' -e 'syscall\.Exec' -- '*.go'`, tests excluded) | `sh -c`, string-built argv, user, template or imported input reaching a command line, a flag-like argument not guarded with `--` (T6) |
 | `sweep-fs` | every non-test Go file calling `os.Rename`, `os.Remove`, `os.RemoveAll`, `os.Chown`, `os.Chmod`, `os.Symlink`, `os.OpenFile`, `os.WriteFile`, `os.MkdirAll`, `filepath.Walk` or `filepath.WalkDir` outside `internal/beneath` | root writing, renaming or deleting through a path a lower-trust principal controls without `internal/beneath` resolution; file modes (T2, T12) |
-| `sweep-sql` | every non-test, non-generated Go file under `internal/` or `cmd/` that calls `Exec`, `Query` or `QueryRow` (with or without `Context`) on a database handle (`git grep -l -E '\.(Exec|Query|QueryRow)(Context)?\(' -- internal cmd`, then drop the matches that are not a database handle), or builds SQL text with `fmt.Sprintf` or string concatenation | SQL built from input rather than bound parameters (T10, doc 01 §7) |
+| `sweep-sql` | every non-test, non-generated Go file under `internal/` or `cmd/` that calls `Exec`, `Query` or `QueryRow` (with or without `Context`) on a database handle (`git grep -l -E -e '\.Exec(Context)?\(' -e '\.Query(Context)?\(' -e '\.QueryRow(Context)?\(' -- internal cmd`, then drop the matches that are not a database handle), or builds SQL text with `fmt.Sprintf` or string concatenation | SQL built from input rather than bound parameters (T26, doc 01 §7) |
 
 **Too large for one reviewer.** A unit whose file list exceeds about 45 files
 or 12,000 lines (`wc -l` over the list) is split into `<unit>-1`, `<unit>-2`…
@@ -367,7 +367,7 @@ withhold: true | false
 verdict: CONFIRMED | CONFIRMED-WITH-PRECONDITIONS
 files: [<repository-relative path>, …]
 related: [<SA-… id>, …]      # [] when none
-invariant: <T1…T18, or none>
+invariant: <an invariant from doc 15 §4 (T<n>), or none>
 cwe: [CWE-<n>, …]            # optional; not written by the audit
 filed: "#<n>" | GHSA-…       # optional; written by the file mode
 ```
@@ -591,9 +591,10 @@ maintainer has approved *that* report in step 4.
      because the reporter chose the private path; moving it to a public issue is
      the maintainer's call, made with the reporter (`SECURITY.md`).
    - **Not confirmed** (`REFUTED`, `DUPLICATE …`, `ACCEPTED-RESIDUAL …`) —
-     `scripts/gh-rest.sh advisory-reject <ghsa_id>`. The helper has no way to
-     comment on an advisory, so the drafted `reporter_reply` is shown to the
-     maintainer to send from the advisory's page; it is never sent from here.
+     `scripts/gh-rest.sh advisory-reject <ghsa_id>`. The drafted `reporter_reply`
+     is shown to the maintainer and is never sent from here, by design; the
+     maintainer may send it from the advisory's page or with
+     `scripts/gh-rest.sh advisory-comment <ghsa_id> --body-file <file>`.
    A failed call is reported with the id and left as it is; the report stays in
    `triage` if it never got as far as `advisory-accept` or `advisory-reject`, so
    running the mode again picks it up. When the maintainer asks to preview,

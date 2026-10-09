@@ -268,3 +268,171 @@ func TestLabRebalance_ASourceDirectorySwappedForASymlinkBeforeTheDeleteRemovesNo
 	}
 	assertSwapRefused(t, report, "documents/Reports/Q3.txt", outside, reports+".moved")
 }
+
+// The source side, while the file is being copied. A directory above the
+// source swapped for a symlink to a directory outside every disk, holding a
+// file of the same name and size, at the moment the copy starts reading must
+// not make root read that file (#776): the target holds the real file's
+// content, never the outside file's. When the swap is still in place at the
+// delete the entry fails naming the symlink and the real source, in the
+// directory moved aside, stays; when it was undone first, the source goes,
+// its own content being what was copied.
+
+const (
+	labRealContent    = "quarterly numbers"
+	labOutsideContent = "outside secrets!!"
+)
+
+func labOutsideWithSource(t *testing.T, name string) (outside string, touched func() []string) {
+	t.Helper()
+	outside, events := labWatchedOutside(t, name)
+	mustWrite(t, filepath.Join(outside, "Q3.txt"), labOutsideContent)
+	base := len(events())
+	return outside, func() []string { return events()[base:] }
+}
+
+func labAssertSourceSwapMidCopy(t *testing.T, report Report, back bool, target, outside string, touched func() []string, reports string) {
+	t.Helper()
+	assertFileContent(t, target, labRealContent)
+	assertFileContent(t, filepath.Join(outside, "Q3.txt"), labOutsideContent)
+	if got := touched(); len(got) != 0 {
+		t.Errorf("the root daemon touched the outside directory: %v", got)
+	}
+	e, ok := resultFor(report, "documents/Reports/Q3.txt")
+	if !ok {
+		t.Fatal("no entry for documents/Reports/Q3.txt")
+	}
+	if back {
+		if e.Result != ResultMoved {
+			t.Errorf("entry = %+v, want moved", e)
+		}
+		if _, err := os.Lstat(filepath.Join(reports, "Q3.txt")); !os.IsNotExist(err) {
+			t.Errorf("the source is still there after its content was copied: %v", err)
+		}
+		return
+	}
+	if e.Result != ResultFailed || !strings.Contains(e.Err, "is a symbolic link") {
+		t.Errorf("entry = %+v, want failed naming the symlink", e)
+	}
+	if got, err := os.ReadFile(filepath.Join(reports+".moved", "Q3.txt")); err != nil || string(got) != labRealContent {
+		t.Errorf("the real source = %q, %v, want it kept", got, err)
+	}
+}
+
+func labSwapVariants() []struct {
+	name string
+	back bool
+} {
+	return []struct {
+		name string
+		back bool
+	}{{"stays", false}, {"back", true}}
+}
+
+func TestLabMover_ASourceDirectorySwappedMidCopyCopiesTheRealFile(t *testing.T) {
+	for _, v := range labSwapVariants() {
+		t.Run(v.name, func(t *testing.T) {
+			top := bringUpLabMoverTopology(t, "swapmidmover"+v.name)
+			share := top.cacheShare()
+			labBuildShareTree(t, share.CachePath)
+			mustMkdirAll(t, filepath.Join(top.dataDisks[0], share.Name, "documents", "Reports"))
+			reports := filepath.Join(share.CachePath, "documents", "Reports")
+			labSourceSwapCleanup(t, filepath.Join(share.CachePath, "documents"), filepath.Join(share.CachePath, "documents.moved"), reports+".moved")
+			outside, touched := labOutsideWithSource(t, "swapmidmover"+v.name)
+			swap := swapOnce(t, reports, outside)
+			swapBack := swapBackOnce(t, reports)
+
+			deps := Deps{UUID: func() string {
+				swap()
+				return "swap-uuid"
+			}}
+			if v.back {
+				deps.FsyncDir = func(dirfd int) error {
+					swapBack()
+					return fsyncDir(dirfd)
+				}
+			}
+			report, err := Run(context.Background(), []Share{share}, Config{SkipGracePeriod: true, VerifyChecksum: true}, deps, RunHooks{}, nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			labAssertSourceSwapMidCopy(t, report, v.back, filepath.Join(top.dataDisks[0], share.Name, "documents", "Reports", "Q3.txt"), outside, touched, reports)
+		})
+	}
+}
+
+func TestLabRelocateToCache_ASourceDirectorySwappedMidCopyCopiesTheRealFile(t *testing.T) {
+	for _, v := range labSwapVariants() {
+		t.Run(v.name, func(t *testing.T) {
+			top := bringUpLabMoverTopology(t, "swapmidreloc"+v.name)
+			share := top.cacheShare()
+			reports := filepath.Join(share.Branches[0], "documents", "Reports")
+			labSourceSwapCleanup(t, filepath.Join(share.Branches[0], "documents"), filepath.Join(share.CachePath, "documents"), reports+".moved")
+			mustWrite(t, filepath.Join(reports, "Q3.txt"), labRealContent)
+			mustMkdirAll(t, filepath.Join(share.CachePath, "documents", "Reports"))
+			outside, touched := labOutsideWithSource(t, "swapmidreloc"+v.name)
+			swap := swapOnce(t, reports, outside)
+			swapBack := swapBackOnce(t, reports)
+
+			deps := Deps{
+				UUID: func() string {
+					swap()
+					return "swap-uuid"
+				},
+				Sync: func(context.Context, []parity.ManifestEntry) error {
+					if v.back {
+						swapBack()
+					}
+					return nil
+				},
+			}
+			report, err := RelocateToCache(context.Background(), share, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+			if err != nil {
+				t.Fatalf("RelocateToCache: %v", err)
+			}
+			labAssertSourceSwapMidCopy(t, report, v.back, filepath.Join(share.CachePath, "documents", "Reports", "Q3.txt"), outside, touched, reports)
+		})
+	}
+}
+
+func TestLabRebalance_ASourceDirectorySwappedMidCopyCopiesTheRealFile(t *testing.T) {
+	for _, v := range labSwapVariants() {
+		t.Run(v.name, func(t *testing.T) {
+			top := bringUpLabMoverTopology(t, "swapmidrebal"+v.name)
+			share := top.cacheShare()
+			reports := filepath.Join(share.Branches[0], "documents", "Reports")
+			labSourceSwapCleanup(t, filepath.Join(share.Branches[0], "documents"), filepath.Join(share.Branches[1], "documents"), reports+".moved")
+			mustWrite(t, filepath.Join(reports, "Q3.txt"), labRealContent)
+			mustMkdirAll(t, filepath.Join(share.Branches[1], "documents", "Reports"))
+			outside, touched := labOutsideWithSource(t, "swapmidrebal"+v.name)
+			swap := swapOnce(t, reports, outside)
+			swapBack := swapBackOnce(t, reports)
+
+			plan := RebalancePlan{Moves: []RebalanceMove{{
+				Share:        share.Name,
+				RelPath:      "documents/Reports/Q3.txt",
+				SourceBranch: share.Branches[0],
+				TargetBranch: share.Branches[1],
+				Size:         int64(len(labRealContent)),
+			}}}
+			deps := Deps{
+				TrackedFileCount: func(context.Context) (int, error) { return 100000, nil },
+				UUID: func() string {
+					swap()
+					return "swap-uuid"
+				},
+				Sync: func(context.Context, []parity.ManifestEntry) error {
+					if v.back {
+						swapBack()
+					}
+					return nil
+				},
+			}
+			report, err := RunRebalance(context.Background(), plan, Config{VerifyChecksum: true}, deps, RunHooks{}, nil)
+			if err != nil {
+				t.Fatalf("RunRebalance: %v", err)
+			}
+			labAssertSourceSwapMidCopy(t, report, v.back, filepath.Join(share.Branches[1], "documents", "Reports", "Q3.txt"), outside, touched, reports)
+		})
+	}
+}

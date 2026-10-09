@@ -28,10 +28,16 @@ type FS interface {
 	// different object of the same name, cannot cause removal of anything
 	// other than what resolution found (CWE-367).
 	RemoveConfined(root, rel string) error
-	ReadDir(path string) ([]os.DirEntry, error)
+	// ListConfined lists the directory rel names beneath root, with each
+	// entry's type, size and holding disk (MergerFSBasepath) read through a
+	// descriptor opened beneath root rather than by pathname. On Linux the
+	// open refuses a root that is itself a symlink and fails with
+	// ErrPathEscapes when any component of rel is a symlink at that moment,
+	// so a directory swapped for a symlink after the caller validated rel
+	// cannot make it list anything outside root (CWE-367).
+	ListConfined(root, rel string) ([]BrowseEntry, error)
 	Lstat(path string) (os.FileInfo, error)
 	EvalSymlinks(path string) (string, error)
-	GetXattr(path, attr string) ([]byte, error)
 }
 
 // OSFS is FS against the real operating system.
@@ -74,8 +80,8 @@ func (OSFS) RemoveConfined(root, rel string) error {
 	return removeConfined(OSFS{}, root, rel)
 }
 
-func (OSFS) ReadDir(path string) ([]os.DirEntry, error) {
-	return os.ReadDir(path)
+func (OSFS) ListConfined(root, rel string) ([]BrowseEntry, error) {
+	return listConfined(root, rel)
 }
 
 func (OSFS) Lstat(path string) (os.FileInfo, error) {
@@ -84,10 +90,6 @@ func (OSFS) Lstat(path string) (os.FileInfo, error) {
 
 func (OSFS) EvalSymlinks(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
-}
-
-func (OSFS) GetXattr(path, attr string) ([]byte, error) {
-	return lgetxattr(path, attr)
 }
 
 // MergerFSBasepath is the mergerfs xattr browse reads for the holding

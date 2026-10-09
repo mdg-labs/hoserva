@@ -11,16 +11,18 @@ import (
 
 var (
 	socketPath string
-	// remoteHost, remotePort, remoteToken and insecureSkipTLSVerify are
-	// #50's remote-use flags (Q43): once --host is set, every command
-	// talks TLS to hoservad's :8008 (Q9) with a personal API token instead
-	// of the local Unix socket. remoteToken defaults from the
+	// remoteHost, remotePort, remoteToken, insecureSkipTLSVerify and
+	// tlsFingerprint are #50's remote-use flags (Q43): once --host is set,
+	// every command talks TLS to hoservad's :8008 (Q9) with a personal API
+	// token instead of the local Unix socket. remoteToken defaults from the
 	// HOSERVA_TOKEN environment variable so a token need not appear in
-	// shell history or a process listing.
+	// shell history or a process listing; tlsFingerprint likewise from
+	// HOSERVA_TLS_FINGERPRINT.
 	remoteHost            string
 	remotePort            int
 	remoteToken           string
 	insecureSkipTLSVerify bool
+	tlsFingerprint        string
 )
 
 func rootCmd() *cobra.Command {
@@ -35,7 +37,8 @@ func rootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&remoteHost, "host", "", "Remote hoservad host, for TLS use over TCP instead of the local Unix socket (Q43)")
 	cmd.PersistentFlags().IntVar(&remotePort, "port", defaultRemotePort, "Remote hoservad TCP port (Q9)")
 	cmd.PersistentFlags().StringVar(&remoteToken, "token", os.Getenv("HOSERVA_TOKEN"), "Personal API token for --host (Q43); defaults from HOSERVA_TOKEN")
-	cmd.PersistentFlags().BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for --host (needed for hoservad's default self-signed certificate, Q9)")
+	cmd.PersistentFlags().BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for --host. The token then goes to whoever answers, so prefer --tls-fingerprint; cannot be combined with it")
+	cmd.PersistentFlags().StringVar(&tlsFingerprint, "tls-fingerprint", os.Getenv("HOSERVA_TLS_FINGERPRINT"), "Trust --host only if its certificate has this SHA-256 fingerprint (sha256:AB:CD:…), e.g. hoservad's default self-signed certificate; defaults from HOSERVA_TLS_FINGERPRINT")
 	cmd.AddCommand(
 		statusCmd(),
 		arrayCmd(),

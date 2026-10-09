@@ -253,12 +253,15 @@ func TestLoadOrGenerateTLSCertificate_RecoversInterruptedPairFromBackup(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := installTLSCertificate(certPath, keyPath, issuedCert, issuedKey); err != nil {
+	// An install stopped after its snapshot and its key rename: the key is
+	// the new one, the certificate still the old one, and the snapshot is
+	// the previous pair.
+	if err := snapshotTLSPair(certPath, keyPath); err != nil {
 		t.Fatal(err)
 	}
-
-	// The live certificate no longer matches its key. The snapshot taken
-	// before that install is the previous pair.
+	if err := writeTLSFileDurable(keyPath, issuedKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(certPath, issuedCert[:len(issuedCert)/2], 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -268,6 +271,26 @@ func TestLoadOrGenerateTLSCertificate_RecoversInterruptedPairFromBackup(t *testi
 	}
 	if string(recovered.Certificate[0]) != string(original.Certificate[0]) {
 		t.Fatal("interrupted install should restore the snapshotted pair, not keep a mismatched one or mint a new certificate")
+	}
+}
+
+func TestInstallTLSCertificate_RemovesBackupOnceComplete(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "hoserva.crt")
+	keyPath := filepath.Join(dir, "hoserva.key")
+	if _, err := loadOrGenerateTLSCertificate(certPath, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	issuedCert, issuedKey, err := generateNamedCertificate("nas.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installTLSCertificate(certPath, keyPath, issuedCert, issuedKey); err != nil {
+		t.Fatal(err)
+	}
+	assertNoTLSBackups(t, dir)
+	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
+		t.Fatalf("installed pair does not load: %v", err)
 	}
 }
 

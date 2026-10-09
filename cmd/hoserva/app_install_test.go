@@ -28,6 +28,7 @@ func testInstallPlan() apiv1.TemplateInstallPlan {
 			{Kind: apiv1.TemplatePrivilegeKindConfinementDisabled, Service: "agent", Detail: apiv1.NewOptString("apparmor:unconfined"), Description: "Switches off part of the container's confinement."},
 		},
 		Compose: "services: {}\n",
+		Digest:  "abc123digest",
 	}
 }
 
@@ -86,6 +87,53 @@ func TestAppInstallDryRunPreviewsInsteadOfInstalling(t *testing.T) {
 	}
 	if !strings.Contains(printed, "Would install") || !strings.Contains(printed, "Nothing was created.") {
 		t.Errorf("output = %q", printed)
+	}
+	if !strings.Contains(printed, "Plan digest: abc123digest") || !strings.Contains(printed, "--plan-digest") {
+		t.Errorf("output lacks the digest and how to pass it:\n%s", printed)
+	}
+}
+
+func TestAppInstallSendsThePlanDigestAndLeavesItOutByDefault(t *testing.T) {
+	var gotBody apiv1.TemplateInstallRequest
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		gotBody = apiv1.TemplateInstallRequest{}
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &gotBody); err != nil {
+			t.Errorf("request body %q: %v", raw, err)
+		}
+		writeJSON(t, w, http.StatusOK, &apiv1.TemplateInstallResult{Stack: apiv1.Stack{Name: "agent", InstalledAt: time.Now().UTC()}, Plan: testInstallPlan()})
+	})
+	if _, err := runAppCLI(t, sock, "app", "install", "risky-agent", "--plan-digest", "abc123digest"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gotBody.PlanDigest.Or(""); got != "abc123digest" {
+		t.Errorf("planDigest = %q, want abc123digest", got)
+	}
+	if _, err := runAppCLI(t, sock, "app", "install", "risky-agent"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.PlanDigest.Set {
+		t.Errorf("planDigest = %q sent without --plan-digest", gotBody.PlanDigest.Value)
+	}
+}
+
+func TestAppInstallReportsAChangedTemplateInPlainWords(t *testing.T) {
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"code":"template_changed","message":"template: the template changed since it was previewed: x is not the revision that was previewed"}`))
+	})
+	_, err := runAppCLI(t, sock, "app", "install", "risky-agent", "--plan-digest", "old")
+	if err == nil {
+		t.Fatal("a changed template was installed")
+	}
+	for _, want := range []string{"changed since it was previewed", "nothing was installed", "--dry-run", "--plan-digest"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "code 409") {
+		t.Errorf("error %q is the raw API error", err)
 	}
 }
 
@@ -270,5 +318,20 @@ func TestAppInstallDryRunPrintsAnInputValueWithControlCharactersEscaped(t *testi
 	assertNoTerminalControl(t, printed)
 	if !strings.Contains(printed, `  NOTE: x\x1b[2K`) {
 		t.Errorf("output lacks the escaped value:\n%s", printed)
+	}
+}
+
+func TestAppInstallRefusesAnEmptyPlanDigest(t *testing.T) {
+	called := false
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		writeJSON(t, w, http.StatusOK, &apiv1.TemplateInstallResult{Stack: apiv1.Stack{Name: "agent", InstalledAt: time.Now().UTC()}, Plan: testInstallPlan()})
+	})
+	_, err := runAppCLI(t, sock, "app", "install", "risky-agent", "--plan-digest", "")
+	if err == nil || !strings.Contains(err.Error(), "--plan-digest needs a value") {
+		t.Fatalf("err = %v, want --plan-digest needs a value", err)
+	}
+	if called {
+		t.Error("an empty --plan-digest reached the server")
 	}
 }

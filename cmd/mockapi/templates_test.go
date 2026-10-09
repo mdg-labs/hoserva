@@ -423,3 +423,56 @@ func TestMockCatalogHasATemplateWithoutAnIconWhoseIconAnswers404(t *testing.T) {
 		t.Fatalf("installing the icon-less template: %v", err)
 	}
 }
+
+func TestMockInstallBoundToAPlanDigestMirrorsProduction(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	params := apiv1.InstallTemplateParams{ID: "jellyfin"}
+	plan, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+	if err != nil || plan.Digest == "" {
+		t.Fatalf("PreviewTemplateInstall = %+v, %v, want a digest", plan, err)
+	}
+
+	changed, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{ExtraParams: apiv1.NewOptString("--cap-add=SYS_ADMIN")}, apiv1.PreviewTemplateInstallParams{ID: "jellyfin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Digest == plan.Digest {
+		t.Fatal("a plan with another privilege summary has the digest of the plan without it")
+	}
+	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{PlanDigest: apiv1.NewOptString(changed.Digest)}, params)
+	resp := h.NewError(ctx, err)
+	if resp.StatusCode != 409 || resp.Response.Code != "template_changed" {
+		t.Errorf("install bound to another plan: %d %q (%v), want 409 template_changed", resp.StatusCode, resp.Response.Code, err)
+	}
+	if _, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "jellyfin"}); err == nil {
+		t.Error("a refused install recorded a stack")
+	}
+
+	res, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{PlanDigest: apiv1.NewOptString(plan.Digest)}, params)
+	if err != nil {
+		t.Fatalf("install bound to its own plan: %v", err)
+	}
+	if res.Plan.Digest != plan.Digest {
+		t.Errorf("install digest %s, preview digest %s", res.Plan.Digest, plan.Digest)
+	}
+}
+
+func TestMockInstallRefusesAnEmptyPlanDigest(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, err = h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{PlanDigest: apiv1.NewOptString("")}, apiv1.InstallTemplateParams{ID: "jellyfin"})
+	resp := h.NewError(ctx, err)
+	if resp.StatusCode != 409 || resp.Response.Code != "template_changed" {
+		t.Errorf("install bound to an empty digest: %d %q (%v), want 409 template_changed", resp.StatusCode, resp.Response.Code, err)
+	}
+	if _, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "jellyfin"}); err == nil {
+		t.Error("a refused install recorded a stack")
+	}
+}

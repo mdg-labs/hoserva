@@ -23019,7 +23019,11 @@ func (s *TemplateInputRole) UnmarshalText(data []byte) error {
 // Ref: #/components/schemas/TemplateInstallPlan
 type TemplateInstallPlan struct {
 	Template StackTemplate `json:"template"`
-	Title    string        `json:"title"`
+	// Hex SHA-256 over the plan's template source, id and revision, its `compose` text and its
+	// `privileges`. A preview and an install of the same request have the same digest. Pass it as
+	// `planDigest` to `installTemplate` to install only what was shown.
+	Digest string `json:"digest"`
+	Title  string `json:"title"`
 	// The stack's name.
 	Name   string          `json:"name"`
 	Inputs []TemplateInput `json:"inputs"`
@@ -23042,6 +23046,11 @@ type TemplateInstallPlan struct {
 // GetTemplate returns the value of Template.
 func (s *TemplateInstallPlan) GetTemplate() StackTemplate {
 	return s.Template
+}
+
+// GetDigest returns the value of Digest.
+func (s *TemplateInstallPlan) GetDigest() string {
+	return s.Digest
 }
 
 // GetTitle returns the value of Title.
@@ -23082,6 +23091,11 @@ func (s *TemplateInstallPlan) GetCompose() string {
 // SetTemplate sets the value of Template.
 func (s *TemplateInstallPlan) SetTemplate(val StackTemplate) {
 	s.Template = val
+}
+
+// SetDigest sets the value of Digest.
+func (s *TemplateInstallPlan) SetDigest(val string) {
+	s.Digest = val
 }
 
 // SetTitle sets the value of Title.
@@ -23163,6 +23177,12 @@ type TemplateInstallRequest struct {
 	// that cannot be checked is refused too. Under host networking Docker ignores published ports, so none
 	// is checked.
 	ExtraParams OptString `json:"extraParams"`
+	// The `digest` of the plan the caller was shown. Only `installTemplate` reads it;
+	// `previewTemplateInstall` ignores it. When given and the plan the install would write now has another
+	// digest, the install is refused with 409 `template_changed` before anything is created. Absent
+	// installs whatever the template is now; a value that is not a 64-character lowercase hex digest is
+	// refused with 400, never read as absent.
+	PlanDigest OptString `json:"planDigest"`
 }
 
 // GetName returns the value of Name.
@@ -23200,6 +23220,11 @@ func (s *TemplateInstallRequest) GetExtraParams() OptString {
 	return s.ExtraParams
 }
 
+// GetPlanDigest returns the value of PlanDigest.
+func (s *TemplateInstallRequest) GetPlanDigest() OptString {
+	return s.PlanDigest
+}
+
 // SetName sets the value of Name.
 func (s *TemplateInstallRequest) SetName(val OptString) {
 	s.Name = val
@@ -23233,6 +23258,11 @@ func (s *TemplateInstallRequest) SetMemoryMiB(val OptInt) {
 // SetExtraParams sets the value of ExtraParams.
 func (s *TemplateInstallRequest) SetExtraParams(val OptString) {
 	s.ExtraParams = val
+}
+
+// SetPlanDigest sets the value of PlanDigest.
+func (s *TemplateInstallRequest) SetPlanDigest(val OptString) {
+	s.PlanDigest = val
 }
 
 // The restart policy of every service. Absent leaves the template's.

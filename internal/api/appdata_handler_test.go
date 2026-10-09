@@ -64,7 +64,7 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 		t.Fatal(err)
 	}
 	f.svc = &backup.AppdataService{
-		Backup:      &backup.Service{Store: dests, Hostname: "test-host", Now: func() time.Time { return time.Date(2026, 9, 29, 4, 0, 0, 0, time.UTC) }},
+		Backup:      &backup.Service{Store: dests, Hostname: "test-host", Recipient: &backup.Recipient{Identity: "AGE-SECRET-KEY-HANDLER-TEST"}, Now: func() time.Time { return time.Date(2026, 9, 29, 4, 0, 0, 0, time.UTC) }},
 		Containers:  backup.LifecycleContainers{Lifecycle: life},
 		Roots:       func(context.Context) ([]string, error) { return []string{f.appdata}, nil },
 		Policies:    &backup.FakeAppdataPolicyStore{},

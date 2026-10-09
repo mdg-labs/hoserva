@@ -81,14 +81,12 @@ func (f *ownerRecordingFS) Chown(path string, uid, gid int) error {
 	return nil
 }
 
-func (f xattrFS) GetXattr(path, attr string) ([]byte, error) {
-	if attr != MergerFSBasepath {
-		return nil, nil
+func (f xattrFS) ListConfined(root, rel string) ([]BrowseEntry, error) {
+	entries, err := f.OSFS.ListConfined(root, rel)
+	for i := range entries {
+		entries[i].Disk = f.xattr[filepath.Join(root, rel, entries[i].Name)]
 	}
-	if v, ok := f.xattr[path]; ok {
-		return []byte(v), nil
-	}
-	return nil, nil
+	return entries, err
 }
 
 func testService(t *testing.T) (context.Context, *Service, testLayout, *recordingMounter) {

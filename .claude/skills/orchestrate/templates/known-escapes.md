@@ -78,6 +78,7 @@ existing line by adding its PR number.
 - **errors** — a caller accepts a helper's exit 0 as a result while the helper exits 0 with empty output when its input is missing (`dev-diff.sh --list` without a local `dev`), so "unavailable" reads as "empty" — PR 575
 - **errors** — a step allowed to fail (`continue-on-error` on an artifact download) feeds a reporter that cannot tell its failure from an expected empty result, so a failed download reads as "no reports were found" — PR 714
 - **errors** — a lookup calls a listing that refuses results past its page cap without the filter that bounds it (every advisory instead of the drafts the lookup can match), so once the collection grows every run stops — PR 772
+- **errors** — two paths accept the same "done, with a warning" error (a certificate installed but its backup left behind) and only one of them tells the admin, so the other swallows the warning — PR 785
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
@@ -136,6 +137,8 @@ existing line by adding its PR number.
 - **accounting** — capacity tracked per consumer (per share) instead of per filesystem, or a negative headroom summed into a total, so a plan overcommits or wrongly refuses — PR 337
 - **planning** — planner and post-check disagree on which entries count (the planner skips symlinks or all of lost+found, the post-check rejects them), so the refusal comes only after all the work, on every retry — PR 337, 394
 - **validation** — a list input split in a way that silently drops entries (bash `read` stops at the first newline and drops a trailing empty field) instead of refusing the malformed input — PR 403
+- **validation** — a reader of one section of a Markdown doc does not skip fenced code, although the same script has a fence helper, so an example row counts as real and a fenced heading ends the section early — PR 785
+- **doc-drift** — a skill step places an action that reports a result (an advisory comment saying the fix is on `dev`) before the step that decides and performs it (the hold-back check and the push), so an agent following it in order reports what has not happened — PR 785
 
 ## Security
 - **security** — host or URL checked by substring instead of parsed host (including allowlist entries left unanchored beside anchored ones); redirects not validated — PR 201, 228, 474
@@ -150,6 +153,7 @@ existing line by adding its PR number.
 - **security** — a user-docs example bakes a TLS-skip flag (`curl --insecure`) into a reusable script that sends a secret token, instead of keeping it to a one-off test — PR 708
 - **security** — an entry a tree walk re-reads from its opened descriptor is handled by type differently in sibling paths (a directory that took a file's name between the lstat and the open is recorded as archived on the file path but counted as changed on the link path), so a later identity-scoped removal treats what was never read as read — PR 777
 - **security** — a structural check of a workflow or script accepts a required value anywhere in a step's text (substring, comments included) instead of as the exact argument it must be, so a step that only names it elsewhere passes — PR 777
+- **security** — a strip or deny rule keyed on id 0 alone (setgid left off only for gid 0) while other ids are as privileged (the `hoserva`, `docker`, `disk` groups), so the bound a doc claims for an accepted residual does not hold — PR 785
 
 ## Tests
 - **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached, any non-zero exit accepted as the expected refusal without its diagnostic, a fixture key spelled differently from the one the parser reads so the scenario is never built, two omitted optional values compared through the same zero fallback) — PR 159, 163, 231, 337, 403, 421, 430, 567, 589, 592, 644
@@ -173,6 +177,8 @@ existing line by adding its PR number.
 - **docs** — a fixture or spec comment states a property only one build tier produces (an L2-only partition layout) as if every build had it — PR 568
 - **docs** — a user-facing command block that is not safe to paste (an `export VAR=<value>` the shell reads as redirection) or whose surrounding text it contradicts (an `export` of a secret said to keep it out of shell history) — PR 688
 - **docs** — a user-docs checklist whose tick rule ("tick each line that does not apply") does not fit how its items are phrased (statements to confirm, "I know whether…"), so the reader cannot tell when it is complete — PR 708
+- **docs** — a Markdown table cell holds a command whose code span contains `|` (a regex alternation), which splits the row into extra cells; escaping it as `\|` fixes the rendering but leaves a command that matches nothing for an agent reading the raw file, so rewrite the command without a pipe (one `-e` per pattern) — PR 785
+- **docs** — a sentence elides the noun of a comparison ("where a real account's, never capped…, would not"), so the rule it states cannot be parsed — PR 785
 
 ## Catalog templates
 - **template** — an image option that prints credentials (peer configuration QR codes) to the container log left switched on, when the image also saves them in the app's folder — catalog PR 81

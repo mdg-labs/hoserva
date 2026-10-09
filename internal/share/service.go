@@ -595,26 +595,17 @@ func (s *Service) Browse(ctx context.Context, name, rel string) (string, []Brows
 			listed = ""
 		}
 	}
-	entries, err := s.FS.ReadDir(dir)
+	resolvedRoot, err := s.FS.EvalSymlinks(root)
+	if err != nil {
+		return "", nil, fmt.Errorf("share: resolving share root %s: %w", root, err)
+	}
+	dirRel, ok := rootRelative(resolvedRoot, root, dir)
+	if !ok {
+		return "", nil, fmt.Errorf("%w: %q", ErrPathEscapes, rel)
+	}
+	out, err := s.FS.ListConfined(root, dirRel)
 	if err != nil {
 		return "", nil, fmt.Errorf("share: listing %s: %w", dir, err)
-	}
-	out := make([]BrowseEntry, 0, len(entries))
-	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		full := filepath.Join(dir, e.Name())
-		disk := ""
-		if x, err := s.FS.GetXattr(full, MergerFSBasepath); err == nil {
-			disk = string(x)
-		}
-		item := BrowseEntry{Name: e.Name(), Directory: e.IsDir(), Disk: disk}
-		if !e.IsDir() {
-			item.SizeBytes = info.Size()
-		}
-		out = append(out, item)
 	}
 	return listed, out, nil
 }

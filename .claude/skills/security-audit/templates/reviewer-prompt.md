@@ -79,7 +79,7 @@ needs: a doc 15 §3 entry point; an attacker from §2 using only its capability;
 a hop-by-hop trace from entry point to sink with `file:line` for every hop,
 including each guard you checked on the way and why it does not stop the
 attacker; the concrete outcome; the preconditions; a proposed severity under
-the rubric; and the invariant (`T1`…`T18`) it violates, if one applies.
+the rubric; and the invariant (a `T<n>` from doc 15 §4) it violates, if one applies.
 
 Not candidates: anything an admin can do by design (§2.3), anything in §5,
 style, and hardening you would like with no path from §3. A weakness with a
@@ -106,7 +106,7 @@ sink: <file:line of the operation that does the damage>
 impact: <the concrete outcome for an asset in doc 15 §1>
 preconditions: <what must be true beyond the attacker's capability, or "none — default configuration">
 proposed_severity: critical | high | medium | low | info
-invariant: <T1…T18, or "none">
+invariant: <an invariant from doc 15 §4 (T<n>), or "none">
 type: bug | chore | docs
 area: <one area:* label per CLAUDE.md's Area table, or "none">
 safety_critical: true | false

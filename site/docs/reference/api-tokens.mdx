@@ -94,8 +94,24 @@ The operation behind the call is [List disks](./api/list-disks.api.mdx). Every o
 The `hoserva` command-line tool can also run from another computer. It reads the same token from `HOSERVA_TOKEN`:
 
 ```bash
-hoserva --host "$HOSERVA_HOST" --insecure-skip-tls-verify disk list
+hoserva --host "$HOSERVA_HOST" disk list
 ```
+
+That works when the server presents a certificate your computer trusts, such as one from Let's Encrypt, and you address the server by its domain name. With the default self-signed certificate, pin it by its fingerprint. On the Hoserva server, read the fingerprint:
+
+```bash
+openssl x509 -noout -fingerprint -sha256 -in /var/lib/hoserva/tls/hoserva.crt | cut -d= -f2
+```
+
+Then pass the value it prints with `--tls-fingerprint`, or set `HOSERVA_TLS_FINGERPRINT`:
+
+```bash
+hoserva --host "$HOSERVA_HOST" --tls-fingerprint "AB:CD:…" disk list
+```
+
+`hoserva` checks the fingerprint before it sends the token, and refuses to connect to a server whose certificate differs. When you regenerate the self-signed certificate, read the fingerprint again and update the value you pass.
+
+`--insecure-skip-tls-verify` skips the check entirely, so the token goes to whoever answers. Use it only for a one-off test on a network you control, and never together with `--tls-fingerprint`.
 
 ## Revoke a token
 

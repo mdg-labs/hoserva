@@ -43881,6 +43881,10 @@ func (s *TemplateInstallPlan) encodeFields(e *jx.Encoder) {
 		s.Template.Encode(e)
 	}
 	{
+		e.FieldStart("digest")
+		e.Str(s.Digest)
+	}
+	{
 		e.FieldStart("title")
 		e.Str(s.Title)
 	}
@@ -43922,15 +43926,16 @@ func (s *TemplateInstallPlan) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfTemplateInstallPlan = [8]string{
+var jsonFieldsNameOfTemplateInstallPlan = [9]string{
 	0: "template",
-	1: "title",
-	2: "name",
-	3: "inputs",
-	4: "privileges",
-	5: "warnings",
-	6: "advancedAvailable",
-	7: "compose",
+	1: "digest",
+	2: "title",
+	3: "name",
+	4: "inputs",
+	5: "privileges",
+	6: "warnings",
+	7: "advancedAvailable",
+	8: "compose",
 }
 
 // Decode decodes TemplateInstallPlan from json.
@@ -43938,7 +43943,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode TemplateInstallPlan to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -43952,8 +43957,20 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"template\"")
 			}
-		case "title":
+		case "digest":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Digest = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"digest\"")
+			}
+		case "title":
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				v, err := d.Str()
 				s.Title = string(v)
@@ -43965,7 +43982,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"title\"")
 			}
 		case "name":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				v, err := d.Str()
 				s.Name = string(v)
@@ -43977,7 +43994,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"name\"")
 			}
 		case "inputs":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				s.Inputs = make([]TemplateInput, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -43995,7 +44012,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"inputs\"")
 			}
 		case "privileges":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				s.Privileges = make([]TemplatePrivilege, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -44013,7 +44030,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"privileges\"")
 			}
 		case "warnings":
-			requiredBitSet[0] |= 1 << 5
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				s.Warnings = make([]ConversionWarning, 0)
 				if err := d.Arr(func(d *jx.Decoder) error {
@@ -44031,7 +44048,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"warnings\"")
 			}
 		case "advancedAvailable":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				v, err := d.Bool()
 				s.AdvancedAvailable = bool(v)
@@ -44043,7 +44060,7 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"advancedAvailable\"")
 			}
 		case "compose":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				v, err := d.Str()
 				s.Compose = string(v)
@@ -44063,8 +44080,9 @@ func (s *TemplateInstallPlan) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b11111111,
+		0b00000001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -44161,9 +44179,15 @@ func (s *TemplateInstallRequest) encodeFields(e *jx.Encoder) {
 			s.ExtraParams.Encode(e)
 		}
 	}
+	{
+		if s.PlanDigest.Set {
+			e.FieldStart("planDigest")
+			s.PlanDigest.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfTemplateInstallRequest = [7]string{
+var jsonFieldsNameOfTemplateInstallRequest = [8]string{
 	0: "name",
 	1: "values",
 	2: "networkMode",
@@ -44171,6 +44195,7 @@ var jsonFieldsNameOfTemplateInstallRequest = [7]string{
 	4: "cpus",
 	5: "memoryMiB",
 	6: "extraParams",
+	7: "planDigest",
 }
 
 // Decode decodes TemplateInstallRequest from json.
@@ -44250,6 +44275,16 @@ func (s *TemplateInstallRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"extraParams\"")
+			}
+		case "planDigest":
+			if err := func() error {
+				s.PlanDigest.Reset()
+				if err := s.PlanDigest.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"planDigest\"")
 			}
 		default:
 			return d.Skip()

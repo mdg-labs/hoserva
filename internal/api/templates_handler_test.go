@@ -389,3 +389,53 @@ func TestTemplates_APortTheExtraParametersPublishIsRefusedLikeAPortInput(t *test
 		t.Errorf("a free extra port was refused: %v", err)
 	}
 }
+
+func TestTemplates_AnInstallBoundToThePreviewedPlanIsRefusedWhenTheTemplateChanged(t *testing.T) {
+	ctx := context.Background()
+	h, root := newTemplateHandler(t)
+	plan, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{}, apiv1.PreviewTemplateInstallParams{ID: "probe"})
+	if err != nil || plan.Digest == "" {
+		t.Fatalf("PreviewTemplateInstall = %+v, %v, want a digest", plan, err)
+	}
+	h.TemplateInstall.Catalog = template.MapCatalog{Source: "hoserva", Templates: map[string]string{
+		"probe": tplTemplate("probe", "    privileged: true\n"),
+	}}
+	req := &apiv1.TemplateInstallRequest{PlanDigest: apiv1.NewOptString(plan.Digest)}
+	_, err = h.InstallTemplate(ctx, req, apiv1.InstallTemplateParams{ID: "probe"})
+	if status, code := statusOf(h, err); status != 409 || code != "template_changed" {
+		t.Fatalf("InstallTemplate = %d %q, want 409 template_changed", status, code)
+	}
+	if _, err := os.Stat(filepath.Join(root, "probe")); !os.IsNotExist(err) {
+		t.Errorf("a refused install left the stack directory: %v", err)
+	}
+	if _, err := h.GetStack(ctx, apiv1.GetStackParams{Name: "probe"}); err == nil {
+		t.Error("a refused install recorded a stack")
+	}
+
+	now, err := h.PreviewTemplateInstall(ctx, &apiv1.TemplateInstallRequest{}, apiv1.PreviewTemplateInstallParams{ID: "probe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if now.Digest == plan.Digest {
+		t.Fatal("a template that became privileged kept its digest")
+	}
+	res, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{PlanDigest: apiv1.NewOptString(now.Digest)}, apiv1.InstallTemplateParams{ID: "probe"})
+	if err != nil {
+		t.Fatalf("install bound to the current plan: %v", err)
+	}
+	if res.Plan.Digest != now.Digest {
+		t.Errorf("install digest %s, preview digest %s", res.Plan.Digest, now.Digest)
+	}
+}
+
+func TestInstallTemplateRefusesAnEmptyPlanDigest(t *testing.T) {
+	ctx := context.Background()
+	h, root := newTemplateHandler(t)
+	_, err := h.InstallTemplate(ctx, &apiv1.TemplateInstallRequest{PlanDigest: apiv1.NewOptString("")}, apiv1.InstallTemplateParams{ID: "probe"})
+	if status, code := statusOf(h, err); status != 409 || code != "template_changed" {
+		t.Fatalf("InstallTemplate = %d %q, want 409 template_changed", status, code)
+	}
+	if _, err := os.Stat(filepath.Join(root, "probe")); !os.IsNotExist(err) {
+		t.Errorf("a refused install left the stack directory: %v", err)
+	}
+}

@@ -243,6 +243,9 @@ func TestAppdataRun_StopsArchivesRestartsInReverseThenUploads(t *testing.T) {
 		if hdr.Container != name || !hdr.Stopped || trailer.Files != 1 {
 			t.Fatalf("%s: header %+v trailer %+v", name, hdr, trailer)
 		}
+		if !trailer.authentic(rig.key(t)) {
+			t.Fatalf("%s: the archive's tag is not the installation's: %+v", name, trailer)
+		}
 	}
 	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the stopped-container journal survived a clean run: %v", err)

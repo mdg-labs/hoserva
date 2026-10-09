@@ -187,13 +187,17 @@ func (a *AppdataService) PreviewRestore(ctx context.Context, req AppdataRestoreR
 	if len(roots) == 0 {
 		return out, invalidArchivef("the array has no cache disk, so there is no appdata location to restore into")
 	}
+	key, err := a.archiveKey()
+	if err != nil {
+		return out, err
+	}
 	staging, release, err := a.previews.stage(roots)
 	if err != nil {
 		return out, err
 	}
 	defer release()
 
-	plain, hdr, err := a.fetchVerifiedAppdata(ctx, req, source, roots, staging)
+	plain, hdr, err := a.fetchVerifiedAppdata(ctx, req, source, roots, staging, key)
 	if err != nil {
 		return out, err
 	}

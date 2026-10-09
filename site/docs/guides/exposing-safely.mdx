@@ -118,7 +118,27 @@ read -rsp 'Token: ' HOSERVA_TOKEN && export HOSERVA_TOKEN
 hoserva --host 192.168.1.20 status
 ```
 
-`--host` connects over HTTPS on port 8008. Use `--port` if you changed the listen port. With the default self-signed certificate, add `--insecure-skip-tls-verify`. Reading the token into `HOSERVA_TOKEN` this way keeps it off the screen and out of your shell history. `--token` works too, but the token then ends up in your shell history.
+`--host` connects over HTTPS on port 8008. Use `--port` if you changed the listen port. Reading the token into `HOSERVA_TOKEN` this way keeps it off the screen and out of your shell history. `--token` works too, but the token then ends up in your shell history.
+
+With a trusted certificate, such as one from Let's Encrypt, address the server by its domain name and nothing more is needed. With the default self-signed certificate, no authority vouches for the server, so tell `hoserva` which certificate to expect. That is the certificate's fingerprint, a short value that identifies it. Read it on the Hoserva server:
+
+```bash
+openssl x509 -noout -fingerprint -sha256 -in /var/lib/hoserva/tls/hoserva.crt | cut -d= -f2
+```
+
+Then pass it with `--tls-fingerprint`, or set it in `HOSERVA_TLS_FINGERPRINT`. Replace the placeholder with the value the first command printed:
+
+```bash
+hoserva --host 192.168.1.20 --tls-fingerprint "AB:CD:…" status
+```
+
+`hoserva` compares the fingerprint before it sends anything, so the token never reaches a server with a different certificate. A mismatch stops the command with an error that shows the fingerprint the server presented. Do not accept a new value unless you have read it again on the server, or you expected the certificate to change.
+
+The fingerprint belongs to one certificate. When you select **Regenerate self-signed certificate**, the server gets a new certificate and your saved fingerprint no longer matches, so read it again and update the value you pass.
+
+:::warning[Do not skip certificate checks]
+`--insecure-skip-tls-verify` makes `hoserva` accept any certificate. Anyone who can intercept the connection can then pose as your server and receive your token. Use `--tls-fingerprint` instead. The two options cannot be combined.
+:::
 
 ## What about exposing an app through a reverse proxy?
 

@@ -75,7 +75,7 @@ another.
 5. **Set the severity yourself**, by the rubric's lowest matching level after
    its anti-inflation rules, whatever the reviewer proposed. Say why when it
    differs.
-6. **Check the claimed invariant** (`T1`…`T18`) is the one violated, and that
+6. **Check the claimed invariant** (a `T<n>` from doc 15 §4) is the one violated, and that
    `type`, `area`, `safety_critical` and `files` are right; correct them if not.
 
 ## Verdict, one per candidate
@@ -105,7 +105,7 @@ severity_changed_from: <the reviewer's proposed severity, or "unchanged">
 type: bug | chore | docs
 area: <area:* label, or "none">
 safety_critical: true | false
-invariant: <T1…T18, or "none">
+invariant: <an invariant from doc 15 §4 (T<n>), or "none">
 files: [<repository-relative paths>]
 verified_trace:
   - file: <path>

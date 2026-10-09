@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,19 +24,28 @@ import (
 	"github.com/mdg-labs/hoserva/internal/beneath"
 )
 
+// testAppdataKey authenticates the archives the archive-level tests pack.
+var testAppdataKey = func() []byte {
+	key, err := deriveAppdataKey("AGE-SECRET-KEY-TEST-IDENTITY")
+	if err != nil {
+		panic(err)
+	}
+	return key
+}()
+
 // extractAppdata unpacks into targets whose parents already exist, holding
 // the parents only for the call.
 func extractAppdata(ctx context.Context, archivePath string, hdr appdataHeader, targets []string) error {
 	dirs := &heldDirs{}
 	defer dirs.close()
-	return dirs.extract(ctx, archivePath, hdr, targets, make([]liveIdentity, len(targets)))
+	return dirs.extract(ctx, archivePath, hdr, targets, make([]liveIdentity, len(targets)), nil, nil)
 }
 
 func packTestTree(t *testing.T, dir string) (string, appdataHeader, appdataTrailer) {
 	t.Helper()
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC), Dirs: []string{dir}}
-	trailer, err := packAppdata(context.Background(), dest, hdr)
+	trailer, err := packAppdata(context.Background(), dest, hdr, testAppdataKey)
 	if err != nil {
 		t.Fatalf("packAppdata: %v", err)
 	}
@@ -538,7 +548,7 @@ func TestAppdataPack_CancelStopsTheCopyAndLeavesNoArchive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
-	if _, err := packAppdata(ctx, dest, appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}); !errors.Is(err, context.Canceled) {
+	if _, err := packAppdata(ctx, dest, appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}, testAppdataKey); !errors.Is(err, context.Canceled) {
 		t.Fatalf("packAppdata = %v, want context.Canceled", err)
 	}
 	if entries, _ := os.ReadDir(filepath.Dir(dest)); len(entries) != 0 {
@@ -669,7 +679,7 @@ func TestAppdataArchive_RecordsTheIdentityOfEveryEntryItArchives(t *testing.T) {
 	archived := archivedIDs{}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	if _, err := packAppdataRecording(context.Background(), dest, hdr, archived); err != nil {
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archived); err != nil {
 		t.Fatal(err)
 	}
 	var want []devIno
@@ -698,7 +708,7 @@ func TestAppdataArchive_RecordsNothingForAnEntryItDoesNotArchive(t *testing.T) {
 	archived := archivedIDs{}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	if _, err := packAppdataRecording(context.Background(), dest, hdr, archived); err != nil {
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archived); err != nil {
 		t.Fatal(err)
 	}
 	late := filepath.Join(src, "late")
@@ -789,7 +799,7 @@ func TestAppdataArchive_ADirectorySwappedForALinkIsNotFollowed(t *testing.T) {
 	archived := archivedIDs{}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archived)
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archived)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +821,7 @@ func TestAppdataArchive_AFileSwappedForALinkIsNotFollowed(t *testing.T) {
 	archived := archivedIDs{}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archived)
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archived)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -851,7 +861,7 @@ func TestAppdataArchive_AFileSwappedForADirectoryIsCountedAsChangedAndNotRecorde
 	archived := archivedIDs{}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archived)
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archived)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -881,7 +891,7 @@ func TestAppdataArchive_ADirectoryHoldingALinkBelowTheRootIsNotFollowed(t *testi
 	archived := archivedIDs{}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	if _, err := packAppdataRecording(context.Background(), dest, hdr, archived); err != nil {
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archived); err != nil {
 		t.Fatal(err)
 	}
 	requireNothingFromOutside(t, dest, archived, src, outside)
@@ -895,7 +905,7 @@ func TestAppdataArchive_AnAppdataDirectoryThatIsALinkIsRefused(t *testing.T) {
 	}
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{link}}
-	if _, err := packAppdataRecording(context.Background(), dest, hdr, nil); !errors.Is(err, beneath.ErrSymlink) {
+	if _, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, nil); !errors.Is(err, beneath.ErrSymlink) {
 		t.Fatalf("packing a link = %v, want an error wrapping ErrSymlink", err)
 	}
 }
@@ -925,7 +935,7 @@ func TestAppdataArchive_ADirectoryRemovedBeforeItIsListedDoesNotEndTheArchive(t 
 
 	dest := filepath.Join(t.TempDir(), "a.tar.zst")
 	hdr := appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}
-	trailer, err := packAppdataRecording(context.Background(), dest, hdr, archivedIDs{})
+	trailer, err := packAppdataRecording(context.Background(), dest, hdr, testAppdataKey, archivedIDs{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -943,5 +953,132 @@ func TestAppdataArchive_ADirectoryRemovedBeforeItIsListedDoesNotEndTheArchive(t 
 		if !names[want] {
 			t.Errorf("%s is missing from the archive: the walk stopped at the vanished directory (entries %v)", want, names)
 		}
+	}
+}
+
+func TestAppdataArchive_TrailerTagIsGivenByItsKeyAndNoOther(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive, _, _ := packTestTree(t, src)
+	_, trailer, err := verifyAppdata(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trailer.authentic(testAppdataKey) {
+		t.Fatal("the tag of a packed archive is not authentic under the key it was packed with")
+	}
+	other, err := deriveAppdataKey("AGE-SECRET-KEY-ANOTHER-IDENTITY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trailer.authentic(other) || trailer.authentic(nil) {
+		t.Fatal("the tag is authentic under another key, or under none")
+	}
+	for name, edit := range map[string]func(*appdataTrailer){
+		"files":   func(x *appdataTrailer) { x.Files++ },
+		"bytes":   func(x *appdataTrailer) { x.Bytes++ },
+		"skipped": func(x *appdataTrailer) { x.Skipped++ },
+		"changed": func(x *appdataTrailer) { x.Changed++ },
+		"sha256":  func(x *appdataTrailer) { x.SHA256 = strings.Repeat("0", 64) },
+		"removed": func(x *appdataTrailer) { x.MAC = "" },
+		"garbled": func(x *appdataTrailer) { x.MAC = "zz" },
+	} {
+		altered := trailer
+		edit(&altered)
+		if altered.authentic(testAppdataKey) {
+			t.Errorf("a trailer with its %s altered is still authentic", name)
+		}
+	}
+}
+
+func TestAppdataArchive_PackRefusesToWriteWithoutAKey(t *testing.T) {
+	src := t.TempDir()
+	dest := filepath.Join(t.TempDir(), "a.tar.zst")
+	if _, err := packAppdata(context.Background(), dest, appdataHeader{Container: "alpha", CreatedAt: time.Now(), Dirs: []string{src}}, nil); err == nil {
+		t.Fatal("packAppdata without a key succeeded")
+	}
+	if _, err := os.Stat(dest); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an archive was written without a key: %v", err)
+	}
+	if _, err := deriveAppdataKey(""); err == nil {
+		t.Fatal("a key was derived from an empty identity")
+	}
+}
+
+func TestAppdataArchive_RestoredModeLeavesOffSetuidOfRootAndSetgidOfPrivilegedGroups(t *testing.T) {
+	privileged := privilegedGIDs{998: true, 999: true}
+	tests := []struct {
+		name     string
+		mode     int64
+		uid, gid int
+		want     uint32
+		stripped string
+	}{
+		{"root setuid", 0o4755, 0, 5, 0o755, "setuid"},
+		{"root setgid", 0o2755, 5, 0, 0o755, "setgid"},
+		{"root both", 0o6755, 0, 0, 0o755, "setuid and setgid"},
+		{"user setuid", 0o4755, 5, 5, 0o4755, ""},
+		{"user setgid", 0o2755, 5, 5, 0o2755, ""},
+		{"root-owned but group not root keeps setgid", 0o6755, 0, 5, 0o2755, "setuid"},
+		{"sticky kept", 0o1777, 0, 0, 0o1777, ""},
+		{"root plain", 0o644, 0, 0, 0o644, ""},
+		{"privileged group setgid", 0o2755, 5, 999, 0o755, "setgid"},
+		{"privileged group setgid on a directory", 0o2775, 5, 998, 0o775, "setgid"},
+		{"privileged group without setgid", 0o755, 5, 999, 0o755, ""},
+		{"privileged group keeps setuid of another owner", 0o6755, 5, 999, 0o4755, "setgid"},
+		{"users group keeps setgid", 0o2775, 99, 100, 0o2775, ""},
+		{"share directory of an ordinary group keeps setgid", 0o2775, 100, 99, 0o2775, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, stripped := restoredMode(&tar.Header{Typeflag: tar.TypeReg, Mode: tc.mode, Uid: tc.uid, Gid: tc.gid}, privileged)
+			if got != tc.want || stripped != tc.stripped {
+				t.Fatalf("restoredMode = %#o, %q; want %#o, %q", got, stripped, tc.want, tc.stripped)
+			}
+		})
+	}
+}
+
+func TestAppdataArchive_ResolvePrivilegedGroupsReadsTheHostsGroupsAndFailsClosed(t *testing.T) {
+	gids := map[string]string{"hoserva": "990", "docker": "991", "disk": "6"}
+	lookup := func(name string) (*user.Group, error) {
+		if gid, ok := gids[name]; ok {
+			return &user.Group{Name: name, Gid: gid}, nil
+		}
+		return nil, user.UnknownGroupError(name)
+	}
+	got, err := resolvePrivilegedGroups(lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gid := range []int{0, 990, 991, 6} {
+		if !got.has(gid) {
+			t.Errorf("gid %d is not privileged in %v", gid, got)
+		}
+	}
+	for _, gid := range []int{99, 100, 1000} {
+		if got.has(gid) {
+			t.Errorf("gid %d is privileged in %v", gid, got)
+		}
+	}
+
+	boom := errors.New("name service unavailable")
+	if _, err := resolvePrivilegedGroups(func(name string) (*user.Group, error) {
+		if name == "docker" {
+			return nil, boom
+		}
+		return lookup(name)
+	}); !errors.Is(err, boom) {
+		t.Fatalf("resolvePrivilegedGroups with a failing lookup = %v, want it to fail with the lookup's error", err)
+	}
+	if _, err := resolvePrivilegedGroups(func(name string) (*user.Group, error) {
+		return &user.Group{Name: name, Gid: "not-a-number"}, nil
+	}); err == nil {
+		t.Fatal("resolvePrivilegedGroups accepted a group id that is not a number")
 	}
 }

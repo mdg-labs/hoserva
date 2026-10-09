@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io/fs"
 	"math/big"
@@ -27,6 +28,21 @@ import (
 // generates one itself.
 var errTLSKeyReadable = fmt.Errorf("TLS key file must not be group- or world-readable (mode 0600)")
 
+// errTLSBackupLeft reports that a completed install could not remove, or
+// could not durably remove, the previous pair's .bak files. The new pair is
+// live and a caller must treat it as installed; the error is only a warning
+// that a later start with the live pair missing could restore the old one
+// from them. It is the acme package's sentinel so the ACME service and the
+// API layer recognise it without importing this package.
+var errTLSBackupLeft = acme.ErrBackupLeft
+
+// Seams for the removal and the final directory sync in removeTLSBackups,
+// so a test can fail either.
+var (
+	removeTLSBackupFile = os.Remove
+	syncTLSBackupDir    = fsyncDir
+)
+
 func checkTLSKeyPermissions(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -39,9 +55,9 @@ func checkTLSKeyPermissions(path string) error {
 }
 
 // certLifetime is generous on purpose: this is a self-signed certificate
-// (Q9) a browser will always warn about anyway, so there is no rotation
-// story to build for it yet — regenerating it (deleting the two files
-// under the state directory) is the escape hatch until one exists.
+// (Q9) a browser will always warn about anyway, so there is no automatic
+// rotation — Regenerate certificate on /settings/network is the way to
+// replace it.
 const certLifetime = 10 * 365 * 24 * time.Hour
 
 // loadOrGenerateTLSCertificate reads certPath/keyPath, generating a fresh
@@ -267,6 +283,28 @@ func installTLSCertificate(certPath, keyPath string, certPEM, keyPEM []byte) err
 			return fmt.Errorf("verifying installed TLS certificate: %w (restoring previous: %v)", err, rbErr)
 		}
 		return fmt.Errorf("verifying installed TLS certificate: %w", err)
+	}
+	return removeTLSBackups(certPath, keyPath)
+}
+
+// removeTLSBackups deletes the .bak pair once the install that wrote it
+// has finished: it only exists to repair an install interrupted between
+// its two renames, and left behind it would hand an earlier key back to
+// loadOrGenerateTLSCertificate whenever the live pair is later missing.
+// The certificate goes first so recovery has nothing to read even if the
+// key's removal then fails.
+func removeTLSBackups(certPath, keyPath string) error {
+	var errs []error
+	for _, path := range []string{certPath + ".bak", keyPath + ".bak"} {
+		if err := removeTLSBackupFile(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	if err := syncTLSBackupDir(filepath.Dir(certPath)); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%w: %w", errTLSBackupLeft, errors.Join(errs...))
 	}
 	return nil
 }

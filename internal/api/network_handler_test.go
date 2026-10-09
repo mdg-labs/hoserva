@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -23,6 +26,7 @@ type fakeHTTPS struct {
 	restart  bool
 	notAfter time.Time
 	kind     string
+	regenErr error
 }
 
 func (f *fakeHTTPS) Certificate() (api.TLSCertView, error) {
@@ -35,7 +39,11 @@ func (f *fakeHTTPS) Certificate() (api.TLSCertView, error) {
 
 func (f *fakeHTTPS) Regenerate(context.Context) (api.TLSCertView, error) {
 	f.notAfter = time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC)
-	return f.Certificate()
+	view, err := f.Certificate()
+	if err != nil {
+		return view, err
+	}
+	return view, f.regenErr
 }
 
 func (f *fakeHTTPS) AllowAllSources() bool { return f.allowAll }
@@ -240,5 +248,70 @@ func TestConfirmNetworkSettings(t *testing.T) {
 	}
 	if got.Pending.IsSet() {
 		t.Fatal("pending should be cleared")
+	}
+}
+
+func TestRegenerateTLSCertificate_BackupLeftSucceedsAndWarns(t *testing.T) {
+	nh, svc, _ := newNotifyTestHandler(t)
+	h, _, https := newNetworkHandler(t)
+	h.Notify = nh.Notify
+	https.regenErr = fmt.Errorf("%w: remove hoserva.crt.bak: permission denied", acme.ErrBackupLeft)
+
+	got, err := h.RegenerateTLSCertificate(context.Background())
+	if err != nil {
+		t.Fatalf("RegenerateTLSCertificate: %v", err)
+	}
+	if got.Certificate.Kind != apiv1.TLSCertificateKindSelfSigned {
+		t.Fatalf("certificate kind = %q, want self_signed", got.Certificate.Kind)
+	}
+
+	groups, unread, err := svc.ListInbox(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unread != 1 || len(groups) != 1 || groups[0].EventType != notify.EventCertificateRenewalFailed || len(groups[0].Alerts) != 1 {
+		t.Fatalf("inbox = %+v (unread %d), want one certificate_renewal_failed alert", groups, unread)
+	}
+	alert := groups[0].Alerts[0]
+	if alert.Title != "Certificate regenerated, backup file left behind" {
+		t.Errorf("title = %q", alert.Title)
+	}
+	for _, want := range []string{"new self-signed certificate is in use", "could not be removed", "Remove it from the TLS directory", "hoserva.crt.bak: permission denied"} {
+		if !strings.Contains(alert.Message, want) {
+			t.Errorf("message %q lacks %q", alert.Message, want)
+		}
+	}
+}
+
+func TestRegenerateTLSCertificate_BackupLeftWithoutNotifierStillSucceeds(t *testing.T) {
+	h, _, https := newNetworkHandler(t)
+	https.regenErr = fmt.Errorf("%w: remove hoserva.key.bak: permission denied", acme.ErrBackupLeft)
+	if _, err := h.RegenerateTLSCertificate(context.Background()); err != nil {
+		t.Fatalf("RegenerateTLSCertificate: %v", err)
+	}
+}
+
+func TestRegenerateTLSCertificate_CleanRegeneratePublishesNothing(t *testing.T) {
+	nh, svc, _ := newNotifyTestHandler(t)
+	h, _, _ := newNetworkHandler(t)
+	h.Notify = nh.Notify
+	if _, err := h.RegenerateTLSCertificate(context.Background()); err != nil {
+		t.Fatalf("RegenerateTLSCertificate: %v", err)
+	}
+	if _, unread, err := svc.ListInbox(context.Background()); err != nil || unread != 0 {
+		t.Fatalf("inbox unread = %d, err = %v, want none", unread, err)
+	}
+}
+
+func TestRegenerateTLSCertificate_OtherErrorFailsAndPublishesNothing(t *testing.T) {
+	nh, svc, _ := newNotifyTestHandler(t)
+	h, _, https := newNetworkHandler(t)
+	h.Notify = nh.Notify
+	https.regenErr = errors.New("writing hoserva.crt: disk full")
+	if _, err := h.RegenerateTLSCertificate(context.Background()); err == nil {
+		t.Fatal("RegenerateTLSCertificate succeeded, want the regenerate error")
+	}
+	if _, unread, err := svc.ListInbox(context.Background()); err != nil || unread != 0 {
+		t.Fatalf("inbox unread = %d, err = %v, want none", unread, err)
 	}
 }

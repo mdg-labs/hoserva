@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -80,8 +81,16 @@ func (h *httpsControl) Current() (acme.CertView, error) {
 }
 
 func (h *httpsControl) Install(certPEM, keyPEM []byte) error {
-	if err := installTLSCertificate(h.certPath, h.keyPath, certPEM, keyPEM); err != nil {
-		return err
+	return h.install(certPEM, keyPEM)
+}
+
+// install swaps the live pair and the served certificate together. When
+// only the backup cleanup failed the new pair is on disk, so it is served
+// anyway and the error is still returned.
+func (h *httpsControl) install(certPEM, keyPEM []byte) error {
+	installErr := installTLSCertificate(h.certPath, h.keyPath, certPEM, keyPEM)
+	if installErr != nil && !errors.Is(installErr, errTLSBackupLeft) {
+		return installErr
 	}
 	cert, err := tls.LoadX509KeyPair(h.certPath, h.keyPath)
 	if err != nil {
@@ -90,24 +99,26 @@ func (h *httpsControl) Install(certPEM, keyPEM []byte) error {
 	h.certMu.Lock()
 	h.cert = cert
 	h.certMu.Unlock()
-	return nil
+	return installErr
 }
 
+// Regenerate returns the new certificate's view even when it also returns
+// errTLSBackupLeft: the new pair is served in that case, and the caller
+// decides whether the leftover backup is worth a warning.
 func (h *httpsControl) Regenerate(context.Context) (api.TLSCertView, error) {
-	if err := os.Remove(h.certPath); err != nil && !os.IsNotExist(err) {
-		return api.TLSCertView{}, err
+	certPEM, keyPEM, err := generateSelfSignedCertificate()
+	if err != nil {
+		return api.TLSCertView{}, fmt.Errorf("generating self-signed certificate: %w", err)
 	}
-	if err := os.Remove(h.keyPath); err != nil && !os.IsNotExist(err) {
-		return api.TLSCertView{}, err
+	installErr := h.install(certPEM, keyPEM)
+	if installErr != nil && !errors.Is(installErr, errTLSBackupLeft) {
+		return api.TLSCertView{}, installErr
 	}
-	cert, err := loadOrGenerateTLSCertificate(h.certPath, h.keyPath)
+	view, err := h.Certificate()
 	if err != nil {
 		return api.TLSCertView{}, err
 	}
-	h.certMu.Lock()
-	h.cert = cert
-	h.certMu.Unlock()
-	return h.Certificate()
+	return view, installErr
 }
 
 func (h *httpsControl) AllowAllSources() bool {

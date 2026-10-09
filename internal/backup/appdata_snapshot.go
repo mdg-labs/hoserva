@@ -58,6 +58,10 @@ func (a *AppdataService) Snapshot(ctx context.Context, name string, reason Reaso
 	if err != nil {
 		return container.SnapshotRef{}, err
 	}
+	key, err := a.archiveKey()
+	if err != nil {
+		return container.SnapshotRef{}, err
+	}
 	staging, err := appdataStaging(roots)
 	if err != nil {
 		return container.SnapshotRef{}, err
@@ -68,7 +72,7 @@ func (a *AppdataService) Snapshot(ctx context.Context, name string, reason Reaso
 		_, _ = fmt.Fprintf(out, "warning: %s\n", w)
 	}
 	failures := map[string]error{}
-	staged, err := a.archiveStopped(ctx, out, []AppdataContainer{*c}, staging, a.now(), dests, reason, failures)
+	staged, err := a.archiveStopped(ctx, out, []AppdataContainer{*c}, staging, a.now(), dests, reason, key, failures)
 	if err != nil {
 		return container.SnapshotRef{}, err
 	}

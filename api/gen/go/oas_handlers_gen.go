@@ -18969,7 +18969,10 @@ func (s *Server) handleInitializeMigrationParityRequest(args [0]string, argsEsca
 // `stack_dir_exists`, 400 `invalid_stack`), as do those of `previewTemplateInstall`. An input that
 // needs a value and has none is refused with 400 `invalid_template_input` whose `details.input` names
 // it, and a `networkMode` that names a network that does not exist with 409 `network_missing` (the
-// message holds the `docker network create` command); nothing is written in either case.
+// message holds the `docker network create` command); nothing is written in either case. A request
+// that carries `planDigest` is refused with 409 `template_changed` when the plan this install would
+// write has another digest, because the catalog was refreshed or another source supplied the template
+// since the preview; nothing is created, and a new preview shows what the template is now.
 //
 // POST /templates/{id}/install
 func (s *Server) handleInstallTemplateRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

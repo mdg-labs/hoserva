@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -236,6 +237,92 @@ func TestBrowse_RefusesSymlinkEscape(t *testing.T) {
 	}
 	if _, _, err := svc.Browse(ctx, "media", "external"); !errors.Is(err, ErrPathEscapes) {
 		t.Fatalf("browse through symlink = %v, want ErrPathEscapes", err)
+	}
+}
+
+// swapBeforeListFS swaps victim for a symlink to swapTo at the moment Browse
+// hands the validated listing to the filesystem, after confineSharePathOnFS
+// has already approved the path.
+type swapBeforeListFS struct {
+	OSFS
+	victim string
+	swapTo string
+}
+
+func (f *swapBeforeListFS) ListConfined(root, rel string) ([]BrowseEntry, error) {
+	if err := os.RemoveAll(f.victim); err != nil {
+		return nil, err
+	}
+	if err := os.Symlink(f.swapTo, f.victim); err != nil {
+		return nil, err
+	}
+	return f.OSFS.ListConfined(root, rel)
+}
+
+func TestBrowse_RefusesIntermediateDirSwappedForSymlinkAfterValidation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the confined listing is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
+	}
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	writeFile(t, filepath.Join(shareRoot, "a", "b", "inside.txt"), "in")
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "b", "outside-secret.txt"), "no")
+
+	svc.FS = &swapBeforeListFS{victim: filepath.Join(shareRoot, "a"), swapTo: outside}
+
+	_, entries, err := svc.Browse(ctx, "media", "a/b")
+	if !errors.Is(err, ErrPathEscapes) {
+		t.Fatalf("Browse after an intermediate directory was swapped for a symlink = %v, want ErrPathEscapes", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("Browse listed %+v from outside the share", entries)
+	}
+}
+
+func TestBrowse_RefusesShareRootThatIsASymlink(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the confined listing is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
+	}
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	if err := os.RemoveAll(shareRoot); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "outside-secret.txt"), "no")
+	if err := os.Symlink(outside, shareRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"", "."} {
+		_, entries, err := svc.Browse(ctx, "media", rel)
+		if !errors.Is(err, ErrPathEscapes) {
+			t.Fatalf("Browse(%q) of a symlinked share root = %v, want ErrPathEscapes", rel, err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("Browse(%q) listed %+v through a symlinked share root", rel, entries)
+		}
+	}
+}
+
+func TestBrowse_ListsThroughInShareSymlinkResolvedAtValidation(t *testing.T) {
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	writeFile(t, filepath.Join(shareRoot, "real", "song.flac"), "abc")
+	if err := os.Symlink("real", filepath.Join(shareRoot, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, entries, err := svc.Browse(ctx, "media", "alias")
+	if err != nil {
+		t.Fatalf("Browse through an in-share symlink: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "song.flac" || entries[0].SizeBytes != 3 {
+		t.Fatalf("entries = %+v, want song.flac of 3 bytes", entries)
 	}
 }
 

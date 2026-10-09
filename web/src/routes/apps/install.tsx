@@ -58,6 +58,7 @@ type TemplateInstallResult = components["schemas"]["TemplateInstallResult"];
 const NOT_FOUND_CODE = "template_not_found";
 const NAME_ERROR_CODES = ["invalid_stack_name", "stack_exists", "stack_dir_exists"];
 const NETWORK_ERROR_CODES = ["network_missing"];
+const TEMPLATE_CHANGED_CODE = "template_changed";
 const PREVIEW_DEBOUNCE_MS = 400;
 const NO_DEVICE = "__none__";
 const NAME_FIELD = "stack-name";
@@ -382,9 +383,15 @@ function InstallForm({ template }: { template: CatalogTemplate }): React.ReactEl
     setInstallFailure(null);
     const key = installKey;
     try {
-      const result = await installTemplate(template.id, installBody);
+      const result = await installTemplate(template.id, { ...installBody, planDigest: plan.digest });
       const parsed = parseClientResult(result, t("apps.install.installFailed"));
       if (parsed.error !== null || parsed.data === undefined) {
+        if (result.error?.code === TEMPLATE_CHANGED_CODE) {
+          setInstallFailure({ key, code: TEMPLATE_CHANGED_CODE, message: t("apps.install.templateChanged"), input: null });
+          setPreview((prev) => ({ ...prev, settledKey: null, failure: null }));
+          setReloads((n) => n + 1);
+          return;
+        }
         setInstallFailure({
           key,
           code: result.error?.code,
