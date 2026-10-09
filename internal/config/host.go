@@ -29,8 +29,16 @@ const DockerDataRootDefault = "/var/lib/docker"
 // DockerDataRootCache is the one cache-side data-root DockerDataRoot ever
 // moves Docker to (Q62): a single, fixed path, never derived per host or
 // per call, so a caller finishing an interrupted move already knows this
-// is the only target it could have been.
-const DockerDataRootCache = "/mnt/cache/docker"
+// is the only target it could have been. It starts with a dot because a
+// share name never does (pool.ValidateShareName), so no share's cache
+// branch can be this directory.
+const DockerDataRootCache = "/mnt/cache/.docker"
+
+// DockerDataRootCacheLegacy is where earlier versions moved Docker's
+// data-root. An install already moved there keeps it: nothing rewrites its
+// daemon.json, and the template privilege summary still treats the path as
+// Docker's.
+const DockerDataRootCacheLegacy = "/mnt/cache/docker"
 
 const (
 	KindSamba            = "samba"

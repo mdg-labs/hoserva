@@ -391,14 +391,22 @@ func interpolateVolume(v any, values map[string]string) any {
 // or on the cache, the two places Hoserva's own layout puts data (D10). A
 // path relative to the stack directory is outside both. The cache itself and
 // Docker's data-root on it are not: they hold every container's layers and
-// named volumes, privileged containers' included.
+// named volumes, privileged containers' included. The same holds for the
+// pool's view of a directory of that name, so a bind through /mnt/user does
+// not pass as benign where the cache path would not; the legacy data-root
+// name is covered the same way for an install that still uses it.
 func insideLayout(src string) bool {
 	if !strings.HasPrefix(src, "/") {
 		return false
 	}
 	p := path.Clean(src)
-	if p == cacheRoot || under(p, dockerDataRoot) {
+	if p == cacheRoot {
 		return false
+	}
+	for _, root := range []string{dockerDataRoot, legacyDockerDataRoot} {
+		if under(p, root) || under(p, poolRoot+strings.TrimPrefix(root, cacheRoot)) {
+			return false
+		}
 	}
 	return under(p, poolRoot) || under(p, cacheRoot)
 }

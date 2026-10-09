@@ -19,7 +19,11 @@ const (
 	poolRoot  = "/mnt/user"
 	// dockerDataRoot is where Docker's data-root moves on the cache (Q62),
 	// the same path as config.DockerDataRootCache.
-	dockerDataRoot = cacheRoot + "/docker"
+	dockerDataRoot = cacheRoot + "/.docker"
+	// legacyDockerDataRoot is where earlier versions moved it, the same
+	// path as config.DockerDataRootCacheLegacy; an install already there
+	// keeps it.
+	legacyDockerDataRoot = cacheRoot + "/docker"
 )
 
 // A Check inspects a schema-valid template for a rule the schema cannot

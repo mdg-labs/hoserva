@@ -540,8 +540,8 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DockerDataRoot != "/mnt/cache/docker" {
-		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/docker", got.DockerDataRoot)
+	if got.DockerDataRoot != "/mnt/cache/.docker" {
+		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/.docker", got.DockerDataRoot)
 	}
 
 	// ApplyDockerDataRoot must have actually run, not just DockerDataRoot's
@@ -549,15 +549,15 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	// through Generator (never overwriting anything, since none existed).
 	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
 	created := fakeDirs.Created()
-	if len(created) != 1 || created[0] != "/mnt/cache/docker" {
-		t.Fatalf("DockerDirs.Created() = %v, want exactly [/mnt/cache/docker]", created)
+	if len(created) != 1 || created[0] != "/mnt/cache/.docker" {
+		t.Fatalf("DockerDirs.Created() = %v, want exactly [/mnt/cache/.docker]", created)
 	}
 	daemonJSON, err := os.ReadFile(filepath.Join(g.Root, "docker", "daemon.json"))
 	if err != nil {
 		t.Fatalf("reading generated daemon.json: %v", err)
 	}
-	if !strings.Contains(string(daemonJSON), `"data-root": "/mnt/cache/docker"`) {
-		t.Fatalf("daemon.json = %s, want a data-root of /mnt/cache/docker", daemonJSON)
+	if !strings.Contains(string(daemonJSON), `"data-root": "/mnt/cache/.docker"`) {
+		t.Fatalf("daemon.json = %s, want a data-root of /mnt/cache/.docker", daemonJSON)
 	}
 	if strings.Contains(string(daemonJSON), "Hoserva") {
 		t.Fatalf("daemon.json = %s, want no #-comment header — Docker's own daemon.json must be valid JSON", daemonJSON)

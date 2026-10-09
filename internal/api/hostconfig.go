@@ -28,6 +28,9 @@ func mapDockerDataRootErr(err error) error {
 	if errors.Is(err, config.ErrUnmanaged) || errors.Is(err, config.ErrExistingHostFile) {
 		return &apiError{code: "unmanaged_config", statusCode: 409, message: err.Error()}
 	}
+	if errors.Is(err, config.ErrDockerDataRootInUse) {
+		return &apiError{code: "docker_data_root_in_use", statusCode: 409, message: err.Error()}
+	}
 	return err
 }
 

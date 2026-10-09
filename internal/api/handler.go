@@ -246,7 +246,7 @@ type Handler struct {
 	// ApplyHostConfig (Q62, Q76). Nil uses config.OSDirMaker — every test
 	// that can reach an accepted cache move must set this to a fake
 	// (CLAUDE.md: real disks and real host paths are off-limits), never
-	// leave it nil and let a real os.MkdirAll(/mnt/cache/docker) run.
+	// leave it nil and let a real os.MkdirAll(/mnt/cache/.docker) run.
 	DockerDirs config.DirMaker
 	// ArrayStore is create-array topology, used to decide whether a Docker
 	// data-root move to cache is even possible (Q62). Nil means no cache.

@@ -598,8 +598,9 @@ The floor is `dockerEngineMinVersion` in `internal/api/doctor.go`, raised over t
 ### Q62 — Docker container storage backend
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §3
 
-**Default: standard Docker Engine directory-based storage — `overlay2`, data-root a plain directory on cache (`/mnt/cache/docker`) — never a fixed-size loopback image.**
+**Default: standard Docker Engine directory-based storage — `overlay2`, data-root a plain directory on cache (`/mnt/cache/.docker`) — never a fixed-size loopback image.**
 A loopback image that must be manually resized when it fills is one of the most common Docker complaints on Unraid, and it is self-inflicted: standard Docker Engine already defaults to directory-based `overlay2` storage, and the loopback image is an Unraid-specific choice to keep Docker's storage in one movable file. Hoserva has no reason to reproduce it — the Engine is a normal prerequisite (D8) pointed at a normal directory, sized by the cache device itself, which already has its own capacity monitoring (doc 02 §3). One less way to run out of space by surprise.
+The directory name starts with a dot because a share name never does, so no share's cache branch can be Docker's data-root: a share user cannot reach dockerd's entries, and the mover never moves them. The move refuses a directory that already holds files the managed `daemon.json` does not name. An install already moved to `/mnt/cache/docker` keeps that data-root, its `daemon.json` is left as it is, and the privilege summary (doc 04 §5, §7) counts both paths as Docker's data-root. Known limitation: on such an install, a share named `docker` with a cache leg still shares that directory, and only moving the data would end that.
 
 ### Q39 — Where curated templates live
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §1, §2, §7, Q35, Q65, Q66

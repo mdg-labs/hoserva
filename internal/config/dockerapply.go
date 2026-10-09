@@ -3,7 +3,9 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -33,6 +35,13 @@ const dockerRestartPendingPath = "docker/.restart-pending"
 // cache-side data-root directory with — root-only, matching Docker's own
 // default ownership of /var/lib/docker.
 const dockerDataRootDirMode = 0o711
+
+// ErrDockerDataRootInUse is ApplyDockerDataRoot's refusal when the
+// directory it would make Docker's data-root already holds entries that
+// Docker's own daemon.json does not name as its data-root — a share's cache
+// branch, say. Docker would run as root on whatever is in there, and the
+// directory's owner and mode would be set by whoever created it.
+var ErrDockerDataRootInUse = errors.New("config: docker data-root directory already holds files")
 
 // DirMaker creates a directory tree. ApplyDockerDataRoot's data-root move
 // is the one filesystem write it makes outside Generator.Root (the cache
@@ -166,7 +175,57 @@ func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string)
 	if dataRoot == DockerDataRootDefault {
 		return nil
 	}
+	if err := g.checkDockerDataRootUnused(dataRoot); err != nil {
+		return err
+	}
 	return g.CanWrite(ctx, dockerDaemonConfigPath)
+}
+
+// checkDockerDataRootUnused refuses dataRoot when it exists with entries and
+// the managed daemon.json does not already name it: an earlier, completed
+// move of this same data-root leaves Docker's own entries there, and
+// re-applying it must stay a no-op. A directory that cannot be read is
+// refused too, never taken as empty.
+func (g *Generator) checkDockerDataRootUnused(dataRoot string) error {
+	entries, err := os.ReadDir(dataRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("config: reading docker data-root %s: %w", dataRoot, err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	configured, err := g.configuredDockerDataRoot()
+	if err != nil {
+		return err
+	}
+	if configured == dataRoot {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrDockerDataRootInUse, dataRoot)
+}
+
+// configuredDockerDataRoot is the data-root the managed daemon.json names,
+// or "" when there is none or it names none.
+func (g *Generator) configuredDockerDataRoot() (string, error) {
+	full, _, err := g.resolvePath(dockerDaemonConfigPath)
+	if err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("config: reading docker daemon.json: %w", err)
+	}
+	var cfg dockerDaemonConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", nil
+	}
+	return cfg.DataRoot, nil
 }
 
 // ApplyDockerDataRoot performs the move DockerDataRoot only decides:
@@ -214,6 +273,9 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 
 	if dataRoot == DockerDataRootDefault {
 		return nil
+	}
+	if err := g.checkDockerDataRootUnused(dataRoot); err != nil {
+		return err
 	}
 	if dirs == nil {
 		dirs = OSDirMaker{}
